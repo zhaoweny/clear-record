@@ -1,0 +1,4 @@
+#!/bin/sh
+# Thin shim -> `just verify`. Branching-free by design (see justfile header);
+# kept so tooling that already calls ./scripts/verify keeps working.
+exec just verify

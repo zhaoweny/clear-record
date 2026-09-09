@@ -1,0 +1,21 @@
+# docs/agents/git-worktree.toml — geometry and authority for the agentic
+# git workflow. Consumed at dispatch and landing time by the canonical
+# git-worktree skill in the personal logbook
+# (50-59-engineering/57-agent-skills/git-worktree/).
+# Missing or unparseable => the skill prints a warning and uses the
+# conservative defaults documented in the skill (see its setup.md).
+
+[worktrees]
+# Worktree checkout directory, relative to the repo root. Must stay gitignored.
+worktree_dir = ".wt"
+
+# Shape of agent branch names. {slug} = task slug (always present).
+# Add {user} (an operator path segment) only when several operators share one
+# repo; omit it for solo trees and GitHub-fork workflows.
+branch_template = "agents/{slug}"
+
+[control]
+# Who performs the final review-and-land on main:
+#   "orchestrator" — the running main agent verifies (verify gate) then lands.
+#   "human"        — agents push + report; a human reviews and lands.
+landing_authority = "orchestrator"

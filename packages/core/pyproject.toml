@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cr-core"
+version = "0.1.0"
+description = "Backend-agnostic application core for clear-record: the audio->record pipeline domain and shared services (no vendor/ML-framework code)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cr_core"]

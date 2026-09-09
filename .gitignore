@@ -1,0 +1,57 @@
+# Local temp folder — per-session scratch, handoff notes, state (see .local/)
+.local/
+
+# Agent worktrees (see docs/agents/git-worktree.toml when adopted)
+.wt/
+wt-*
+
+# Local issue tracker (see docs/agents/issue-tracker.md)
+.scratch/
+
+# Environment files (keep .env.example if added)
+.env
+.env.*
+!.env.example
+
+# Audio / dataset / model artifacts are environment-local data, never git.
+# Large recordings, downloaded model weights, caches and intermediate
+# artifacts do not belong in the repository. See docs/architecture.md §8.
+*.wav
+*.flac
+*.ogg
+*.mp3
+*.m4a
+models/
+data/
+cache/
+artifacts/
+*.pt
+*.bin
+*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Editors / OS noise
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

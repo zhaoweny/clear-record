@@ -1,0 +1,50 @@
+# clear-record — uv workspace root.
+#
+# Workspace members under packages/:
+#   packages/core      -> dist "cr-core",      import "cr_core"      (backend-agnostic application core)
+#   packages/providers -> dist "cr-providers", import "cr_providers" (per-vendor ASR backend adapters)
+#   packages/cli       -> dist "cr-cli",       import "cr_cli"       (the `clearrecord` command)
+#
+# See docs/adr/0004-uv-workspace-layout.md for the decision record.
+#
+# The root is a virtual project (never built/published); only the workspace
+# members are real packages.
+
+[project]
+name = "clear-record"
+version = "0.1.0"
+description = "Local-first open-source multitrack recording and transcription: from many recordings to one clear record (workspace root)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Ruff's default rule set; extend deliberately per-slice later.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/core/tests",
+    "packages/providers/tests",
+    "packages/cli/tests",
+]

@@ -78,3 +78,38 @@ def test_reconcile_shifts_and_prefers_best(tmp_path) -> None:
     assert len(merged) == 1
     assert merged[0].speaker == "Alice"
     assert merged[0].start == 0.0
+
+
+def test_synth_align_recovers_true_offsets(tmp_path) -> None:
+    """Owner strategy: synthesize 4-device badness with known ground truth, then
+    confirm `align` recovers the offsets within a reasonable tolerance."""
+    import soundfile as sf
+
+    from cr_core import Source
+    from cr_engine import SYNTH_SR, align_sources, make_scene, record
+
+    scene, _ = make_scene(duration_s=25.0, n_speakers=4, seed=1)
+    offsets_s = {0: 0.0}
+    sources: list[Source] = []
+    for i in range(4):
+        start_s = 0.0 if i == 0 else [0.40, 0.85, 1.30][i - 1]
+        audio, _ = record(
+            scene,
+            start_s=start_s,
+            drift_ppm=-25.0,
+            gain=1.05,
+            noise=0.002,
+            lowpass_ms=0.6,
+            rir_s=0.08,
+            dropout_frac=0.005,
+            seed=7,
+        )
+        wav = tmp_path / f"d{i}.wav"
+        sf.write(str(wav), audio, SYNTH_SR)
+        offsets_s[i] = start_s
+        sources.append(Source(id=f"d{i}", path=str(wav), label=f"dev{i}"))
+
+    alignment = align_sources(sources, reference_id="d0")
+    for i in range(1, 4):
+        got = alignment.offsets[f"d{i}"]
+        assert got == pytest.approx(offsets_s[i], abs=0.15), f"device {i} offset {got}"

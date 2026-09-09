@@ -86,6 +86,21 @@ uv run --all-packages --extra apple clearrecord run recordings --backend apple -
 `calibrate` prints `coverage`, `mean_confidence`, `wer` and `similarity` and
 writes `recordings/export/calibration.json`.
 
+### Validate alignment (no real bad multi-track needed)
+
+Real "4-channel pre-mixed badness with a correct answer" is scarce, so the
+`align` set is **synthesized** (owner strategy, see
+[docs/test-corpus.md](docs/test-corpus.md)):
+
+```sh
+uv run --all-packages clearrecord synth /tmp/align-test --devices 4 --duration 25 --seed 1
+uv run --all-packages clearrecord align /tmp/align-test
+# compare the printed offsets against /tmp/align-test/ground_truth.json
+```
+
+`just verify` already asserts `align` recovers the true offsets on a synthetic
+4-device scene.
+
 > **Privacy:** recordings and derived artifacts are environment-local data.
 > They are gitignored and never enter the repository. The clean-room boundary
 > in `docs/architecture.md` §6 and ADR-0006 make this explicit.
@@ -138,5 +153,7 @@ boundaries, never linked or vendored into the MIT core).
 - [docs/architecture.md](docs/architecture.md) — architecture + provenance
   document distilled from the record (FACT / VOICE / REQ / DESIGN / SUGGESTION
   / OPEN labels).
+- [docs/test-corpus.md](docs/test-corpus.md) — the owner's public reference
+  anchors & the synthesize-the-badness strategy.
 - [docs/adr/](docs/adr/) — architecture decision records.
 - `AGENTS.md`, `docs/agents/` — agent workflow/geometry docs.

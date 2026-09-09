@@ -12,7 +12,12 @@ from cr_cli.cli import _build_parser
 
 def test_subcommands_match_pipeline() -> None:
     parser = _build_parser()
-    expected = set(pipeline_spec().cli_commands()) | {"backends", "run", "calibrate"}
+    expected = set(pipeline_spec().cli_commands()) | {
+        "backends",
+        "run",
+        "calibrate",
+        "synth",
+    }
     subparsers_action = next(
         a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
     )

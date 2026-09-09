@@ -294,8 +294,10 @@ spatial-invention scope (§7) is deliberately out of scope.
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
 1. `ingest` — richer manifest metadata (sample rate, channels, original path,
-   a checksum) + idempotent re-ingest. *(partly done — normalize is landed)*
+   a checksum) + idempotent re-ingest. *(normalize is landed)*
 2. `align` — expose per-source alignment confidence and a manual-offset override.
+   *(the synthesized-badness harness is landed — `clearrecord synth` +
+   `cr_engine.synth`, proven by `just verify`; per-source confidence is TODO)*
 3. `transcribe` — hot-test the **nvidia** and **amd** backends on real hardware;
    add `--language` refinement and optional VAD/timestamps params.
 4. `reconcile` — allow a `--prefer` source to break confidence ties; better

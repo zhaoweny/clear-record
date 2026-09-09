@@ -121,6 +121,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="a reference transcript text file to compare (WER/similarity)",
     )
 
+    # synthesis (owner strategy: build the badness, keep the ground truth)
+    syn = sub.add_parser(
+        "synth",
+        help="generate a clean scene + degraded per-device recordings with exact ground truth",
+    )
+    syn.add_argument("directory", help="output workspace directory")
+    syn.add_argument(
+        "--devices", type=int, default=4, help="number of recording devices (default 4)"
+    )
+    syn.add_argument(
+        "--duration",
+        type=float,
+        default=20.0,
+        help="scene duration in seconds (default 20)",
+    )
+    syn.add_argument(
+        "--speakers",
+        type=int,
+        default=4,
+        help="number of speakers in the scene (default 4)",
+    )
+    syn.add_argument("--seed", type=int, default=0, help="random seed")
+
     # backends
     b = sub.add_parser(
         "backends", help="list which ASR backends are currently available"
@@ -145,6 +168,16 @@ def _main(args: argparse.Namespace) -> int:
             if not args.all and state != "available":
                 continue
             print(f"{bid:8s} {state}")
+        return 0
+
+    if command == "synth":
+        stages.synth(
+            args.directory,
+            devices=args.devices,
+            duration_s=args.duration,
+            speakers=args.speakers,
+            seed=args.seed,
+        )
         return 0
 
     if command == "ingest":

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Protocol
 
-# The three supported compute families (owner voice, 2026-09-09).
+from cr_core import TranscriptionResult
+
 BackendId = str
+
+# Multilingual checkpoint used unless overridden. Multilingual (non-`.en`) models
+# handle Chinese/English mixed speech (owner voice: mixed-language meetings).
+DEFAULT_MODEL = "small"
 
 
 @dataclass(frozen=True)
@@ -17,60 +22,45 @@ class BackendInfo:
     vendor: str
     frameworks: tuple[str, ...]
     description: str
+    default_model: str = DEFAULT_MODEL
 
 
 class Backend(Protocol):
     """A live, callable ASR backend.
 
-    ``available()`` may perform a runtime probe (e.g. import the optional
-    framework, query GPUs, or touch the Metal device). It must be cheap enough
-    to call on every CLI invocation.
+    ``available()`` performs a cheap runtime probe (platform + import). It must
+    stay cheap enough to call on every CLI invocation and must **never** import a
+    heavy GPU framework on module import.
     """
 
     info: BackendInfo
 
     def available(self) -> bool: ...
 
-    def transcribe(self, audio_path: str, *, language: str | None = None) -> str:
-        """Return the best-effort transcript for ``audio_path``.
+    def transcribe(
+        self,
+        audio_path: str,
+        *,
+        language: str | None = None,
+        model: str | None = None,
+        model_dir: str | None = None,
+    ) -> TranscriptionResult:
+        """Transcribe ``audio_path`` and return timestamped segments.
 
-        ``language`` is optional; a backend may auto-detect when omitted.
+        ``language`` is the BCP-47-ish whisper hint, or ``None``/"auto" to
+        auto-detect. ``model`` selects the checkpoint name/size (or a path).
+        ``model_dir`` is where to download/read model weights.
         """
         ...
 
 
-class BackendRegistry:
-    """A small name -> backend factory map."""
+def _importable(module: str) -> bool:
+    import importlib.util
 
-    def __init__(self) -> None:
-        self._factories: dict[str, type] = {}
-
-    def register(self, id: BackendId, factory: type) -> None:
-        self._factories[id] = factory
-
-    def ids(self) -> tuple[BackendId, ...]:
-        return tuple(sorted(self._factories))
-
-    def get(self, id: BackendId) -> Backend:
-        if id not in self._factories:
-            raise KeyError(f"unknown ASR backend {id!r}")
-        return self._factories[id]()
-
-    def __contains__(self, id: BackendId) -> bool:
-        return id in self._factories
-
-    def __len__(self) -> int:
-        return len(self._factories)
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
 
 
-_global: BackendRegistry = BackendRegistry()
-
-
-def register(id: BackendId, factory: type) -> None:
-    """Register a backend factory in the process-wide registry."""
-    _global.register(id, factory)
-
-
-# Re-exported typing helper for callers that read backend metadata from a
-# registry: mapping BackendId -> static metadata.
-BackendCatalog = Mapping[BackendId, BackendInfo]
+__all__ = ["Backend", "BackendId", "BackendInfo", "DEFAULT_MODEL", "_importable"]

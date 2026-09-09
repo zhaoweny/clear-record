@@ -8,15 +8,19 @@ unavailable rather than failing the whole pipeline.
 
 from __future__ import annotations
 
-from cr_providers.base import Backend, BackendId, BackendRegistry, register
-from cr_providers.backends import BACKENDS, available_backend_ids, get_backend
+from cr_providers.backends import (
+    BACKENDS,
+    available_backend_ids,
+    get_backend,
+)
+from cr_providers.base import Backend, BackendId, BackendInfo, DEFAULT_MODEL
 
 __all__ = [
+    "BACKENDS",
     "Backend",
     "BackendId",
-    "BackendRegistry",
-    "register",
-    "BACKENDS",
+    "BackendInfo",
+    "DEFAULT_MODEL",
     "available_backend_ids",
     "get_backend",
 ]

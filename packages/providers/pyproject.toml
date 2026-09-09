@@ -22,17 +22,19 @@ cr-core = { workspace = true }
 # default `uv sync` — they are activated by name so the core stays backend-
 # agnostic and a clean CI/dev env does not need a GPU framework.
 #
-#   uv sync --all-packages --extra apple
-#   uv sync --all-packages --extra nvidia
-#   uv sync --all-packages --extra amd
+#   uv sync --all-packages --extra apple     (Apple Silicon: whisper.cpp/Metal)
+#   uv sync --all-packages --extra nvidia    (NVIDIA: faster-whisper/CUDA)
+#   uv sync --all-packages --extra amd       (AMD Radeon: whisper.cpp/ROCm-Vulkan)
+#   uv sync --all-packages --extra all       (all three)
 #
 # See docs/adr/0005-transcription-backend-strategy.md. No backend is required;
 # a backend is only usable when its extra is installed AND its runtime checks
 # are satisfied (see `cr_providers.base.Backend.available()`).
 [project.optional-dependencies]
-apple = []
-nvidia = []
-amd = []
+apple = ["pywhispercpp>=1.1.3"]
+nvidia = ["faster-whisper>=1.1.0"]
+amd = ["pywhispercpp>=1.1.3"]
+all = ["pywhispercpp>=1.1.3", "faster-whisper>=1.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cr_providers"]

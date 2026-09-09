@@ -16,11 +16,12 @@ Date: 2026-09-09
 
 ## Decision
 
-- [DECISION] Organize the repository as a **uv workspace** with three members
+- [DECISION] Organize the repository as a **uv workspace** with four members
   under `packages/`, each in a `src/` layout:
 
   ```text
-  packages/core      → dist cr-core,      import cr_core      (backend-agnostic domain core)
+  packages/core      → dist cr-core,      import cr_core      (backend-agnostic domain model)
+  packages/engine    → dist cr-engine,    import cr_engine    (audio I/O, alignment, reconcile)
   packages/providers → dist cr-providers, import cr_providers (per-vendor ASR adapters)
   packages/cli       → dist cr-cli,       import cr_cli       (the `clearrecord` command)
   ```
@@ -29,10 +30,13 @@ Date: 2026-09-09
   members = ["packages/*"]`, `requires-python = ">=3.12"`, root dev group with
   `ruff` + `pytest`). The root is a **virtual project** (`package = false`),
   never built/published.
-- Dependency edges: `cr-providers → cr-core`, `cr-cli → cr-core`, `cr-cli →
-  cr-providers`. No other member-to-member edges.
-- `cr-core` has **no third-party dependencies**. Vendor stacks are **optional
-  extras** on `cr-providers` (`apple` / `nvidia` / `amd`), not default deps.
+- Dependency edges: `cr-engine → cr-core`, `cr-providers → cr-core`, `cr-cli →
+  cr-core`, `cr-cli → cr-engine`, `cr-cli → cr-providers`. No other member-to-
+  member edges.
+- `cr-core` has **no third-party dependencies**. `cr-engine` adds `numpy` +
+  `soundfile` (generic numerics + I/O, no vendor/ASR code). Vendor stacks are
+  **optional extras** on `cr-providers` (`apple` / `nvidia` / `amd`), mirrored as
+  aggregate extras at the workspace root.
 - Each member declares `license = "MIT"`. `cr-cli` exposes the
   `clearrecord` console script.
 

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cr-engine"
+version = "0.1.0"
+description = "Audio signal processing for clear-record: loading/decoding, cross-correlation alignment, and segment reconciliation."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "cr-core",
+    "numpy>=2.0",
+    "soundfile>=0.12",
+]
+
+[tool.uv.sources]
+cr-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cr_engine"]

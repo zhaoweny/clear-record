@@ -16,9 +16,12 @@ reconcile → export. It runs fully offline with your own models.
   provider interface; permissive stacks are preferred, copyleft components are
   never linked or vendored into the MIT core (ADR-0003).
 - **Backends:** Apple (Metal/Core ML/ANE), NVIDIA (CUDA), AMD (ROCm/Vulkan) —
-  one interface, three families (ADR-0005).
+  one interface, three families (ADR-0005). Apple is proven; install a backend's
+  stack with `uv sync --extra <backend>`.
 - **Clean-room:** independently implemented from a generic public problem
   statement; no work/company artifacts are imported (ADR-0001, architecture §6).
+- **Privacy:** recordings and model weights are environment-local data — always
+  gitignored, never committed (ADR-0006).
 
 ## Where the detail lives
 
@@ -41,8 +44,20 @@ without evidence. The owner's authoritative words live in
 
 ## Current status
 
-**Scaffold only.** The repo is established: uv workspace
-(`cr-core` / `cr-providers` / `cr-cli`), MIT license, provenance labeling, a
-`clearrecord` CLI whose surface derives from the pipeline spec, and a
-passing `just verify` gate. **Pipeline execution is not implemented yet** —
-see `docs/architecture.md` §8 for the ordered next slices.
+**Runnable v0.1 pipeline.** The repo now does real work end-to-end:
+
+- uv workspace (`cr-core` domain · `cr-engine` audio/align/reconcile ·
+  `cr-providers` ASR adapters · `cr-cli` the `clearrecord` command), MIT license,
+  provenance labeling, and a passing `just verify` gate (17 tests).
+- `ingest` normalizes each source to 16 kHz mono WAV; `align` estimates source
+  offsets via windowed cross-correlation; `transcribe` runs a real local ASR
+  backend (Apple Silicon via whisper.cpp/Metal is proven on Apple M4, incl.
+  language detection + per-segment confidence); `reconcile` produces a
+  source-attributed timeline; `export` writes Markdown/SRT/VTT/JSON; `calibrate`
+  reports coverage / WER / similarity against an optional reference.
+- **Not yet:** NVIDIA (faster-whisper) and AMD (whisper.cpp) backends are
+  declared and capability-gated but not hot-tested here (no such hardware on
+  this machine); the exotic spatial-invention scope (§7) remains out of scope.
+
+See `docs/architecture.md` §3–§8 for the pipeline and the ordered remaining
+slices.

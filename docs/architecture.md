@@ -180,6 +180,15 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   what is available on the current machine.
 - The vendor stacks are **not imported by `cr-core`** and are imported lazily in
   `cr-providers`, so a plain dev/CI environment needs no GPU framework.
+- [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
+  decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
+  every later stage + the ASR backend operate on canonical audio. This is also
+  what makes whisper.cpp's 16 kHz requirement a non-issue.
+- [DESIGN] pywhispercpp reports segment `t0/t1` in a **10 ms** unit (not ms) in
+  current versions; the adapter calibrates the scale against the known audio
+  duration (`cr_providers.backends._time_scale`) so timestamps are correct
+  regardless of binding version. Note: cross-device clock sync is still **out of
+  scope** (§7).
 - The reference/open hardware laboratory (owner's own, generic and personal):
 
   | Machine | Role |
@@ -251,32 +260,48 @@ evidence-backed scope decision (new ADR), not a retroactive import.
 Layout:
 
 ```text
-packages/core      → cr-core      backend-agnostic domain core (PipelineSpec, observation model) — NO vendor/ML code
+packages/core      → cr-core      backend-agnostic domain model — NO vendor/ML code
+packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
 packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
-packages/cli       → cr-cli       the `clearrecord` command; surface derives from PipelineSpec
+packages/cli       → cr-cli       the `clearrecord` command; stages live in cr_cli.stages
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0005
+docs/adr/                          decision records 0001–0006
 docs/vox/voice-of-owner.md         owner voice
 ```
 
-**Current status:** scaffold established — uv workspace, MIT license,
-provenance labeling, a `clearrecord` CLI whose subcommand surface derives from
-the pipeline spec, and a passing `just verify` gate. **Pipeline execution is not
-yet implemented**; the CLI stages and the `transcribe()` methods are declared
-placeholders.
+**Current status: runnable v0.1 pipeline.**
+
+- `ingest` → normalize every source to 16 kHz mono WAV in the workspace
+  (`<dir>/audio/`).
+- `align` → `cr_engine.align_sources`, windowed cross-correlation (approximate
+  offset; low-confidence results fall back to simultaneous start).
+- `transcribe` → real ASR via `cr_providers`; **Apple Silicon (whisper.cpp /
+  Metal) is proven on an Apple M4**, with auto language detection and per-segment
+  confidence; validated against a known-good 11 s reference (coverage 1.0,
+  WER 0.0).
+- `reconcile` → `cr_engine.reconcile`; shift by alignment, collapse overlaps,
+  attribute speaker per source.
+- `export` → Markdown / SRT / VTT / JSON.
+- `calibrate` → coverage, mean confidence, WER/similarity vs an optional
+  reference transcript.
+
+`just verify` is green (17 tests); the CLI surface is derived from
+`PipelineSpec`. **Not yet:** the NVIDIA (faster-whisper/CUDA) and AMD
+(whisper.cpp/ROCm-Vulkan) backends are declared and capability-gated but not
+hot-tested here (no such hardware on the current host); and the exotic
+spatial-invention scope (§7) is deliberately out of scope.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
-1. `ingest` — read a source container/manifest, validate audio files, emit
-   `Observation` records with timestamps + provenance.
-2. `align` — normalize per-source clock domains onto a common timebase.
-3. `transcribe` — wire a real `Backend.transcribe()` for at least one backend
-   (Apple first, since it is the author's always-on node); keep the interface
-   vendor-neutral.
-4. `reconcile` — merge segments into an attributable transcript (VAD/ASR output
-   → segments → speaker turns).
-5. `export` — searchable/archiveable artifact with links back to source audio.
-6. resilience — chunked/durable capture + resumable runs.
+1. `ingest` — richer manifest metadata (sample rate, channels, original path,
+   a checksum) + idempotent re-ingest. *(partly done — normalize is landed)*
+2. `align` — expose per-source alignment confidence and a manual-offset override.
+3. `transcribe` — hot-test the **nvidia** and **amd** backends on real hardware;
+   add `--language` refinement and optional VAD/timestamps params.
+4. `reconcile` — allow a `--prefer` source to break confidence ties; better
+   same-speaker joining.
+5. `export` — per-format options (word timestamps, speaker labels in SRT).
+6. resilience — durable chunked capture + resumable runs for long recordings.
 
 ---
 

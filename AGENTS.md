@@ -20,13 +20,16 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 
 ## Hard rules
 
-- **Never import work/company artifacts.** This is a clean-room OSS repo. Do not
-  add company source code, company prompts/specs, partner names, company
-  recordings, datasets, internal docs or credentials. Proposed scope changes
-  that would import such material must be rejected and escalated instead.
+- **Never import work/company artifacts or private recordings.** This is a
+  clean-room OSS repo. Do not add company source code, company prompts/specs,
+  partner names, company recordings, datasets, internal docs or credentials. And
+  **never commit user recordings, derived transcripts, or downloaded model
+  weights** — they are environment-local data (ADR-0006). Proposed changes that
+  would commit such material are rejected and escalated.
 - **Keep the core vendor-free.** `cr-core` must never import CUDA, ROCm,
-  Metal/CoreML, torch/tensorflow or a specific ASR library. Vendor things go in
-  `cr-providers`, behind the `Backend` interface.
+  Metal/CoreML, torch/tensorflow or a specific ASR library. `cr-engine` may use
+  numpy/soundfile but no vendor/ASR code. Vendor things go in `cr-providers`,
+  behind the `Backend` interface.
 - **Preserve provenance.** Label statements FACT / VOICE / REQ / DESIGN /
   SUGGESTION / OPEN. Do not promote a suggestion or an open question to a
   requirement without owner evidence.

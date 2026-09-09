@@ -8,6 +8,36 @@ the domain model and the *shape* of the pipeline; vendor adapters live in
 
 from __future__ import annotations
 
+from cr_core.model import (
+    Alignment,
+    RecordDocument,
+    Segment,
+    Source,
+    TranscriptionResult,
+    alignment_from_dict,
+    load_json,
+    record_from_dict,
+    segment_from_dict,
+    source_from_dict,
+    to_dict,
+    write_json,
+)
 from cr_core.pipeline import PipelineSpec, Step, pipeline_spec
 
-__all__ = ["PipelineSpec", "Step", "pipeline_spec"]
+__all__ = [
+    "Alignment",
+    "PipelineSpec",
+    "RecordDocument",
+    "Segment",
+    "Source",
+    "Step",
+    "TranscriptionResult",
+    "alignment_from_dict",
+    "load_json",
+    "pipeline_spec",
+    "record_from_dict",
+    "segment_from_dict",
+    "source_from_dict",
+    "to_dict",
+    "write_json",
+]

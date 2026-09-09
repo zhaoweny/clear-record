@@ -58,8 +58,8 @@ Date: 2026-09-09
 - Adding a backend = one extra -> one adapter + one optional dependency group +
   one `available()` probe. Each new backend must stay behind the interface and
   keep `cr-core` vendor-free (ADR-0003).
-- `transcribe()` is currently a declared placeholder in the scaffold; wiring a
-  real backend (Apple first, per the owner's always-on Apple Silicon node) is
-  slice 3 in `docs/architecture.md` §8.
+- **Apple is proven** (Apple M4, whisper.cpp/Metal, 16 kHz normalize + 10 ms
+  time-scale calibration); the nvidia/amd adapters are declared and
+  capability-gated but not yet hot-tested on real hardware.
 - Revisit if a hardware family's recommended stack changes materially (e.g. a
   new Apple ASR runtime or an AMD CUDA-compat path).

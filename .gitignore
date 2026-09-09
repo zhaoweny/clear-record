@@ -15,19 +15,24 @@ wt-*
 
 # Audio / dataset / model artifacts are environment-local data, never git.
 # Large recordings, downloaded model weights, caches and intermediate
-# artifacts do not belong in the repository. See docs/architecture.md §8.
+# artifacts do not belong in the repository. See docs/architecture.md §6 & §8.
+recordings/
+data/
+models/
+cache/
+artifacts/
 *.wav
 *.flac
 *.ogg
+*.opus
 *.mp3
 *.m4a
-models/
-data/
-cache/
-artifacts/
+*.aac
 *.pt
 *.bin
 *.onnx
+*.srt
+*.vtt
 
 # Python
 __pycache__/

@@ -283,37 +283,42 @@ docs/vox/voice-of-owner.md         owner voice
 - `transcribe` → real ASR via `cr_providers`; **Apple Silicon (whisper.cpp /
   Metal) is proven on an Apple M4**, with auto language detection and per-segment
   confidence; validated against a known-good 11 s reference (coverage 1.0,
-  WER 0.0).
+  WER 0.0). Long tapes run **chunked and resumable** (`<dir>/chunks/<source>/`,
+  progress in `<dir>/transcribe.log`), and a **glossary** (`<dir>/glossary.txt`)
+  is applied as the decoder's initial prompt (cache-keyed, so a background first
+  pass can be corrected by a finished glossary).
+- `diarize` → baseline multi-speaker attribution for a **single mixed stream**
+  (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
+  attribution when channels are already split.
 - `reconcile` → `cr_engine.reconcile`; shift by alignment, collapse overlaps,
-  attribute speaker per source.
+  join only same-speaker runs, attribute speaker per source or diarizer.
 - `export` → Markdown / SRT / VTT / JSON.
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.
 
-`just verify` is green (20 tests); the CLI surface is derived from
-`PipelineSpec`. **Meeting-tape readiness:** multi-channel capture is handled
-(per-channel split), tapes of any length are processable (1 kHz alignment), and
-Apple Silicon transcription is proven. **Remaining gaps for a heavy meeting
-workflow:** the NVIDIA (faster-whisper/CUDA) and AMD (whisper.cpp/ROCm-Vulkan)
-backends are declared and capability-gated but not hot-tested here; a **single
-mixed stream** yields one attributed speaker (no ML diarization); there is no
-**glossary / initial-prompt** support for names and domain terms yet; and long
-runs have no **chunked resume/progress**. The exotic spatial-invention scope
-(§7) is deliberately out of scope.
+`just verify` is green (24 tests); the CLI surface is derived from
+`PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
+split), chunked/resumable transcription with progress, baseline diarization, a
+glossary initial prompt, and Apple Silicon transcription are all landed.
+**Remaining gaps:** the NVIDIA (faster-whisper/CUDA) and AMD
+(whisper.cpp/ROCm-Vulkan) backends are declared and capability-gated but not
+hot-tested here; diarization is a transparent baseline (not a deep-embedding
+system) and will struggle with same-pitch speakers and heavy overlap; and the
+exotic spatial-invention scope (§7) remains out of scope.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
 1. `ingest` — richer manifest metadata (sample rate, channels, original path,
-   a checksum) + idempotent re-ingest. *(normalize is landed)*
-2. `align` — expose per-source alignment confidence and a manual-offset override.
-   *(the synthesized-badness harness is landed — `clearrecord synth` +
-   `cr_engine.synth`, proven by `just verify`; per-source confidence is TODO)*
+   a checksum); *(normalize + channel split landed)*.
+2. `align` — per-source alignment confidence and a manual-offset override;
+   *(synthesized-badness harness landed)*.
 3. `transcribe` — hot-test the **nvidia** and **amd** backends on real hardware;
-   add `--language` refinement and optional VAD/timestamps params.
-4. `reconcile` — allow a `--prefer` source to break confidence ties; better
-   same-speaker joining.
-5. `export` — per-format options (word timestamps, speaker labels in SRT).
-6. resilience — durable chunked capture + resumable runs for long recordings.
+   *(chunked resume + glossary landed)*.
+4. `diarize` — replace/augment the spectral+F0 baseline with a deep embedding
+   provider behind the same seam; handle same-pitch speakers and overlap.
+5. `reconcile` — `--prefer` tie-breaking; better same-speaker joining across
+   sources.
+6. `export` — per-format options (word timestamps, speaker labels in SRT).
 
 ---
 

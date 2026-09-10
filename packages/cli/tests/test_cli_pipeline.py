@@ -102,3 +102,83 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     mixed = stages.ingest(str(wd), split="mix")
     assert len(mixed) == 1
     assert not mixed[0].id.endswith("ch1")
+
+
+def test_transcribe_chunks_resume_and_glossary_invalidation(
+    tmp_path, monkeypatch
+) -> None:
+    """Chunked transcription is resumable, and adding a glossary invalidates the
+    chunk cache so a background first pass can be corrected."""
+    import soundfile as sf
+
+    from cr_core import Segment, TranscriptionResult
+    from cr_providers import BackendInfo
+
+    from cr_cli import stages
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(8 * sr, dtype=np.float64) / sr
+    sf.write(
+        str(wd / "a.wav"), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr
+    )
+    stages.ingest(str(wd), split="mix")
+
+    class Fake:
+        calls = 0
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+        ):
+            type(self).calls += 1
+            data, file_sr = sf.read(audio_path)
+            dur = len(data) / file_sr
+            return TranscriptionResult(
+                source="fake",
+                segments=(
+                    Segment(
+                        start=0.0,
+                        end=round(dur, 3),
+                        text="chunk",
+                        source="fake",
+                        confidence=0.5,
+                    ),
+                ),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=dur,
+            )
+
+    fake = Fake()
+    monkeypatch.setattr(stages, "get_backend", lambda _id: fake)
+
+    stages.transcribe(str(wd), "fake", chunk_seconds=3.0, overlap_seconds=1.0)
+    first = Fake.calls
+    assert first > 1  # the 8 s tape was chunked
+
+    # resume: every chunk cached -> no backend calls
+    stages.transcribe(str(wd), "fake", chunk_seconds=3.0, overlap_seconds=1.0)
+    assert Fake.calls == first
+
+    # a new glossary invalidates the cache -> re-transcribes
+    stages.glossary(str(wd), add=["Zhaoweny"])
+    stages.transcribe(str(wd), "fake", chunk_seconds=3.0, overlap_seconds=1.0)
+    assert Fake.calls > first

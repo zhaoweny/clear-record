@@ -17,6 +17,8 @@ def test_subcommands_match_pipeline() -> None:
         "run",
         "calibrate",
         "synth",
+        "diarize",
+        "glossary",
     }
     subparsers_action = next(
         a for a in parser._actions if isinstance(a, argparse._SubParsersAction)

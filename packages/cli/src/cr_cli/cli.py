@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Sequence
 
 from cr_providers import available_backend_ids
+from cr_engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 from cr_cli import stages
 
@@ -65,6 +66,52 @@ def _build_parser() -> argparse.ArgumentParser:
             "--models-dir",
             default=_default_models_dir(),
             help=f"model download dir (default {_default_models_dir()})",
+        )
+        p.add_argument(
+            "--glossary",
+            help="glossary file (one term/line) used as the ASR initial prompt; "
+            "defaults to <directory>/glossary.txt if present",
+        )
+        p.add_argument(
+            "--chunk-seconds",
+            type=float,
+            default=DEFAULT_CHUNK_S,
+            help=f"chunk length for long tape transcription (default {DEFAULT_CHUNK_S:.0f}s)",
+        )
+        p.add_argument(
+            "--overlap-seconds",
+            type=float,
+            default=DEFAULT_OVERLAP_S,
+            help=f"overlap between chunks (default {DEFAULT_OVERLAP_S:.0f}s)",
+        )
+        p.add_argument(
+            "--no-resume",
+            dest="resume",
+            action="store_false",
+            help="ignore cached chunks and re-transcribe from scratch",
+        )
+        p.set_defaults(resume=True)
+
+    def _diarize_args(p: argparse.ArgumentParser) -> None:
+        g = p.add_mutually_exclusive_group()
+        g.add_argument(
+            "--diarize",
+            dest="diarize",
+            action="store_true",
+            help="force multi-speaker diarization",
+        )
+        g.add_argument(
+            "--no-diarize",
+            dest="diarize",
+            action="store_false",
+            help="disable diarization",
+        )
+        p.set_defaults(diarize=None)
+        p.add_argument(
+            "--speakers",
+            type=int,
+            default=None,
+            help="known number of speakers (default: estimate from the audio)",
         )
 
     def _common_args(p: argparse.ArgumentParser) -> None:
@@ -126,7 +173,11 @@ def _build_parser() -> argparse.ArgumentParser:
     add_pipeline_command(
         "run",
         "full pipeline: ingest -> align -> transcribe -> reconcile -> export",
-        lambda p: (_backend(directory_first=True)(p), _channel_args(p)),
+        lambda p: (
+            _backend(directory_first=True)(p),
+            _channel_args(p),
+            _diarize_args(p),
+        ),
     )
 
     # calibration convenience
@@ -137,9 +188,27 @@ def _build_parser() -> argparse.ArgumentParser:
     cal.add_argument("directory", help="workspace directory")
     _backend_args(cal)
     _channel_args(cal)
+    _diarize_args(cal)
     cal.add_argument(
         "--reference-transcript",
         help="a reference transcript text file to compare (WER/similarity)",
+    )
+
+    # diarization (multi-speaker attribution for a single mixed stream)
+    dia = sub.add_parser(
+        "diarize", help="assign speaker labels to already-transcribed segments"
+    )
+    dia.add_argument("directory", help="workspace directory")
+    _diarize_args(dia)
+
+    # glossary (decoder initial prompt; edit while a pass runs in the background)
+    glo = sub.add_parser(
+        "glossary",
+        help="show or append to the workspace glossary (ASR initial prompt)",
+    )
+    glo.add_argument("directory", help="workspace directory")
+    glo.add_argument(
+        "--add", nargs="*", default=None, help="term(s)/phrase(s) to append"
     )
 
     # synthesis (owner strategy: build the badness, keep the ground truth)
@@ -216,7 +285,19 @@ def _main(args: argparse.Namespace) -> int:
             model=args.model,
             language=args.language,
             model_dir=args.models_dir,
+            glossary=args.glossary,
+            chunk_seconds=args.chunk_seconds,
+            overlap_seconds=args.overlap_seconds,
+            resume=args.resume,
         )
+        return 0
+
+    if command == "diarize":
+        stages.diarize(args.directory, speakers=args.speakers)
+        return 0
+
+    if command == "glossary":
+        stages.glossary(args.directory, add=args.add)
         return 0
 
     if command == "reconcile":
@@ -236,6 +317,12 @@ def _main(args: argparse.Namespace) -> int:
             model_dir=args.models_dir,
             audio_files=None,
             split=args.split,
+            glossary=args.glossary,
+            chunk_seconds=args.chunk_seconds,
+            overlap_seconds=args.overlap_seconds,
+            resume=args.resume,
+            do_diarize=args.diarize,
+            speakers=args.speakers,
         )
         return 0
 
@@ -247,6 +334,12 @@ def _main(args: argparse.Namespace) -> int:
             language=args.language,
             model_dir=args.models_dir,
             split=args.split,
+            glossary=args.glossary,
+            chunk_seconds=args.chunk_seconds,
+            overlap_seconds=args.overlap_seconds,
+            resume=args.resume,
+            do_diarize=args.diarize,
+            speakers=args.speakers,
         )
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0

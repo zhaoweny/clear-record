@@ -45,7 +45,9 @@ def reconcile(
                     end=round(seg.end + off, 4),
                     text=seg.text.strip(),
                     source=src.id,
-                    speaker=label[src.id],
+                    # Preserve a diarized speaker if one was assigned; otherwise
+                    # fall back to the source's label (per-channel case).
+                    speaker=seg.speaker or label[src.id],
                     confidence=seg.confidence,
                     language=seg.language,
                 )
@@ -61,7 +63,11 @@ def reconcile(
         if cur is None:
             cur = seg
             continue
-        if seg.source == cur.source and seg.start <= cur.end + _JOIN_GAP_S:
+        if (
+            seg.source == cur.source
+            and (seg.speaker or "") == (cur.speaker or "")
+            and seg.start <= cur.end + _JOIN_GAP_S
+        ):
             # same speaker, continuous -> join
             cur = Segment(
                 start=cur.start,

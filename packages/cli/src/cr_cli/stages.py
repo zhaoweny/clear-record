@@ -14,15 +14,28 @@ from pathlib import Path
 
 import soundfile as sf
 
-from cr_core import RecordDocument, Segment, Source, write_json
+from cr_core import (
+    RecordDocument,
+    Segment,
+    Source,
+    load_json,
+    segment_from_dict,
+    to_dict,
+    write_json,
+)
 from cr_engine import (
+    DEFAULT_CHUNK_S,
+    DEFAULT_OVERLAP_S,
     SYNTH_SR,
     align_sources,
     channel_count,
+    diarize as diarize_segments,
     make_scene,
+    plan_chunks,
     prepare_16k_wav,
     record as synth_record,
     reconcile as reconcile_segments,
+    write_chunk,
 )
 from cr_engine.audio import read_audio
 from cr_providers import get_backend
@@ -123,13 +136,88 @@ def align(directory: str, reference: str | None = None):
 # --------------------------------------------------------------------------- #
 # transcribe
 # --------------------------------------------------------------------------- #
+def _duration(path: str | Path) -> float:
+    """Duration in seconds of a WAV (0.0 if unknown)."""
+    try:
+        info = sf.info(str(path))
+        return float(info.frames) / float(info.samplerate or 1)
+    except Exception:
+        try:
+            data, sr = read_audio(path, target_sr=None)
+            return float(len(data) / sr)
+        except Exception:
+            return 0.0
+
+
+def _load_glossary(directory: Path, explicit: str | None) -> tuple[str, str]:
+    """Return ``(prompt, source)``. The glossary is one term/phrase per line;
+    ``#`` comments and blanks are ignored. Capped to stay a sane prompt."""
+    path = Path(explicit) if explicit else ws.glossary_path(directory)
+    if not path.exists():
+        return "", ""
+    terms = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            terms.append(line)
+    prompt = ", ".join(terms)[:2000]
+    return prompt, str(path)
+
+
+def _log_line(directory: Path, message: str) -> None:
+    """Print and append to the workspace's durable transcription log."""
+    print(message)
+    try:
+        with (directory / "transcribe.log").open("a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except OSError:
+        pass
+
+
+def _merge_chunk_segments(
+    chunks: list[list[Segment]], bounds: list[tuple[float, float]]
+) -> list[Segment]:
+    """Merge overlapping chunk results with deterministic ownership.
+
+    Each adjacent pair overlaps by ``overlap`` seconds. We hand ownership of the
+    overlap to the earlier chunk and drop later-chunk segments that start before
+    the midpoint of the overlap, so a word is kept exactly once without fuzzy
+    text matching (which can miss partial boundary words).
+    """
+    out: list[Segment] = []
+    for idx, segs in enumerate(chunks):
+        if idx == 0:
+            keep_from = float("-inf")
+        else:
+            prev_end = bounds[idx - 1][1]
+            this_start = bounds[idx][0]
+            keep_from = (this_start + prev_end) / 2.0
+        for seg in segs:
+            if seg.text.strip() and seg.start + 1e-6 >= keep_from:
+                out.append(seg)
+    out.sort(key=lambda s: (s.start, s.end))
+    return out
+
+
 def transcribe(
     directory: str,
     backend_id: str,
     model: str | None = None,
     language: str | None = None,
     model_dir: str | None = None,
+    glossary: str | None = None,
+    chunk_seconds: float = DEFAULT_CHUNK_S,
+    overlap_seconds: float = DEFAULT_OVERLAP_S,
+    resume: bool = True,
 ):
+    """Transcribe every source, in **resumable overlapping chunks** for long
+    tapes, with an optional **glossary** as the decoder's initial prompt.
+
+    Chunk results are cached under ``<dir>/chunks/<source>/``; the cache is
+    invalidated when the backend/model/language/glossary/prompt or chunk plan
+    changes, which is what lets you do a first pass in the background and then
+    re-run with a finished glossary.
+    """
     d = Path(directory)
     sources, _ = ws.load_manifest(d)
     backend = get_backend(backend_id)
@@ -141,29 +229,104 @@ def transcribe(
         )
 
     chosen_model = model or backend.info.default_model
+    prompt, prompt_src = _load_glossary(d, glossary)
+    if prompt:
+        _log_line(d, f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
+
     per_source: dict[str, list[Segment]] = {}
     meta: dict = {
         "backend": backend_id,
         "model": chosen_model,
         "language": language or "auto",
         "model_dir": model_dir,
+        "glossary": prompt_src or None,
+        "chunk_seconds": chunk_seconds,
+        "overlap_seconds": overlap_seconds,
         "sources": {},
     }
     for src in sources:
-        print(f"[transcribe] {src.id}: {backend.info.description} ({chosen_model})")
-        res = backend.transcribe(
-            src.path, language=language, model=model, model_dir=model_dir
+        duration = _duration(src.path)
+        chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
+        cache = ws.chunks_dir(d) / src.id
+        cache.mkdir(parents=True, exist_ok=True)
+        run_meta = {
+            "backend": backend_id,
+            "model": chosen_model,
+            "language": language or "auto",
+            "glossary": prompt,
+            "chunk_seconds": chunk_seconds,
+            "overlap_seconds": overlap_seconds,
+            "n_chunks": len(chunks),
+        }
+        meta_file = cache / "_meta.json"
+
+        reuse = resume and meta_file.exists() and _read_json_safe(meta_file) == run_meta
+        if not reuse:
+            for stale in cache.glob("*.json"):
+                stale.unlink()
+            write_json(meta_file, run_meta)
+
+        _log_line(
+            d,
+            f"[transcribe] {src.id}: {len(chunks)} chunk(s), {duration:.1f}s, "
+            f"{backend.info.description} ({chosen_model})",
         )
-        segs = [dataclasses.replace(s, source=src.id) for s in res.segments]
-        per_source[src.id] = segs
+        chunk_segments: list[list[Segment]] = []
+        for i, (start_s, end_s) in enumerate(chunks):
+            seg_file = cache / f"{i:04d}.json"
+            if reuse and seg_file.exists():
+                chunk_segments.append(
+                    [segment_from_dict(x) for x in load_json(seg_file)]
+                )
+                _log_line(
+                    d, f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached"
+                )
+                continue
+            chunk_wav = cache / f"{i:04d}.wav"
+            write_chunk(src.path, chunk_wav, start_s, end_s)
+            res = backend.transcribe(
+                str(chunk_wav),
+                language=language,
+                model=model,
+                model_dir=model_dir,
+                initial_prompt=prompt or None,
+            )
+            shifted = [
+                dataclasses.replace(
+                    s,
+                    start=round(s.start + start_s, 4),
+                    end=round(s.end + start_s, 4),
+                    source=src.id,
+                )
+                for s in res.segments
+            ]
+            write_json(seg_file, [to_dict(s) for s in shifted])
+            chunk_segments.append(shifted)
+            chunk_wav.unlink(missing_ok=True)  # segments cached; wav is regenerable
+            _log_line(
+                d,
+                f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} "
+                f"[{start_s:.0f}-{end_s:.0f}s] -> {len(shifted)} segment(s)",
+            )
+
+        merged = _merge_chunk_segments(chunk_segments, chunks)
+        per_source[src.id] = merged
         meta["sources"][src.id] = {
-            "duration": res.audio_duration,
-            "segments": len(segs),
-            "language": res.language,
+            "duration": duration,
+            "segments": len(merged),
+            "language": None,
+            "chunks": len(chunks),
         }
     ws.write_segments(d, per_source, meta)
     _print_transcription(per_source, meta)
     return per_source
+
+
+def _read_json_safe(path: Path):
+    try:
+        return load_json(path)
+    except Exception:
+        return None
 
 
 def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> None:
@@ -175,8 +338,83 @@ def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> No
         dur = info.get("duration")
         print(
             f"  {sid:24s} segments={len(segs):4d}  duration={dur if dur is not None else '?'}  "
-            f"lang={info.get('language') or '?'}"
+            f"chunks={info.get('chunks', '?')}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# diarize (multi-speaker attribution for a single mixed stream)
+# --------------------------------------------------------------------------- #
+def diarize(directory: str, speakers: int | None = None):
+    """Assign speaker labels to segments per source (baseline spectral clustering).
+
+    For per-channel sources this is harmless (each channel is one speaker, so the
+    labels collapse to one and are left as the source label). For a single mixed
+    stream it is how you get `Speaker 1/2/…` in the record.
+    """
+    d = Path(directory)
+    sources, _ = ws.load_manifest(d)
+    per_source, meta = ws.load_segments(d)
+    src_by_id = {s.id: s for s in sources}
+    applied = False
+    for sid, segs in per_source.items():
+        src = src_by_id.get(sid)
+        if not segs or src is None:
+            continue
+        try:
+            audio, sr = read_audio(src.path, 16000)
+        except Exception as exc:  # decode failure is non-fatal
+            _log_line(d, f"[diarize] {sid}: skipped ({exc})")
+            continue
+        labels = diarize_segments(
+            audio, sr, [(s.start, s.end) for s in segs], n_speakers=speakers
+        )
+        n_found = len(set(labels))
+        if n_found > 1:
+            per_source[sid] = [
+                dataclasses.replace(s, speaker=f"Speaker {labels[i] + 1}")
+                for i, s in enumerate(segs)
+            ]
+            applied = True
+        _log_line(
+            d, f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)"
+        )
+    if applied:
+        ws.write_segments(d, per_source, meta)
+    return per_source
+
+
+# --------------------------------------------------------------------------- #
+# glossary
+# --------------------------------------------------------------------------- #
+def glossary(directory: str, add: list[str] | None = None) -> Path:
+    """Show (and optionally append to) the workspace glossary.
+
+    The glossary is one term/phrase per line; it becomes the ASR decoder's
+    initial prompt. Edit it while a first transcription pass runs in the
+    background, then re-run `transcribe`: the chunk cache is keyed on the
+    glossary, so the finished terms are applied.
+    """
+    d = Path(directory)
+    path = ws.glossary_path(d)
+    if add:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            for term in add:
+                term = term.strip()
+                if term:
+                    fh.write(term + "\n")
+    terms: list[str] = []
+    if path.exists():
+        terms = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    print(f"[glossary] {path} ({len(terms)} term(s))")
+    for term in terms:
+        print(f"  {term}")
+    return path
 
 
 # --------------------------------------------------------------------------- #
@@ -308,12 +546,36 @@ def run(
     model_dir: str | None = None,
     audio_files: list[str] | None = None,
     split: str = "auto",
+    glossary: str | None = None,
+    chunk_seconds: float = DEFAULT_CHUNK_S,
+    overlap_seconds: float = DEFAULT_OVERLAP_S,
+    resume: bool = True,
+    do_diarize: bool | None = None,
+    speakers: int | None = None,
     reference: str | None = None,
     formats: list[str] | None = None,
 ):
     ingest(directory, audio_files, split=split)
     align(directory, reference=None)
-    transcribe(directory, backend, model=model, language=language, model_dir=model_dir)
+    transcribe(
+        directory,
+        backend,
+        model=model,
+        language=language,
+        model_dir=model_dir,
+        glossary=glossary,
+        chunk_seconds=chunk_seconds,
+        overlap_seconds=overlap_seconds,
+        resume=resume,
+    )
+    sources, _ = ws.load_manifest(Path(directory))
+    # Per-channel capture already attributes per source; diarize a single mixed
+    # stream (or when the user names a speaker count) to recover multiple
+    # speakers from one recording.
+    if do_diarize is None:
+        do_diarize = speakers is not None or len(sources) == 1
+    if do_diarize and sources:
+        diarize(directory, speakers=speakers)
     reconcile(directory, prefer=reference)
     export(directory, formats)
 
@@ -435,7 +697,9 @@ def synth(
 __all__ = [
     "align",
     "calibrate_report",
+    "diarize",
     "export",
+    "glossary",
     "ingest",
     "reconcile",
     "run",

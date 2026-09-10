@@ -135,3 +135,65 @@ def test_channel_count_and_channel_select(tmp_path) -> None:
     # default downmixes to mono
     mixed, _ = read_audio(p)
     assert mixed.shape == got_l.shape
+
+
+def test_plan_chunks_overlap() -> None:
+    from cr_engine import plan_chunks
+
+    assert plan_chunks(5.0, chunk_s=10.0, overlap_s=2.0) == [(0.0, 5.0)]
+    chunks = plan_chunks(25.0, chunk_s=10.0, overlap_s=2.0)
+    assert chunks[0] == (0.0, 10.0)
+    assert chunks[-1][1] == 25.0
+    # every boundary < duration is followed by an overlapping start
+    for (_, end), (nxt_start, _) in zip(chunks, chunks[1:]):
+        assert nxt_start == end - 2.0
+
+
+def test_diarize_separates_two_voices(tmp_path) -> None:
+    from cr_engine import diarize
+
+    sr = 16000
+    rng = np.random.default_rng(0)
+    seg_len = sr
+
+    def low() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        return np.convolve(x, np.ones(64) / 64, mode="same")
+
+    def high() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        slow = np.convolve(x, np.ones(64) / 64, mode="same")
+        return x - slow
+
+    seq = [low(), high(), low(), high()]
+    audio = np.concatenate(seq).astype(np.float32)
+    audio /= np.max(np.abs(audio)) or 1.0
+    segments = [(i * 1.0, (i + 1) * 1.0) for i in range(4)]
+
+    labels = diarize(audio, sr, segments, n_speakers=2)
+    assert labels[0] == labels[2]
+    assert labels[1] == labels[3]
+    assert labels[0] != labels[1]
+
+
+def test_diarize_separates_two_pitches() -> None:
+    """Pitch is the strongest cheap cue: two harmonic voices an octave apart."""
+    from cr_engine import diarize
+
+    sr = 16000
+    n = sr
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(n, dtype=np.float64) / sr
+        x = sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+        return x.astype(np.float32)
+
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    audio = np.concatenate(seq)
+    audio /= np.max(np.abs(audio)) or 1.0
+    segments = [(i * 1.0, (i + 1) * 1.0) for i in range(4)]
+
+    labels = diarize(audio, sr, segments, n_speakers=2)
+    assert labels[0] == labels[2]
+    assert labels[1] == labels[3]
+    assert labels[0] != labels[1]

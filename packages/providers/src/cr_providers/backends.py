@@ -99,6 +99,7 @@ class _WhisperCppBackend:
         language: str | None = None,
         model: str | None = None,
         model_dir: str | None = None,
+        initial_prompt: str | None = None,
     ) -> TranscriptionResult:
         from pywhispercpp.model import Model  # lazy
 
@@ -117,11 +118,10 @@ class _WhisperCppBackend:
             detected = _detect_whispercpp_language(self._model, audio_path)
         else:
             detected = language
-        segs = self._model.transcribe(
-            audio_path,
-            language=detected,
-            extract_probability=True,
-        )
+        params: dict = {"language": detected, "extract_probability": True}
+        if initial_prompt:
+            params["initial_prompt"] = initial_prompt
+        segs = self._model.transcribe(audio_path, **params)
         duration = _whispercpp_duration(audio_path)
         segments = _whispercpp_segments(
             segs, source=self.info.id, language=detected, duration=duration
@@ -219,6 +219,7 @@ class NvidiaBackend:
         language: str | None = None,
         model: str | None = None,
         model_dir: str | None = None,
+        initial_prompt: str | None = None,
     ) -> TranscriptionResult:
         from faster_whisper import WhisperModel  # lazy
 
@@ -229,7 +230,11 @@ class NvidiaBackend:
             )
         lang = language if language and language != "auto" else None
         seg_iter, info = self._model.transcribe(
-            audio_path, language=lang, vad_filter=True, beam_size=5
+            audio_path,
+            language=lang,
+            vad_filter=True,
+            beam_size=5,
+            initial_prompt=initial_prompt or None,
         )
         segments: list[Segment] = []
         for s in seg_iter:

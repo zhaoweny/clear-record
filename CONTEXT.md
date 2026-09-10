@@ -49,15 +49,18 @@ without evidence. The owner's authoritative words live in
 - uv workspace (`cr-core` domain · `cr-engine` audio/align/reconcile ·
   `cr-providers` ASR adapters · `cr-cli` the `clearrecord` command), MIT license,
   provenance labeling, and a passing `just verify` gate (17 tests).
-- `ingest` normalizes each source to 16 kHz mono WAV; `align` estimates source
-  offsets via windowed cross-correlation; `transcribe` runs a real local ASR
-  backend (Apple Silicon via whisper.cpp/Metal is proven on Apple M4, incl.
-  language detection + per-segment confidence); `reconcile` produces a
-  source-attributed timeline; `export` writes Markdown/SRT/VTT/JSON; `calibrate`
-  reports coverage / WER / similarity against an optional reference.
+- `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
+  captures per channel**; `align` estimates source offsets via windowed
+  cross-correlation; `transcribe` runs a real local ASR backend (Apple
+  Silicon via whisper.cpp/Metal is proven on Apple M4) with **chunked, resumable**
+  processing and a **glossary** initial prompt; `diarize` does baseline
+  multi-speaker attribution for a single mixed stream; `reconcile` produces a
+  source/speaker-attributed timeline; `export` writes Markdown/SRT/VTT/JSON;
+  `calibrate` reports coverage / WER / similarity against an optional reference.
 - **Not yet:** NVIDIA (faster-whisper) and AMD (whisper.cpp) backends are
   declared and capability-gated but not hot-tested here (no such hardware on
-  this machine); the exotic spatial-invention scope (§7) remains out of scope.
+  this machine); diarization is a baseline, not a deep-embedding system; and the
+  exotic spatial-invention scope (§7) remains out of scope.
 
 See `docs/architecture.md` §3–§8 for the pipeline and the ordered remaining
 slices.

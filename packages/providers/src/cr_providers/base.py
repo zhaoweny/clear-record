@@ -44,12 +44,14 @@ class Backend(Protocol):
         language: str | None = None,
         model: str | None = None,
         model_dir: str | None = None,
+        initial_prompt: str | None = None,
     ) -> TranscriptionResult:
         """Transcribe ``audio_path`` and return timestamped segments.
 
         ``language`` is the BCP-47-ish whisper hint, or ``None``/"auto" to
         auto-detect. ``model`` selects the checkpoint name/size (or a path).
-        ``model_dir`` is where to download/read model weights.
+        ``model_dir`` is where to download/read model weights. ``initial_prompt``
+        biases decoding toward a glossary of names/terms.
         """
         ...
 

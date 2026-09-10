@@ -144,6 +144,41 @@ Processing on an Apple Silicon Mac (Metal via `whisper.cpp`) is the intended
 always-on-node setup from the project concept; a 1–3 h tape is a batch job, not
 an interactive one.
 
+## Long tapes, diarization & glossary
+
+**Chunked + resumable.** Long tapes are transcribed in overlapping windows and
+each chunk is checkpointed under `<dir>/chunks/<source>/`, so a run can be
+stopped and restarted (a second run reuses the cache). Progress is printed and
+appended to `<dir>/transcribe.log`, so you can watch a background run.
+
+```sh
+clearrecord transcribe <dir> --backend apple --model medium \
+    --chunk-seconds 600 --overlap-seconds 5     # --no-resume to force a redo
+```
+
+**Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
+has no per-speaker channels, so segments are clustered into speakers from the
+audio itself (log-mel + F0 fingerprint, k-means; baseline, dependency-free). A
+per-channel capture already attributes per source, so diarization is skipped
+there. It runs automatically for a single source, or force/size it:
+
+```sh
+clearrecord run <dir> --backend apple --speakers 2      # known count
+clearrecord diarize <dir> --speakers 3                  # re-diarize existing segments
+clearrecord diarize <dir> --no-diarize                  # off
+```
+
+**Glossary (initial prompt).** Put names/terms one per line in
+`<dir>/glossary.txt` (or pass `--glossary FILE`); they become the decoder's
+initial prompt. The chunk cache is keyed on the glossary, so the intended
+workflow is: **start a first pass in the background, build the glossary while it
+runs, then re-run** — the chunks are re-decoded with the finished terms.
+
+```sh
+clearrecord glossary <dir> --add "李工" "Wenyuan" "ATE-2000"
+clearrecord transcribe <dir> --backend apple --model medium   # picks up glossary.txt
+```
+
 > **Privacy:** recordings and derived artifacts are environment-local data.
 > They are gitignored and never enter the repository. The clean-room boundary
 > in `docs/architecture.md` §6 and ADR-0006 make this explicit.

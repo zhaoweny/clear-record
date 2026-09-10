@@ -236,3 +236,56 @@ def test_whispercli_segments_rejects_bad_shapes() -> None:
             source="amd",
             language="en",
         )
+
+
+@pytest.mark.parametrize("bad_text", [123, 1.5, True, ["a"], {"a": "b"}])
+def test_whispercli_segments_rejects_non_string_text(bad_text) -> None:
+    """A non-string ``text`` must raise, not leak ``AttributeError`` from
+    ``(text or "").strip()`` inside ``_make_segment``."""
+    with pytest.raises(RuntimeError, match="non-string 'text'"):
+        _whispercli_segments(
+            [{"offsets": {"from": 0, "to": 1}, "text": bad_text, "tokens": []}],
+            source="amd",
+            language="en",
+        )
+
+
+def test_whispercli_segments_accepts_none_text() -> None:
+    """``None`` (and whitespace) is still a valid empty segment, not an error."""
+    assert (
+        _whispercli_segments(
+            [{"offsets": {"from": 0, "to": 1}, "text": None, "tokens": []}],
+            source="amd",
+            language="en",
+        )
+        == ()
+    )
+
+
+def test_transcribe_non_string_text_is_runtime_error(tmp_path, monkeypatch) -> None:
+    payload = {
+        "result": {"language": "en"},
+        "transcription": [
+            {"offsets": {"from": 0, "to": 1000}, "text": 123, "tokens": []}
+        ],
+    }
+    _install_fake_run(monkeypatch, _writes_json(payload))
+
+    with pytest.raises(RuntimeError, match="non-string 'text'"):
+        AmdBackend().transcribe(str(tmp_path / "a.wav"), model=_stub_model(tmp_path))
+
+
+def test_transcribe_invalid_utf8_is_runtime_error(tmp_path, monkeypatch) -> None:
+    """Invalid UTF-8 must become the same clear RuntimeError, not a
+    ``UnicodeDecodeError``."""
+
+    def behavior(cmd):
+        out_prefix = cmd[cmd.index("-of") + 1]
+        with open(out_prefix + ".json", "wb") as fh:
+            fh.write(b'{"transcription": "\xff\xfe"}')
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    _install_fake_run(monkeypatch, behavior)
+
+    with pytest.raises(RuntimeError, match="unparseable JSON"):
+        AmdBackend().transcribe(str(tmp_path / "a.wav"), model=_stub_model(tmp_path))

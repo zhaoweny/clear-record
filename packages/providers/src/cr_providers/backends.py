@@ -293,9 +293,10 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
 
     The document structure is validated here so a malformed ``-ojf`` payload
     raises a clear ``RuntimeError`` naming the backend instead of leaking an
-    ``AttributeError`` from an unexpected ``entry``/``token`` shape. A single
-    segment with non-numeric timestamps is skipped (a per-segment glitch), but
-    structurally wrong containers are a hard error.
+    ``AttributeError`` from an unexpected ``entry``/``token``/``text`` shape
+    (``text`` must be a ``str`` or ``None``). A single segment with non-numeric
+    timestamps is skipped (a per-segment glitch), but structurally wrong
+    containers and field types are a hard error.
     """
     if not isinstance(entries, list):
         raise RuntimeError(
@@ -335,10 +336,15 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
             ):
                 probs.append(float(token["p"]))
         confidence = sum(probs) / len(probs) if probs else None
+        text = entry.get("text")
+        if text is not None and not isinstance(text, str):
+            raise RuntimeError(
+                f"whisper-cli ({source}) returned non-string 'text': {text!r}."
+            )
         segment = _make_segment(
             start,
             end,
-            entry.get("text"),
+            text,
             source=source,
             confidence=confidence,
             language=language,
@@ -383,7 +389,8 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
     whisper.cpp's argument parser calls ``exit(0)`` on an unknown flag, so a
     ``whisper-cli`` without ``-ojf``/``--prompt`` "succeeds" while writing no
     file. Read defensively so a bare ``FileNotFoundError`` / ``JSONDecodeError``
-    never escapes; every failure names the backend and the cause.
+    / ``UnicodeDecodeError`` never escapes; every failure names the backend and
+    the cause.
     """
     try:
         with open(path, encoding="utf-8") as fh:
@@ -395,7 +402,7 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
             f"{path!r}: {exc}. The installed whisper-cli may not support "
             f"-ojf/--prompt (usage: {tail!r})."
         ) from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RuntimeError(
             f"whisper-cli ({backend_id}) produced unparseable JSON at {path!r}: {exc}."
         ) from exc

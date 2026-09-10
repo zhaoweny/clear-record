@@ -59,6 +59,31 @@ def _time_scale(segments, duration: float | None) -> float:
     return 100.0
 
 
+def _make_segment(
+    start: float,
+    end: float,
+    text: str | None,
+    *,
+    source: str,
+    confidence: float | None,
+    language: str,
+) -> Segment | None:
+    """Build a normalized core ``Segment``, or ``None`` when the text is empty."""
+    if end < start:
+        start, end = end, start
+    text = (text or "").strip()
+    if not text:
+        return None
+    return Segment(
+        start=round(start, 3),
+        end=round(end, 3),
+        text=text,
+        source=source,
+        confidence=confidence,
+        language=language,
+    )
+
+
 def _whispercpp_segments(
     segs, source: str, language: str, duration: float | None = None
 ) -> tuple[Segment, ...]:
@@ -68,26 +93,21 @@ def _whispercpp_segments(
     for s in segs:
         start = float(getattr(s, "t0", getattr(s, "start", 0.0))) / scale
         end = float(getattr(s, "t1", getattr(s, "end", start))) / scale
-        if end < start:
-            start, end = end, start
         conf = getattr(s, "probability", None)
         if conf is None:
             conf = getattr(s, "prob", None)
         if conf is None:
             conf = getattr(s, "p", None)
-        text = (getattr(s, "text", "") or "").strip()
-        if not text:
-            continue
-        out.append(
-            Segment(
-                start=round(start, 3),
-                end=round(end, 3),
-                text=text,
-                source=source,
-                confidence=float(conf) if conf is not None else None,
-                language=language,
-            )
+        segment = _make_segment(
+            start,
+            end,
+            getattr(s, "text", ""),
+            source=source,
+            confidence=float(conf) if conf is not None else None,
+            language=language,
         )
+        if segment is not None:
+            out.append(segment)
     return tuple(out)
 
 
@@ -139,7 +159,7 @@ class _WhisperCppBackend:
         if initial_prompt:
             params["initial_prompt"] = initial_prompt
         segs = self._model.transcribe(audio_path, **params)
-        duration = _whispercpp_duration(audio_path)
+        duration = _audio_duration(audio_path)
         segments = _whispercpp_segments(
             segs, source=self.info.id, language=detected, duration=duration
         )
@@ -164,7 +184,7 @@ def _detect_whispercpp_language(model, audio_path: str, default: str = "") -> st
         return default
 
 
-def _whispercpp_duration(audio_path: str) -> float | None:
+def _audio_duration(audio_path: str) -> float | None:
     try:
         import soundfile as sf
 
@@ -182,12 +202,11 @@ def _whispercpp_duration(audio_path: str) -> float | None:
 # system ``ggml`` and loads a GPU backend plugin — ``ggml-vulkan``/``ggml-hip``
 # for AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered
 # when an accepted plugin and the vendor's GPU device are present.
-_WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp", "whisper")
+_WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp")
 _GGML_BACKEND_DIRS = ("/usr/lib/ggml", "/usr/lib64/ggml", "/usr/local/lib/ggml")
 _GGML_BACKEND_PATTERNS = {
     "vulkan": "libggml-vulkan*.so*",
-    "hip": "libggml-hip*.so*",
-    "rocm": "libggml-rocm*.so*",
+    "hip": "libggml-hip*.so*",  # whisper.cpp's ROCm/HIP plugin
     "cuda": "libggml-cuda*.so*",
 }
 
@@ -228,9 +247,21 @@ def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
     return None
 
 
-def _has_dri_render_node() -> bool:
-    """AMD/Mesa style GPU node."""
-    return bool(glob.glob("/dev/dri/renderD*"))
+_AMD_VENDOR_ID = "0x1002"
+
+
+def _has_amd_gpu() -> bool:
+    """An AMD GPU is present (vendor id 0x1002 on a DRM card/render node)."""
+    nodes = glob.glob("/sys/class/drm/renderD*/device/vendor")
+    nodes += glob.glob("/sys/class/drm/card[0-9]*/device/vendor")
+    for node in nodes:
+        try:
+            with open(node, encoding="ascii") as fh:
+                if fh.read().strip().lower().startswith(_AMD_VENDOR_ID):
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def _has_nvidia_device() -> bool:
@@ -259,11 +290,6 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
             end = float(offsets.get("to", 0.0)) / 1000.0
         except (TypeError, ValueError):
             continue
-        if end < start:
-            start, end = end, start
-        text = (entry.get("text") or "").strip()
-        if not text:
-            continue
         probs = [
             float(token["p"])
             for token in (entry.get("tokens") or [])
@@ -271,16 +297,16 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
             and not _is_special_token(str(token.get("text", "")))
         ]
         confidence = sum(probs) / len(probs) if probs else None
-        out.append(
-            Segment(
-                start=round(start, 3),
-                end=round(end, 3),
-                text=text,
-                source=source,
-                confidence=confidence,
-                language=language,
-            )
+        segment = _make_segment(
+            start,
+            end,
+            entry.get("text"),
+            source=source,
+            confidence=confidence,
+            language=language,
         )
+        if segment is not None:
+            out.append(segment)
     return tuple(out)
 
 
@@ -384,7 +410,7 @@ class _WhisperCliBackend:
         detected = (data.get("result") or {}).get("language") or (
             "" if lang == "auto" else lang
         )
-        duration = _whispercpp_duration(audio_path)
+        duration = _audio_duration(audio_path)
         segments = _whispercli_segments(
             data.get("transcription", []), source=self.info.id, language=detected
         )
@@ -428,8 +454,8 @@ class AmdBackend(_WhisperCliBackend):
                 "(ggml Vulkan/HIP backend, e.g. gfx1100).",
                 parallelizable=True,
             ),
-            gpu_backends=("vulkan", "hip", "rocm"),
-            device_check=_has_dri_render_node,
+            gpu_backends=("vulkan", "hip"),
+            device_check=_has_amd_gpu,
         )
 
 

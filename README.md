@@ -175,7 +175,7 @@ clearrecord transcribe <dir> --backend apple --model medium \
 **Parallel + pipelined.** Pending chunks across *all* sources are fed through
 one bounded worker pool, so the GPU stays fed (a single `whisper-cli` peaks well
 below saturation). `--jobs 0` (default) picks a small adaptive fan-out for
-process-isolated backends and serializes in-process ones (Apple/NVIDIA);
+process-isolated backends and serializes in-process ones (Apple);
 `--jobs N` or `CR_JOBS=N` override. Measured on an RX 7900 XTX: four sources ×
 300 s fell from 37.5 s to 8.8 s (~4.3×).
 

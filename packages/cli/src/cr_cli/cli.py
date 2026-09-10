@@ -97,7 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
             type=int,
             default=0,
             help="parallel transcription workers (0 = auto; process-isolated "
-            "backends only, e.g. the AMD whisper-cli)",
+            "backends only, e.g. the AMD/NVIDIA whisper-cli)",
         )
 
     def _diarize_args(p: argparse.ArgumentParser) -> None:

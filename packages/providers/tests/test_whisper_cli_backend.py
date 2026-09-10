@@ -86,3 +86,17 @@ def test_has_nvidia_device_accepts_native_and_wsl(monkeypatch) -> None:
     # WSL2 exposes CUDA through /dev/dxg, with no /dev/nvidia* nodes.
     monkeypatch.setattr(backends.os.path, "exists", lambda path: path == "/dev/dxg")
     assert backends._has_nvidia_device()
+
+
+def test_find_whisper_cli_rejects_generic_whisper(monkeypatch) -> None:
+    """Only the whisper.cpp CLI counts; a bare `whisper` (e.g. OpenAI's) must
+    not satisfy the probe, since it lacks the `-ojf`/`-of` interface."""
+    import cr_providers.backends as backends
+
+    monkeypatch.delenv("CR_WHISPER_CLI", raising=False)
+    monkeypatch.setattr(
+        backends.shutil,
+        "which",
+        lambda name: "/usr/bin/whisper" if name == "whisper" else None,
+    )
+    assert backends._find_whisper_cli() is None

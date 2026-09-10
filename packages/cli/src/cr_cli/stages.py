@@ -220,20 +220,18 @@ def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
 _DEFAULT_MAX_JOBS = 4
 
 
-def _resolve_jobs(backend, n_pending: int, requested: int) -> int:
+def _resolve_jobs(parallelizable: bool, n_pending: int, requested: int) -> int:
     """Choose the chunk-transcription worker count adaptively.
 
     Precedence: explicit ``requested`` (>0), then ``CR_JOBS``, else a small
     default for process-isolated backends. The GPU is the shared bottleneck, so
     the default is modest (measured ~93% ``gpu_busy`` at 4 concurrent
-    ``whisper-cli`` processes); in-process backends that share model state are
-    always serialized, even when a worker count is requested.
+    ``whisper-cli`` processes); a backend that shares in-process model state
+    (Apple ``pywhispercpp``) is always serialized, even when asked otherwise.
     """
     if n_pending <= 1:
         return 1
-    # Safety first: a backend that shares in-process model state (Apple
-    # pywhispercpp) must never run concurrently.
-    if not getattr(backend.info, "parallelizable", False):
+    if not parallelizable:
         return 1
     if requested and requested > 0:
         return max(1, min(int(requested), n_pending))
@@ -241,6 +239,29 @@ def _resolve_jobs(backend, n_pending: int, requested: int) -> int:
     if env.isdigit() and int(env) > 0:
         return max(1, min(int(env), n_pending))
     return max(1, min(os.cpu_count() or 1, _DEFAULT_MAX_JOBS, n_pending))
+
+
+@dataclasses.dataclass
+class _ChunkTask:
+    """One uncached chunk to transcribe — a unit of parallel work."""
+
+    source_id: str
+    index: int
+    audio_path: str
+    start_s: float
+    end_s: float
+    cache: Path
+    n_chunks: int
+
+
+@dataclasses.dataclass
+class _SourcePlan:
+    """A source's chunk plan plus the per-chunk segments as they fill in."""
+
+    source: Source
+    duration: float
+    chunks: list[tuple[float, float]]
+    segments: list[list[Segment] | None]
 
 
 def transcribe(
@@ -273,10 +294,14 @@ def transcribe(
     sources, _ = ws.load_manifest(d)
     backend = get_backend(backend_id)
     if not backend.available():
+        hint = (
+            "`uv sync --extra apple`"
+            if backend_id == "apple"
+            else "a system `whisper-cli` + a ggml GPU plugin (see README)"
+        )
         raise SystemExit(
             f"[transcribe] backend '{backend_id}' is not available on this machine.\n"
-            f"  Install its extra (e.g. `uv sync --extra {backend_id}`) and check the runtime "
-            f"requirements in docs/adr/0005."
+            f"  Install {hint}; runtime requirements are in docs/adr/0005."
         )
 
     chosen_model = model or backend.info.default_model
@@ -286,8 +311,8 @@ def transcribe(
 
     # Plan every source first (cheap I/O), then run the uncached chunks through
     # one bounded pool so the GPU stays fed across source boundaries too.
-    plans: list[dict] = []
-    pending: list[tuple] = []
+    plans: list[_SourcePlan] = []
+    pending: list[_ChunkTask] = []
     for src in sources:
         duration = _duration(src.path)
         chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
@@ -325,19 +350,18 @@ def transcribe(
                 )
             else:
                 pending.append(
-                    (src.id, i, src.path, start_s, end_s, cache, len(chunks))
+                    _ChunkTask(src.id, i, src.path, start_s, end_s, cache, len(chunks))
                 )
-        plans.append({"src": src, "duration": duration, "chunks": chunks, "segs": segs})
+        plans.append(_SourcePlan(src, duration, chunks, segs))
 
-    plan_by_id = {p["src"].id: p for p in plans}
-    workers = _resolve_jobs(backend, len(pending), jobs)
+    plan_by_id = {plan.source.id: plan for plan in plans}
+    workers = _resolve_jobs(backend.info.parallelizable, len(pending), jobs)
     if pending:
         _log_line(d, f"[transcribe] {len(pending)} pending chunk(s), jobs={workers}")
 
-    def _run_chunk(task: tuple):
-        src_id, i, src_path, start_s, end_s, cache, n_chunks = task
-        chunk_wav = cache / f"{i:04d}.wav"
-        write_chunk(src_path, chunk_wav, start_s, end_s)
+    def _run_chunk(task: _ChunkTask) -> tuple[str, int, list[Segment]]:
+        chunk_wav = task.cache / f"{task.index:04d}.wav"
+        write_chunk(task.audio_path, chunk_wav, task.start_s, task.end_s)
         try:
             res = backend.transcribe(
                 str(chunk_wav),
@@ -351,30 +375,30 @@ def transcribe(
         shifted = [
             dataclasses.replace(
                 s,
-                start=round(s.start + start_s, 4),
-                end=round(s.end + start_s, 4),
-                source=src_id,
+                start=round(s.start + task.start_s, 4),
+                end=round(s.end + task.start_s, 4),
+                source=task.source_id,
             )
             for s in res.segments
         ]
-        write_json(cache / f"{i:04d}.json", [to_dict(s) for s in shifted])
+        write_json(task.cache / f"{task.index:04d}.json", [to_dict(s) for s in shifted])
         _log_line(
             d,
-            f"[transcribe]   {src_id} chunk {i + 1}/{n_chunks} "
-            f"[{start_s:.0f}-{end_s:.0f}s] -> {len(shifted)} segment(s)",
+            f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
+            f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)",
         )
-        return src_id, i, shifted
+        return task.source_id, task.index, shifted
 
     if workers <= 1:
         for task in pending:
             src_id, i, shifted = _run_chunk(task)
-            plan_by_id[src_id]["segs"][i] = shifted
+            plan_by_id[src_id].segments[i] = shifted
     else:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(_run_chunk, task) for task in pending]
             for future in as_completed(futures):
                 src_id, i, shifted = future.result()
-                plan_by_id[src_id]["segs"][i] = shifted
+                plan_by_id[src_id].segments[i] = shifted
 
     per_source: dict[str, list[Segment]] = {}
     meta: dict = {
@@ -389,14 +413,13 @@ def transcribe(
         "sources": {},
     }
     for plan in plans:
-        src = plan["src"]
-        merged = _merge_chunk_segments([s or [] for s in plan["segs"]])
-        per_source[src.id] = merged
-        meta["sources"][src.id] = {
-            "duration": plan["duration"],
+        merged = _merge_chunk_segments([s or [] for s in plan.segments])
+        per_source[plan.source.id] = merged
+        meta["sources"][plan.source.id] = {
+            "duration": plan.duration,
             "segments": len(merged),
             "language": None,
-            "chunks": len(plan["chunks"]),
+            "chunks": len(plan.chunks),
         }
     ws.write_segments(d, per_source, meta)
     _print_transcription(per_source, meta)

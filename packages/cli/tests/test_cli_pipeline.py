@@ -384,22 +384,11 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
 
 def test_resolve_jobs_is_adaptive() -> None:
     from cr_cli.stages import _resolve_jobs
-    from cr_providers import BackendInfo
 
-    class _B:
-        pass
-
-    parallel = _B()
-    parallel.info = BackendInfo(
-        id="p", vendor="t", frameworks=(), description="d", parallelizable=True
-    )
-    serial = _B()
-    serial.info = BackendInfo(id="s", vendor="t", frameworks=(), description="d")
-
-    assert _resolve_jobs(serial, 10, 4) == 1  # in-process -> serialized
-    assert _resolve_jobs(parallel, 1, 4) == 1  # no work to parallelize
-    assert _resolve_jobs(parallel, 10, 2) == 2  # explicit request wins
-    assert 1 <= _resolve_jobs(parallel, 10, 0) <= 4  # bounded adaptive default
+    assert _resolve_jobs(False, 10, 4) == 1  # in-process -> serialized
+    assert _resolve_jobs(True, 1, 4) == 1  # no work to parallelize
+    assert _resolve_jobs(True, 10, 2) == 2  # explicit request wins
+    assert 1 <= _resolve_jobs(True, 10, 0) <= 4  # bounded adaptive default
 
 
 def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> None:

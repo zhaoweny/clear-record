@@ -235,7 +235,9 @@ def _has_dri_render_node() -> bool:
 
 def _has_nvidia_device() -> bool:
     return (
-        bool(glob.glob("/dev/nvidia[0-9]*")) or shutil.which("nvidia-smi") is not None
+        bool(glob.glob("/dev/nvidia[0-9]*"))  # native Linux proprietary driver
+        or os.path.exists("/dev/dxg")  # WSL2 CUDA passthrough
+        or shutil.which("nvidia-smi") is not None
     )
 
 

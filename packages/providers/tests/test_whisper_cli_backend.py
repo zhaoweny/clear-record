@@ -73,3 +73,16 @@ def test_nvidia_and_amd_share_the_cli_adapter() -> None:
     assert isinstance(NvidiaBackend(), _WhisperCliBackend)
     assert AmdBackend().info.parallelizable
     assert NvidiaBackend().info.parallelizable
+
+
+def test_has_nvidia_device_accepts_native_and_wsl(monkeypatch) -> None:
+    import cr_providers.backends as backends
+
+    monkeypatch.setattr(backends.glob, "glob", lambda pattern: [])
+    monkeypatch.setattr(backends.shutil, "which", lambda name: None)
+    monkeypatch.setattr(backends.os.path, "exists", lambda path: False)
+    assert not backends._has_nvidia_device()
+
+    # WSL2 exposes CUDA through /dev/dxg, with no /dev/nvidia* nodes.
+    monkeypatch.setattr(backends.os.path, "exists", lambda path: path == "/dev/dxg")
+    assert backends._has_nvidia_device()

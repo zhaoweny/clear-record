@@ -67,6 +67,20 @@ its runtime probe succeeds. `apple` installs its stack with `--extra apple`;
 package. `clearrecord backends` shows what is available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
+**Installing a `whisper-cli` GPU backend** (`nvidia` / `amd`):
+
+- Arch: `sudo pacman -S --needed whisper-cpp ggml-cuda` (or `ggml-vulkan`,
+  `ggml-hip`).
+- From source: `cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release &&
+  cmake --build build -j --config Release`, then point the adapter at the build:
+  `CR_WHISPER_CLI=$PWD/build/bin/whisper-cli` and
+  `CR_GGML_BACKEND_DIRS=$PWD/build/bin`.
+- WSL2: build with `-DGGML_CUDA=ON`; the device probe accepts the `/dev/dxg`
+  passthrough (no `/dev/nvidia*` nodes there).
+- Models: `hf download ggerganov/whisper.cpp ggml-small.bin --local-dir models`;
+  a size like `--model small` resolves to `models/ggml-small.bin` (a path works
+  too).
+
 ## Calibrate your own model (recommended workflow)
 
 Drop a private recording into a gitignored folder and run the pipeline; if you

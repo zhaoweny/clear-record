@@ -60,6 +60,19 @@ separation/recovery. This is a genuine **multi-source `align`** case and
 motivates the **closest-mic-wins** rule in `reconcile` (per-channel ⇒
 `speaker ≈ source`, minimising diarization work).
 
+**Cross-talk and the room reference.** `[FACT]` Close lavaliers do not isolate
+one voice: each mic still picks up its neighbours, so a "closest mic" can carry a
+segment it does not own and closest-mic-wins misattributes it. `[REQ]` **Whenever
+per-mic sources may bleed, also record a mixed/room reference.** The room mic is a
+neutral, speaker-independent witness: it shows that a segment was spoken even
+when no identified per-mic channel is loud in that window, so attribution can
+keep the incoming speaker instead of guessing a bleed channel. This is implemented
+by `clearrecord attribute` → `cr_engine.attribute.attribute_segments` (relative,
+gain-normalized per-source energy), and the badness is synthesized with exact
+ground truth by `cr_engine.synth.make_crosstalk_scene`. `[OPEN]` Whether a room
+reference can *name* a speaker, rather than gate/fall back, remains undetermined;
+here it is a witness, never a speaker candidate.
+
 ### Anchor 3 — John Gruber's *The Talk Show* (live, single mixed stream)
 
 `[VOICE: owner]` "I'm talking John Gruber's *The Talk Show*, live from WWDC."

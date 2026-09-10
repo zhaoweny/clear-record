@@ -114,6 +114,20 @@ def _build_parser() -> argparse.ArgumentParser:
             help="known number of speakers (default: estimate from the audio)",
         )
 
+    def _attribute_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--attribute-energy",
+            action="store_true",
+            help="attribute speakers by relative source energy (close-mic "
+            "cross-talk) instead of spectral diarization",
+        )
+        p.add_argument(
+            "--mixed-source",
+            default=None,
+            help="manifest source id to use as the mixed/room reference for "
+            "energy attribution",
+        )
+
     def _common_args(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "--reference",
@@ -177,6 +191,7 @@ def _build_parser() -> argparse.ArgumentParser:
             _backend(directory_first=True)(p),
             _channel_args(p),
             _diarize_args(p),
+            _attribute_args(p),
         ),
     )
 
@@ -189,6 +204,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _backend_args(cal)
     _channel_args(cal)
     _diarize_args(cal)
+    _attribute_args(cal)
     _common_args(cal)
     cal.add_argument(
         "--reference-transcript",
@@ -201,6 +217,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     dia.add_argument("directory", help="workspace directory")
     _diarize_args(dia)
+
+    # cross-talk-aware attribution (close mics hear more than one speaker)
+    attr = sub.add_parser(
+        "attribute",
+        help="re-attribute speakers by relative source energy (close-mic cross-talk)",
+    )
+    attr.add_argument("directory", help="workspace directory")
+    attr.add_argument(
+        "--mixed-source",
+        default=None,
+        help="manifest source id to use as the mixed/room reference",
+    )
 
     # glossary (decoder initial prompt; edit while a pass runs in the background)
     glo = sub.add_parser(
@@ -297,6 +325,10 @@ def _main(args: argparse.Namespace) -> int:
         stages.diarize(args.directory, speakers=args.speakers)
         return 0
 
+    if command == "attribute":
+        stages.attribute(args.directory, mixed_source=args.mixed_source)
+        return 0
+
     if command == "glossary":
         stages.glossary(args.directory, add=args.add)
         return 0
@@ -325,6 +357,8 @@ def _main(args: argparse.Namespace) -> int:
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,
+            attribute_energy=args.attribute_energy,
+            mixed_source=args.mixed_source,
         )
         return 0
 
@@ -343,6 +377,8 @@ def _main(args: argparse.Namespace) -> int:
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,
+            attribute_energy=args.attribute_energy,
+            mixed_source=args.mixed_source,
         )
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0

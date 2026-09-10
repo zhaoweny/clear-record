@@ -13,6 +13,13 @@ numpy-only (no scipy) and vendor-free. The output is:
   - ``speaker_events``  exact (speaker, start_s, end_s) ground truth
   - per-recorder ``record()`` -> (audio, true_offset_s) with the offset relative
     to a reference recorder that starts at scene time ``0``.
+
+It also models **close-microphone cross-talk**: ``make_speaker_stems`` exposes the
+per-speaker contributions, ``mix_crosstalk`` renders one device with a designated
+dominant speaker plus attenuated bleed from the others, and
+``make_crosstalk_scene`` builds one lav-style device per speaker. Each event keeps
+its true speaker, so per-segment attribution can be scored against ground truth
+(the cross-talk failure mode behind ticket 09).
 """
 
 from __future__ import annotations
@@ -51,17 +58,31 @@ def _voice_noise(rng: np.random.Generator, n: int) -> np.ndarray:
     return (noise * env).astype(np.float32)
 
 
-def make_scene(
+def make_speaker_stems(
     duration_s: float,
     n_speakers: int = 3,
     *,
     sr: int = SR,
     seed: int = 0,
-) -> tuple[np.ndarray, list[dict]]:
-    """Build a clean multi-speaker scene and its exact event timeline."""
+    non_overlapping: bool = False,
+) -> tuple[list[np.ndarray], list[dict]]:
+    """Build clean per-speaker stems and their exact event timeline.
+
+    Every event is rendered into its own speaker's stem, then all stems are scaled
+    by one shared factor so that ``sum(stems)`` equals the :func:`make_scene`
+    scene. Exposing the individual stems is what makes cross-talk testable: a
+    device can be rendered as one dominant speaker plus attenuated bleed from the
+    others (:func:`mix_crosstalk`, :func:`make_crosstalk_scene`).
+
+    ``events`` carries the ground-truth ``speaker`` (index) and ``start``/``end``
+    (seconds) for every utterance, so a test can assert per-segment attribution.
+    By default utterances may overlap (as the existing generator does); set
+    ``non_overlapping`` for a scene where every window has exactly one speaker,
+    which is what lets a test score attribution without overlap ambiguity.
+    """
     rng = np.random.default_rng(seed)
     n = int(duration_s * sr)
-    scene = np.zeros(n, dtype=np.float32)
+    stems = [np.zeros(n, dtype=np.float32) for _ in range(n_speakers)]
     events: list[dict] = []
     speaker_voice: dict[int, float] = {
         s: rng.uniform(180.0, 320.0) for s in range(n_speakers)
@@ -80,16 +101,86 @@ def make_scene(
             alpha = float(
                 np.clip(0.05 + (speaker_voice[speaker] - 180.0) / 4000.0, 0.03, 0.20)
             )
-            scene[i0:i1] += _one_pole_lowpass(seg, alpha).astype(np.float32)
+            stems[speaker][i0:i1] += _one_pole_lowpass(seg, alpha).astype(np.float32)
             events.append(
                 {"speaker": speaker, "start": round(start_s, 4), "end": round(end_s, 4)}
             )
         t += rng.uniform(0.25, 0.9)
+        if non_overlapping:
+            t = max(t, end_s)
 
-    # normalise
-    peak = float(np.max(np.abs(scene))) or 1.0
-    scene = (scene / peak * 0.8).astype(np.float32)
+    # One shared normalisation: the sum still peaks at 0.8 exactly as before.
+    mixed = np.zeros(n, dtype=np.float32)
+    for stem in stems:
+        mixed += stem
+    peak = float(np.max(np.abs(mixed))) or 1.0
+    scale = 0.8 / peak
+    return [(stem * scale).astype(np.float32) for stem in stems], events
+
+
+def make_scene(
+    duration_s: float,
+    n_speakers: int = 3,
+    *,
+    sr: int = SR,
+    seed: int = 0,
+) -> tuple[np.ndarray, list[dict]]:
+    """Build a clean multi-speaker scene and its exact event timeline."""
+    stems, events = make_speaker_stems(duration_s, n_speakers, sr=sr, seed=seed)
+    scene = np.zeros(int(duration_s * sr), dtype=np.float32)
+    for stem in stems:
+        scene += stem
     return scene, events
+
+
+def mix_crosstalk(
+    stems: list[np.ndarray],
+    dominant: int,
+    *,
+    bleed_db: float = -12.0,
+) -> np.ndarray:
+    """Render one close-microphone device from per-speaker ``stems``.
+
+    The device's designated ``dominant`` speaker is at 0 dB; every other speaker
+    bleeds in at ``bleed_db`` (e.g. ``-6`` for strong lav cross-talk, very
+    negative for an effectively isolated channel). This is the "each mic hears
+    more than one speaker" model the energy attributor must undo.
+    """
+    if not stems:
+        raise ValueError("mix_crosstalk needs at least one stem")
+    if not 0 <= dominant < len(stems):
+        raise IndexError(f"dominant {dominant} out of range for {len(stems)} stems")
+    gain = float(10.0 ** (bleed_db / 20.0))
+    out = np.zeros_like(stems[0], dtype=np.float32)
+    for i, stem in enumerate(stems):
+        out += (stem if i == dominant else stem * gain).astype(np.float32)
+    return out
+
+
+def make_crosstalk_scene(
+    duration_s: float,
+    n_speakers: int = 2,
+    *,
+    bleed_db: float = -9.0,
+    sr: int = SR,
+    seed: int = 0,
+    non_overlapping: bool = False,
+) -> tuple[list[np.ndarray], list[dict]]:
+    """Build one lav-style device per speaker, with modelled cross-talk.
+
+    Device ``s`` has speaker ``s`` dominant (0 dB) and every other speaker present
+    at ``bleed_db``. Returns ``(device_audio, events)`` where each event's
+    ``speaker`` is the **true** source, so a test can score attribution against
+    it. Pair with :func:`record` for per-device degradation if wanted.
+    """
+    stems, events = make_speaker_stems(
+        duration_s, n_speakers, sr=sr, seed=seed, non_overlapping=non_overlapping
+    )
+    devices = [
+        mix_crosstalk(stems, speaker, bleed_db=bleed_db)
+        for speaker in range(n_speakers)
+    ]
+    return devices, events
 
 
 # --------------------------------------------------------------------------- #
@@ -166,4 +257,11 @@ def record(
     return audio, true_offset
 
 
-__all__ = ["SR", "make_scene", "record"]
+__all__ = [
+    "SR",
+    "make_crosstalk_scene",
+    "make_scene",
+    "make_speaker_stems",
+    "mix_crosstalk",
+    "record",
+]

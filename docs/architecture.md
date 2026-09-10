@@ -290,6 +290,11 @@ docs/vox/voice-of-owner.md         owner voice
 - `diarize` → baseline multi-speaker attribution for a **single mixed stream**
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
+- `attribute` → cross-talk-aware per-segment attribution by **relative,
+  gain-normalized source energy** (`cr_engine.attribute`), with an optional
+  mixed/room reference as a presence gate (never a speaker itself). `run
+  --attribute-energy` opts in without changing the default `diarize` path, and
+  the corrected speaker is preserved by `reconcile`. See `docs/test-corpus.md`.
 - `reconcile` → `cr_engine.reconcile`; shift by alignment, collapse overlaps,
   join only same-speaker runs, attribute speaker per source or diarizer.
 - `export` → Markdown / SRT / VTT / JSON.

@@ -28,6 +28,7 @@ from cr_engine import (
     DEFAULT_OVERLAP_S,
     SYNTH_SR,
     align_sources,
+    attribute_segments,
     channel_count,
     clean_segments,
     diarize as diarize_segments,
@@ -395,6 +396,59 @@ def diarize(directory: str, speakers: int | None = None):
 
 
 # --------------------------------------------------------------------------- #
+# attribute (cross-talk-aware attribution by relative source energy)
+# --------------------------------------------------------------------------- #
+def attribute(directory: str, mixed_source: str | None = None):
+    """Re-attribute each segment's speaker from the relative source energy.
+
+    Cross-talk correction for close microphones: instead of trusting the source a
+    segment came from ("one source == one speaker", the closest-mic-wins rule),
+    pick the source with the highest gain-normalized energy in the segment's
+    aligned window. A mixed/room reference named by ``mixed_source`` gates weak
+    claims and is never itself a speaker candidate. Composable with `reconcile`,
+    which preserves the assigned speaker.
+    """
+    d = Path(directory)
+    sources, alignment = ws.load_manifest(d)
+    per_source, meta = ws.load_segments(d)
+    mixed = None
+    if mixed_source:
+        mixed = next((s for s in sources if s.id == mixed_source), None)
+        if mixed is None:
+            raise SystemExit(f"[attribute] no source '{mixed_source}' in manifest")
+    offsets = dict(alignment.offsets) if alignment else {}
+
+    order = [sid for sid, segs in per_source.items() if segs]
+    flat = [seg for sid in order for seg in per_source[sid]]
+    if not flat:
+        print("[attribute] no segments to attribute")
+        return per_source
+
+    attributed = attribute_segments(flat, sources, offsets=offsets, mixed=mixed)
+    changed = 0
+    pos = 0
+    for sid in order:
+        updated = []
+        for seg in per_source[sid]:
+            seg = attributed[pos]
+            pos += 1
+            updated.append(seg)
+        per_source[sid] = updated
+    for before, after in zip(flat, attributed):
+        if before.speaker != after.speaker:
+            changed += 1
+    if changed:
+        ws.write_segments(d, per_source, meta)
+    speakers = {s.speaker for s in attributed}
+    suffix = f" (room reference: {mixed_source})" if mixed_source else ""
+    print(
+        f"[attribute] {len(flat)} segment(s), {len(speakers)} speaker(s), "
+        f"{changed} re-attributed{suffix}"
+    )
+    return per_source
+
+
+# --------------------------------------------------------------------------- #
 # glossary
 # --------------------------------------------------------------------------- #
 def glossary(directory: str, add: list[str] | None = None) -> Path:
@@ -564,6 +618,8 @@ def run(
     speakers: int | None = None,
     reference: str | None = None,
     formats: list[str] | None = None,
+    attribute_energy: bool = False,
+    mixed_source: str | None = None,
 ):
     ingest(directory, audio_files, split=split)
     align(directory, reference=reference)
@@ -579,13 +635,18 @@ def run(
         resume=resume,
     )
     sources, _ = ws.load_manifest(Path(directory))
-    # Per-channel capture already attributes per source, and a single voice must
-    # not be split on weak evidence, so diarization is opt-in: `--diarize`
-    # forces it; a known `--speakers N` turns it on with that count.
-    if do_diarize is None:
-        do_diarize = speakers is not None
-    if do_diarize and sources:
-        diarize(directory, speakers=speakers)
+    # Energy attribution (close-mic cross-talk) is an opt-in alternative to
+    # spectral diarization; when off, the default `diarize` path is unchanged.
+    if attribute_energy and sources:
+        attribute(directory, mixed_source=mixed_source)
+    else:
+        # Per-channel capture already attributes per source, and a single voice
+        # must not be split on weak evidence, so diarization is opt-in:
+        # `--diarize` forces it; a known `--speakers N` turns it on.
+        if do_diarize is None:
+            do_diarize = speakers is not None
+        if do_diarize and sources:
+            diarize(directory, speakers=speakers)
     reconcile(directory, prefer=reference)
     export(directory, formats)
 
@@ -706,6 +767,7 @@ def synth(
 
 __all__ = [
     "align",
+    "attribute",
     "calibrate_report",
     "diarize",
     "export",

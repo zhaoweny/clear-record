@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cr_engine.align import align_sources, cross_correlate, estimate_offset
+from cr_engine.attribute import attribute_segments
 from cr_engine.audio import (
     ASR_SAMPLE_RATE,
     AudioDecodeError,
@@ -15,7 +16,13 @@ from cr_engine.chunk import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S, plan_chunks, wri
 from cr_engine.diarize import diarize, logmel_stats
 from cr_engine.merge import reconcile
 from cr_engine.synth import SR as SYNTH_SR
-from cr_engine.synth import make_scene, record
+from cr_engine.synth import (
+    make_crosstalk_scene,
+    make_scene,
+    make_speaker_stems,
+    mix_crosstalk,
+    record,
+)
 from cr_engine.text import clean_segments, collapse_repetitions, is_non_speech
 
 __all__ = [
@@ -25,6 +32,7 @@ __all__ = [
     "DEFAULT_OVERLAP_S",
     "SYNTH_SR",
     "align_sources",
+    "attribute_segments",
     "channel_count",
     "clean_segments",
     "collapse_repetitions",
@@ -33,7 +41,10 @@ __all__ = [
     "estimate_offset",
     "is_non_speech",
     "logmel_stats",
+    "make_crosstalk_scene",
     "make_scene",
+    "make_speaker_stems",
+    "mix_crosstalk",
     "plan_chunks",
     "prepare_16k_wav",
     "read_audio",

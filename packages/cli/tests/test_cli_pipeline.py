@@ -104,6 +104,54 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     assert not mixed[0].id.endswith("ch1")
 
 
+def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -> None:
+    """`attribute` re-labels bleed-dominated segments from relative energy, and
+    `reconcile` keeps the corrected speaker (composability)."""
+    import soundfile as sf
+
+    from cr_core import Segment
+    from cr_engine import SYNTH_SR, make_crosstalk_scene
+    from cr_cli import workspace as ws
+
+    devices, events = make_crosstalk_scene(
+        duration_s=16.0, n_speakers=2, bleed_db=-6.0, seed=7, non_overlapping=True
+    )
+    wd = tmp_path / "ct"
+    wd.mkdir()
+    for i, device in enumerate(devices):
+        sf.write(str(wd / f"lav{i}.wav"), device, SYNTH_SR)
+
+    sources = stages.ingest(str(wd))
+    labels = {s.id: s.label for s in sources}
+    truth = {f"w{i}": labels[f"lav{e['speaker']}"] for i, e in enumerate(events)}
+    # Every segment is taken from the bleed channel and given the naive label.
+    per_source: dict[str, list[Segment]] = {s.id: [] for s in sources}
+    for i, e in enumerate(events):
+        wrong = f"lav{1 - e['speaker']}"
+        per_source[wrong].append(
+            Segment(
+                start=e["start"],
+                end=e["end"],
+                text=f"w{i}",
+                source=wrong,
+                speaker=labels[wrong],
+            )
+        )
+    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+
+    stages.attribute(str(wd))
+    per_source, _ = ws.load_segments(wd)
+    fixed = [s for sid in per_source for s in per_source[sid]]
+    assert sorted(s.speaker for s in fixed) == sorted(truth.values())
+
+    record = stages.reconcile(str(wd))
+    assert record.segments
+    # Joins may merge adjacent cues, but every token keeps the corrected speaker.
+    for seg in record.segments:
+        for token in seg.text.split():
+            assert seg.speaker == truth[token]
+
+
 def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""
@@ -175,6 +223,32 @@ def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
 
     stages.run(wd, backend="fake", reference="b")
     assert seen["reference"] == "b"
+
+
+def test_run_attribute_energy_selects_energy_path(tmp_path, monkeypatch) -> None:
+    """`run --attribute-energy` routes to energy attribution and leaves the
+    default spectral `diarize` path untouched when the flag is off."""
+    wd = _workspace(tmp_path)
+    calls = {"attribute": 0, "diarize": 0}
+
+    def spy_attribute(directory, mixed_source=None):
+        calls["attribute"] += 1
+        return {}
+
+    def spy_diarize(directory, speakers=None):
+        calls["diarize"] += 1
+
+    monkeypatch.setattr(stages, "transcribe", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "reconcile", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "export", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "attribute", spy_attribute)
+    monkeypatch.setattr(stages, "diarize", spy_diarize)
+
+    stages.run(wd, backend="fake", attribute_energy=True, mixed_source="b")
+    assert calls == {"attribute": 1, "diarize": 0}
+
+    stages.run(wd, backend="fake", do_diarize=True)
+    assert calls == {"attribute": 1, "diarize": 1}
 
 
 def test_transcribe_chunks_resume_and_glossary_invalidation(

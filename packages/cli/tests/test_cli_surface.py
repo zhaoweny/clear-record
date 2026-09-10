@@ -18,6 +18,7 @@ def test_subcommands_match_pipeline() -> None:
         "calibrate",
         "synth",
         "diarize",
+        "attribute",
         "glossary",
     }
     subparsers_action = next(
@@ -30,6 +31,24 @@ def test_run_and_calibrate_expose_reference() -> None:
     parser = _build_parser()
     assert parser.parse_args(["run", "dir", "--reference", "b"]).reference == "b"
     assert parser.parse_args(["calibrate", "dir", "--reference", "b"]).reference == "b"
+
+
+def test_attribute_surface_wires_energy_and_mixed_reference() -> None:
+    """`attribute` and `run --attribute-energy` expose the cross-talk seam; the
+    default `run` leaves energy attribution off (diarize path unchanged)."""
+    parser = _build_parser()
+    standalone = parser.parse_args(["attribute", "dir", "--mixed-source", "room"])
+    assert standalone.mixed_source == "room"
+
+    default = parser.parse_args(["run", "dir"])
+    assert default.attribute_energy is False
+    assert default.mixed_source is None
+
+    opted = parser.parse_args(
+        ["run", "dir", "--attribute-energy", "--mixed-source", "room"]
+    )
+    assert opted.attribute_energy is True
+    assert opted.mixed_source == "room"
 
 
 def test_eval_error_rates_perfect_and_bad() -> None:

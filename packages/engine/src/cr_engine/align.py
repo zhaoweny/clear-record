@@ -31,11 +31,16 @@ _MAX_LAG_S = 120.0
 # multi-hour meeting tape would need multi-GB FFT buffers; at 1 kHz a 3 h file
 # is ~10.8 M samples (~hundreds of MB), so long tapes stay processable.
 _ALIGN_SR = 1000
-# Normalized cross-correlation peak below which a source is treated as
-# unplaceable. Uncorrelated audio (e.g. unrelated white noise) still produces a
-# small positive peak (~0.04 measured) because we take the max over many lags;
-# without this floor that noise was recorded as a valid near-zero offset.
-_MIN_CONFIDENCE = 0.05
+# Minimum normalized correlation coefficient (cosine at the located peak) for a
+# source to be treated as placeable. Unrelated audio still yields a spurious
+# peak because we take the max over many lags: measured over 250 seeds of
+# speech-band noise, the max coefficient is ~0.14 at 1200 s and ~0.16 at 3000 s
+# (n up to 3e6 samples at _ALIGN_SR). A genuine match — including the degraded,
+# mic-mismatched synthetic devices — measures ~0.99. This floor sits ~1.5x above
+# the worst spurious peak and ~4x below a real match. (Ticket 04's original 0.05
+# was calibrated against the old, scale-dependent peak, which fell as
+# sqrt(window_len / signal_len) and rejected every long recording.)
+_MIN_CONFIDENCE = 0.25
 
 
 def _normalized(x: np.ndarray) -> np.ndarray:
@@ -99,7 +104,8 @@ def estimate_offset(
         win_start = 0
     window = _normalized(ref[win_start : win_start + n_win])
 
-    corr = cross_correlate(_normalized(src), window)
+    src_n = _normalized(src)
+    corr = cross_correlate(src_n, window)
     # Search *both* directions around the reference window position, bounded by
     # max_lag. The previous one-sided guard rejected any window found beyond
     # max_lag into the source — which silently zeroed every recording whose most
@@ -112,9 +118,19 @@ def estimate_offset(
     lag = lo + int(np.argmax(corr[lo : hi + 1]))
     value = float(corr[lag])
 
+    # ``value`` is a raw dot product: because the window is unit-norm, it scales
+    # with the *local* energy of the source at the winning lag. Dividing by that
+    # local norm turns it into the cosine (normalized correlation coefficient)
+    # between the window and the source slice it matched. That coefficient is
+    # scale-invariant — ~1.0 for a matching window at any signal length — so the
+    # confidence floor no longer rises with recording duration.
+    local = float(np.linalg.norm(src_n[lag : lag + n_win]))
+    if local <= 1e-12:
+        return 0.0, None
+
     # offset = ref_window_start - source_position (in samples at _ALIGN_SR)
     offset = (win_start - lag) / _ALIGN_SR
-    confidence = float(min(1.0, max(0.0, value)))
+    confidence = float(min(1.0, max(0.0, value / local)))
     if confidence < _MIN_CONFIDENCE:
         # A weak peak means the window matched no real counterpart: unrelated
         # audio still yields a small positive correlation. Treat it as

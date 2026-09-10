@@ -256,6 +256,92 @@ def test_estimate_offset_uncorrelated_noise_is_unresolved(tmp_path) -> None:
     assert "noise" not in alignment.offsets
 
 
+def test_estimate_offset_long_recording_confidence_is_scale_invariant(
+    tmp_path,
+) -> None:
+    """A genuine match on a long tape still earns a *high* confidence.
+
+    The old confidence was the raw cross-correlation peak, which falls as
+    ~sqrt(window_len / signal_len): at 1200 s it is ~0.06, so the ``> 0.5``
+    assertion below fails and the 0.05 floor wrongly rejects every genuine
+    alignment past ~2.5 h. The scale-invariant coefficient stays ~1.0 at any
+    length.
+    """
+    from cr_engine import align_sources
+
+    sr = 2000  # written rate; read_audio resamples to _ALIGN_SR (1 kHz)
+    duration_s = 1200.0
+    shift_s = 60.0
+    n = int(duration_s * sr)
+    rng = np.random.default_rng(11)
+    k = max(1, int(0.004 * sr))
+    base = np.convolve(rng.standard_normal(n), np.ones(k) / k, mode="same")
+    # Confine the signal to the middle so the shifted source keeps every sample:
+    # the reference window always has a full-length counterpart.
+    envelope = np.zeros(n, dtype=np.float32)
+    envelope[int(100.0 * sr) : int(1050.0 * sr)] = 1.0
+    sig = (base * envelope).astype(np.float32)
+    sig *= 0.5 / (np.max(np.abs(sig)) or 1.0)
+
+    shift = int(shift_s * sr)
+    src = np.concatenate([np.zeros(shift, dtype=np.float32), sig[: n - shift]])
+    ref_p = tmp_path / "ref_long.wav"
+    src_p = tmp_path / "src_long.wav"
+    sf.write(str(ref_p), sig, sr)
+    sf.write(str(src_p), src, sr)
+
+    offset, confidence = estimate_offset(str(ref_p), str(src_p))
+    # src is delayed by 60 s, so ref_time = source_time - 60.
+    assert offset == pytest.approx(-shift_s, abs=0.5)
+    assert confidence is not None and confidence > 0.5
+
+    alignment = align_sources(
+        [
+            Source(id="ref", path=str(ref_p), label="Alice"),
+            Source(id="src", path=str(src_p), label="Bob"),
+        ],
+        reference_id="ref",
+    )
+    assert alignment.unresolved == ()
+    assert alignment.confidence is not None and alignment.confidence > 0.5
+
+
+def test_estimate_offset_long_uncorrelated_noise_is_unresolved(tmp_path) -> None:
+    """Independent noise of realistic length stays below the re-calibrated floor.
+
+    The spurious max coefficient over 250 seeds of speech-band noise is ~0.14 at
+    1200 s (~0.16 at 3000 s); the 0.25 floor keeps real margin above it without
+    the old length-dependence.
+    """
+    from cr_engine import align_sources
+
+    sr = 2000
+    n = int(1200.0 * sr)
+    k = max(1, int(0.004 * sr))
+
+    def noise(seed: int) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        x = np.convolve(rng.standard_normal(n), np.ones(k) / k, mode="same")
+        x *= 0.5 / (np.max(np.abs(x)) or 1.0)
+        return x.astype(np.float32)
+
+    ref_p = tmp_path / "ref_noise.wav"
+    src_p = tmp_path / "src_noise.wav"
+    sf.write(str(ref_p), noise(1), sr)
+    sf.write(str(src_p), noise(2), sr)
+
+    _, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert confidence is None
+
+    sources = [
+        Source(id="ref", path=str(ref_p), label="Alice"),
+        Source(id="noise", path=str(src_p), label="Bob"),
+    ]
+    alignment = align_sources(sources, reference_id="ref")
+    assert alignment.unresolved == ("noise",)
+    assert "noise" not in alignment.offsets
+
+
 def test_reconcile_collapses_overlap_cluster() -> None:
     """Three mutually-overlapping sources yield exactly one survivor, chosen by
     confidence then source order — not ~ceil(N/2) pairwise survivors."""

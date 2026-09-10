@@ -32,14 +32,24 @@ _MAX_LAG_S = 120.0
 # is ~10.8 M samples (~hundreds of MB), so long tapes stay processable.
 _ALIGN_SR = 1000
 # Minimum normalized correlation coefficient (cosine at the located peak) for a
-# source to be treated as placeable. Unrelated audio still yields a spurious
-# peak because we take the max over many lags: measured over 250 seeds of
-# speech-band noise, the max coefficient is ~0.14 at 1200 s and ~0.16 at 3000 s
-# (n up to 3e6 samples at _ALIGN_SR). A genuine match — including the degraded,
-# mic-mismatched synthetic devices — measures ~0.99. This floor sits ~1.5x above
-# the worst spurious peak and ~4x below a real match. (Ticket 04's original 0.05
-# was calibrated against the old, scale-dependent peak, which fell as
-# sqrt(window_len / signal_len) and rejected every long recording.)
+# source to be treated as placeable. Confidence is the normalized coefficient, so
+# it is scale-invariant: unlike the old raw peak it does not fall with recording
+# length, and the floor below applies unchanged to a 3 h tape.
+#
+# Calibration (synthetic, measured):
+#   - identical / self-matched content: ~0.99;
+#   - realistic mic + room mismatch: 0.83-0.98 (the in-repo `make_scene` devices
+#     hit ~0.99 only because they share one degradation seed, so their added
+#     noise is identical rather than independent-mic noise);
+#   - uncorrelated speech-band noise, max over many lags: ~0.13, rising to ~0.14
+#     at 1200 s and ~0.16 at 3000 s (250 seeds, n up to 3e6 samples).
+#
+# The 0.25 floor sits above the noise ceiling and below the realistic-mismatch
+# range. It deliberately *rejects* genuine content when the reference is dry and
+# the source is very reverberant (rir_s 0.08-0.16): those matches measure
+# ~0.17-0.23 and land under the floor. Ticket 04's old 0.05 floor accepted them,
+# but also admitted far more spurious peaks; choosing precision over recall for
+# heavily reverberant sources is the documented tradeoff.
 _MIN_CONFIDENCE = 0.25
 
 

@@ -342,6 +342,40 @@ def test_estimate_offset_long_uncorrelated_noise_is_unresolved(tmp_path) -> None
     assert "noise" not in alignment.offsets
 
 
+def test_estimate_offset_rejects_reverberant_source_as_deliberate_tradeoff(
+    tmp_path, monkeypatch
+) -> None:
+    """Document the 0.25 floor's precision-over-recall tradeoff.
+
+    A *dry* reference against a strongly reverberant source of the same content
+    is genuine, not noise, but the reverb smears its coefficient down to
+    ~0.17-0.23: above the old 0.05 floor (which accepted it) and below the
+    current 0.25 floor (which rejects it). The rejection is intentional; lowering
+    the floor must make this test fail so the threshold change is conscious.
+    """
+    from cr_engine import SYNTH_SR, make_scene, record
+
+    scene, _ = make_scene(duration_s=10.0, n_speakers=3, seed=1)
+    ref, _ = record(scene, start_s=0.0, rir_s=0.0, seed=1)
+    src, _ = record(scene, start_s=1.5, rir_s=0.16, seed=2)
+    ref_p = tmp_path / "dry_ref.wav"
+    src_p = tmp_path / "reverberant_src.wav"
+    sf.write(str(ref_p), ref, SYNTH_SR)
+    sf.write(str(src_p), src, SYNTH_SR)
+
+    # Shipped 0.25 floor: this genuine-but-smeared match is rejected.
+    _, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert confidence is None
+
+    # The content is real and placeable — only the floor hides it. With the old
+    # 0.05 floor the coefficient lands in the documented ~0.17-0.23 band.
+    monkeypatch.setattr("cr_engine.align._MIN_CONFIDENCE", 0.05)
+    offset, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert confidence is not None
+    assert 0.15 < confidence < 0.25
+    assert offset == pytest.approx(1.5, abs=0.5)
+
+
 def test_reconcile_collapses_overlap_cluster() -> None:
     """Three mutually-overlapping sources yield exactly one survivor, chosen by
     confidence then source order — not ~ceil(N/2) pairwise survivors."""

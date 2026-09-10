@@ -8,10 +8,13 @@ Date: 2026-09-09
 - [DECISION] ADR-0002 licenses clear-record's own code under MIT.
 - [VOICE] The ASR backends must support Apple (Metal/Core ML/ANE), NVIDIA (CUDA)
   and AMD (ROCm/Vulkan) — see ADR-0005.
-- [FACT] The preferred transcription stacks are permissive: `whisper.cpp` (MIT),
-  `faster-whisper` (MIT), CTranslate2 (MIT); PyTorch (BSD-3) is a transitive
-  dependency of the CUDA path. There is no existing requirement to aggregate a
-  copyleft component in-process.
+- [FACT] The transcription stacks now in use are permissive: `whisper.cpp`,
+  including its `ggml` backends (`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and the
+  in-process `pywhispercpp` wheel, all MIT. NVIDIA and AMD drive the system
+  `whisper-cli`; Apple runs `pywhispercpp` in process (ADR-0005). The earlier
+  `faster-whisper` / CTranslate2 / PyTorch CUDA path has been superseded and is
+  no longer used. There is no existing requirement to aggregate a copyleft
+  component in-process.
 
 ## Policy (owner text, verbatim)
 

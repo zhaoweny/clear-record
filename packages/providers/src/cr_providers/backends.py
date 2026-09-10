@@ -203,7 +203,16 @@ def _audio_duration(audio_path: str) -> float | None:
 # for AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered
 # when an accepted plugin and the vendor's GPU device are present.
 _WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp")
-_GGML_BACKEND_DIRS = ("/usr/lib/ggml", "/usr/lib64/ggml", "/usr/local/lib/ggml")
+# Arch/Fedora install plugin `.so`s directly under a `ggml` dir; Debian/Ubuntu
+# put them under the multiarch tuple. Missing a layout here is a false negative
+# (the probe rejects a machine that can actually run the backend), so list both.
+_GGML_BACKEND_DIRS = (
+    "/usr/lib/ggml",
+    "/usr/lib64/ggml",
+    "/usr/local/lib/ggml",
+    "/usr/lib/x86_64-linux-gnu/ggml",
+    "/usr/lib/aarch64-linux-gnu/ggml",
+)
 _GGML_BACKEND_PATTERNS = {
     "vulkan": "libggml-vulkan*.so*",
     "hip": "libggml-hip*.so*",  # whisper.cpp's ROCm/HIP plugin
@@ -281,21 +290,50 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
 
     ``offsets`` are milliseconds; per-segment confidence is the mean token
     probability (control tokens such as ``[_BEG_]`` are excluded).
+
+    The document structure is validated here so a malformed ``-ojf`` payload
+    raises a clear ``RuntimeError`` naming the backend instead of leaking an
+    ``AttributeError`` from an unexpected ``entry``/``token`` shape. A single
+    segment with non-numeric timestamps is skipped (a per-segment glitch), but
+    structurally wrong containers are a hard error.
     """
+    if not isinstance(entries, list):
+        raise RuntimeError(
+            f"whisper-cli ({source}) returned unexpected JSON: 'transcription' "
+            f"must be a list, got {type(entries).__name__}."
+        )
     out: list[Segment] = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"whisper-cli ({source}) returned a non-object transcription "
+                f"entry: {entry!r}."
+            )
         offsets = entry.get("offsets") or {}
+        if not isinstance(offsets, dict):
+            raise RuntimeError(
+                f"whisper-cli ({source}) returned non-object 'offsets': {offsets!r}."
+            )
         try:
             start = float(offsets.get("from", 0.0)) / 1000.0
             end = float(offsets.get("to", 0.0)) / 1000.0
         except (TypeError, ValueError):
             continue
-        probs = [
-            float(token["p"])
-            for token in (entry.get("tokens") or [])
-            if isinstance(token.get("p"), (int, float))
-            and not _is_special_token(str(token.get("text", "")))
-        ]
+        tokens = entry.get("tokens") or []
+        if not isinstance(tokens, list):
+            raise RuntimeError(
+                f"whisper-cli ({source}) returned non-list 'tokens': {tokens!r}."
+            )
+        probs: list[float] = []
+        for token in tokens:
+            if not isinstance(token, dict):
+                raise RuntimeError(
+                    f"whisper-cli ({source}) returned a non-object token: {token!r}."
+                )
+            if isinstance(token.get("p"), (int, float)) and not _is_special_token(
+                str(token.get("text", ""))
+            ):
+                probs.append(float(token["p"]))
         confidence = sum(probs) / len(probs) if probs else None
         segment = _make_segment(
             start,
@@ -339,12 +377,51 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
     )
 
 
+def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
+    """Read the ``-ojf`` output, turning every failure into a clear error.
+
+    whisper.cpp's argument parser calls ``exit(0)`` on an unknown flag, so a
+    ``whisper-cli`` without ``-ojf``/``--prompt`` "succeeds" while writing no
+    file. Read defensively so a bare ``FileNotFoundError`` / ``JSONDecodeError``
+    never escapes; every failure names the backend and the cause.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        tail = (stdout or "").strip()[-800:]
+        raise RuntimeError(
+            f"whisper-cli ({backend_id}) produced no readable -ojf JSON at "
+            f"{path!r}: {exc}. The installed whisper-cli may not support "
+            f"-ojf/--prompt (usage: {tail!r})."
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"whisper-cli ({backend_id}) produced unparseable JSON at {path!r}: {exc}."
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"whisper-cli ({backend_id}) returned unexpected JSON (expected an "
+            f"object, got {type(data).__name__})."
+        )
+    return data
+
+
 class _WhisperCliBackend:
     """System ``whisper-cli`` backend, GPU-accelerated by a ggml plugin.
 
     Subclasses declare which ggml backend families they accept and how to probe
     the vendor's GPU device, so AMD and NVIDIA share one process-isolated code
     path (and therefore the same parallel transcription).
+
+    Residual risk in ``available()``: the probe proves that a ``whisper-cli``
+    binary and a matching ``libggml-*`` *file* are present plus a vendor device,
+    but not that this build can *load* the plugin (a ggml ABI/build mismatch
+    still passes). Such a build warns on stderr and may silently fall back to
+    CPU; the probe cannot tell without a model-dependent run, which would make
+    ``available()`` expensive. The failure surfaces at ``transcribe()`` time,
+    where a missing/invalid ``-ojf`` result now raises a clear ``RuntimeError``
+    instead of an unhelpful ``FileNotFoundError``.
     """
 
     def __init__(
@@ -402,14 +479,20 @@ class _WhisperCliBackend:
             if proc.returncode != 0:
                 tail = (proc.stderr or "").strip()[-800:]
                 raise RuntimeError(
-                    f"whisper-cli failed (exit {proc.returncode}): {tail}"
+                    f"whisper-cli ({self.info.id}) failed (exit "
+                    f"{proc.returncode}): {tail}"
                 )
-            with open(out_prefix + ".json", encoding="utf-8") as fh:
-                data = json.load(fh)
+            data = _load_whispercli_json(
+                out_prefix + ".json", self.info.id, proc.stdout or ""
+            )
 
-        detected = (data.get("result") or {}).get("language") or (
-            "" if lang == "auto" else lang
-        )
+        result = data.get("result")
+        if result is not None and not isinstance(result, dict):
+            raise RuntimeError(
+                f"whisper-cli ({self.info.id}) returned non-object 'result': "
+                f"{result!r}."
+            )
+        detected = (result or {}).get("language") or ("" if lang == "auto" else lang)
         duration = _audio_duration(audio_path)
         segments = _whispercli_segments(
             data.get("transcription", []), source=self.info.id, language=detected

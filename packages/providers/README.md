@@ -20,3 +20,12 @@ its runtime probe succeeds. `apple` is provided by its optional dependency extra
 install no Python package. `BackendInfo.parallelizable` marks adapters that are
 safe to run concurrently (process-isolated ones); the transcribe stage uses it
 to size its worker pool. See `docs/adr/0005-transcription-backend-strategy.md`.
+
+> **Probe caveat (residual risk).** For `nvidia`/`amd`, `available()` proves
+> *presence*, not *loadability*: it checks that a `whisper-cli` binary, a
+> matching `libggml-*` plugin file, and the vendor GPU device all exist, but not
+> that this build can actually load the plugin. A ggml version/ABI mismatch can
+> still report available and fall back to CPU (whisper-cli warns on stderr). A
+> model-dependent load check would make `available()` expensive, so the failure
+> is surfaced at `transcribe()` time, where a missing or invalid `-ojf` result
+> now raises a clear `RuntimeError` rather than an opaque `FileNotFoundError`.

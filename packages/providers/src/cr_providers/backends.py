@@ -8,17 +8,21 @@ reports itself unavailable and the CLI proceeds without crashing.
 Mapping to compute families (ADR-0005):
 
 - ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE),
-  in process through the ``pywhispercpp`` wheel.
+  preferring the *system* ``whisper-cli`` (Homebrew ``whisper-cpp`` + a ggml
+  ``libggml-metal`` plugin) and falling back to the in-process
+  ``pywhispercpp`` wheel.
 - ``nvidia`` — NVIDIA via the *system* ``whisper-cli`` (CUDA / Vulkan),
   Linux-only probe.
 - ``amd``    — AMD Radeon via the *system* ``whisper-cli`` (Vulkan / ROCm),
   Linux-only probe.
 
-NVIDIA and AMD share one process-isolated code path: no PyPI wheel ships a
-GPU-accelerated ggml backend, so both drive a distro ``whisper-cli`` linked
-against the system ``ggml``, which loads a GPU backend as a plugin (Arch
-``ggml-cuda`` / ``ggml-vulkan`` / ``ggml-hip``). The probe checks for an accepted
-plugin and the vendor's GPU device, not just an import.
+All three now share one process-isolated code path: no PyPI wheel ships a
+GPU-accelerated ggml backend, so each drives a system ``whisper-cli`` linked
+against the system ``ggml``, which loads a GPU backend as a plugin (``ggml-cuda``
+/ ``ggml-vulkan`` / ``ggml-hip`` on Linux; ``ggml-metal`` on macOS). The probe
+checks for an accepted plugin and, on Linux, the vendor's GPU device — not just
+an import. Apple keeps ``pywhispercpp`` as a fallback so a pip-only Mac still
+works.
 """
 
 from __future__ import annotations
@@ -118,8 +122,10 @@ def _whispercpp_available() -> bool:
 class _WhisperCppBackend:
     """In-process whisper.cpp backend (Apple Metal / Core ML / ANE).
 
-    Uses the ``pywhispercpp`` wheel, whose bundled ggml is CPU-only; this is the
-    proven Apple path. AMD does **not** use it — see :class:`_WhisperCliBackend`.
+    Uses the ``pywhispercpp`` wheel. It is now the *fallback* on Apple: the
+    preferred path is the system ``whisper-cli`` + ggml Metal plugin (see
+    :class:`_WhisperCliBackend`), which is process-isolated. The wheel is kept
+    so a Mac that only has the pip extra still works.
     """
 
     def __init__(self, info: BackendInfo) -> None:
@@ -195,28 +201,57 @@ def _audio_duration(audio_path: str) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
-# system ``whisper-cli`` adapter (AMD / NVIDIA: GPU via ggml backend plugins)
+# system ``whisper-cli`` adapter (Apple Metal / AMD / NVIDIA via ggml plugins)
 # --------------------------------------------------------------------------- #
-# PyPI's ``pywhispercpp`` wheels are CPU-only, so AMD and NVIDIA shell out to
-# the distro's ``whisper-cli`` (e.g. Arch ``whisper-cpp``), which links the
-# system ``ggml`` and loads a GPU backend plugin — ``ggml-vulkan``/``ggml-hip``
-# for AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered
-# when an accepted plugin and the vendor's GPU device are present.
+# PyPI's ``pywhispercpp`` wheels are CPU-only, so Apple, AMD and NVIDIA shell out
+# to the system's ``whisper-cli`` (Homebrew ``whisper-cpp`` on macOS; e.g. Arch
+# ``whisper-cpp`` on Linux), which links the system ``ggml`` and loads a GPU
+# backend plugin — ``ggml-metal`` for Apple, ``ggml-vulkan``/``ggml-hip`` for
+# AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered when
+# an accepted plugin (and, on Linux, the vendor's GPU device) is present.
 _WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp")
+# Homebrew bin dirs as a fallback when Homebrew's prefix is absent from PATH
+# (Apple Silicon first, then Intel). `CR_WHISPER_CLI` and PATH still win.
+_WHISPER_CLI_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 # Arch/Fedora install plugin `.so`s directly under a `ggml` dir; Debian/Ubuntu
-# put them under the multiarch tuple. Missing a layout here is a false negative
-# (the probe rejects a machine that can actually run the backend), so list both.
+# put them under the multiarch tuple. macOS/Homebrew installs the ggml backend
+# plugins under `libexec` (not `lib`), reachable via the stable `opt/` symlink
+# or the versioned Cellar. Missing a layout here is a false negative (the probe
+# rejects a machine that can actually run the backend), so list them all.
 _GGML_BACKEND_DIRS = (
     "/usr/lib/ggml",
     "/usr/lib64/ggml",
     "/usr/local/lib/ggml",
     "/usr/lib/x86_64-linux-gnu/ggml",
     "/usr/lib/aarch64-linux-gnu/ggml",
+    # macOS / Homebrew (Apple Silicon prefix, then Intel prefix).
+    "/opt/homebrew/lib",
+    "/opt/homebrew/libexec",
+    "/opt/homebrew/lib/ggml",
+    "/opt/homebrew/opt/ggml/lib",
+    "/opt/homebrew/opt/ggml/libexec",
+    "/opt/homebrew/Cellar/ggml/*/lib",
+    "/opt/homebrew/Cellar/ggml/*/libexec",
+    "/usr/local/lib",
+    "/usr/local/libexec",
+    "/usr/local/lib/ggml",
+    "/usr/local/opt/ggml/lib",
+    "/usr/local/opt/ggml/libexec",
+    "/usr/local/Cellar/ggml/*/lib",
+    "/usr/local/Cellar/ggml/*/libexec",
 )
+# One or more glob patterns per family. Metal is a dynamic backend plugin on
+# macOS; Homebrew ships it as `libggml-metal.so` under `libexec`, while other
+# builds may produce a `.dylib` or embed the `.metal` library.
 _GGML_BACKEND_PATTERNS = {
-    "vulkan": "libggml-vulkan*.so*",
-    "hip": "libggml-hip*.so*",  # whisper.cpp's ROCm/HIP plugin
-    "cuda": "libggml-cuda*.so*",
+    "vulkan": ("libggml-vulkan*.so*",),
+    "hip": ("libggml-hip*.so*",),  # whisper.cpp's ROCm/HIP plugin
+    "cuda": ("libggml-cuda*.so*",),
+    "metal": (
+        "libggml-metal*.so*",
+        "libggml-metal*.dylib",
+        "ggml-metal.metal",
+    ),
 }
 
 
@@ -229,6 +264,11 @@ def _find_whisper_cli() -> str | None:
         path = shutil.which(name)
         if path:
             return path
+    for directory in _WHISPER_CLI_BIN_DIRS:
+        for name in _WHISPER_CLI_CANDIDATES:
+            candidate = os.path.join(directory, name)
+            if os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -236,8 +276,8 @@ def _ggml_backend_dirs() -> tuple[str, ...]:
     """Where to look for ggml backend plugins.
 
     ``CR_GGML_BACKEND_DIRS`` (``os.pathsep``-separated) is prepended, so a
-    from-source ``whisper.cpp`` build — or a non-Arch distro's layout — can
-    point the probe at its own ``libggml-*.so`` directory.
+    from-source ``whisper.cpp`` build — or a non-standard distro/brew layout —
+    can point the probe at its own ``libggml-*.{so,dylib}`` directory.
     """
     extra = os.environ.get("CR_GGML_BACKEND_DIRS", "")
     return tuple(p for p in extra.split(os.pathsep) if p) + _GGML_BACKEND_DIRS
@@ -246,13 +286,14 @@ def _ggml_backend_dirs() -> tuple[str, ...]:
 def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
     """Path to a ggml GPU backend plugin for any accepted backend family."""
     for family in families:
-        pattern = _GGML_BACKEND_PATTERNS.get(family)
-        if not pattern:
+        patterns = _GGML_BACKEND_PATTERNS.get(family)
+        if not patterns:
             continue
-        for directory in _ggml_backend_dirs():
-            matches = sorted(glob.glob(os.path.join(directory, pattern)))
-            if matches:
-                return matches[0]
+        for pattern in patterns:
+            for directory in _ggml_backend_dirs():
+                matches = sorted(glob.glob(os.path.join(directory, pattern)))
+                if matches:
+                    return matches[0]
     return None
 
 
@@ -415,20 +456,20 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
 
 
 class _WhisperCliBackend:
-    """System ``whisper-cli`` backend, GPU-accelerated by a ggml plugin.
+    """System ``whisper-cli`` backend, accelerated by a ggml backend plugin.
 
-    Subclasses declare which ggml backend families they accept and how to probe
-    the vendor's GPU device, so AMD and NVIDIA share one process-isolated code
-    path (and therefore the same parallel transcription).
+    Subclasses declare which ggml backend families they accept, how to probe the
+    vendor's GPU device, and which OS they run on, so Apple, AMD and NVIDIA share
+    one process-isolated code path (and the same parallel transcription).
 
     Residual risk in ``available()``: the probe proves that a ``whisper-cli``
-    binary and a matching ``libggml-*`` *file* are present plus a vendor device,
-    but not that this build can *load* the plugin (a ggml ABI/build mismatch
-    still passes). Such a build warns on stderr and may silently fall back to
-    CPU; the probe cannot tell without a model-dependent run, which would make
-    ``available()`` expensive. The failure surfaces at ``transcribe()`` time,
-    where a missing/invalid ``-ojf`` result now raises a clear ``RuntimeError``
-    instead of an unhelpful ``FileNotFoundError``.
+    binary and a matching ``libggml-*`` *file* are present plus (on Linux) a
+    vendor device, but not that this build can *load* the plugin (a ggml
+    ABI/build mismatch still passes). Such a build warns on stderr and may
+    silently fall back to CPU; the probe cannot tell without a model-dependent
+    run, which would make ``available()`` expensive. The failure surfaces at
+    ``transcribe()`` time, where a missing/invalid ``-ojf`` result now raises a
+    clear ``RuntimeError`` instead of an unhelpful ``FileNotFoundError``.
     """
 
     def __init__(
@@ -437,14 +478,16 @@ class _WhisperCliBackend:
         *,
         gpu_backends: tuple[str, ...],
         device_check: Callable[[], bool],
+        system: str = "Linux",
     ) -> None:
         self.info = info
         self._gpu_backends = gpu_backends
         self._device_check = device_check
+        self._system = system
 
     def available(self) -> bool:
         return (
-            platform.system() == "Linux"
+            platform.system() == self._system
             and _find_whisper_cli() is not None
             and _find_ggml_gpu_backend(self._gpu_backends) is not None
             and self._device_check()
@@ -514,21 +557,64 @@ class _WhisperCliBackend:
         )
 
 
-class AppleBackend(_WhisperCppBackend):
-    """Apple Silicon: Metal / Core ML / ANE via whisper.cpp."""
+def _has_metal_device() -> bool:
+    """Metal is present on every macOS host (Apple Silicon and recent Intel).
+
+    There is no DRM/``nvidia-smi`` equivalent to probe: the Metal plugin file
+    plus the ``whisper-cli`` binary is the capability check, so this is a
+    constant-true device predicate (see :class:`_WhisperCliBackend`).
+    """
+    return True
+
+
+class AppleBackend:
+    """Apple Silicon: Metal / Core ML / ANE via whisper.cpp.
+
+    Prefers the same process-isolated system ``whisper-cli`` path as AMD and
+    NVIDIA — a Homebrew ``whisper-cpp`` links the system ``ggml`` and loads the
+    ``libggml-metal`` plugin. When the CLI or the Metal plugin is missing, it
+    falls back to the in-process ``pywhispercpp`` wheel, so a pip-only Mac still
+    works. The backend id stays ``apple`` either way.
+    """
 
     def __init__(self) -> None:
-        super().__init__(
-            BackendInfo(
-                id="apple",
-                vendor="Apple",
-                frameworks=("Metal", "Core ML", "ANE"),
-                description="macOS Apple Silicon ASR via whisper.cpp (Metal / Core ML / ANE).",
-            )
+        self.info = BackendInfo(
+            id="apple",
+            vendor="Apple",
+            frameworks=("Metal", "Core ML", "ANE"),
+            description="macOS Apple Silicon ASR via whisper.cpp "
+            "(system whisper-cli + ggml/Metal, or in-process pywhispercpp).",
+        )
+        self._inprocess = _WhisperCppBackend(self.info)
+        self._cli = _WhisperCliBackend(
+            self.info,
+            gpu_backends=("metal",),
+            device_check=_has_metal_device,
+            system="Darwin",
         )
 
     def available(self) -> bool:
-        return platform.system() == "Darwin" and _whispercpp_available()
+        return platform.system() == "Darwin" and (
+            self._cli.available() or self._inprocess.available()
+        )
+
+    def transcribe(
+        self,
+        audio_path: str,
+        *,
+        language: str | None = None,
+        model: str | None = None,
+        model_dir: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
+        backend = self._cli if self._cli.available() else self._inprocess
+        return backend.transcribe(
+            audio_path,
+            language=language,
+            model=model,
+            model_dir=model_dir,
+            initial_prompt=initial_prompt,
+        )
 
 
 class AmdBackend(_WhisperCliBackend):

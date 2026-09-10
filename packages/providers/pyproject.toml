@@ -22,7 +22,7 @@ cr-core = { workspace = true }
 # default `uv sync` — they are activated by name so the core stays backend-
 # agnostic and a clean CI/dev env does not need a GPU framework.
 #
-#   uv sync --all-packages --extra apple     (Apple Silicon: whisper.cpp/Metal)
+#   uv sync --all-packages --extra apple     (Apple: pywhispercpp fallback)
 #   uv sync --all-packages --extra nvidia    (NVIDIA: system stack, see below)
 #   uv sync --all-packages --extra amd       (AMD Radeon: system stack, see below)
 #   uv sync --all-packages --extra all       (everything that has Python deps)
@@ -31,11 +31,13 @@ cr-core = { workspace = true }
 # a backend is only usable when its runtime checks are satisfied (see
 # `cr_providers.base.Backend.available()`).
 #
-# `nvidia` and `amd` are the exception to the "extra installs the stack" rule:
-# no PyPI wheel ships a GPU-accelerated ggml backend, so both carry no Python
-# dependency. The capability comes from the *system* `whisper-cli` plus a ggml
-# GPU backend plugin (e.g. Arch `whisper-cpp` + `ggml-cuda`/`ggml-vulkan`/
-# `ggml-hip`); `available()` probes the plugin and the vendor GPU device.
+# Every family prefers the *system* `whisper-cli` plus a ggml backend plugin
+# (macOS: Homebrew `whisper-cpp` + `ggml-metal`; Linux: e.g. Arch `whisper-cpp`
+# + `ggml-cuda`/`ggml-vulkan`/`ggml-hip`), because no PyPI wheel ships a
+# GPU-accelerated ggml backend. So `nvidia`/`amd` carry no Python dependency and
+# `apple` carries `pywhispercpp` only as a fallback for a pip-only Mac;
+# `available()` probes the CLI, the plugin, the platform and (on Linux) the
+# vendor GPU device.
 [project.optional-dependencies]
 apple = ["pywhispercpp>=1.1.3"]
 nvidia = []

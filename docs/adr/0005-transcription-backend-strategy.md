@@ -23,24 +23,31 @@ Date: 2026-09-09
 - [DECISION] Define a single vendor-neutral backend interface in `cr-providers`
   (`Backend`, with `info`, `available()`, `transcribe()`).
 - [DECISION] Provide three backend adapters, each a **capability**:
-  - `apple`   — Apple Silicon (Metal / Core ML / ANE), via `whisper.cpp`
-    (`pywhispercpp`, in process);
+  - `apple`   — Apple Silicon (Metal / Core ML / ANE), via the **system
+    `whisper-cli`** (`brew install whisper-cpp`) linked against a `ggml` Metal
+    plugin; falls back to the in-process `pywhispercpp` wheel when the CLI or
+    plugin is absent, so a pip-only Mac still works;
   - `nvidia`  — NVIDIA CUDA / Vulkan, via the **system `whisper-cli`** (the
     same process-isolated path as `amd`);
   - `amd`     — AMD Radeon (Vulkan / ROCm), via the **system `whisper-cli`**
     (subprocess), because no PyPI wheel ships a Vulkan/HIP ggml backend.
 - [DECISION] A backend is usable only when its runtime probe succeeds
-  (`available()`). The `apple` extra provides its stack; for `nvidia`/`amd` the
-  stack is a **system** one (`whisper-cpp` + a ggml GPU plugin — `ggml-cuda`/
+  (`available()`). The `apple` extra still installs the `pywhispercpp` fallback;
+  the preferred Apple path, and all of `nvidia`/`amd`, is a **system** stack
+  (`whisper-cpp` + a ggml GPU plugin — `ggml-metal` on macOS, `ggml-cuda`/
   `ggml-vulkan` for NVIDIA, `ggml-vulkan`/`ggml-hip` for AMD), so the probe
-  requires Linux, `whisper-cli` on PATH, an accepted plugin (search dirs are
-  overridable via `CR_GGML_BACKEND_DIRS`), and the vendor's GPU device.
-  `clearrecord backends` lists the current availability. The default dev/CI env
-  installs **no** vendor framework.
+  requires the platform (`Darwin` for Apple, `Linux` for the others),
+  `whisper-cli` on PATH (Homebrew bin dirs are a fallback), an accepted plugin
+  (search dirs are overridable via `CR_GGML_BACKEND_DIRS`), and — on Linux — the
+  vendor's GPU device. Metal needs no separate device probe: the plugin plus the
+  CLI *is* the check. `clearrecord backends` lists the current availability. The
+  default dev/CI env installs **no** vendor framework.
 - [DECISION] Backends declare `parallelizable` in `BackendInfo` — true for the
   process-isolated `whisper-cli` adapters (`nvidia`, `amd`). The transcribe stage
   feeds pending chunks through a bounded worker pool for those and serializes
-  in-process ones (Apple), which share model state.
+  in-process ones. `apple` stays `False`: its CLI path is process-isolated, but
+  its `pywhispercpp` fallback shares model state, so the safe common denominator
+  is sequential.
 - [DECISION] `cr-core` never imports a vendor stack; it only depends on the
   interface. Vendor stacks are lazy-imported inside `cr-providers`.
 
@@ -62,21 +69,31 @@ Date: 2026-09-09
   natural high-throughput CUDA option), **superseded**: it runs in-process and
   holds shared model state, so it cannot share the process-isolated parallel
   path, and PyPI ships no GPU-accelerated `pywhispercpp`. NVIDIA now uses the
-  same system `whisper-cli` (ggml CUDA/Vulkan) path as AMD.
+  same system `whisper-cli` (ggml CUDA/Vulkan) path as AMD. `apple` follows the
+  same reasoning: Homebrew's `whisper-cpp` links a Metal ggml plugin, so the
+  wheel is only a fallback.
 
 ## Consequences / review hook
 
-- Adding a backend = one adapter + one `available()` probe (plus, for the Apple
-  wheel, one optional dependency extra). Each new backend must stay behind the
-  interface and keep `cr-core` vendor-free (ADR-0003).
-- **Apple is proven** (Apple M4, whisper.cpp/Metal, 16 kHz normalize + 10 ms
-  time-scale calibration). **AMD is proven** on an RX 7900 XTX (RADV NAVI31,
+- Adding a backend = one adapter + one `available()` probe (plus an optional
+  dependency extra where a wheel is the stack). Each new backend must stay behind
+  the interface and keep `cr-core` vendor-free (ADR-0003).
+- **Apple is proven** (Apple M4). It first landed on the in-process
+  `pywhispercpp` wheel (16 kHz normalize + 10 ms time-scale calibration); it now
+  **prefers the system `whisper-cli` + ggml Metal** path, with the wheel kept as
+  a fallback. On Homebrew's `ggml` 0.23.0 the Metal plugin is a **`.so`** under
+  `<prefix>/Cellar/ggml/<version>/libexec/` (`libggml-metal.so`), not a `.dylib`
+  in `lib` — the probe globs both `libexec` and `lib`, `opt/` and Cellar.
+  **AMD is proven** on an RX 7900 XTX (RADV NAVI31,
   Mesa 26.2.2): `whisper-cli` loads `libggml-vulkan.so`, and on 300 s of a real
   tape `ggml-small` ran 6.5 s wall / 6.4 s compute versus 46.0 s on CPU (~7×
   wall, encoder ~80×); end-to-end, 4 sources × ~80 min ran in 2:55. The
   `nvidia` adapter shares that path; its hot-test target is an RTX 4090
   (sm_89 / `ggml-cuda`).
-- The NVIDIA/AMD mechanism deliberately deviates from "the extra installs the
-  stack": their extras are no-op markers and the capability is system-provided.
-  Revisit if a maintained GPU `pywhispercpp` wheel appears (the subprocess could
-  then be retired), or if a hardware family's stack changes materially.
+- The mechanism deliberately deviates from "the extra installs the stack": for
+  `nvidia`/`amd` the extras are no-op markers and the capability is
+  system-provided, and on macOS the *preferred* Apple stack is system-provided
+  (`brew install whisper-cpp`) while the `apple` extra provides only the
+  `pywhispercpp` fallback. Revisit once the system CLI path is hot-tested on
+  Apple hardware: the wheel fallback (and the `apple` extra) could then be
+  retired; also revisit if a hardware family's stack changes materially.

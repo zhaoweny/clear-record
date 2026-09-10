@@ -56,19 +56,23 @@ three major desktop compute families behind one interface:
 
 | id | Vendor | Frameworks | Stack |
 |---|---|---|---|
-| `apple` | Apple Silicon | Metal, Core ML, ANE | `whisper.cpp` |
+| `apple` | Apple Silicon | Metal, Core ML, ANE | system `whisper-cli` + `ggml-metal` (fallback: `pywhispercpp`) |
 | `nvidia` | NVIDIA | CUDA, Vulkan | system `whisper-cli` + `ggml-cuda`/`ggml-vulkan` |
 | `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
 Each backend is a *capability*, not a hard dependency — it is usable only when
-its runtime probe succeeds. `apple` installs its stack with `--extra apple`;
-`nvidia` and `amd` use the system `whisper-cli` (Arch: `whisper-cpp` +
-`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and their extras install no Python
-package. `clearrecord backends` shows what is available on this machine. See
+its runtime probe succeeds. All three prefer the system `whisper-cli`
+(macOS/Homebrew: `whisper-cpp` + `ggml-metal`; Arch: `whisper-cpp` +
+`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and the `nvidia`/`amd` extras install no
+Python package. Apple keeps the `pywhispercpp` wheel (`--extra apple`) as a
+fallback, so a pip-only Mac still works. `clearrecord backends` shows what is
+available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
-**Installing a `whisper-cli` GPU backend** (`nvidia` / `amd`):
+**Installing a `whisper-cli` GPU backend** (`apple` / `nvidia` / `amd`):
 
+- macOS: `brew install whisper-cpp` (pulls `ggml`; the Metal plugin is a
+  `libggml-metal.so` under the ggml `libexec`).
 - Arch: `sudo pacman -S --needed whisper-cpp ggml-cuda` (or `ggml-vulkan`,
   `ggml-hip`).
 - From source: `cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release &&
@@ -156,9 +160,11 @@ uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple --model medium
 ```
 
-Processing on an Apple Silicon Mac (Metal via `whisper.cpp`) is the intended
-always-on-node setup from the project concept; a 1–3 h tape is a batch job, not
-an interactive one.
+Processing on an Apple Silicon Mac is the intended always-on-node setup from the
+project concept; a 1–3 h tape is a batch job, not an interactive one. The
+`apple` backend **prefers the system `whisper-cli` + `ggml-metal`** path
+(`brew install whisper-cpp`) and falls back to the `pywhispercpp` wheel that
+`--extra apple` installs, so both a Homebrew Mac and a pip-only Mac work.
 
 ## Long tapes, diarization & glossary
 
@@ -175,7 +181,8 @@ clearrecord transcribe <dir> --backend apple --model medium \
 **Parallel + pipelined.** Pending chunks across *all* sources are fed through
 one bounded worker pool, so the GPU stays fed (a single `whisper-cli` peaks well
 below saturation). `--jobs 0` (default) picks a small adaptive fan-out for
-process-isolated backends and serializes in-process ones (Apple);
+process-isolated backends and serializes in-process ones (e.g. the Apple wheel
+fallback);
 `--jobs N` or `CR_JOBS=N` override. Measured on an RX 7900 XTX: four sources ×
 300 s fell from 37.5 s to 8.8 s (~4.3×).
 

@@ -97,6 +97,9 @@ def test_find_whisper_cli_rejects_generic_whisper(monkeypatch) -> None:
     """Only the whisper.cpp CLI counts; a bare `whisper` (e.g. OpenAI's) must
     not satisfy the probe, since it lacks the `-ojf`/`-of` interface."""
     monkeypatch.delenv("CR_WHISPER_CLI", raising=False)
+    # Isolate from the Homebrew bin-dir fallback so the test stays
+    # hardware-independent (a dev Mac may have a real /opt/homebrew/bin).
+    monkeypatch.setattr(backends, "_WHISPER_CLI_BIN_DIRS", ())
     monkeypatch.setattr(
         backends.shutil,
         "which",

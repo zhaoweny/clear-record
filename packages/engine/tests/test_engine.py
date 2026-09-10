@@ -365,6 +365,22 @@ def test_diarize_auto_keeps_single_speaker() -> None:
     assert len(set(labels)) == 1
 
 
+def test_diarize_auto_single_speaker_worst_case() -> None:
+    """Pin the *worst* single-speaker scene, not an easy one.
+
+    Across durations 6-30 s and seeds 0-19 the highest silhouette any
+    single-speaker ``make_scene`` reaches is ~0.399 (8 s, seed 1), the tightest
+    case against ``_MIN_SILHOUETTE``. Auto mode must still call it one speaker:
+    lowering the floor below ~0.399 makes this scene split and fails here."""
+    from cr_engine import SYNTH_SR, diarize, make_scene
+
+    scene, events = make_scene(duration_s=8.0, n_speakers=1, seed=1)
+    segments = [(e["start"], e["end"]) for e in events]
+
+    labels = diarize(scene, SYNTH_SR, segments)
+    assert len(set(labels)) == 1
+
+
 def test_diarize_auto_splits_two_separated_voices() -> None:
     """Auto model-count can actually *find* a split: two strongly separated
     voices (low-pass vs high-pass noise, silhouette ~0.51) must yield exactly

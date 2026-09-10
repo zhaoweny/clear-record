@@ -10,7 +10,7 @@ speakers either given or estimated by silhouette score.
 It is not a state-of-the-art diarizer and is honest about that — it is the
 default that always works offline, behind a seam a stronger provider can replace.
 Auto model-count is deliberately conservative: a single-speaker synthetic scene
-can score up to ~0.35, so it only splits when the features separate clearly.
+can score up to ~0.40, so it only splits when the features separate clearly.
 """
 
 from __future__ import annotations
@@ -20,12 +20,20 @@ import numpy as np
 __all__ = ["diarize", "logmel_stats", "pitch_stats"]
 
 # Minimum silhouette score for the automatic model count to accept more than one
-# speaker. Measured reality: single-speaker synthetic scenes (``make_scene``)
-# score up to ~0.35, and ``make_scene`` multi-speaker scenes score <=~0.29, so a
-# clearly *separated* two-voice scene measures ~0.51. Auto mode is therefore
-# deliberately conservative: it will not split a scene whose features do not
-# separate, and only accepts a second speaker above this floor.
-_MIN_SILHOUETTE = 0.40
+# speaker. The floor is set from measured behaviour, not a guess:
+#   - single-speaker ``make_scene`` scenes score up to 0.399 (worst measured:
+#     duration 8 s, seed 1) across durations 6-30 s and seeds 0-19;
+#   - a clearly *separated* two-voice synthetic scene scores ~0.51;
+#   - the marginal two-voice case pinned by the tests scores ~0.427.
+# Those two constraints (worst single-speaker < floor <= marginal two-voice) are
+# only ~0.027 apart, so there is no room for a comfortable gap. 0.413 is the
+# value that best separates them, leaving a *thin* ~0.014 on each side. This is a
+# real limitation of the cheap log-mel + pitch fingerprint, not a safety cushion.
+# Note the documented limitation that ``make_scene`` multi-speaker scenes usually
+# measure <=~0.32 (the generator's per-speaker timbre differences are subtle) and
+# therefore stay at one speaker; a rare scene that happens to separate well does
+# split. Auto mode only accepts a second speaker above this floor.
+_MIN_SILHOUETTE = 0.413
 
 
 # --------------------------------------------------------------------------- #

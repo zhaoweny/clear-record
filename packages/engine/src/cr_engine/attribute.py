@@ -54,11 +54,13 @@ _SILENCE_RATIO = 1e-3
 # the identified channels did not, and we decline to invent a speaker. The
 # compared quantity is a *ratio of ratios* (candidate window/level over room
 # window/level), so it is invariant to microphone and room gain. Measured on
-# make_crosstalk_scene with a mix room (gains randomised 0.3-3x, 40 seeds):
-# a covered speaker scores >= ~1.25 and unmiked bleed <= ~0.69 for the common
-# 1-3 close mics down to -6 dB (<= ~0.94 even with more speakers than mics), so
-# 1.0 sits between them and the previous 0.05 left unmiked speech ungated across
-# the realistic -6..-12 dB bleed range.
+# make_crosstalk_scene with a mix room (gains randomised 0.3-3x, 40 seeds) in the
+# **non-overlapping** regime — the generator's default overlaps utterances, where
+# this separation collapses (covered min ~0.74, bleed max ~2.3), so the gate is
+# scoped to non-overlapping speech: a covered speaker scores >= ~1.25 and unmiked
+# bleed <= ~0.69 for the common 1-3 close mics down to -6 dB (<= ~0.94 even with
+# more speakers than mics), so 1.0 sits between them and the previous 0.05 left
+# unmiked speech ungated across the realistic -6..-12 dB bleed range.
 _ROOM_SHARE = 1.0
 _FRAME_S = 0.02
 

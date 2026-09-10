@@ -71,10 +71,13 @@ by `clearrecord attribute` → `cr_engine.attribute.attribute_segments` (relativ
 gain-normalized per-source energy). The room is excluded from the candidate set
 even when it is also listed in the manifest, so it is never emitted as a speaker.
 The gate is calibrated for a room reference that carries every speaker at a
-comparable level and for cross-talk down to about −6 dB (weaker bleed is easier);
-a room mic far below the per-mic level can leave a covered speaker uncorrected,
-in which case attribution conservatively keeps the incoming speaker. The badness
-is synthesized with exact ground truth by `cr_engine.synth.make_crosstalk_scene`.
+comparable level, for cross-talk down to about −6 dB (weaker bleed is easier), and
+for **non-overlapping** speech — overlapping utterances blur the level comparison,
+so the fence is scoped to that regime. A room mic far below the per-mic level can
+leave a covered speaker uncorrected, in which case attribution conservatively keeps
+the incoming speaker. The badness is synthesized with exact ground truth by
+`cr_engine.synth.make_crosstalk_scene` (`non_overlapping=True` for the calibrated
+regime).
 `[OPEN]` Whether a room reference can *name* a speaker, rather than gate/fall
 back, remains undetermined; here it is a witness, never a speaker candidate.
 

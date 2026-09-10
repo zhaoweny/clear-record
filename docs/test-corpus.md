@@ -68,10 +68,15 @@ neutral, speaker-independent witness: it shows that a segment was spoken even
 when no identified per-mic channel is loud in that window, so attribution can
 keep the incoming speaker instead of guessing a bleed channel. This is implemented
 by `clearrecord attribute` → `cr_engine.attribute.attribute_segments` (relative,
-gain-normalized per-source energy), and the badness is synthesized with exact
-ground truth by `cr_engine.synth.make_crosstalk_scene`. `[OPEN]` Whether a room
-reference can *name* a speaker, rather than gate/fall back, remains undetermined;
-here it is a witness, never a speaker candidate.
+gain-normalized per-source energy). The room is excluded from the candidate set
+even when it is also listed in the manifest, so it is never emitted as a speaker.
+The gate is calibrated for a room reference that carries every speaker at a
+comparable level and for cross-talk down to about −6 dB (weaker bleed is easier);
+a room mic far below the per-mic level can leave a covered speaker uncorrected,
+in which case attribution conservatively keeps the incoming speaker. The badness
+is synthesized with exact ground truth by `cr_engine.synth.make_crosstalk_scene`.
+`[OPEN]` Whether a room reference can *name* a speaker, rather than gate/fall
+back, remains undetermined; here it is a witness, never a speaker candidate.
 
 ### Anchor 3 — John Gruber's *The Talk Show* (live, single mixed stream)
 

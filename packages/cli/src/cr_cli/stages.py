@@ -417,6 +417,8 @@ def attribute(directory: str, mixed_source: str | None = None):
         if mixed is None:
             raise SystemExit(f"[attribute] no source '{mixed_source}' in manifest")
     offsets = dict(alignment.offsets) if alignment else {}
+    # The room is a witness, never a speaker: keep it out of the candidate set.
+    candidates = [s for s in sources if mixed is None or s.id != mixed.id]
 
     order = [sid for sid, segs in per_source.items() if segs]
     flat = [seg for sid in order for seg in per_source[sid]]
@@ -424,7 +426,7 @@ def attribute(directory: str, mixed_source: str | None = None):
         print("[attribute] no segments to attribute")
         return per_source
 
-    attributed = attribute_segments(flat, sources, offsets=offsets, mixed=mixed)
+    attributed = attribute_segments(flat, candidates, offsets=offsets, mixed=mixed)
     changed = 0
     pos = 0
     for sid in order:

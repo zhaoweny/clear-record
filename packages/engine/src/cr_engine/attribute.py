@@ -18,8 +18,19 @@ well. A room mic is a neutral, speaker-independent witness: it shows that a
 segment was spoken even when no identified per-source channel is loud in that
 window, so attribution can keep the incoming speaker instead of guessing a
 bleed source. The mixed reference is deliberately **not** a speaker candidate (it
-has no single speaker identity); it is used as a presence gate. See
+has no single speaker identity); it is used as a presence gate. It is excluded
+from the candidate set even when it is also listed in ``sources`` -- the CLI
+passes the manifest sources and separately names the room. See
 ``docs/test-corpus.md``.
+
+Supported gate range: the gate compares a candidate's gain-normalized window
+level against the room's, so it is invariant to microphone and room gain. It is
+calibrated for a room/mixed reference that carries every speaker at a comparable
+level (a "room-eye view"), and for the common one-to-three close mics with cross-
+talk of about -6 dB or weaker; under those conditions covered speakers clear the
+gate and unmiked bleed does not. A room reference far below the per-mic level, or
+much stronger cross-talk (near 0 dB), can still misclassify -- attribution then
+keeps the incoming speaker rather than invent a room identity.
 """
 
 from __future__ import annotations
@@ -40,8 +51,15 @@ __all__ = ["attribute_segments"]
 _SILENCE_RATIO = 1e-3
 # When a room reference is present, a candidate must carry at least this share of
 # the room's normalized level to claim a segment; otherwise the room saw speech
-# the identified channels did not, and we decline to invent a speaker.
-_ROOM_SHARE = 0.05
+# the identified channels did not, and we decline to invent a speaker. The
+# compared quantity is a *ratio of ratios* (candidate window/level over room
+# window/level), so it is invariant to microphone and room gain. Measured on
+# make_crosstalk_scene with a mix room (gains randomised 0.3-3x, 40 seeds):
+# a covered speaker scores >= ~1.25 and unmiked bleed <= ~0.69 for the common
+# 1-3 close mics down to -6 dB (<= ~0.94 even with more speakers than mics), so
+# 1.0 sits between them and the previous 0.05 left unmiked speech ungated across
+# the realistic -6..-12 dB bleed range.
+_ROOM_SHARE = 1.0
 _FRAME_S = 0.02
 
 
@@ -56,20 +74,29 @@ def _frame_energies(x: np.ndarray, sr: int, frame_s: float) -> np.ndarray:
     return np.mean(frames**2, axis=1)
 
 
-def _level(x: np.ndarray, sr: int, frame_s: float) -> float:
-    """Robust speech level: mean energy of the loudest half of the frames.
+# A frame within this many dB of the source's own peak counts as *active*. The
+# floor is relative to the source, so it is gain-independent; frames below it are
+# silence/room tone and must not drag the source's level down.
+_ACTIVE_FLOOR = 1e-3  # -30 dB relative to the source peak
 
-    A plain global RMS would include long silences and make a mostly-silent
-    channel look artificially quiet; the loudest-half level tracks the source's
-    speech level instead.
+
+def _level(x: np.ndarray, sr: int, frame_s: float) -> float:
+    """Robust speech level: mean energy of the source's *active* frames.
+
+    A plain global RMS (or the loudest-half mean) includes long silences and
+    makes a sparse channel look artificially quiet, which inflates its
+    gain-normalized window energy and lets bleed claim windows. Averaging only
+    frames within ~30 dB of the source's own peak tracks the speech level, so a
+    microphone's cross-talk ratio reflects the bleed attenuation.
     """
     energies = _frame_energies(x, sr, frame_s)
     if energies.size == 0:
         return 1e-12
-    threshold = float(np.percentile(energies, 50.0))
-    loud = energies[energies >= threshold]
-    level = float(loud.mean()) if loud.size else float(energies.mean())
-    return max(level, 1e-12)
+    peak = float(energies.max())
+    if peak <= 0.0:
+        return 1e-12
+    active = energies[energies >= peak * _ACTIVE_FLOOR]
+    return max(float(active.mean()) if active.size else peak, 1e-12)
 
 
 def _window_energy(x: np.ndarray, sr: int, start_s: float, end_s: float) -> float:
@@ -98,8 +125,9 @@ def attribute_segments(
     candidate can be read in the segment's reference window. ``sources`` supplies
     the caller-provided source -> speaker identity via ``Source.label`` (falling
     back to the id). With ``mixed`` given, its room energy gates weak candidate
-    claims (see the module docstring). Segments that no candidate can claim keep
-    their incoming speaker.
+    claims (see the module docstring) and any entry in ``sources`` with the same
+    id is skipped as a candidate, so the room is never emitted as a speaker.
+    Segments that no candidate can claim keep their incoming speaker.
     """
     if not segments:
         return list(segments)
@@ -108,6 +136,8 @@ def attribute_segments(
     loaded: dict[str, tuple[np.ndarray, int]] = {}
     levels: dict[str, float] = {}
     for src in sources:
+        if mixed is not None and src.id == mixed.id:
+            continue  # the room is a witness, never a speaker candidate
         try:
             data, sr = read_audio(src.path, target_sr)
         except Exception:

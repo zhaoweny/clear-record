@@ -145,6 +145,11 @@ def mix_crosstalk(
     bleeds in at ``bleed_db`` (e.g. ``-6`` for strong lav cross-talk, very
     negative for an effectively isolated channel). This is the "each mic hears
     more than one speaker" model the energy attributor must undo.
+
+    The mix is **not renormalized**: adding bleed can push a device slightly above
+    the summed-scene peak (measured <= ~1.01x), which is harmless for float audio
+    and for the gain-normalized attributor. Renormalizing would instead change the
+    dominant/bleed ratio the model exists to reproduce.
     """
     if not stems:
         raise ValueError("mix_crosstalk needs at least one stem")

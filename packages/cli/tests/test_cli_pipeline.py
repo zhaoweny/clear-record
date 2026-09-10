@@ -152,6 +152,57 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
             assert seg.speaker == truth[token]
 
 
+def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
+    """B1 regression: the mixed/room source lives in the manifest, so the CLI must
+    keep it out of the candidate set -- it is a witness, never a speaker.
+
+    Three speakers, only two lavs, and the room recorded as a manifest source.
+    Without the exclusion the loud room wins the energy comparison and is emitted
+    as a speaker for unmiked speech, contradicting the documented contract."""
+    import numpy as np
+    import soundfile as sf
+
+    from cr_core import Segment
+    from cr_engine import SYNTH_SR, make_speaker_stems, mix_crosstalk
+
+    from cr_cli import workspace as ws
+
+    stems, events = make_speaker_stems(
+        duration_s=16.0, n_speakers=3, seed=7, non_overlapping=True
+    )
+    wd = tmp_path / "ctroom"
+    wd.mkdir()
+    for i in range(2):
+        sf.write(
+            str(wd / f"mic{i}.wav"), mix_crosstalk(stems, i, bleed_db=-12.0), SYNTH_SR
+        )
+    sf.write(str(wd / "room.wav"), np.sum(stems, axis=0).astype(np.float32), SYNTH_SR)
+
+    sources = stages.ingest(str(wd))
+    labels = {s.id: s.label for s in sources}
+    per_source: dict[str, list[Segment]] = {s.id: [] for s in sources}
+    expected: dict[str, str] = {}
+    for i, e in enumerate(events):
+        if e["speaker"] < 2:  # covered: correct the bleed-dominated channel
+            wrong = f"mic{1 - e['speaker']}"
+            expected[f"w{i}"] = labels[f"mic{e['speaker']}"]
+        else:  # unmiked: the room gate keeps the incoming speaker
+            wrong = "mic1"
+            expected[f"w{i}"] = labels["mic1"]
+        per_source[wrong].append(
+            Segment(e["start"], e["end"], f"w{i}", wrong, labels[wrong])
+        )
+    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+
+    stages.attribute(str(wd), mixed_source="room")
+    per_source, _ = ws.load_segments(wd)
+    emitted = [s for sid in per_source for s in per_source[sid]]
+
+    assert labels["room"] not in {s.speaker for s in emitted}
+    assert all(s.speaker != labels["room"] for s in emitted)
+    assert all(s.speaker == expected[s.text] for s in emitted)
+
+
 def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""

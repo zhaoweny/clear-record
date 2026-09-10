@@ -8,6 +8,9 @@ wt-*
 # Local issue tracker (see docs/agents/issue-tracker.md)
 .scratch/
 
+# Local pipeline workspace (sources + derived artifacts; environment-local only)
+workspace/
+
 # Environment files (keep .env.example if added)
 .env
 .env.*

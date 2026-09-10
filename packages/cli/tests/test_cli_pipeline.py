@@ -380,3 +380,106 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     stages.glossary(str(wd), add=["Zhaoweny"])
     stages.transcribe(str(wd), "fake", chunk_seconds=3.0, overlap_seconds=1.0)
     assert Fake.calls > first
+
+
+def test_resolve_jobs_is_adaptive() -> None:
+    from cr_cli.stages import _resolve_jobs
+    from cr_providers import BackendInfo
+
+    class _B:
+        pass
+
+    parallel = _B()
+    parallel.info = BackendInfo(
+        id="p", vendor="t", frameworks=(), description="d", parallelizable=True
+    )
+    serial = _B()
+    serial.info = BackendInfo(id="s", vendor="t", frameworks=(), description="d")
+
+    assert _resolve_jobs(serial, 10, 4) == 1  # in-process -> serialized
+    assert _resolve_jobs(parallel, 1, 4) == 1  # no work to parallelize
+    assert _resolve_jobs(parallel, 10, 2) == 2  # explicit request wins
+    assert 1 <= _resolve_jobs(parallel, 10, 0) <= 4  # bounded adaptive default
+
+
+def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> None:
+    """A process-isolated backend's pending chunks run overlapped, and the
+    merged result is still per-source complete."""
+    import threading
+    import time
+
+    from cr_cli import stages
+    from cr_core import Segment, TranscriptionResult
+    from cr_providers import BackendInfo
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(8 * sr, dtype=np.float64) / sr
+    sf.write(
+        str(wd / "a.wav"), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr
+    )
+    stages.ingest(str(wd), split="mix")
+
+    class Fake:
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+        ):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                data, file_sr = sf.read(audio_path)
+                dur = len(data) / file_sr
+                return TranscriptionResult(
+                    source="fake",
+                    segments=(
+                        Segment(
+                            start=0.0,
+                            end=round(dur, 3),
+                            text="chunk",
+                            source="fake",
+                            confidence=0.5,
+                        ),
+                    ),
+                    language="en",
+                    backend="fake",
+                    model="fake",
+                    audio_duration=dur,
+                )
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    fake = Fake()
+    monkeypatch.setattr(stages, "get_backend", lambda _id: fake)
+
+    per_source = stages.transcribe(
+        str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=4
+    )
+    assert fake.max_active > 1  # chunks actually overlapped
+    assert per_source["a"]  # and the merged output is complete

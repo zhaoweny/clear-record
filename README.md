@@ -57,14 +57,14 @@ three major desktop compute families behind one interface:
 | id | Vendor | Frameworks | Stack |
 |---|---|---|---|
 | `apple` | Apple Silicon | Metal, Core ML, ANE | `whisper.cpp` |
-| `nvidia` | NVIDIA | CUDA, cuBLAS, cuDNN | `faster-whisper` / CTranslate2 |
+| `nvidia` | NVIDIA | CUDA, Vulkan | system `whisper-cli` + `ggml-cuda`/`ggml-vulkan` |
 | `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
 Each backend is a *capability*, not a hard dependency — it is usable only when
-its runtime probe succeeds. `apple`/`nvidia` install their stack with
-`--extra <backend>`; `amd` uses the system `whisper-cli` (Arch: `whisper-cpp` +
-`ggml-vulkan`) and `--extra amd` installs no Python package. `clearrecord
-backends` shows what is available on this machine. See
+its runtime probe succeeds. `apple` installs its stack with `--extra apple`;
+`nvidia` and `amd` use the system `whisper-cli` (Arch: `whisper-cpp` +
+`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and their extras install no Python
+package. `clearrecord backends` shows what is available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
 ## Calibrate your own model (recommended workflow)
@@ -155,8 +155,15 @@ appended to `<dir>/transcribe.log`, so you can watch a background run.
 
 ```sh
 clearrecord transcribe <dir> --backend apple --model medium \
-    --chunk-seconds 600 --overlap-seconds 5     # --no-resume to force a redo
+    --chunk-seconds 600 --overlap-seconds 5 --jobs 4   # --no-resume to force a redo
 ```
+
+**Parallel + pipelined.** Pending chunks across *all* sources are fed through
+one bounded worker pool, so the GPU stays fed (a single `whisper-cli` peaks well
+below saturation). `--jobs 0` (default) picks a small adaptive fan-out for
+process-isolated backends and serializes in-process ones (Apple/NVIDIA);
+`--jobs N` or `CR_JOBS=N` override. Measured on an RX 7900 XTX: four sources ×
+300 s fell from 37.5 s to 8.8 s (~4.3×).
 
 **Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
 has no per-speaker channels, so segments can be clustered into speakers from the

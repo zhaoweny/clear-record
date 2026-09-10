@@ -91,6 +91,14 @@ def _build_parser() -> argparse.ArgumentParser:
             help="ignore cached chunks and re-transcribe from scratch",
         )
         p.set_defaults(resume=True)
+        p.add_argument(
+            "--jobs",
+            "-j",
+            type=int,
+            default=0,
+            help="parallel transcription workers (0 = auto; process-isolated "
+            "backends only, e.g. the AMD whisper-cli)",
+        )
 
     def _diarize_args(p: argparse.ArgumentParser) -> None:
         g = p.add_mutually_exclusive_group()
@@ -318,6 +326,7 @@ def _main(args: argparse.Namespace) -> int:
             chunk_seconds=args.chunk_seconds,
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
+            jobs=args.jobs,
         )
         return 0
 
@@ -354,6 +363,7 @@ def _main(args: argparse.Namespace) -> int:
             chunk_seconds=args.chunk_seconds,
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
+            jobs=args.jobs,
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,
@@ -374,6 +384,7 @@ def _main(args: argparse.Namespace) -> int:
             chunk_seconds=args.chunk_seconds,
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
+            jobs=args.jobs,
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,

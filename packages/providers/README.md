@@ -11,11 +11,12 @@ major desktop compute families rather than only one.
 | Backend id | Vendor / framework | Typical stack |
 |---|---|---|
 | `apple` | Apple Silicon | Metal / Core ML / ANE (whisper.cpp) |
-| `nvidia` | NVIDIA | CUDA / cuBLAS / cuDNN (faster-whisper / CTranslate2) |
+| `nvidia` | NVIDIA | CUDA / Vulkan (system `whisper-cli` + `ggml-cuda`/`ggml-vulkan`) |
 | `amd` | AMD Radeon | ROCm / Vulkan (system `whisper-cli` + `ggml-vulkan`/`ggml-hip`, e.g. `gfx1100`) |
 
 Each backend is a *capability*, not a hard dependency: it is available only when
-its runtime probe succeeds. `apple`/`nvidia` are provided by their optional
-dependency extras; `amd` is system-provided (`whisper-cpp` + `ggml-vulkan`) and
-its extra installs no Python package. See
-`docs/adr/0005-transcription-backend-strategy.md`.
+its runtime probe succeeds. `apple` is provided by its optional dependency extra;
+`nvidia` and `amd` are system-provided (`whisper-cpp` + a ggml GPU plugin) and
+install no Python package. `BackendInfo.parallelizable` marks adapters that are
+safe to run concurrently (process-isolated ones); the transcribe stage uses it
+to size its worker pool. See `docs/adr/0005-transcription-backend-strategy.md`.

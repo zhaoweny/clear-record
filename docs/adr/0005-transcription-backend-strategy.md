@@ -13,8 +13,7 @@ Date: 2026-09-09
 - [FACT] Apple Silicon: `whisper.cpp` supports **Metal** and **Core ML**; a
   June-2026 community experiment reported an **ANE**-native encoder ~2× its
   Core ML path.
-- [FACT] NVIDIA: `faster-whisper` / **CTranslate2** use **CUDA / cuBLAS /
-  cuDNN**.
+- [FACT] NVIDIA: `whisper.cpp`'s ggml provides a **CUDA** backend (and Vulkan).
 - [FACT] AMD Radeon: `whisper.cpp` supports **Vulkan** and **ROCm**, and targets
   the **`gfx1100`** (RX 7900 XTX) family.
 - [FACT] The ASR stacks in scope are permissive (see ADR-0003).
@@ -26,16 +25,22 @@ Date: 2026-09-09
 - [DECISION] Provide three backend adapters, each a **capability**:
   - `apple`   — Apple Silicon (Metal / Core ML / ANE), via `whisper.cpp`
     (`pywhispercpp`, in process);
-  - `nvidia`  — NVIDIA CUDA (cuBLAS / cuDNN), via `faster-whisper` / CTranslate2;
+  - `nvidia`  — NVIDIA CUDA / Vulkan, via the **system `whisper-cli`** (the
+    same process-isolated path as `amd`);
   - `amd`     — AMD Radeon (Vulkan / ROCm), via the **system `whisper-cli`**
     (subprocess), because no PyPI wheel ships a Vulkan/HIP ggml backend.
 - [DECISION] A backend is usable only when its runtime probe succeeds
-  (`available()`). For the wheel-backed families the optional extra provides the
-  stack; for `amd` the stack is a **system** one (`whisper-cpp` +
-  `ggml-vulkan`/`ggml-hip`), so the probe requires Linux, `whisper-cli` on PATH,
-  an installed ggml GPU backend plugin, and a DRM render node. `clearrecord
-  backends` lists the current availability. The default dev/CI env installs
-  **no** vendor framework.
+  (`available()`). The `apple` extra provides its stack; for `nvidia`/`amd` the
+  stack is a **system** one (`whisper-cpp` + a ggml GPU plugin — `ggml-cuda`/
+  `ggml-vulkan` for NVIDIA, `ggml-vulkan`/`ggml-hip` for AMD), so the probe
+  requires Linux, `whisper-cli` on PATH, an accepted plugin (search dirs are
+  overridable via `CR_GGML_BACKEND_DIRS`), and the vendor's GPU device.
+  `clearrecord backends` lists the current availability. The default dev/CI env
+  installs **no** vendor framework.
+- [DECISION] Backends declare `parallelizable` in `BackendInfo` — true for the
+  process-isolated `whisper-cli` adapters (`nvidia`, `amd`). The transcribe stage
+  feeds pending chunks through a bounded worker pool for those and serializes
+  in-process ones (Apple), which share model state.
 - [DECISION] `cr-core` never imports a vendor stack; it only depends on the
   interface. Vendor stacks are lazy-imported inside `cr-providers`.
 
@@ -53,23 +58,25 @@ Date: 2026-09-09
   the AMD ROCm box unserved, and contradicts the owner's explicit requirement.
 - Hard-requiring all three stacks — rejected: burdens dev/CI and anyone without
   a GPU; backends should be optional capabilities.
-- A single mixed "whisper.cpp for everything" path — considered; the CUDA path
-  through faster-whisper/CTranslate2 is the natural high-throughput NVIDIA
-  option, while whisper.cpp covers Apple + AMD. The interface leaves the
-  per-family choice to the adapter.
+- Serving NVIDIA through `faster-whisper`/CTranslate2 — the original choice (the
+  natural high-throughput CUDA option), **superseded**: it runs in-process and
+  holds shared model state, so it cannot share the process-isolated parallel
+  path, and PyPI ships no GPU-accelerated `pywhispercpp`. NVIDIA now uses the
+  same system `whisper-cli` (ggml CUDA/Vulkan) path as AMD.
 
 ## Consequences / review hook
 
-- Adding a backend = one adapter + one `available()` probe (plus, for
-  wheel-backed families, one optional dependency extra). Each new backend must
-  stay behind the interface and keep `cr-core` vendor-free (ADR-0003).
+- Adding a backend = one adapter + one `available()` probe (plus, for the Apple
+  wheel, one optional dependency extra). Each new backend must stay behind the
+  interface and keep `cr-core` vendor-free (ADR-0003).
 - **Apple is proven** (Apple M4, whisper.cpp/Metal, 16 kHz normalize + 10 ms
   time-scale calibration). **AMD is proven** on an RX 7900 XTX (RADV NAVI31,
   Mesa 26.2.2): `whisper-cli` loads `libggml-vulkan.so`, and on 300 s of a real
   tape `ggml-small` ran 6.5 s wall / 6.4 s compute versus 46.0 s on CPU (~7×
-  wall, encoder ~80×). The `nvidia` adapter is declared and capability-gated but
-  not yet hot-tested on real hardware.
-- The AMD mechanism deliberately deviates from "the extra installs the stack":
-  the extra is a no-op marker and the capability is system-provided. Revisit if a
-  maintained Vulkan/HIP `pywhispercpp` wheel appears (the subprocess could then
-  be retired), or if a hardware family's stack changes materially.
+  wall, encoder ~80×); end-to-end, 4 sources × ~80 min ran in 2:55. The
+  `nvidia` adapter shares that path; its hot-test target is an RTX 4090
+  (sm_89 / `ggml-cuda`).
+- The NVIDIA/AMD mechanism deliberately deviates from "the extra installs the
+  stack": their extras are no-op markers and the capability is system-provided.
+  Revisit if a maintained GPU `pywhispercpp` wheel appears (the subprocess could
+  then be retired), or if a hardware family's stack changes materially.

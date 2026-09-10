@@ -1,34 +1,36 @@
 """Concrete backend adapters for the three supported compute families.
 
-Each backend is a *capability*: its heavy stack is imported lazily inside
-``transcribe()`` (and only probed cheaply in ``available()``), so merely
-importing this module never forces a GPU framework. If the optional dependency
-is absent or the runtime probe fails, the backend reports itself as unavailable
-and the CLI can proceed without crashing the whole world.
+Each backend is a *capability*: a cheap probe in ``available()`` decides whether
+the machine can run it, and any heavy stack is touched only inside
+``transcribe()``. If a dependency or the runtime probe is missing, the backend
+reports itself unavailable and the CLI proceeds without crashing.
 
 Mapping to compute families (ADR-0005):
 
-- ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE).
-- ``nvidia`` — NVIDIA via ``faster-whisper`` / CTranslate2 (CUDA / cuBLAS / cuDNN).
+- ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE),
+  in process through the ``pywhispercpp`` wheel.
+- ``nvidia`` — NVIDIA via the *system* ``whisper-cli`` (CUDA / Vulkan),
+  Linux-only probe.
 - ``amd``    — AMD Radeon via the *system* ``whisper-cli`` (Vulkan / ROCm),
   Linux-only probe.
 
-The first two use Python wheels; the AMD one cannot. PyPI's ``pywhispercpp``
-wheels are CPU-only, so ``amd`` drives a distro ``whisper-cli`` linked against
-the system ``ggml``, which loads GPU backends as plugins (Arch ``ggml-vulkan`` /
-``ggml-hip``). The capability probe checks for that, not just an import.
+NVIDIA and AMD share one process-isolated code path: no PyPI wheel ships a
+GPU-accelerated ggml backend, so both drive a distro ``whisper-cli`` linked
+against the system ``ggml``, which loads a GPU backend as a plugin (Arch
+``ggml-cuda`` / ``ggml-vulkan`` / ``ggml-hip``). The probe checks for an accepted
+plugin and the vendor's GPU device, not just an import.
 """
 
 from __future__ import annotations
 
 import glob
 import json
-import math
 import os
 import platform
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 
 from cr_core import Segment, TranscriptionResult
 
@@ -173,14 +175,21 @@ def _whispercpp_duration(audio_path: str) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
-# system ``whisper-cli`` adapter (AMD Radeon: Vulkan / HIP via ggml plugins)
+# system ``whisper-cli`` adapter (AMD / NVIDIA: GPU via ggml backend plugins)
 # --------------------------------------------------------------------------- #
-# ``pywhispercpp`` wheels are CPU-only, so the AMD adapter shells out to the
-# distro's ``whisper-cli`` (e.g. Arch ``whisper-cpp``), which links the system
-# ``ggml`` and loads a GPU backend plugin (``ggml-vulkan`` / ``ggml-hip``). A
-# backend is only offered when such a plugin and a DRM render node are present.
+# PyPI's ``pywhispercpp`` wheels are CPU-only, so AMD and NVIDIA shell out to
+# the distro's ``whisper-cli`` (e.g. Arch ``whisper-cpp``), which links the
+# system ``ggml`` and loads a GPU backend plugin — ``ggml-vulkan``/``ggml-hip``
+# for AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered
+# when an accepted plugin and the vendor's GPU device are present.
 _WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp", "whisper")
 _GGML_BACKEND_DIRS = ("/usr/lib/ggml", "/usr/lib64/ggml", "/usr/local/lib/ggml")
+_GGML_BACKEND_PATTERNS = {
+    "vulkan": "libggml-vulkan*.so*",
+    "hip": "libggml-hip*.so*",
+    "rocm": "libggml-rocm*.so*",
+    "cuda": "libggml-cuda*.so*",
+}
 
 
 def _find_whisper_cli() -> str | None:
@@ -195,22 +204,39 @@ def _find_whisper_cli() -> str | None:
     return None
 
 
-def _find_ggml_gpu_backend() -> str | None:
-    """Path to an installed ggml GPU backend plugin (Vulkan/HIP), if any."""
-    for directory in _GGML_BACKEND_DIRS:
-        for pattern in (
-            "libggml-vulkan*.so*",
-            "libggml-hip*.so*",
-            "libggml-rocm*.so*",
-        ):
+def _ggml_backend_dirs() -> tuple[str, ...]:
+    """Where to look for ggml backend plugins.
+
+    ``CR_GGML_BACKEND_DIRS`` (``os.pathsep``-separated) is prepended, so a
+    from-source ``whisper.cpp`` build — or a non-Arch distro's layout — can
+    point the probe at its own ``libggml-*.so`` directory.
+    """
+    extra = os.environ.get("CR_GGML_BACKEND_DIRS", "")
+    return tuple(p for p in extra.split(os.pathsep) if p) + _GGML_BACKEND_DIRS
+
+
+def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
+    """Path to a ggml GPU backend plugin for any accepted backend family."""
+    for family in families:
+        pattern = _GGML_BACKEND_PATTERNS.get(family)
+        if not pattern:
+            continue
+        for directory in _ggml_backend_dirs():
             matches = sorted(glob.glob(os.path.join(directory, pattern)))
             if matches:
                 return matches[0]
     return None
 
 
-def _has_gpu_render_node() -> bool:
+def _has_dri_render_node() -> bool:
+    """AMD/Mesa style GPU node."""
     return bool(glob.glob("/dev/dri/renderD*"))
+
+
+def _has_nvidia_device() -> bool:
+    return (
+        bool(glob.glob("/dev/nvidia[0-9]*")) or shutil.which("nvidia-smi") is not None
+    )
 
 
 def _is_special_token(text: str) -> bool:
@@ -286,17 +312,30 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
 
 
 class _WhisperCliBackend:
-    """System ``whisper-cli`` backend (AMD Radeon: Vulkan / HIP via ggml)."""
+    """System ``whisper-cli`` backend, GPU-accelerated by a ggml plugin.
 
-    def __init__(self, info: BackendInfo) -> None:
+    Subclasses declare which ggml backend families they accept and how to probe
+    the vendor's GPU device, so AMD and NVIDIA share one process-isolated code
+    path (and therefore the same parallel transcription).
+    """
+
+    def __init__(
+        self,
+        info: BackendInfo,
+        *,
+        gpu_backends: tuple[str, ...],
+        device_check: Callable[[], bool],
+    ) -> None:
         self.info = info
+        self._gpu_backends = gpu_backends
+        self._device_check = device_check
 
     def available(self) -> bool:
         return (
             platform.system() == "Linux"
             and _find_whisper_cli() is not None
-            and _find_ggml_gpu_backend() is not None
-            and _has_gpu_render_node()
+            and _find_ggml_gpu_backend(self._gpu_backends) is not None
+            and self._device_check()
         )
 
     def transcribe(
@@ -385,81 +424,28 @@ class AmdBackend(_WhisperCliBackend):
                 frameworks=("ROCm", "Vulkan"),
                 description="AMD Radeon ASR via the system whisper-cli "
                 "(ggml Vulkan/HIP backend, e.g. gfx1100).",
-            )
+                parallelizable=True,
+            ),
+            gpu_backends=("vulkan", "hip", "rocm"),
+            device_check=_has_dri_render_node,
         )
 
 
-class NvidiaBackend:
-    """NVIDIA: CUDA / cuBLAS / cuDNN via faster-whisper / CTranslate2."""
-
-    info = BackendInfo(
-        id="nvidia",
-        vendor="NVIDIA",
-        frameworks=("CUDA", "cuBLAS", "cuDNN"),
-        description="NVIDIA CUDA ASR via faster-whisper / CTranslate2.",
-        default_model="small",
-    )
+class NvidiaBackend(_WhisperCliBackend):
+    """NVIDIA on Linux: CUDA / Vulkan via the system ``whisper-cli``."""
 
     def __init__(self) -> None:
-        self._model = None
-
-    def available(self) -> bool:
-        if not _importable("faster_whisper"):
-            return False
-        import shutil
-
-        return shutil.which("nvidia-smi") is not None
-
-    def transcribe(
-        self,
-        audio_path: str,
-        *,
-        language: str | None = None,
-        model: str | None = None,
-        model_dir: str | None = None,
-        initial_prompt: str | None = None,
-    ) -> TranscriptionResult:
-        from faster_whisper import WhisperModel  # lazy
-
-        name = model or self.info.default_model
-        if self._model is None:
-            self._model = WhisperModel(
-                name, device="cuda", compute_type="float16", download_root=model_dir
-            )
-        lang = language if language and language != "auto" else None
-        seg_iter, info = self._model.transcribe(
-            audio_path,
-            language=lang,
-            vad_filter=True,
-            beam_size=5,
-            initial_prompt=initial_prompt or None,
-        )
-        segments: list[Segment] = []
-        for s in seg_iter:
-            conf = None
-            logprob = getattr(s, "avg_logprob", None)
-            if logprob is not None:
-                conf = float(math.exp(max(-6.0, min(0.0, logprob))))
-            text = (s.text or "").strip()
-            if not text:
-                continue
-            segments.append(
-                Segment(
-                    start=round(float(s.start), 3),
-                    end=round(float(s.end), 3),
-                    text=text,
-                    source="nvidia",
-                    confidence=conf,
-                    language=getattr(info, "language", "") or (lang or ""),
-                )
-            )
-        return TranscriptionResult(
-            source="nvidia",
-            segments=tuple(segments),
-            language=getattr(info, "language", "") or (lang or ""),
-            backend="nvidia",
-            model=name,
-            audio_duration=getattr(info, "duration", None),
+        super().__init__(
+            BackendInfo(
+                id="nvidia",
+                vendor="NVIDIA",
+                frameworks=("CUDA", "Vulkan"),
+                description="NVIDIA ASR via the system whisper-cli "
+                "(ggml CUDA/Vulkan backend).",
+                parallelizable=True,
+            ),
+            gpu_backends=("cuda", "vulkan"),
+            device_check=_has_nvidia_device,
         )
 
 

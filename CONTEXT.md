@@ -15,10 +15,10 @@ reconcile → export. It runs fully offline with your own models.
 - **License:** MIT (own code). Vendor ASR stacks are consumed behind a
   provider interface; permissive stacks are preferred, copyleft components are
   never linked or vendored into the MIT core (ADR-0003).
-- **Backends:** Apple (Metal/Core ML/ANE), NVIDIA (CUDA), AMD (ROCm/Vulkan) —
-  one interface, three families (ADR-0005). Apple and AMD are proven; install a
-  wheel-backed stack with `uv sync --extra <backend>` (AMD uses the system
-  `whisper-cli` + a ggml GPU plugin instead).
+- **Backends:** Apple (Metal/Core ML/ANE), NVIDIA (CUDA/Vulkan), AMD
+  (ROCm/Vulkan) — one interface, three families (ADR-0005). Apple and AMD are
+  proven; `apple` installs a wheel-backed stack with `uv sync --extra apple`,
+  while `nvidia`/`amd` use the system `whisper-cli` + a ggml GPU plugin.
 - **Clean-room:** independently implemented from a generic public problem
   statement; no work/company artifacts are imported (ADR-0001, architecture §6).
 - **Privacy:** recordings and model weights are environment-local data — always
@@ -59,8 +59,8 @@ without evidence. The owner's authoritative words live in
   source/speaker-attributed timeline; `export` writes Markdown/SRT/VTT/JSON;
   `calibrate` reports coverage / WER / similarity against an optional reference.
 - **AMD is hot-tested** (RX 7900 XTX, RADV) via the system `whisper-cli` +
-  `ggml-vulkan`; the `nvidia` (faster-whisper) backend remains declared and
-  capability-gated but not hot-tested here. Diarization is a baseline, not a
+  `ggml-vulkan`; the `nvidia` backend shares that path but is not hot-tested
+  here. Diarization is a baseline, not a
   deep-embedding system; the exotic spatial-invention scope (§7) is out of scope.
 
 See `docs/architecture.md` §3–§8 for the pipeline and the ordered remaining

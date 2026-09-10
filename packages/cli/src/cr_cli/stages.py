@@ -9,7 +9,10 @@ merge) and ``cr_providers`` (ASR). No vendor logic lives here.
 from __future__ import annotations
 
 import dataclasses
+import os
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import soundfile as sf
@@ -169,14 +172,18 @@ def _load_glossary(directory: Path, explicit: str | None) -> tuple[str, str]:
     return prompt, str(path)
 
 
+_log_lock = threading.Lock()
+
+
 def _log_line(directory: Path, message: str) -> None:
     """Print and append to the workspace's durable transcription log."""
-    print(message)
-    try:
-        with (directory / "transcribe.log").open("a", encoding="utf-8") as fh:
-            fh.write(message + "\n")
-    except OSError:
-        pass
+    with _log_lock:
+        print(message)
+        try:
+            with (directory / "transcribe.log").open("a", encoding="utf-8") as fh:
+                fh.write(message + "\n")
+        except OSError:
+            pass
 
 
 def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
@@ -210,6 +217,32 @@ def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
     return clean_segments(out)
 
 
+_DEFAULT_MAX_JOBS = 4
+
+
+def _resolve_jobs(backend, n_pending: int, requested: int) -> int:
+    """Choose the chunk-transcription worker count adaptively.
+
+    Precedence: explicit ``requested`` (>0), then ``CR_JOBS``, else a small
+    default for process-isolated backends. The GPU is the shared bottleneck, so
+    the default is modest (measured ~93% ``gpu_busy`` at 4 concurrent
+    ``whisper-cli`` processes); in-process backends that share model state are
+    always serialized, even when a worker count is requested.
+    """
+    if n_pending <= 1:
+        return 1
+    # Safety first: a backend that shares in-process model state (Apple
+    # pywhispercpp) must never run concurrently.
+    if not getattr(backend.info, "parallelizable", False):
+        return 1
+    if requested and requested > 0:
+        return max(1, min(int(requested), n_pending))
+    env = os.environ.get("CR_JOBS", "").strip()
+    if env.isdigit() and int(env) > 0:
+        return max(1, min(int(env), n_pending))
+    return max(1, min(os.cpu_count() or 1, _DEFAULT_MAX_JOBS, n_pending))
+
+
 def transcribe(
     directory: str,
     backend_id: str,
@@ -220,6 +253,7 @@ def transcribe(
     chunk_seconds: float = DEFAULT_CHUNK_S,
     overlap_seconds: float = DEFAULT_OVERLAP_S,
     resume: bool = True,
+    jobs: int = 0,
 ):
     """Transcribe every source, in **resumable overlapping chunks** for long
     tapes, with an optional **glossary** as the decoder's initial prompt.
@@ -228,6 +262,12 @@ def transcribe(
     invalidated when the backend/model/language/glossary/prompt or chunk plan
     changes, which is what lets you do a first pass in the background and then
     re-run with a finished glossary.
+
+    Pending chunks (across all sources) are transcribed **concurrently** by a
+    bounded worker pool when the backend is process-isolated (``jobs=0`` picks
+    the count adaptively; ``--jobs`` / ``CR_JOBS`` override; in-process backends
+    such as Apple's are always serialized). Cached chunks are loaded instead of
+    recomputed, so resume is unchanged.
     """
     d = Path(directory)
     sources, _ = ws.load_manifest(d)
@@ -244,17 +284,10 @@ def transcribe(
     if prompt:
         _log_line(d, f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
 
-    per_source: dict[str, list[Segment]] = {}
-    meta: dict = {
-        "backend": backend_id,
-        "model": chosen_model,
-        "language": language or "auto",
-        "model_dir": model_dir,
-        "glossary": prompt_src or None,
-        "chunk_seconds": chunk_seconds,
-        "overlap_seconds": overlap_seconds,
-        "sources": {},
-    }
+    # Plan every source first (cheap I/O), then run the uncached chunks through
+    # one bounded pool so the GPU stays fed across source boundaries too.
+    plans: list[dict] = []
+    pending: list[tuple] = []
     for src in sources:
         duration = _duration(src.path)
         chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
@@ -282,19 +315,30 @@ def transcribe(
             f"[transcribe] {src.id}: {len(chunks)} chunk(s), {duration:.1f}s, "
             f"{backend.info.description} ({chosen_model})",
         )
-        chunk_segments: list[list[Segment]] = []
+        segs: list[list[Segment] | None] = [None] * len(chunks)
         for i, (start_s, end_s) in enumerate(chunks):
             seg_file = cache / f"{i:04d}.json"
             if reuse and seg_file.exists():
-                chunk_segments.append(
-                    [segment_from_dict(x) for x in load_json(seg_file)]
-                )
+                segs[i] = [segment_from_dict(x) for x in load_json(seg_file)]
                 _log_line(
                     d, f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached"
                 )
-                continue
-            chunk_wav = cache / f"{i:04d}.wav"
-            write_chunk(src.path, chunk_wav, start_s, end_s)
+            else:
+                pending.append(
+                    (src.id, i, src.path, start_s, end_s, cache, len(chunks))
+                )
+        plans.append({"src": src, "duration": duration, "chunks": chunks, "segs": segs})
+
+    plan_by_id = {p["src"].id: p for p in plans}
+    workers = _resolve_jobs(backend, len(pending), jobs)
+    if pending:
+        _log_line(d, f"[transcribe] {len(pending)} pending chunk(s), jobs={workers}")
+
+    def _run_chunk(task: tuple):
+        src_id, i, src_path, start_s, end_s, cache, n_chunks = task
+        chunk_wav = cache / f"{i:04d}.wav"
+        write_chunk(src_path, chunk_wav, start_s, end_s)
+        try:
             res = backend.transcribe(
                 str(chunk_wav),
                 language=language,
@@ -302,31 +346,57 @@ def transcribe(
                 model_dir=model_dir,
                 initial_prompt=prompt or None,
             )
-            shifted = [
-                dataclasses.replace(
-                    s,
-                    start=round(s.start + start_s, 4),
-                    end=round(s.end + start_s, 4),
-                    source=src.id,
-                )
-                for s in res.segments
-            ]
-            write_json(seg_file, [to_dict(s) for s in shifted])
-            chunk_segments.append(shifted)
-            chunk_wav.unlink(missing_ok=True)  # segments cached; wav is regenerable
-            _log_line(
-                d,
-                f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} "
-                f"[{start_s:.0f}-{end_s:.0f}s] -> {len(shifted)} segment(s)",
+        finally:
+            chunk_wav.unlink(missing_ok=True)  # segments cached; wav regenerable
+        shifted = [
+            dataclasses.replace(
+                s,
+                start=round(s.start + start_s, 4),
+                end=round(s.end + start_s, 4),
+                source=src_id,
             )
+            for s in res.segments
+        ]
+        write_json(cache / f"{i:04d}.json", [to_dict(s) for s in shifted])
+        _log_line(
+            d,
+            f"[transcribe]   {src_id} chunk {i + 1}/{n_chunks} "
+            f"[{start_s:.0f}-{end_s:.0f}s] -> {len(shifted)} segment(s)",
+        )
+        return src_id, i, shifted
 
-        merged = _merge_chunk_segments(chunk_segments)
+    if workers <= 1:
+        for task in pending:
+            src_id, i, shifted = _run_chunk(task)
+            plan_by_id[src_id]["segs"][i] = shifted
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_run_chunk, task) for task in pending]
+            for future in as_completed(futures):
+                src_id, i, shifted = future.result()
+                plan_by_id[src_id]["segs"][i] = shifted
+
+    per_source: dict[str, list[Segment]] = {}
+    meta: dict = {
+        "backend": backend_id,
+        "model": chosen_model,
+        "language": language or "auto",
+        "model_dir": model_dir,
+        "glossary": prompt_src or None,
+        "chunk_seconds": chunk_seconds,
+        "overlap_seconds": overlap_seconds,
+        "jobs": workers,
+        "sources": {},
+    }
+    for plan in plans:
+        src = plan["src"]
+        merged = _merge_chunk_segments([s or [] for s in plan["segs"]])
         per_source[src.id] = merged
         meta["sources"][src.id] = {
-            "duration": duration,
+            "duration": plan["duration"],
             "segments": len(merged),
             "language": None,
-            "chunks": len(chunks),
+            "chunks": len(plan["chunks"]),
         }
     ws.write_segments(d, per_source, meta)
     _print_transcription(per_source, meta)
@@ -622,6 +692,7 @@ def run(
     formats: list[str] | None = None,
     attribute_energy: bool = False,
     mixed_source: str | None = None,
+    jobs: int = 0,
 ):
     ingest(directory, audio_files, split=split)
     align(directory, reference=reference)
@@ -635,6 +706,7 @@ def run(
         chunk_seconds=chunk_seconds,
         overlap_seconds=overlap_seconds,
         resume=resume,
+        jobs=jobs,
     )
     sources, _ = ws.load_manifest(Path(directory))
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to

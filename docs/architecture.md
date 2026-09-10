@@ -155,7 +155,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 - Apple Silicon: `whisper.cpp` treats Apple Silicon as a first-class target with
   **Metal** and **Core ML** acceleration; a June-2026 community experiment
   reported an **ANE**-native encoder roughly 2× its Core ML path.
-- NVIDIA: `faster-whisper` / **CTranslate2** use **CUDA / cuBLAS / cuDNN**.
+- NVIDIA: `whisper.cpp`'s ggml supports a **CUDA** backend (and Vulkan).
 - AMD Radeon: `whisper.cpp` supports **Vulkan** and **ROCm**, and targets the
   **`gfx1100`** (RX 7900 XTX) family.
 
@@ -169,20 +169,19 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
      ┌───────────┬───────────┬───────────┐
    apple       nvidia       amd
  Metal/CoreML   CUDA       ROCm/Vulkan
- ANE           cuBLAS       gfx1100…
- whisper.cpp    cuDNN      whisper-cli
-             faster-whisper
+ ANE          Vulkan       gfx1100…
+ whisper.cpp  whisper-cli  whisper-cli
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
   its runtime probe succeeds (see `cr_providers.base.Backend.available()`).
   `clearrecord backends` lists what is available on the current machine.
-- Apple runs `whisper.cpp` **in process** via `pywhispercpp`; NVIDIA runs
-  `faster-whisper`/CTranslate2. AMD **shells out to the system `whisper-cli`**:
-  PyPI's `pywhispercpp` wheels are CPU-only, while a distro `whisper-cpp` links
-  the system `ggml` and loads a GPU backend plugin (`ggml-vulkan`/`ggml-hip`).
-  The `amd` extra is therefore a no-op marker; `available()` requires Linux,
-  `whisper-cli`, a ggml GPU plugin, and a DRM render node.
+- Apple runs `whisper.cpp` **in process** via `pywhispercpp`. AMD and NVIDIA
+  **shell out to the system `whisper-cli`**: PyPI's `pywhispercpp` wheels are
+  CPU-only, while a distro `whisper-cpp` links the system `ggml` and loads a GPU
+  backend plugin (`ggml-vulkan`/`ggml-hip` for AMD, `ggml-cuda`/`ggml-vulkan`
+  for NVIDIA). Their extras are no-op markers; `available()` requires Linux,
+  `whisper-cli`, an accepted plugin, and the vendor's GPU device.
 - The vendor stacks are **not imported by `cr-core`**; wheel-backed stacks are
   imported lazily in `cr-providers`, so a plain dev/CI environment needs no GPU
   framework.
@@ -292,7 +291,10 @@ docs/vox/voice-of-owner.md         owner voice
   WER 0.0). Long tapes run **chunked and resumable** (`<dir>/chunks/<source>/`,
   progress in `<dir>/transcribe.log`), and a **glossary** (`<dir>/glossary.txt`)
   is applied as the decoder's initial prompt (cache-keyed, so a background first
-  pass can be corrected by a finished glossary).
+  pass can be corrected by a finished glossary). Pending chunks across **all
+  sources** run through one bounded worker pool (`--jobs` / `CR_JOBS`; adaptive
+  default) so the GPU stays fed; `BackendInfo.parallelizable` serializes
+  in-process backends.
 - `diarize` → baseline multi-speaker attribution for a **single mixed stream**
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
@@ -311,12 +313,12 @@ docs/vox/voice-of-owner.md         owner voice
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple Silicon transcription are all landed.
-**Remaining gaps:** the NVIDIA (faster-whisper/CUDA) backend is declared and
-capability-gated but not yet hot-tested on real hardware — the AMD path is now
-hot-tested on an RX 7900 XTX via system `whisper-cli` + `ggml-vulkan` (its
-ROCm/HIP half is not exercised); diarization is a transparent baseline (not a
-deep-embedding system) and will struggle with same-pitch speakers and heavy
-overlap; and the exotic spatial-invention scope (§7) remains out of scope.
+**Remaining gaps:** the NVIDIA path (system `whisper-cli` + ggml CUDA/Vulkan)
+shares the hot-tested AMD code path but is not yet hot-tested on real NVIDIA
+hardware; the AMD path is hot-tested on an RX 7900 XTX (its ROCm/HIP half is not
+exercised); diarization is a transparent baseline (not a deep-embedding system)
+and will struggle with same-pitch speakers and heavy overlap; and the exotic
+spatial-invention scope (§7) remains out of scope.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 

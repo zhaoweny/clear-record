@@ -63,3 +63,13 @@ def test_amd_backend_metadata_unchanged() -> None:
     backend = AmdBackend()
     assert backend.info.id == "amd"
     assert "Vulkan" in backend.info.frameworks
+
+
+def test_nvidia_and_amd_share_the_cli_adapter() -> None:
+    """Both GPU families use the same process-isolated whisper-cli path."""
+    from cr_providers.backends import NvidiaBackend, _WhisperCliBackend
+
+    assert isinstance(AmdBackend(), _WhisperCliBackend)
+    assert isinstance(NvidiaBackend(), _WhisperCliBackend)
+    assert AmdBackend().info.parallelizable
+    assert NvidiaBackend().info.parallelizable

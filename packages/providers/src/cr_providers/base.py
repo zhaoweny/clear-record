@@ -23,6 +23,11 @@ class BackendInfo:
     frameworks: tuple[str, ...]
     description: str
     default_model: str = DEFAULT_MODEL
+    # True when independent `transcribe()` calls run in separate OS processes
+    # (e.g. a subprocess CLI) and may therefore be executed concurrently.
+    # In-process backends that share model state keep this False so the
+    # pipeline stays sequential and thread-safe.
+    parallelizable: bool = False
 
 
 class Backend(Protocol):

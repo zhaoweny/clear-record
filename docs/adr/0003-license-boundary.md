@@ -10,12 +10,11 @@ Date: 2026-09-09
   and AMD (ROCm/Vulkan) — see ADR-0005.
 - [FACT] The transcription stacks now in use are permissive: `whisper.cpp`,
   including its `ggml` backends (`ggml-metal`/`ggml-cuda`/`ggml-vulkan`/
-  `ggml-hip`) and the in-process `pywhispercpp` wheel, all MIT. All three
-  families drive the system `whisper-cli`; Apple prefers `whisper-cli` + the
-  `ggml-metal` plugin and keeps `pywhispercpp` in process as a fallback
-  (ADR-0005). The earlier
-  `faster-whisper` / CTranslate2 / PyTorch CUDA path has been superseded and is
-  no longer used. There is no existing requirement to aggregate a copyleft
+  `ggml-hip`), all MIT. All three families drive the system `whisper-cli`
+  (ADR-0005); the earlier in-process `pywhispercpp` wheel was retired. The
+  earlier
+  `faster-whisper` / CTranslate2 / PyTorch CUDA path has also been superseded and
+  is no longer used. There is no existing requirement to aggregate a copyleft
   component in-process.
 
 ## Policy (owner text, verbatim)

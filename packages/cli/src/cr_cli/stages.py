@@ -352,7 +352,7 @@ def _resolve_jobs(
     the default is modest (measured ~93% ``gpu_busy`` at 4 concurrent
     ``whisper-cli`` processes) and bounded by the model's resident size against
     the detected VRAM (or the 8 GB floor when the GPU cannot be probed). A
-    backend that shares in-process model state (Apple ``pywhispercpp``) is
+    backend that is not process-isolated (shares in-process model state) is
     always serialized, even when asked otherwise.
     """
     if n_pending <= 1:
@@ -571,16 +571,16 @@ def transcribe(
 
     Pending chunks (across all sources) are transcribed **concurrently** by a
     bounded worker pool when the backend is process-isolated (``jobs=0`` picks
-    the count adaptively; ``--jobs`` / ``CR_JOBS`` override; in-process backends
-    such as Apple's are always serialized). Cached chunks are loaded instead of
-    recomputed, so resume is unchanged.
+    the count adaptively; ``--jobs`` / ``CR_JOBS`` override; backends that share
+    in-process model state are always serialized). Cached chunks are loaded
+    instead of recomputed, so resume is unchanged.
     """
     d = Path(directory)
     sources, _ = ws.load_manifest(d)
     backend = get_backend(backend_id)
     if not backend.available():
         hint = (
-            "`uv sync --extra apple`"
+            "`brew install whisper-cpp`"
             if backend_id == "apple"
             else "a system `whisper-cli` + a ggml GPU plugin (see README)"
         )

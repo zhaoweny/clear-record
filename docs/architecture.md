@@ -171,22 +171,23 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
  Metal/CoreML   CUDA       ROCm/Vulkan
  ANE          Vulkan       gfx1100…
  whisper-cli  whisper-cli  whisper-cli
-(pywhispercpp fallback)
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
   its runtime probe succeeds (see `cr_providers.base.Backend.available()`).
   `clearrecord backends` lists what is available on the current machine.
-- All three **prefer the system `whisper-cli`**, which links the system `ggml`
+- All three **drive the system `whisper-cli`**, which links the system `ggml`
   and loads a backend plugin (`ggml-metal` on macOS via Homebrew `whisper-cpp`;
-  `ggml-vulkan`/`ggml-hip` for AMD, `ggml-cuda`/`ggml-vulkan` for NVIDIA). PyPI's
-  `pywhispercpp` wheels are CPU-only, so Apple uses them only as a fallback when
-  the CLI or Metal plugin is absent (a pip-only Mac). The `nvidia`/`amd` extras
-  are no-op markers; `available()` requires the platform (`Darwin`/`Linux`),
+  `ggml-vulkan`/`ggml-hip` for AMD, `ggml-cuda`/`ggml-vulkan` for NVIDIA). There
+  is no in-process wheel: PyPI ships no GPU-accelerated ggml backend, so `apple`,
+  `nvidia` and `amd` all use the same process-isolated path, and all three extras
+  are no-op markers. `available()` requires the platform (`Darwin`/`Linux`),
   `whisper-cli`, an accepted plugin, and — on Linux — the vendor's GPU device.
-  Metal needs no device probe; the CLI plus plugin is the check.
-- The vendor stacks are **not imported by `cr-core`**; wheel-backed stacks are
-  imported lazily in `cr-providers`, so a plain dev/CI environment needs no GPU
+  Metal needs no device probe; the CLI plus plugin is the check. A missing
+  `ggml-*.bin` is downloaded on first use into `model_dir` / `CR_MODELS_DIR` /
+  `<cwd>/models`; offline, the actionable `hf download …` error is raised.
+- The vendor stacks are **not imported by `cr-core`**; the CLI adapter is driven
+  as a subprocess in `cr-providers`, so a plain dev/CI environment needs no GPU
   framework.
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
@@ -195,10 +196,8 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   are split per channel by default** (when >2 channels) so a 4-channel DJI
   capture becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
-- [DESIGN] The in-process adapter (the Apple **fallback**) calibrates against the
-  known audio duration because `pywhispercpp` reports segment `t0/t1` in a
-  **10 ms** unit (not ms) in current versions (`cr_providers.backends._time_scale`);
-  the `whisper-cli` adapter instead reads millisecond `offsets` from its JSON.
+- [DESIGN] The `whisper-cli` adapter reads millisecond `offsets` from its `-ojf`
+  JSON (`cr_providers.backends._whispercli_segments`).
   Note: cross-device clock sync is still **out of scope** (§7).
 - The reference/open hardware laboratory (owner's own, generic and personal):
 
@@ -288,8 +287,9 @@ docs/vox/voice-of-owner.md         owner voice
 - `align` → `cr_engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback.
-- `transcribe` → real ASR via `cr_providers`; **Apple Silicon (whisper.cpp /
-  Metal) is proven on an Apple M4**, with auto language detection and per-segment
+- `transcribe` → real ASR via `cr_providers`; **Apple Silicon (system
+  whisper.cpp / Metal) is hot-tested end-to-end on an Apple M4** (164 segments,
+  no wheel installed), with auto language detection and per-segment
   confidence; validated against a known-good 11 s reference (coverage 1.0,
   WER 0.0). Long tapes run **chunked and resumable** (`<dir>/chunks/<source>/`,
   progress in `<dir>/transcribe.log`), and a **glossary** (`<dir>/glossary.txt`)
@@ -298,8 +298,9 @@ docs/vox/voice-of-owner.md         owner voice
   sources** run through one bounded worker pool (`--jobs` / `CR_JOBS`; adaptive
   default sized against the model and detected VRAM so a large model cannot OOM
   the documented minimum GPU) so the GPU stays fed; `BackendInfo.parallelizable`
-  serializes in-process backends. Ctrl-C cancels queued chunks and terminates
-  the in-flight `whisper-cli` processes, leaving a consistent, resumable cache.
+  serializes any backend that is not process-isolated. Ctrl-C cancels queued
+  chunks and terminates the in-flight `whisper-cli` processes, leaving a
+  consistent, resumable cache.
 - `diarize` → baseline multi-speaker attribution for a **single mixed stream**
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
@@ -314,17 +315,15 @@ docs/vox/voice-of-owner.md         owner voice
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.
 
-`just verify` is green (24 tests); the CLI surface is derived from
+`just verify` is green (106 tests); the CLI surface is derived from
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple Silicon transcription are all landed. Apple
-now prefers the system `whisper-cli` + `ggml-metal` path (with `pywhispercpp` as
-a fallback).
+is CLI-only (system `whisper-cli` + `ggml-metal`) and auto-downloads its ggml
+model on first use.
 **Remaining gaps:** the NVIDIA path (system `whisper-cli` + ggml CUDA/Vulkan)
 shares the hot-tested AMD code path but is not yet hot-tested on real NVIDIA
-hardware; the Apple `whisper-cli`/Metal path is probe- and unit-tested and its
-plugin loads on an M4, but its end-to-end transcription is not yet hot-tested
-(the in-process `pywhispercpp` path remains); the AMD path is hot-tested on an RX
+hardware; the AMD path is hot-tested on an RX
 7900 XTX (its ROCm/HIP half is not exercised); diarization is a transparent
 baseline (not a deep-embedding system) and will struggle with same-pitch
 speakers and heavy overlap; and the exotic spatial-invention scope (§7) remains
@@ -336,11 +335,11 @@ out of scope.
    a checksum); *(normalize + channel split landed)*.
 2. `align` — per-source alignment confidence and a manual-offset override;
    *(synthesized-badness harness landed)*.
-3. `transcribe` — hot-test the **nvidia** backend on real hardware and the Apple
-   **`whisper-cli`/Metal** path end-to-end, then consider retiring the Apple
-   `pywhispercpp` fallback (**amd** hot-tested via system `whisper-cli` +
-   `ggml-vulkan`); retire the AMD subprocess if a maintained Vulkan/HIP wheel
-   appears; *(chunked resume + glossary landed)*.
+3. `transcribe` — hot-test the **nvidia** backend on real hardware
+   (**amd** hot-tested via system `whisper-cli` + `ggml-vulkan`; **apple**
+   hot-tested end-to-end on an M4 via `whisper-cli` + `ggml-metal`); retire the
+   AMD subprocess if a maintained Vulkan/HIP wheel appears; *(chunked resume +
+   glossary landed)*.
 4. `diarize` — replace/augment the spectral+F0 baseline with a deep embedding
    provider behind the same seam; handle same-pitch speakers and overlap.
 5. `reconcile` — `--prefer` tie-breaking; better same-speaker joining across

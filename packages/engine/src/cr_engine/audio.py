@@ -113,7 +113,7 @@ def rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
 
 
-# whisper.cpp (pywhispercpp) requires 16 kHz mono WAV; normalize once at ingest.
+# whisper.cpp requires 16 kHz mono WAV; normalize once at ingest.
 ASR_SAMPLE_RATE = 16000
 
 

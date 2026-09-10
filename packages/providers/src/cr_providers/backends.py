@@ -8,21 +8,21 @@ reports itself unavailable and the CLI proceeds without crashing.
 Mapping to compute families (ADR-0005):
 
 - ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE),
-  preferring the *system* ``whisper-cli`` (Homebrew ``whisper-cpp`` + a ggml
-  ``libggml-metal`` plugin) and falling back to the in-process
-  ``pywhispercpp`` wheel.
+  driving the *system* ``whisper-cli`` (Homebrew ``whisper-cpp`` + a ggml
+  ``libggml-metal`` plugin).
 - ``nvidia`` — NVIDIA via the *system* ``whisper-cli`` (CUDA / Vulkan),
   Linux-only probe.
 - ``amd``    — AMD Radeon via the *system* ``whisper-cli`` (Vulkan / ROCm),
   Linux-only probe.
 
-All three now share one process-isolated code path: no PyPI wheel ships a
+All three share one process-isolated code path: no PyPI wheel ships a
 GPU-accelerated ggml backend, so each drives a system ``whisper-cli`` linked
 against the system ``ggml``, which loads a GPU backend as a plugin (``ggml-cuda``
 / ``ggml-vulkan`` / ``ggml-hip`` on Linux; ``ggml-metal`` on macOS). The probe
 checks for an accepted plugin and, on Linux, the vendor's GPU device — not just
-an import. Apple keeps ``pywhispercpp`` as a fallback so a pip-only Mac still
-works.
+an import. When the ggml model is absent locally, ``_resolve_ggml_model``
+downloads it from Hugging Face on first use (and falls back to a clear pre-fetch
+error when offline).
 """
 
 from __future__ import annotations
@@ -33,34 +33,14 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
+import urllib.request
 from collections.abc import Callable
 
 from cr_core import Segment, TranscriptionResult
 
-from cr_providers.base import Backend, BackendInfo, _importable
-
-
-def _time_scale(segments, duration: float | None) -> float:
-    """Choose the divisor that turns pywhispercpp ``t0/t1`` values into seconds.
-
-    whisper.cpp reports segment timestamps in fixed sub-second units that differ
-    across bindings/versions (milliseconds vs 10 ms). Because the caller already
-    knows the audio duration, we pick the scale whose total segment span best
-    matches it:
-      - span_t = max(t1) / 1000  -> seconds if units are milliseconds
-      - span_t = max(t1) / 100   -> seconds if units are 10 ms
-    When duration is unknown we default to the 10 ms convention (pywhispercpp).
-    """
-    if not segments:
-        return 100.0
-    last = max(float(getattr(s, "t1", 0)) for s in segments)
-    if duration and last > 0:
-        # If ms -> seconds is already >= half the audio, ms is correct.
-        if (last / 1000.0) >= duration * 0.5:
-            return 1000.0
-        return 100.0
-    return 100.0
+from cr_providers.base import Backend, BackendInfo
 
 
 def _make_segment(
@@ -88,108 +68,6 @@ def _make_segment(
     )
 
 
-def _whispercpp_segments(
-    segs, source: str, language: str, duration: float | None = None
-) -> tuple[Segment, ...]:
-    """Normalize ``pywhispercpp`` Segment objects into core ``Segment``."""
-    scale = _time_scale(list(segs), duration)
-    out: list[Segment] = []
-    for s in segs:
-        start = float(getattr(s, "t0", getattr(s, "start", 0.0))) / scale
-        end = float(getattr(s, "t1", getattr(s, "end", start))) / scale
-        conf = getattr(s, "probability", None)
-        if conf is None:
-            conf = getattr(s, "prob", None)
-        if conf is None:
-            conf = getattr(s, "p", None)
-        segment = _make_segment(
-            start,
-            end,
-            getattr(s, "text", ""),
-            source=source,
-            confidence=float(conf) if conf is not None else None,
-            language=language,
-        )
-        if segment is not None:
-            out.append(segment)
-    return tuple(out)
-
-
-def _whispercpp_available() -> bool:
-    return _importable("pywhispercpp")
-
-
-class _WhisperCppBackend:
-    """In-process whisper.cpp backend (Apple Metal / Core ML / ANE).
-
-    Uses the ``pywhispercpp`` wheel. It is now the *fallback* on Apple: the
-    preferred path is the system ``whisper-cli`` + ggml Metal plugin (see
-    :class:`_WhisperCliBackend`), which is process-isolated. The wheel is kept
-    so a Mac that only has the pip extra still works.
-    """
-
-    def __init__(self, info: BackendInfo) -> None:
-        self.info = info
-        self._model = None
-
-    def available(self) -> bool:
-        return _whispercpp_available()
-
-    def transcribe(
-        self,
-        audio_path: str,
-        *,
-        language: str | None = None,
-        model: str | None = None,
-        model_dir: str | None = None,
-        initial_prompt: str | None = None,
-    ) -> TranscriptionResult:
-        from pywhispercpp.model import Model  # lazy
-
-        name = model or self.info.default_model
-        if self._model is None:
-            threads = max(2, os.cpu_count() or 2)
-            self._model = Model(
-                name,
-                models_dir=model_dir,
-                n_threads=threads,
-                print_realtime=False,
-                print_progress=False,
-            )
-        # Detect (or honour) the language, then pin it for a stable transcript.
-        if language in (None, "", "auto"):
-            detected = _detect_whispercpp_language(self._model, audio_path)
-        else:
-            detected = language
-        params: dict = {"language": detected, "extract_probability": True}
-        if initial_prompt:
-            params["initial_prompt"] = initial_prompt
-        segs = self._model.transcribe(audio_path, **params)
-        duration = _audio_duration(audio_path)
-        segments = _whispercpp_segments(
-            segs, source=self.info.id, language=detected, duration=duration
-        )
-        return TranscriptionResult(
-            source=self.info.id,
-            segments=segments,
-            language=detected,
-            backend=self.info.id,
-            model=name,
-            audio_duration=duration,
-        )
-
-
-def _detect_whispercpp_language(model, audio_path: str, default: str = "") -> str:
-    """Best-effort language auto-detection (returns ``default`` on any failure)."""
-    try:
-        if not hasattr(model, "auto_detect_language"):
-            return default
-        result = model.auto_detect_language(audio_path)
-        return result[0][0] if result and result[0] else default
-    except Exception:
-        return default
-
-
 def _audio_duration(audio_path: str) -> float | None:
     try:
         import soundfile as sf
@@ -203,12 +81,12 @@ def _audio_duration(audio_path: str) -> float | None:
 # --------------------------------------------------------------------------- #
 # system ``whisper-cli`` adapter (Apple Metal / AMD / NVIDIA via ggml plugins)
 # --------------------------------------------------------------------------- #
-# PyPI's ``pywhispercpp`` wheels are CPU-only, so Apple, AMD and NVIDIA shell out
-# to the system's ``whisper-cli`` (Homebrew ``whisper-cpp`` on macOS; e.g. Arch
-# ``whisper-cpp`` on Linux), which links the system ``ggml`` and loads a GPU
-# backend plugin — ``ggml-metal`` for Apple, ``ggml-vulkan``/``ggml-hip`` for
-# AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered when
-# an accepted plugin (and, on Linux, the vendor's GPU device) is present.
+# No PyPI wheel ships a GPU-accelerated ggml backend, so Apple, AMD and NVIDIA
+# shell out to the system's ``whisper-cli`` (Homebrew ``whisper-cpp`` on macOS;
+# e.g. Arch ``whisper-cpp`` on Linux), which links the system ``ggml`` and loads
+# a GPU backend plugin — ``ggml-metal`` for Apple, ``ggml-vulkan``/``ggml-hip``
+# for AMD, ``ggml-cuda``/``ggml-vulkan`` for NVIDIA. A backend is only offered
+# when an accepted plugin (and, on Linux, the vendor's GPU device) is present.
 _WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp")
 # Homebrew bin dirs as a fallback when Homebrew's prefix is absent from PATH
 # (Apple Silicon first, then Intel). `CR_WHISPER_CLI` and PATH still win.
@@ -395,11 +273,19 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
     return tuple(out)
 
 
+# where first-use model downloads come from (Hugging Face's whisper.cpp repo)
+_GGML_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+
+
 def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
-    """Resolve a model name/size (e.g. ``small``) to a ``ggml-*.bin`` path.
+    """Resolve a model name/size (e.g. ``small``) to a local ``ggml-*.bin`` path.
 
     Accepts an explicit existing path, or a name resolved against ``model_dir``
-    (then ``CR_MODELS_DIR``, then ``<cwd>/models``).
+    (then ``CR_MODELS_DIR``, then ``<cwd>/models``). When the model is absent it
+    is downloaded from Hugging Face on first use, streamed to ``<name>.part``
+    and atomically renamed on success so an interrupted download is never mistaken
+    for a model. On a network failure the part file is removed and the original
+    clear pre-fetch error (with the ``hf download`` hint) is raised.
     """
     expanded = os.path.expanduser(model)
     if os.path.isfile(expanded):
@@ -417,11 +303,38 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
     candidate = os.path.join(base, name)
     if os.path.isfile(candidate):
         return candidate
-    raise FileNotFoundError(
-        f"ggml model not found for {model!r}; looked for {candidate}. "
-        f"Download one, e.g. `hf download ggerganov/whisper.cpp {name} "
-        f"--local-dir {base}`."
+    return _download_ggml_model(model, name, base, candidate)
+
+
+def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> str:
+    """Download ``ggml-<name>.bin`` to ``candidate`` (see ``_resolve_ggml_model``)."""
+    os.makedirs(base, exist_ok=True)
+    url = _GGML_MODEL_URL + name
+    part = candidate + ".part"
+    try:
+        with urllib.request.urlopen(url) as response, open(part, "wb") as out:
+            shutil.copyfileobj(response, out)
+    except Exception as exc:  # any download failure -> the actionable pre-fetch error
+        _remove_partial(part)
+        raise FileNotFoundError(
+            f"ggml model not found for {model!r}; looked for {candidate} and "
+            f"could not download {url} ({exc}). Download one manually, e.g. "
+            f"`hf download ggerganov/whisper.cpp {name} --local-dir {base}`."
+        ) from exc
+    os.replace(part, candidate)
+    print(
+        f"[cr-providers] downloaded {name} "
+        f"({os.path.getsize(candidate)} bytes) to {candidate}",
+        file=sys.stderr,
     )
+    return candidate
+
+
+def _remove_partial(part: str) -> None:
+    try:
+        os.remove(part)
+    except OSError:
+        pass
 
 
 def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
@@ -567,53 +480,28 @@ def _has_metal_device() -> bool:
     return True
 
 
-class AppleBackend:
-    """Apple Silicon: Metal / Core ML / ANE via whisper.cpp.
+class AppleBackend(_WhisperCliBackend):
+    """Apple Silicon on macOS: Metal / Core ML / ANE via the system ``whisper-cli``.
 
-    Prefers the same process-isolated system ``whisper-cli`` path as AMD and
-    NVIDIA — a Homebrew ``whisper-cpp`` links the system ``ggml`` and loads the
-    ``libggml-metal`` plugin. When the CLI or the Metal plugin is missing, it
-    falls back to the in-process ``pywhispercpp`` wheel, so a pip-only Mac still
-    works. The backend id stays ``apple`` either way.
+    Drives the same process-isolated path as AMD and NVIDIA — a Homebrew
+    ``whisper-cpp`` links the system ``ggml`` and loads the ``libggml-metal``
+    plugin (ADR-0005). There is no in-process wheel fallback; the ggml model is
+    downloaded on first use by :func:`_resolve_ggml_model`.
     """
 
     def __init__(self) -> None:
-        self.info = BackendInfo(
-            id="apple",
-            vendor="Apple",
-            frameworks=("Metal", "Core ML", "ANE"),
-            description="macOS Apple Silicon ASR via whisper.cpp "
-            "(system whisper-cli + ggml/Metal, or in-process pywhispercpp).",
-        )
-        self._inprocess = _WhisperCppBackend(self.info)
-        self._cli = _WhisperCliBackend(
-            self.info,
+        super().__init__(
+            BackendInfo(
+                id="apple",
+                vendor="Apple",
+                frameworks=("Metal", "Core ML", "ANE"),
+                description="macOS Apple Silicon ASR via the system whisper-cli "
+                "(ggml Metal backend).",
+                parallelizable=True,
+            ),
             gpu_backends=("metal",),
             device_check=_has_metal_device,
             system="Darwin",
-        )
-
-    def available(self) -> bool:
-        return platform.system() == "Darwin" and (
-            self._cli.available() or self._inprocess.available()
-        )
-
-    def transcribe(
-        self,
-        audio_path: str,
-        *,
-        language: str | None = None,
-        model: str | None = None,
-        model_dir: str | None = None,
-        initial_prompt: str | None = None,
-    ) -> TranscriptionResult:
-        backend = self._cli if self._cli.available() else self._inprocess
-        return backend.transcribe(
-            audio_path,
-            language=language,
-            model=model,
-            model_dir=model_dir,
-            initial_prompt=initial_prompt,
         )
 
 

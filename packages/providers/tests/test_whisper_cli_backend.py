@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.error
 
 import pytest
 
@@ -62,8 +63,108 @@ def test_resolve_ggml_model_by_name_and_path(tmp_path) -> None:
     assert _resolve_ggml_model("small", str(tmp_path)) == str(model)
     assert _resolve_ggml_model("ggml-small.bin", str(tmp_path)) == str(model)
     assert _resolve_ggml_model(str(model), None) == str(model)
-    with pytest.raises(FileNotFoundError):
+
+
+# --------------------------------------------------------------------------- #
+# First-run model download (no real network)
+# --------------------------------------------------------------------------- #
+class _FakeResponse:
+    """A minimal ``urlopen`` result yielding ``chunks`` then EOF."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+def _fake_urlopen(chunks: list[bytes]):
+    def urlopen(url: str) -> _FakeResponse:
+        return _FakeResponse(chunks)
+
+    return urlopen
+
+
+def test_resolve_ggml_model_downloads_when_absent(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    payload = b"ggml-model-bytes"
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([payload[:5], payload[5:]])
+    )
+
+    path = _resolve_ggml_model("medium", str(tmp_path))
+
+    assert path == str(tmp_path / "ggml-medium.bin")
+    assert (tmp_path / "ggml-medium.bin").read_bytes() == payload
+    # The atomic `.part` staging file must not survive a successful download.
+    assert not (tmp_path / "ggml-medium.bin.part").exists()
+    err = capsys.readouterr().err
+    assert "downloaded ggml-medium.bin" in err
+    assert path in err
+
+
+def test_resolve_ggml_model_respects_cr_models_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([b"tiny-bytes"])
+    )
+
+    path = _resolve_ggml_model("tiny", None)
+
+    assert path == str(tmp_path / "ggml-tiny.bin")
+    assert (tmp_path / "ggml-tiny.bin").read_bytes() == b"tiny-bytes"
+
+
+def test_resolve_ggml_model_download_failure_raises_clear_error(
+    tmp_path, monkeypatch
+) -> None:
+    def urlopen(url: str):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(FileNotFoundError, match=r"hf download"):
         _resolve_ggml_model("medium", str(tmp_path))
+
+    assert not (tmp_path / "ggml-medium.bin").exists()
+    assert not (tmp_path / "ggml-medium.bin.part").exists()
+
+
+def test_resolve_ggml_model_interrupted_download_leaves_no_model(
+    tmp_path, monkeypatch
+) -> None:
+    """A mid-stream failure rolls back the ``.part`` file, not a model."""
+
+    class _Interrupted:
+        def __init__(self) -> None:
+            self._first = True
+
+        def read(self, size: int = -1) -> bytes:
+            if self._first:
+                self._first = False
+                return b"partial"
+            raise OSError("connection reset")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> bool:
+            return False
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", lambda url: _Interrupted())
+
+    with pytest.raises(FileNotFoundError, match=r"hf download"):
+        _resolve_ggml_model("medium", str(tmp_path))
+
+    assert not (tmp_path / "ggml-medium.bin").exists()
+    assert not (tmp_path / "ggml-medium.bin.part").exists()
 
 
 def test_amd_backend_metadata_unchanged() -> None:
@@ -72,12 +173,14 @@ def test_amd_backend_metadata_unchanged() -> None:
     assert "Vulkan" in backend.info.frameworks
 
 
-def test_nvidia_and_amd_share_the_cli_adapter() -> None:
-    """Both GPU families use the same process-isolated whisper-cli path."""
-    from cr_providers.backends import NvidiaBackend, _WhisperCliBackend
+def test_all_three_families_share_the_cli_adapter() -> None:
+    """All three GPU families use the same process-isolated whisper-cli path."""
+    from cr_providers.backends import AppleBackend, NvidiaBackend, _WhisperCliBackend
 
+    assert isinstance(AppleBackend(), _WhisperCliBackend)
     assert isinstance(AmdBackend(), _WhisperCliBackend)
     assert isinstance(NvidiaBackend(), _WhisperCliBackend)
+    assert AppleBackend().info.parallelizable
     assert AmdBackend().info.parallelizable
     assert NvidiaBackend().info.parallelizable
 

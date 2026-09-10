@@ -56,16 +56,15 @@ three major desktop compute families behind one interface:
 
 | id | Vendor | Frameworks | Stack |
 |---|---|---|---|
-| `apple` | Apple Silicon | Metal, Core ML, ANE | system `whisper-cli` + `ggml-metal` (fallback: `pywhispercpp`) |
+| `apple` | Apple Silicon | Metal, Core ML, ANE | system `whisper-cli` + `ggml-metal` |
 | `nvidia` | NVIDIA | CUDA, Vulkan | system `whisper-cli` + `ggml-cuda`/`ggml-vulkan` |
 | `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
 Each backend is a *capability*, not a hard dependency — it is usable only when
-its runtime probe succeeds. All three prefer the system `whisper-cli`
+its runtime probe succeeds. All three drive the system `whisper-cli`
 (macOS/Homebrew: `whisper-cpp` + `ggml-metal`; Arch: `whisper-cpp` +
-`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and the `nvidia`/`amd` extras install no
-Python package. Apple keeps the `pywhispercpp` wheel (`--extra apple`) as a
-fallback, so a pip-only Mac still works. `clearrecord backends` shows what is
+`ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and their extras install no
+Python package (they are no-op markers). `clearrecord backends` shows what is
 available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
@@ -81,9 +80,11 @@ available on this machine. See
   `CR_GGML_BACKEND_DIRS=$PWD/build/bin`.
 - WSL2: build with `-DGGML_CUDA=ON`; the device probe accepts the `/dev/dxg`
   passthrough (no `/dev/nvidia*` nodes there).
-- Models: `hf download ggerganov/whisper.cpp ggml-small.bin --local-dir models`;
-  a size like `--model small` resolves to `models/ggml-small.bin` (a path works
-  too).
+- Models: a size like `--model small` resolves to `models/ggml-small.bin` and is
+  **downloaded automatically on first use** (from
+  `huggingface.co/ggerganov/whisper.cpp`, into `--model-dir` / `CR_MODELS_DIR` /
+  `./models`); a path works too, and `hf download ggerganov/whisper.cpp
+  ggml-small.bin --local-dir models` is the offline/manual route.
 
 ## Calibrate your own model (recommended workflow)
 
@@ -94,7 +95,8 @@ have a known-good transcript, pass it to get WER:
 # recordings/ is gitignored — nothing here is ever committed
 mkdir -p recordings && cp ~/Downloads/my-take.wav recordings/
 
-# install the backend you want once, then run
+# install the system stack once (see "Installing a whisper-cli GPU backend"),
+# then sync the (no-op) backend extra and run
 uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 
 # full pipeline:
@@ -162,9 +164,9 @@ uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple -
 
 Processing on an Apple Silicon Mac is the intended always-on-node setup from the
 project concept; a 1–3 h tape is a batch job, not an interactive one. The
-`apple` backend **prefers the system `whisper-cli` + `ggml-metal`** path
-(`brew install whisper-cpp`) and falls back to the `pywhispercpp` wheel that
-`--extra apple` installs, so both a Homebrew Mac and a pip-only Mac work.
+`apple` backend is **CLI-only**: `brew install whisper-cpp` (its `ggml` links the
+Metal plugin), and the ggml model is downloaded on first use. The `--extra apple`
+marker installs no Python package.
 
 ## Long tapes, diarization & glossary
 
@@ -181,9 +183,9 @@ clearrecord transcribe <dir> --backend apple --model medium \
 **Parallel + pipelined.** Pending chunks across *all* sources are fed through
 one bounded worker pool, so the GPU stays fed (a single `whisper-cli` peaks well
 below saturation). `--jobs 0` (default) picks a small adaptive fan-out for
-process-isolated backends and serializes in-process ones (e.g. the Apple wheel
-fallback). The default is capped by the CPU count, a 4-way fan-out ceiling, and
-— so N large models cannot OOM a small-VRAM GPU — the model's resident size
+process-isolated backends and serializes in-process ones. The default is capped
+by the CPU count, a 4-way fan-out ceiling, and — so N large models cannot OOM a
+small-VRAM GPU — the model's resident size
 against the detected VRAM. When the GPU cannot be probed (`nvidia-smi`, or the
 DRM `mem_info_vram_total`), an 8 GB minimum is assumed; `CR_VRAM_GB` overrides
 either. `--jobs N` or `CR_JOBS=N` bypass the advisory cap entirely. Measured on
@@ -238,8 +240,8 @@ just format         # ruff format (in place)
 just test           # pytest
 ./scripts/verify    # thin shim -> `just verify`
 
-# backend stacks are optional extras (mirrored at the workspace root):
-uv sync --all-packages --extra apple       # install Apple/whipser.cpp stack
+# backend stacks are optional no-op extra markers (system `whisper-cli`):
+uv sync --all-packages --extra apple       # Apple: system whisper.cpp/Metal
 uv run --all-packages --extra apple clearrecord --help
 ```
 

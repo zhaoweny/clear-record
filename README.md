@@ -157,12 +157,14 @@ clearrecord transcribe <dir> --backend apple --model medium \
 ```
 
 **Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
-has no per-speaker channels, so segments are clustered into speakers from the
+has no per-speaker channels, so segments can be clustered into speakers from the
 audio itself (log-mel + F0 fingerprint, k-means; baseline, dependency-free). A
-per-channel capture already attributes per source, so diarization is skipped
-there. It runs automatically for a single source, or force/size it:
+per-channel capture already attributes per source, and a single voice must not be
+split on weak evidence, so diarization is **opt-in**: enable it explicitly, or
+pass a known count, and it otherwise reports one speaker per source.
 
 ```sh
+clearrecord run <dir> --backend apple --diarize         # enable auto diarization
 clearrecord run <dir> --backend apple --speakers 2      # known count
 clearrecord diarize <dir> --speakers 3                  # re-diarize existing segments
 clearrecord diarize <dir> --no-diarize                  # off

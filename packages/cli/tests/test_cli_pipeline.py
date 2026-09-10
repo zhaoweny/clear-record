@@ -104,6 +104,79 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     assert not mixed[0].id.endswith("ch1")
 
 
+def test_merge_chunk_segments_dedupes_by_coverage() -> None:
+    """A fully-covered duplicate is dropped; a boundary straddler keeps its
+    unique tail; a later unique segment is kept whole."""
+    from cr_core import Segment
+    from cr_cli.stages import _merge_chunk_segments
+
+    def seg(start: float, end: float, text: str) -> Segment:
+        return Segment(start=start, end=end, text=text, source="src")
+
+    first = [seg(0.0, 5.0, "alpha"), seg(5.0, 10.0, "beta")]
+    # chunk 1 overlaps [2, 10]: "alpha" is a covered duplicate; "gamma"
+    # straddles the emitted frontier; "delta" is entirely new.
+    second = [
+        seg(2.0, 5.0, "alpha"),
+        seg(8.0, 13.0, "gamma"),
+        seg(13.0, 15.0, "delta"),
+    ]
+
+    out = _merge_chunk_segments([first, second])
+    assert [(s.start, s.end, s.text) for s in out] == [
+        (0.0, 5.0, "alpha"),
+        (5.0, 10.0, "beta"),
+        (10.0, 13.0, "gamma"),
+        (13.0, 15.0, "delta"),
+    ]
+    assert out[-1].text == "delta"  # the unique tail survived
+    for earlier, later in zip(out, out[1:]):
+        assert earlier.end <= later.start + 1e-9
+
+
+def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
+    """`align` names the sources it could not place instead of silently
+    recording a fake zero offset."""
+    import dataclasses
+    from pathlib import Path
+
+    from cr_cli import workspace as ws
+
+    wd = _workspace(tmp_path)
+    sources = stages.ingest(wd)
+    broken = [
+        dataclasses.replace(s, path=str(tmp_path / "missing.wav")) if s.id == "b" else s
+        for s in sources
+    ]
+    ws.write_manifest(Path(wd), broken)
+
+    alignment = stages.align(wd)
+    assert "b" in alignment.unresolved
+    assert "UNRESOLVED" in capsys.readouterr().out
+
+
+def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
+    """`run` must measure alignment against the chosen reference, not the
+    first source (the stages below are stubbed so no ASR backend is needed)."""
+    wd = _workspace(tmp_path)
+    seen: dict[str, str] = {}
+    real_align = stages.align
+
+    def spy_align(directory, reference=None):
+        alignment = real_align(directory, reference=reference)
+        seen["reference"] = alignment.reference
+        return alignment
+
+    monkeypatch.setattr(stages, "align", spy_align)
+    monkeypatch.setattr(stages, "transcribe", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "diarize", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "reconcile", lambda *a, **k: None)
+    monkeypatch.setattr(stages, "export", lambda *a, **k: None)
+
+    stages.run(wd, backend="fake", reference="b")
+    assert seen["reference"] == "b"
+
+
 def test_transcribe_chunks_resume_and_glossary_invalidation(
     tmp_path, monkeypatch
 ) -> None:

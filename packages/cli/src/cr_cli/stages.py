@@ -29,6 +29,7 @@ from cr_engine import (
     SYNTH_SR,
     align_sources,
     channel_count,
+    clean_segments,
     diarize as diarize_segments,
     make_scene,
     plan_chunks,
@@ -125,11 +126,14 @@ def align(directory: str, reference: str | None = None):
     alignment = align_sources(sources, reference_id=reference)
     ws.write_manifest(d, sources, alignment)
     print(
-        f"[align] reference={alignment.reference} method={alignment.method} conf={alignment.confidence}"
+        f"[align] reference={alignment.reference} method={alignment.method} "
+        f"conf={alignment.confidence} unresolved={len(alignment.unresolved)}"
     )
     for sid, off in alignment.offsets.items():
         marker = " (ref)" if sid == alignment.reference else ""
         print(f"  {sid:24s} offset={off:+.4f}s{marker}")
+    for sid in alignment.unresolved:
+        print(f"  {sid:24s} UNRESOLVED (could not place this source)")
     return alignment
 
 
@@ -174,29 +178,35 @@ def _log_line(directory: Path, message: str) -> None:
         pass
 
 
-def _merge_chunk_segments(
-    chunks: list[list[Segment]], bounds: list[tuple[float, float]]
-) -> list[Segment]:
+def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
     """Merge overlapping chunk results with deterministic ownership.
 
-    Each adjacent pair overlaps by ``overlap`` seconds. We hand ownership of the
-    overlap to the earlier chunk and drop later-chunk segments that start before
-    the midpoint of the overlap, so a word is kept exactly once without fuzzy
-    text matching (which can miss partial boundary words).
+    Adjacent chunks overlap, so the same words can be decoded in both. Ownership
+    is decided by *coverage*, not by comparing starts to an overlap midpoint: we
+    track the furthest end emitted so far and
+
+    - drop a later segment whose span is fully covered by that frontier
+      (``seg.end <= emitted_end``) — it is a duplicate;
+    - clip a straddler's ``start`` up to the frontier so its unique tail survives;
+    - keep outright a segment that starts at or after the frontier.
+
+    The frontier only moves forward, so the result cannot contain overlapping
+    duplicates, while a unique later-chunk tail near a boundary is retained.
     """
     out: list[Segment] = []
-    for idx, segs in enumerate(chunks):
-        if idx == 0:
-            keep_from = float("-inf")
-        else:
-            prev_end = bounds[idx - 1][1]
-            this_start = bounds[idx][0]
-            keep_from = (this_start + prev_end) / 2.0
+    emitted_end = float("-inf")
+    for segs in chunks:
         for seg in segs:
-            if seg.text.strip() and seg.start + 1e-6 >= keep_from:
-                out.append(seg)
+            if seg.end <= emitted_end + 1e-9:
+                continue  # already covered by an earlier chunk
+            if seg.start < emitted_end:
+                seg = dataclasses.replace(seg, start=emitted_end)
+            if seg.end <= seg.start:
+                continue
+            out.append(seg)
+            emitted_end = max(emitted_end, seg.end)
     out.sort(key=lambda s: (s.start, s.end))
-    return out
+    return clean_segments(out)
 
 
 def transcribe(
@@ -309,7 +319,7 @@ def transcribe(
                 f"[{start_s:.0f}-{end_s:.0f}s] -> {len(shifted)} segment(s)",
             )
 
-        merged = _merge_chunk_segments(chunk_segments, chunks)
+        merged = _merge_chunk_segments(chunk_segments)
         per_source[src.id] = merged
         meta["sources"][src.id] = {
             "duration": duration,
@@ -556,7 +566,7 @@ def run(
     formats: list[str] | None = None,
 ):
     ingest(directory, audio_files, split=split)
-    align(directory, reference=None)
+    align(directory, reference=reference)
     transcribe(
         directory,
         backend,
@@ -569,11 +579,11 @@ def run(
         resume=resume,
     )
     sources, _ = ws.load_manifest(Path(directory))
-    # Per-channel capture already attributes per source; diarize a single mixed
-    # stream (or when the user names a speaker count) to recover multiple
-    # speakers from one recording.
+    # Per-channel capture already attributes per source, and a single voice must
+    # not be split on weak evidence, so diarization is opt-in: `--diarize`
+    # forces it; a known `--speakers N` turns it on with that count.
     if do_diarize is None:
-        do_diarize = speakers is not None or len(sources) == 1
+        do_diarize = speakers is not None
     if do_diarize and sources:
         diarize(directory, speakers=speakers)
     reconcile(directory, prefer=reference)

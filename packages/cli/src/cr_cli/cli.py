@@ -189,6 +189,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _backend_args(cal)
     _channel_args(cal)
     _diarize_args(cal)
+    _common_args(cal)
     cal.add_argument(
         "--reference-transcript",
         help="a reference transcript text file to compare (WER/similarity)",
@@ -323,6 +324,7 @@ def _main(args: argparse.Namespace) -> int:
             resume=args.resume,
             do_diarize=args.diarize,
             speakers=args.speakers,
+            reference=args.reference,
         )
         return 0
 
@@ -340,6 +342,7 @@ def _main(args: argparse.Namespace) -> int:
             resume=args.resume,
             do_diarize=args.diarize,
             speakers=args.speakers,
+            reference=args.reference,
         )
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0

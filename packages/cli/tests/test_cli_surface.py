@@ -26,6 +26,12 @@ def test_subcommands_match_pipeline() -> None:
     assert set(subparsers_action.choices) == expected
 
 
+def test_run_and_calibrate_expose_reference() -> None:
+    parser = _build_parser()
+    assert parser.parse_args(["run", "dir", "--reference", "b"]).reference == "b"
+    assert parser.parse_args(["calibrate", "dir", "--reference", "b"]).reference == "b"
+
+
 def test_eval_error_rates_perfect_and_bad() -> None:
     from cr_cli.eval import error_rates
 

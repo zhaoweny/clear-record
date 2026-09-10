@@ -315,7 +315,7 @@ docs/vox/voice-of-owner.md         owner voice
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.
 
-`just verify` is green (106 tests); the CLI surface is derived from
+`just verify` is green (109 tests); the CLI surface is derived from
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple Silicon transcription are all landed. Apple

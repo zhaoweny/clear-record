@@ -61,13 +61,4 @@ class Backend(Protocol):
         ...
 
 
-def _importable(module: str) -> bool:
-    import importlib.util
-
-    try:
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ValueError):
-        return False
-
-
-__all__ = ["Backend", "BackendId", "BackendInfo", "DEFAULT_MODEL", "_importable"]
+__all__ = ["Backend", "BackendId", "BackendInfo", "DEFAULT_MODEL"]

@@ -48,7 +48,7 @@ from cr_engine import (
     write_chunk,
 )
 from cr_engine.audio import read_audio
-from cr_providers import get_backend
+from cr_providers import get_backend, resolve_backend_model
 
 from cr_cli import eval as _eval
 from cr_cli import workspace as ws
@@ -590,6 +590,10 @@ def transcribe(
         )
 
     chosen_model = model or backend.info.default_model
+    # Resolve/download the model once, single-threaded, before the chunk pool:
+    # ``apple`` is parallelizable, so workers must never race the first-use
+    # download the provider would otherwise trigger per chunk.
+    resolve_backend_model(backend, model, model_dir)
     prompt, prompt_src = _load_glossary(d, glossary)
     if prompt:
         _log_line(d, f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")

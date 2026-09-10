@@ -51,7 +51,7 @@ without evidence. The owner's authoritative words live in
 
 - uv workspace (`cr-core` domain · `cr-engine` audio/align/reconcile ·
   `cr-providers` ASR adapters · `cr-cli` the `clearrecord` command), MIT license,
-  provenance labeling, and a passing `just verify` gate (106 tests).
+  provenance labeling, and a passing `just verify` gate (109 tests).
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
   captures per channel**; `align` estimates source offsets via windowed
   cross-correlation; `transcribe` runs a real local ASR backend (Apple Silicon

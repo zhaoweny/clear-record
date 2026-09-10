@@ -474,6 +474,89 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     assert per_source["a"]  # and the merged output is complete
 
 
+def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -> None:
+    """The first-use model resolve/download runs once on the main thread, before
+    any worker: a parallel backend must never race it (the provider also makes
+    the download itself single-flight)."""
+    import threading
+    import time
+
+    from cr_cli import stages
+    from cr_core import Segment, TranscriptionResult
+    from cr_providers import BackendInfo
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(8 * sr, dtype=np.float64) / sr
+    sf.write(
+        str(wd / "a.wav"), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr
+    )
+    stages.ingest(str(wd), split="mix")
+
+    events: list[str] = []
+
+    class Fake:
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def resolve_model(self, model, model_dir):
+            events.append(f"resolve:{threading.current_thread().name}")
+            return "/tmp/fake-model.bin"
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+        ):
+            events.append(f"transcribe:{threading.current_thread().name}")
+            time.sleep(0.02)
+            data, file_sr = sf.read(audio_path)
+            dur = len(data) / file_sr
+            return TranscriptionResult(
+                source="fake",
+                segments=(
+                    Segment(
+                        start=0.0,
+                        end=round(dur, 3),
+                        text="chunk",
+                        source="fake",
+                        confidence=0.5,
+                    ),
+                ),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=dur,
+            )
+
+    fake = Fake()
+    monkeypatch.setattr(stages, "get_backend", lambda _id: fake)
+
+    stages.transcribe(str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=4)
+
+    # Resolved exactly once, on the main thread, before any worker ran.
+    assert events[0] == "resolve:MainThread"
+    assert sum(e.startswith("resolve:") for e in events) == 1
+    # ...and the pool really did fan out, so this exercises the parallel path.
+    assert any(
+        e.startswith("transcribe:") and e != "transcribe:MainThread" for e in events
+    )
+
+
 def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> None:
     """The `jobs=0` default is bounded by the model's resident size against the
     GPU memory, so N large models cannot OOM the documented minimum GPU; an

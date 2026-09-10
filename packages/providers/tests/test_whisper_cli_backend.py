@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 import urllib.error
 
 import pytest
@@ -84,9 +86,11 @@ class _FakeResponse:
         return False
 
 
-def _fake_urlopen(chunks: list[bytes]):
-    def urlopen(url: str) -> _FakeResponse:
-        return _FakeResponse(chunks)
+def _fake_urlopen(chunks: list[bytes], *, calls=None):
+    def urlopen(url: str, timeout=None) -> _FakeResponse:
+        if calls is not None:
+            calls.append((url, timeout))
+        return _FakeResponse(list(chunks))
 
     return urlopen
 
@@ -95,16 +99,21 @@ def test_resolve_ggml_model_downloads_when_absent(
     tmp_path, monkeypatch, capsys
 ) -> None:
     payload = b"ggml-model-bytes"
+    calls: list[tuple[str, float | None]] = []
     monkeypatch.setattr(
-        backends.urllib.request, "urlopen", _fake_urlopen([payload[:5], payload[5:]])
+        backends.urllib.request,
+        "urlopen",
+        _fake_urlopen([payload[:5], payload[5:]], calls=calls),
     )
 
     path = _resolve_ggml_model("medium", str(tmp_path))
 
     assert path == str(tmp_path / "ggml-medium.bin")
     assert (tmp_path / "ggml-medium.bin").read_bytes() == payload
-    # The atomic `.part` staging file must not survive a successful download.
-    assert not (tmp_path / "ggml-medium.bin.part").exists()
+    # The unique staging temp must not survive a successful download.
+    assert [p.name for p in tmp_path.iterdir()] == ["ggml-medium.bin"]
+    # A stalled connection must not block a worker indefinitely.
+    assert calls and calls[0][1] == backends._GGML_DOWNLOAD_TIMEOUT_S
     err = capsys.readouterr().err
     assert "downloaded ggml-medium.bin" in err
     assert path in err
@@ -125,7 +134,7 @@ def test_resolve_ggml_model_respects_cr_models_dir(tmp_path, monkeypatch) -> Non
 def test_resolve_ggml_model_download_failure_raises_clear_error(
     tmp_path, monkeypatch
 ) -> None:
-    def urlopen(url: str):
+    def urlopen(url: str, timeout=None):
         raise urllib.error.URLError("offline")
 
     monkeypatch.setattr(backends.urllib.request, "urlopen", urlopen)
@@ -133,8 +142,8 @@ def test_resolve_ggml_model_download_failure_raises_clear_error(
     with pytest.raises(FileNotFoundError, match=r"hf download"):
         _resolve_ggml_model("medium", str(tmp_path))
 
-    assert not (tmp_path / "ggml-medium.bin").exists()
-    assert not (tmp_path / "ggml-medium.bin.part").exists()
+    # No model and no stray temp survives the failure.
+    assert [p.name for p in tmp_path.iterdir()] == []
 
 
 def test_resolve_ggml_model_interrupted_download_leaves_no_model(
@@ -158,13 +167,74 @@ def test_resolve_ggml_model_interrupted_download_leaves_no_model(
         def __exit__(self, *exc) -> bool:
             return False
 
-    monkeypatch.setattr(backends.urllib.request, "urlopen", lambda url: _Interrupted())
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", lambda url, timeout=None: _Interrupted()
+    )
 
     with pytest.raises(FileNotFoundError, match=r"hf download"):
         _resolve_ggml_model("medium", str(tmp_path))
 
-    assert not (tmp_path / "ggml-medium.bin").exists()
-    assert not (tmp_path / "ggml-medium.bin.part").exists()
+    assert [p.name for p in tmp_path.iterdir()] == []
+
+
+def test_resolve_ggml_model_keyboard_interrupt_cleans_temp(
+    tmp_path, monkeypatch
+) -> None:
+    """Ctrl-C mid-download must clean the temp and propagate it, not hide it
+    behind a ``FileNotFoundError``."""
+
+    def urlopen(url: str, timeout=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(KeyboardInterrupt):
+        _resolve_ggml_model("medium", str(tmp_path))
+
+    assert [p.name for p in tmp_path.iterdir()] == []
+
+
+def test_resolve_ggml_model_is_single_flight_under_concurrency(
+    tmp_path, monkeypatch
+) -> None:
+    """Concurrent first-use callers download exactly once, intact.
+
+    Regression for the pool race: ``apple`` is parallelizable, so with no model
+    present every worker used to stream into the shared ``.part`` and race
+    ``os.replace`` (the loser raised a bare ``FileNotFoundError``, and the shared
+    temp could be left corrupt). The lock plus a unique temp make the
+    check-and-download single-flight.
+    """
+    payload = b"full-model-payload" * 64
+    calls: list[str] = []
+    errors: list[BaseException] = []
+    start = threading.Barrier(2)
+
+    def urlopen(url: str, timeout=None):
+        calls.append(url)  # recorded before any replace can happen
+        time.sleep(0.3)  # keep both callers inside the download window
+        return _FakeResponse([payload])
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", urlopen)
+
+    def worker() -> None:
+        start.wait()
+        try:
+            _resolve_ggml_model("medium", str(tmp_path))
+        except BaseException as exc:  # recorded for the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(calls) == 1, f"expected exactly one download, got {len(calls)}"
+    assert (tmp_path / "ggml-medium.bin").read_bytes() == payload
+    # Only the model remains: no `.part` / temp from either caller.
+    assert [p.name for p in tmp_path.iterdir()] == ["ggml-medium.bin"]
 
 
 def test_amd_backend_metadata_unchanged() -> None:

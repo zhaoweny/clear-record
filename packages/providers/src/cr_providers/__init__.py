@@ -12,6 +12,7 @@ from cr_providers.backends import (
     BACKENDS,
     available_backend_ids,
     get_backend,
+    resolve_backend_model,
 )
 from cr_providers.base import Backend, BackendId, BackendInfo, DEFAULT_MODEL
 
@@ -23,4 +24,5 @@ __all__ = [
     "DEFAULT_MODEL",
     "available_backend_ids",
     "get_backend",
+    "resolve_backend_model",
 ]

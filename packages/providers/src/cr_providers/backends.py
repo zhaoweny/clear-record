@@ -28,6 +28,7 @@ error when offline).
 from __future__ import annotations
 
 import glob
+import itertools
 import json
 import os
 import platform
@@ -35,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.request
 from collections.abc import Callable
 
@@ -275,6 +277,17 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
 
 # where first-use model downloads come from (Hugging Face's whisper.cpp repo)
 _GGML_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+# Socket timeout per read/write: a stalled connection must not block a pool
+# worker (or the single-threaded prefetch) indefinitely.
+_GGML_DOWNLOAD_TIMEOUT_S = 60
+# Serialise first-use downloads. The model can be requested by many pool
+# workers at once (``AppleBackend`` is ``parallelizable``), and without this
+# every worker would stream into the same temp and race ``os.replace``. One
+# lock makes the check-and-download single-flight.
+_DOWNLOAD_LOCK = threading.Lock()
+# Per-call unique temp suffix; combined with the (cross-process) pid it makes
+# concurrent callers and separate CLI invocations unable to share a temp file.
+_PART_COUNTER = itertools.count()
 
 
 def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
@@ -282,10 +295,11 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
 
     Accepts an explicit existing path, or a name resolved against ``model_dir``
     (then ``CR_MODELS_DIR``, then ``<cwd>/models``). When the model is absent it
-    is downloaded from Hugging Face on first use, streamed to ``<name>.part``
-    and atomically renamed on success so an interrupted download is never mistaken
-    for a model. On a network failure the part file is removed and the original
-    clear pre-fetch error (with the ``hf download`` hint) is raised.
+    is downloaded from Hugging Face on first use, streamed to a unique
+    ``<name>.<pid>.<n>.part`` and atomically renamed on success so an
+    interrupted download is never mistaken for a model. On a network failure the
+    temp file is removed and the original clear pre-fetch error (with the
+    ``hf download`` hint) is raised.
     """
     expanded = os.path.expanduser(model)
     if os.path.isfile(expanded):
@@ -307,24 +321,44 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
 
 
 def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> str:
-    """Download ``ggml-<name>.bin`` to ``candidate`` (see ``_resolve_ggml_model``)."""
+    """Download ``ggml-<name>.bin`` to ``candidate`` (single-flight).
+
+    A process-wide lock serialises the check-and-download, and each call streams
+    to its own temp file, so concurrent workers can neither interleave writes nor
+    lose the ``os.replace`` race. Any failure -- including a failed replace --
+    removes the temp and raises the actionable ``FileNotFoundError``; an
+    interrupt still cleans the temp before propagating.
+    """
     os.makedirs(base, exist_ok=True)
     url = _GGML_MODEL_URL + name
-    part = candidate + ".part"
-    try:
-        with urllib.request.urlopen(url) as response, open(part, "wb") as out:
-            shutil.copyfileobj(response, out)
-    except Exception as exc:  # any download failure -> the actionable pre-fetch error
-        _remove_partial(part)
-        raise FileNotFoundError(
-            f"ggml model not found for {model!r}; looked for {candidate} and "
-            f"could not download {url} ({exc}). Download one manually, e.g. "
-            f"`hf download ggerganov/whisper.cpp {name} --local-dir {base}`."
-        ) from exc
-    os.replace(part, candidate)
+    with _DOWNLOAD_LOCK:
+        # Another caller may have finished the download while we waited.
+        if os.path.isfile(candidate):
+            return candidate
+        part = f"{candidate}.{os.getpid()}.{next(_PART_COUNTER)}.part"
+        try:
+            with (
+                urllib.request.urlopen(
+                    url, timeout=_GGML_DOWNLOAD_TIMEOUT_S
+                ) as response,
+                open(part, "wb") as out,
+            ):
+                shutil.copyfileobj(response, out)
+            # Inside the try: a failed rename surfaces as the clear error too.
+            os.replace(part, candidate)
+        except (KeyboardInterrupt, SystemExit):
+            _remove_partial(part)  # interrupted: leave no stray temp
+            raise
+        except Exception as exc:  # download failure -> actionable pre-fetch error
+            _remove_partial(part)
+            raise FileNotFoundError(
+                f"ggml model not found for {model!r}; looked for {candidate} and "
+                f"could not download {url} ({exc}). Download one manually, e.g. "
+                f"`hf download ggerganov/whisper.cpp {name} --local-dir {base}`."
+            ) from exc
+        size = os.path.getsize(candidate)
     print(
-        f"[cr-providers] downloaded {name} "
-        f"({os.path.getsize(candidate)} bytes) to {candidate}",
+        f"[cr-providers] downloaded {name} ({size} bytes) to {candidate}",
         file=sys.stderr,
     )
     return candidate
@@ -405,6 +439,16 @@ class _WhisperCliBackend:
             and _find_ggml_gpu_backend(self._gpu_backends) is not None
             and self._device_check()
         )
+
+    def resolve_model(self, model: str | None, model_dir: str | None) -> str:
+        """Resolve (downloading on first use) this backend's ggml model path.
+
+        The CLI calls this once, **single-threaded before the chunk pool**, so
+        parallel workers only ever read a model that is already present;
+        ``transcribe`` still resolves lazily as a defensive fallback.
+        """
+        name = model or self.info.default_model
+        return _resolve_ggml_model(name, model_dir)
 
     def transcribe(
         self,
@@ -561,8 +605,25 @@ def get_backend(backend_id: str) -> Backend:
         raise KeyError(f"unknown ASR backend {backend_id!r}") from exc
 
 
+def resolve_backend_model(
+    backend: Backend, model: str | None, model_dir: str | None
+) -> str | None:
+    """Resolve (and download, once) a backend's model before a chunk pool.
+
+    Returns the resolved path for backends that own a downloadable ggml model
+    (the ``whisper-cli`` adapters), else ``None``. Callers should invoke this
+    single-threaded before fanning out so pool workers never race a first-use
+    download.
+    """
+    resolver = getattr(backend, "resolve_model", None)
+    if resolver is None:
+        return None
+    return resolver(model, model_dir)
+
+
 __all__ = [
     "BACKENDS",
     "available_backend_ids",
     "get_backend",
+    "resolve_backend_model",
 ]

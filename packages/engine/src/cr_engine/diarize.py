@@ -9,6 +9,8 @@ speakers either given or estimated by silhouette score.
 
 It is not a state-of-the-art diarizer and is honest about that — it is the
 default that always works offline, behind a seam a stronger provider can replace.
+Auto model-count is deliberately conservative: a single-speaker synthetic scene
+can score up to ~0.35, so it only splits when the features separate clearly.
 """
 
 from __future__ import annotations
@@ -18,10 +20,12 @@ import numpy as np
 __all__ = ["diarize", "logmel_stats", "pitch_stats"]
 
 # Minimum silhouette score for the automatic model count to accept more than one
-# speaker. This is deliberately a *strong* margin: a measured single-speaker
-# scene (``make_scene(n_speakers=1)``) scores only ~0.2, so a lower floor still
-# split one voice into two. A clear two-voice separation scores >~0.5.
-_MIN_SILHOUETTE = 0.45
+# speaker. Measured reality: single-speaker synthetic scenes (``make_scene``)
+# score up to ~0.35, and ``make_scene`` multi-speaker scenes score <=~0.29, so a
+# clearly *separated* two-voice scene measures ~0.51. Auto mode is therefore
+# deliberately conservative: it will not split a scene whose features do not
+# separate, and only accepts a second speaker above this floor.
+_MIN_SILHOUETTE = 0.40
 
 
 # --------------------------------------------------------------------------- #

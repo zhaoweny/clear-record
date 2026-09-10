@@ -28,6 +28,11 @@ def _priority(seg: Segment, order: dict[str, int]) -> tuple[float, int]:
     return (seg.confidence or 0.0), -order.get(seg.source, 0)
 
 
+def _overlaps(a: Segment, b: Segment) -> bool:
+    """True when ``a`` and ``b`` strictly overlap (touching endpoints do not)."""
+    return a.start < b.end - 1e-9 and b.start < a.end - 1e-9
+
+
 def _weighted_conf(a: Segment, b: Segment) -> float | None:
     ca, cb = a.confidence, b.confidence
     if ca is None and cb is None:
@@ -71,27 +76,22 @@ def _join_continuous(segments: Sequence[Segment], max_cue_s: float) -> list[Segm
 def _resolve_overlaps(
     segments: Sequence[Segment], order: dict[str, int]
 ) -> list[Segment]:
-    """Keep one survivor per connected component of mutually overlapping
-    segments (deterministic: confidence, then source order).
+    """Greedily keep a maximal non-overlapping set, ordered by priority.
 
-    Resolving pairwise left ~ceil(N/2) duplicates when three or more sources
-    overlapped the same moment.
+    Selection is **non-transitive**: a segment is dropped only when it overlaps
+    a segment we actually *kept*, never merely because it overlaps some other
+    dropped segment. Iterating in descending ``_priority`` keeps exactly one
+    survivor from a set of mutually-overlapping duplicates (N -> 1) while
+    preserving a distinct, non-overlapping event that merely bridges two
+    duplicates. The previous connected-component loop absorbed such a bridge
+    into the cluster and then discarded it, silently losing a real utterance.
     """
-    out: list[Segment] = []
-    cluster: list[Segment] = []
-    cluster_end = 0.0
-    for seg in segments:
-        if cluster and seg.start < cluster_end - 1e-9:
-            cluster.append(seg)
-            cluster_end = max(cluster_end, seg.end)
-            continue
-        if cluster:
-            out.append(max(cluster, key=lambda s: _priority(s, order)))
-        cluster = [seg]
-        cluster_end = seg.end
-    if cluster:
-        out.append(max(cluster, key=lambda s: _priority(s, order)))
-    return out
+    kept: list[Segment] = []
+    for seg in sorted(segments, key=lambda s: _priority(s, order), reverse=True):
+        if all(not _overlaps(seg, k) for k in kept):
+            kept.append(seg)
+    kept.sort(key=lambda s: (s.start, s.end))
+    return kept
 
 
 def reconcile(

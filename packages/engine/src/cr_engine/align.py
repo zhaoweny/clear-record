@@ -31,6 +31,11 @@ _MAX_LAG_S = 120.0
 # multi-hour meeting tape would need multi-GB FFT buffers; at 1 kHz a 3 h file
 # is ~10.8 M samples (~hundreds of MB), so long tapes stay processable.
 _ALIGN_SR = 1000
+# Normalized cross-correlation peak below which a source is treated as
+# unplaceable. Uncorrelated audio (e.g. unrelated white noise) still produces a
+# small positive peak (~0.04 measured) because we take the max over many lags;
+# without this floor that noise was recorded as a valid near-zero offset.
+_MIN_CONFIDENCE = 0.05
 
 
 def _normalized(x: np.ndarray) -> np.ndarray:
@@ -110,7 +115,10 @@ def estimate_offset(
     # offset = ref_window_start - source_position (in samples at _ALIGN_SR)
     offset = (win_start - lag) / _ALIGN_SR
     confidence = float(min(1.0, max(0.0, value)))
-    if confidence <= 0.0:
+    if confidence < _MIN_CONFIDENCE:
+        # A weak peak means the window matched no real counterpart: unrelated
+        # audio still yields a small positive correlation. Treat it as
+        # unplaceable rather than recording a meaningless near-zero offset.
         return 0.0, None
     return float(offset), confidence
 

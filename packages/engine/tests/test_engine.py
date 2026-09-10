@@ -229,6 +229,33 @@ def test_estimate_offset_unplaceable_source_is_unresolved(tmp_path) -> None:
     assert "bad" not in alignment.offsets
 
 
+def test_estimate_offset_uncorrelated_noise_is_unresolved(tmp_path) -> None:
+    """Unrelated audio yields only a weak positive correlation peak; below the
+    confidence floor it must be unplaceable, not recorded as a fake offset."""
+    from cr_core import Source
+    from cr_engine import align_sources
+
+    ref = tmp_path / "ref.wav"
+    _write(ref, leading_silence_s=2.0)
+
+    # 4 s of unrelated white noise: same length as the reference event, so the
+    # only peak is the small correlation of two unrelated signals.
+    noise = tmp_path / "noise.wav"
+    rng = np.random.default_rng(1856)
+    sf.write(str(noise), rng.standard_normal(4 * 8000).astype(np.float32), 8000)
+
+    _, confidence = estimate_offset(str(ref), str(noise))
+    assert confidence is None
+
+    sources = [
+        Source(id="ref", path=str(ref), label="Alice"),
+        Source(id="noise", path=str(noise), label="Bob"),
+    ]
+    alignment = align_sources(sources, reference_id="ref")
+    assert alignment.unresolved == ("noise",)
+    assert "noise" not in alignment.offsets
+
+
 def test_reconcile_collapses_overlap_cluster() -> None:
     """Three mutually-overlapping sources yield exactly one survivor, chosen by
     confidence then source order — not ~ceil(N/2) pairwise survivors."""
@@ -266,6 +293,49 @@ def test_reconcile_survivors_never_overlap() -> None:
         assert earlier.end <= later.start + 1e-9
 
 
+def test_reconcile_greedy_keeps_one_of_mutually_overlapping() -> None:
+    """A mutually-overlapping cluster still collapses to exactly one survivor,
+    chosen by confidence then source order (N -> 1)."""
+    sources = [Source(id=f"s{i}", path="", label=f"spk{i}") for i in range(3)]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0, "s1": 0.0, "s2": 0.0})
+    per_source = {
+        "s0": [Segment(0.0, 5.0, "alpha", "s0", confidence=0.5)],
+        "s1": [Segment(1.0, 6.0, "beta", "s1", confidence=0.9)],
+        "s2": [Segment(2.0, 7.0, "gamma", "s2", confidence=0.7)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    assert len(merged) == 1
+    assert merged[0].speaker == "spk1"  # highest confidence wins
+
+
+def test_reconcile_keeps_bridged_but_distinct_segments() -> None:
+    """Overlap resolution is not transitive.
+
+    ``s1`` [4, 6.5] bridges the two ``s0`` utterances: it overlaps the
+    high-confidence [6, 10] (so it loses) but is the only segment overlapping
+    [0, 5]. The old connected-component resolver absorbed [0, 5] into the
+    cluster through the bridge and then dropped it, silently losing an
+    utterance; the greedy resolver keeps both distinct events."""
+    sources = [
+        Source(id="s0", path="", label="spk0"),
+        Source(id="s1", path="", label="spk1"),
+    ]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0, "s1": 0.0})
+    per_source = {
+        "s0": [
+            Segment(0.0, 5.0, "first", "s0", confidence=0.2),
+            Segment(6.0, 10.0, "second", "s0", confidence=0.9),
+        ],
+        "s1": [Segment(4.0, 6.5, "bridge", "s1", confidence=0.5)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    assert sorted(s.text for s in merged) == ["first", "second"]
+    for earlier, later in zip(merged, merged[1:]):
+        assert earlier.end <= later.start + 1e-9
+
+
 def test_reconcile_caps_cue_length() -> None:
     """A long continuous same-speaker run is split so no cue exceeds the cap."""
     sources = [Source(id="s0", path="", label="Alice")]
@@ -293,6 +363,69 @@ def test_diarize_auto_keeps_single_speaker() -> None:
 
     labels = diarize(scene, SYNTH_SR, segments)
     assert len(set(labels)) == 1
+
+
+def test_diarize_auto_splits_two_separated_voices() -> None:
+    """Auto model-count can actually *find* a split: two strongly separated
+    voices (low-pass vs high-pass noise, silhouette ~0.51) must yield exactly
+    two speakers when ``n_speakers`` is left to auto."""
+    from cr_engine import diarize
+
+    sr = 16000
+    rng = np.random.default_rng(0)
+    seg_len = sr
+
+    def low() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        return np.convolve(x, np.ones(64) / 64, mode="same")
+
+    def high() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        slow = np.convolve(x, np.ones(64) / 64, mode="same")
+        return x - slow
+
+    seq = [low(), high(), low(), high()]
+    audio = np.concatenate(seq).astype(np.float32)
+    audio /= np.max(np.abs(audio)) or 1.0
+    segments = [(i * 1.0, (i + 1) * 1.0) for i in range(4)]
+
+    labels = diarize(audio, sr, segments)  # n_speakers=None -> auto
+    assert len(set(labels)) == 2
+
+
+def test_diarize_auto_accepts_marginal_two_voice() -> None:
+    """A moderately separated two-voice scene (silhouette ~0.43) is still split.
+
+    This pins ``_MIN_SILHOUETTE``: the old 0.45 floor left this scene at one
+    speaker, so the assertion fails if the floor is raised back."""
+    from cr_engine import diarize
+
+    sr = 16000
+    seg_len = sr
+    # A shared component softens the spectral separation just enough that the
+    # auto silhouette lands between the old (0.45) and new (0.40) floors.
+    common = np.random.default_rng(0).standard_normal(seg_len)
+    rng = np.random.default_rng(0)
+
+    def low() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        return np.convolve(x, np.ones(64) / 64, mode="same")
+
+    def high() -> np.ndarray:
+        x = rng.standard_normal(seg_len)
+        slow = np.convolve(x, np.ones(64) / 64, mode="same")
+        return x - slow
+
+    seq = []
+    for i in range(4):
+        voice = low() if i % 2 == 0 else high()
+        seq.append(voice + common)
+    audio = np.concatenate(seq).astype(np.float32)
+    audio /= np.max(np.abs(audio)) or 1.0
+    segments = [(i * 1.0, (i + 1) * 1.0) for i in range(4)]
+
+    labels = diarize(audio, sr, segments)  # n_speakers=None -> auto
+    assert len(set(labels)) == 2
 
 
 def test_diarize_separates_two_voices(tmp_path) -> None:

@@ -273,6 +273,30 @@ def test_estimate_offset_processed_builtin_mic_resolves(tmp_path) -> None:
     assert 0.0 < confidence < 0.25
 
 
+def test_estimate_offset_attenuated_shared_region_corroborates(tmp_path) -> None:
+    """A genuine shared passage ~12 dB below a loud anchor still places the source.
+
+    The reference opens with a loud stretch the source never recorded, so a 5%
+    relative-energy filter drops the quieter — but genuine — shared windows,
+    collapsing the candidate list to the one bad anchor and refusing the source
+    (the ~10 dB recall cliff). The absolute near-silence floor keeps every
+    non-silent window, and the five shared windows agree on +5 s.
+    """
+    sr = 2000
+    loud = _speech_like(int(5.0 * sr), seed=77) * 1.4  # source missed this
+    shared = _speech_like(int(60.0 * sr), seed=5) * 0.35  # ~12 dB down
+    ref = np.concatenate([loud, shared]).astype(np.float32)
+    src = _dissimilar_copy(shared, seed=3, noise=0.1)
+    ref_p = tmp_path / "ref.wav"
+    src_p = tmp_path / "shared.wav"
+    sf.write(str(ref_p), ref, sr)
+    sf.write(str(src_p), src, sr)
+
+    offset, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert offset == pytest.approx(5.0, abs=0.5)
+    assert confidence is not None and confidence > 0.0
+
+
 def test_estimate_offset_same_device_pair_resolves(tmp_path) -> None:
     """The common case still resolves with a high, scale-invariant confidence."""
     sr = 2000
@@ -343,6 +367,61 @@ def test_estimate_offset_uncorrelated_noise_is_unresolved(tmp_path) -> None:
     assert "noise" not in alignment.offsets
 
 
+def test_estimate_offset_long_reference_lone_weak_peak_is_unresolved(tmp_path) -> None:
+    """A long reference must not launder one weak peak through the lone-window path.
+
+    The reference is 5 s of content followed by 115 s of near-silence
+    (amplitude 1e-4). A relative-energy filter collapses this to the single loud
+    window and accepts its coincidental correlation with unrelated audio (offset
+    -27.3 s, confidence ~0.107 on the pre-fix code). Because the near-silence is
+    skipped by an absolute floor and the sole surviving vote is weak, the source
+    stays unresolved: a lone vote is only trusted when it is a *strong* peak, and
+    "the filter left one window" does not count as a one-window reference.
+    """
+    sr = 2000
+    ref = np.concatenate(
+        [
+            _speech_like(int(5.0 * sr), seed=5) * 0.8,
+            _speech_like(int(115.0 * sr), seed=6) * 1e-4,
+        ]
+    ).astype(np.float32)
+    src = np.concatenate(
+        [
+            np.zeros(int(30 * sr), np.float32),
+            _speech_like(int(4 * sr), seed=230),  # unrelated burst-in-silence
+            np.zeros(int(30 * sr), np.float32),
+        ]
+    ).astype(np.float32)
+    ref_p = tmp_path / "ref.wav"
+    src_p = tmp_path / "unrelated.wav"
+    sf.write(str(ref_p), ref, sr)
+    sf.write(str(src_p), src, sr)
+
+    _, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert confidence is None
+
+
+def test_estimate_offset_short_speech_band_noise_is_unresolved(tmp_path) -> None:
+    """Short uncorrelated speech-band noise must not exploit edge lags.
+
+    On a 6 s reference a large share of the search band used to be
+    partial-overlap lags, where a handful of samples normalize into a spuriously
+    high cosine; noise then reached prominence ~25 and this seed was accepted at
+    confidence 0.111. Bounding the search to full-window overlaps and requiring
+    corroboration keeps it unresolved.
+    """
+    sr = 2000
+    a = _speech_like(int(6.0 * sr), seed=10366)
+    b = _speech_like(int(6.0 * sr), seed=10367)
+    a_p = tmp_path / "a.wav"
+    b_p = tmp_path / "b.wav"
+    sf.write(str(a_p), a, sr)
+    sf.write(str(b_p), b, sr)
+
+    _, confidence = estimate_offset(str(a_p), str(b_p))
+    assert confidence is None
+
+
 def test_estimate_offset_long_recording_confidence_is_scale_invariant(
     tmp_path,
 ) -> None:
@@ -396,12 +475,14 @@ def test_estimate_offset_long_recording_confidence_is_scale_invariant(
 def test_estimate_offset_long_uncorrelated_noise_is_unresolved(tmp_path) -> None:
     """Independent noise of realistic length stays below the prominence floor.
 
-    Spurious correlation peaks over many seeds of speech-band noise measure
-    <=0.13 in coefficient and <=8.1 in ``(peak - median) / MAD`` prominence at
-    1200 s (the shipped pair here measures <=6.9); the 0.10 sanity floor and the
-    10.0 prominence floor keep real margin above that without the old
-    length-dependence. A lone spurious peak also cannot form the two-window
-    consensus that a genuine match does.
+    With the search bounded to full-window overlaps, spurious correlation peaks
+    over many seeds of speech-band noise measure <=0.13 in coefficient and
+    <=9.40 in ``(peak - median) / MAD`` prominence across 6-600 s (300
+    seeds/length); the 10.0 floor plus required corroboration keeps the source
+    unresolved. (Unbounded, partial-overlap edge lags pushed short noise to
+    prominence ~10.4 at 20 s and ~25.7 at 6 s — the reviewer's finding — so the
+    bound is load-bearing, not cosmetic.) A lone spurious peak also cannot clear
+    the strong-peak bar.
     """
     from cr_engine import align_sources
 

@@ -5,14 +5,15 @@ constant time offset that best maps the source onto the reference's clock:
 
     reference_time = source_time + offset
 
-The estimate is **windowed** — we take several short, high-energy reference
-windows spread across the tape and locate them in the source — which is both
-cheaper and far more robust than correlating two hours of audio wholesale. A
-single window can be a poor anchor: the most energetic 4 s stretch may be a
-music bed, a dropout, or a section the other device missed entirely. Using
-several windows spread across the reference, and requiring them to agree on the
-same offset, survives those bad anchors. The result is approximate and
-explicitly not a high-precision clock-sync service (architecture §7).
+The estimate is **windowed** — we take several reference windows spread across
+the tape (the most energetic in each slice) and locate them in the source —
+which is both cheaper and far more robust than correlating two hours of audio
+wholesale. A single window can be a poor anchor: the most energetic 4 s stretch
+may be a music bed, a dropout, or a section the other device missed entirely.
+Using several windows spread across the reference, and requiring them to agree on
+the same offset, survives those bad anchors; a lone window is trusted only when
+its peak is decisive. The result is approximate and explicitly not a
+high-precision clock-sync service (architecture §7).
 
 A window is "matched" by the **prominence** of its correlation peak: how far the
 best peak stands above the correlation's own robust background, rather than by an
@@ -48,40 +49,57 @@ _ALIGN_SR = 1000
 # energetic window in its slice of the tape, so a bad anchor in one slice cannot
 # sink the estimate; the others still cover the shared content.
 _N_WINDOWS = 6
-# Candidate windows quieter than this fraction of the strongest candidate are
-# dropped: on a tape that is mostly silence only the windows around real content
-# remain, and their offsets are the ones that can be corroborated.
-_MIN_WINDOW_ENERGY_FRAC = 0.05
-# Absolute sanity floor. A window that is mostly silence has a correlation whose
-# median/MAD collapse, inflating prominence to absurd values for what is really
-# a random match; this floor rejects those. It is far below any genuine match —
-# measured: genuine weak matches peak at ~0.10-0.29; independent speech-band
-# noise peaks at ~0.13, and short (4 s) white noise against a quiet reference at
-# ~0.05.
+# A window is kept if it carries any real signal; only essentially-silent
+# windows are skipped. This is an *absolute* floor (~-80 dBFS, below 16-bit
+# quantization), deliberately not relative to the loudest window: a genuine but
+# attenuated shared passage must stay able to corroborate even when some other
+# device cut a much louder stretch (a phone memo next to a PA, say). Dropping
+# windows by relative energy created a ~10 dB recall cliff.
+_SILENCE_RMS = 1e-4
+# Absolute sanity floor for a correlation peak. It is *not* the noise
+# discriminator — independent speech-band noise reaches ~0.13 and short white
+# noise ~0.05 — it only stops a degenerate near-empty window (whose normalized
+# correlation is numerical fuzz) from being treated as a match. Real
+# discrimination comes from prominence plus corroboration.
 _MIN_COEFFICIENT = 0.10
 # A strong peak is trusted without a prominence test: clean same-device matches
 # measure ~0.95-1.0, well clear of the ~0.13 noise ceiling. (The 4-device
 # synthetic scenes also peak ~0.96-0.99 but, because they share one degradation
 # seed, their reverberant shoulder widens MAD; the strong-peak bypass keeps them
-# from depending on a thin prominence margin.)
+# from depending on a thin prominence margin.) It is also the bar a *lone*
+# uncorroborated vote must clear — see estimate_offset.
 _STRONG_COEFFICIENT = 0.50
 # Peak prominence = (peak - median) / MAD of the coefficient profile over the
-# search band. Calibration (synthetic, measured):
-#   - independent speech-band noise, 20-1200 s, 40+ seeds: prominence <= 8.1
-#     (the shipped 1200 s test pair measures <= 6.9);
-#   - genuine but reverberant (dry ref vs rir_s 0.16): ~19-27;
-#   - phone-like (band-limited + independent noise): ~16-27 at peak coeff
-#     0.17-0.26;
-#   - processed built-in mic (band-limited + noise): ~12-20 at peak coeff
-#     0.10-0.17;
-#   - clean same-device: ~60.
-# The 10.0 floor sits above the noise ceiling and below every genuine match.
-# It deliberately *accepts* the dry-vs-reverberant and mic-mismatched pairs that
-# the old absolute 0.25 floor rejected (ticket 04's precision-over-recall
-# tradeoff is superseded by ticket 10's prominence criterion).
+# search band. The search is bounded to full-window overlaps; that bound is what
+# tames this statistic. Without it, partial-overlap edge lags on short
+# recordings normalize a handful of samples into a spuriously high cosine and
+# pushed uncorrelated noise to prominence ~10.4 at 20 s and ~25.7 at 6 s (the
+# reviewer's finding, reproduced here).
+#
+# Calibration with the bound in place (synthetic, measured):
+#   - independent speech-band noise, 6-600 s, 300 seeds/length: per-window
+#     prominence <= 9.40; low-passed noise <= 8.52; white noise never reaches the
+#     0.10 coefficient floor. End-to-end (prominence + corroboration), 0 false
+#     accepts over 300 seeds at 6-20 s, 200 at 60 s and 60 at 300 s, including
+#     long references whose quiet tail is skipped;
+#   - genuine but reverberant (dry ref vs rir_s 0.16): ~10.0-13.7;
+#   - processed built-in mic (band-limited + noise): ~10.6-17.8 at peak coeff
+#     0.10-0.17 (its weakest window may fall below the floor and is correctly
+#     outvoted by the stronger ones — consensus, not any single window, decides);
+#   - phone-like (band-limited + independent noise): ~14-24 at peak coeff
+#     0.15-0.26.
+#
+# The floor stays at 10.0 rather than climbing above the 9.40 noise tail: the
+# genuinely reverberant pair sits at ~10, so a higher floor trades away exactly
+# the mic-mismatched recall ticket 10 targets (raising it breaks
+# test_estimate_offset_resolves_reverberant_source). Discrimination instead
+# comes from requiring corroborating votes, with a strong-peak bar for a lone
+# window — the noise tail cannot produce either.
 _MIN_PROMINENCE = 10.0
 # An offset is accepted only when at least this many windows agree on it (within
-# tolerance), unless the reference is too short to offer more than one window.
+# tolerance). A single vote is accepted only when its peak clears
+# ``_STRONG_COEFFICIENT``; "the silence filter left one window" does not count as
+# a one-window reference.
 _MIN_VOTES = 2
 _VOTE_TOLERANCE_S = 1.0
 
@@ -114,16 +132,18 @@ def cross_correlate(sig: np.ndarray, window: np.ndarray) -> np.ndarray:
 
 
 def _candidate_window_starts(ref: np.ndarray, n_win: int) -> list[int]:
-    """Several high-energy window start-positions spread across the reference.
+    """Several window start-positions spread across the reference.
 
     The reference is divided into ``_N_WINDOWS`` slices and the most energetic
     window in each is kept, so the candidates span the whole tape rather than
-    clustering on one loud stretch. Windows far quieter than the strongest
-    candidate (a mostly-silent slice) are dropped.
+    clustering on one loud stretch. Only essentially-silent windows
+    (``_SILENCE_RMS``) are dropped; a quieter window is *not* discarded for being
+    quieter than a loud neighbour, so attenuated-but-genuine content can still
+    corroborate the offset.
     """
     n = ref.size
     if n <= n_win:
-        return [0]
+        return [0] if _window_rms(ref) >= _SILENCE_RMS else []
     span = n - n_win
     chosen: list[int] = []
     for b in range(_N_WINDOWS):
@@ -140,12 +160,12 @@ def _candidate_window_starts(ref: np.ndarray, n_win: int) -> list[int]:
     for s in chosen:
         if s not in starts:
             starts.append(s)
-    energies = {
-        s: float(np.mean(np.square(ref[s : s + n_win], dtype=np.float64)))
-        for s in starts
-    }
-    strongest = max(energies.values()) if energies else 0.0
-    return [s for s in starts if energies[s] >= _MIN_WINDOW_ENERGY_FRAC * strongest]
+    return [s for s in starts if _window_rms(ref[s : s + n_win]) >= _SILENCE_RMS]
+
+
+def _window_rms(x: np.ndarray) -> float:
+    """Root-mean-square of a window, for the absolute near-silence floor."""
+    return float(np.sqrt(np.mean(np.square(x, dtype=np.float64)))) if x.size else 0.0
 
 
 def _coefficient_profile(
@@ -215,8 +235,13 @@ def estimate_offset(
         # window found beyond max_lag into the source — which silently zeroed
         # every recording whose most energetic window sat more than max_lag into
         # the tape.
+        #
+        # Bound to full-window overlaps only (lag <= n_src - n_win): a lag where
+        # the window only partly overlaps the source normalizes a handful of
+        # samples into a cosine, which spikes the coefficient and its prominence
+        # on short recordings. Genuine matches land at full-overlap lags.
         lo = max(0, win_start - max_lag)
-        hi = min(coef.size - 1, win_start + max_lag)
+        hi = min(n_src - n_win, win_start + max_lag)
         if hi < lo:
             continue
         band = coef[lo : hi + 1]
@@ -245,13 +270,18 @@ def estimate_offset(
             and max(v[1] for v in cluster) > max((v[1] for v in best), default=0.0)
         ):
             best = cluster
-    if len(starts) > 1 and len(best) < _MIN_VOTES:
-        # Only one window found a peak; without corroboration it is as likely to
-        # be noise as content, so leave the source unresolved rather than record
-        # a meaningless offset.
-        return 0.0, None
 
     offset, confidence = max(best, key=lambda v: v[1])
+    if len(best) < _MIN_VOTES and confidence < _STRONG_COEFFICIENT:
+        # A lone, uncorroborated vote is accepted only when its peak is strong.
+        # The reference can genuinely offer just one usable window — a short clip
+        # or a long tape with a single content stretch — but a weak lone peak is
+        # indistinguishable from an accidental match against unrelated audio.
+        # Critically, "the filter left one window" must not count as "the
+        # reference has only one window": a long reference whose quieter windows
+        # are silence still cannot smuggle a single weak peak through.
+        return 0.0, None
+
     return float(offset), float(min(1.0, max(0.0, confidence)))
 
 

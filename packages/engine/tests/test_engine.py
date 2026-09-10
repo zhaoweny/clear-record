@@ -28,6 +28,23 @@ def _write(path, *, leading_silence_s: float, sr: int = 8000) -> None:
     sf.write(str(path), np.concatenate([pad, sig]), sr)
 
 
+def _speech_like(n: int, *, seed: int) -> np.ndarray:
+    """Aperiodic speech-shaped noise (band-limited, syllabic): a good anchor."""
+    rng = np.random.default_rng(seed)
+    base = np.convolve(rng.standard_normal(n), np.ones(4) / 4, mode="same")
+    env = 0.4 + 0.6 * np.abs(np.sin(np.linspace(0.0, 10.0 * np.pi, n)))
+    env *= 0.5 + 0.5 * rng.random(n)
+    x = base * env
+    return (x / max(float(np.max(np.abs(x))), 1e-9) * 0.8).astype(np.float32)
+
+
+def _dissimilar_copy(x: np.ndarray, *, seed: int, noise: float) -> np.ndarray:
+    """A second capture chain: small/band-limited capsule + independent noise."""
+    band = np.convolve(x, np.ones(3) / 3, mode="same").astype(np.float32)
+    rng = np.random.default_rng(seed)
+    return (band * 0.3 + rng.standard_normal(x.size) * noise).astype(np.float32)
+
+
 def test_cross_correlate_recovers_known_shift(tmp_path) -> None:
     sr = 8000
     rng = np.random.default_rng(0)
@@ -202,6 +219,76 @@ def test_estimate_offset_recovers_window_beyond_previous_limit(tmp_path) -> None
     assert confidence is not None and confidence > 0.0
 
 
+def test_estimate_offset_phone_memo_across_dissimilar_mic(tmp_path) -> None:
+    """A phone memo (attenuated, band-limited, different mic) is placed 300 s
+    from the reference window, even when the reference's loudest stretch is not
+    on the phone at all.
+
+    The reference opens with a loud transient the phone missed, so the single
+    most energetic 4 s window lands there and correlates to nothing: the old
+    single-window, absolute-0.25 code returned ``unresolved`` for this tape. The
+    spread windows find the shared content, and their isolated peaks stand well
+    above the correlation background. ``max_lag_s`` is widened to match the
+    observed ~+357 s separation on a real multi-mic tape.
+    """
+    sr = 2000  # written rate; read_audio resamples to _ALIGN_SR (1 kHz)
+    shared = _speech_like(int(180.0 * sr), seed=5)
+    burst = _speech_like(int(5.0 * sr), seed=77) * 1.5  # phone missed this
+    quiet = _speech_like(int(295.0 * sr), seed=78) * 0.05  # quiet room tone
+    ref = np.concatenate([burst, quiet, shared]).astype(np.float32)
+    phone = _dissimilar_copy(shared, seed=3, noise=0.2)  # started 300 s earlier
+    ref_p = tmp_path / "ref.wav"
+    phone_p = tmp_path / "phone.wav"
+    sf.write(str(ref_p), ref, sr)
+    sf.write(str(phone_p), phone, sr)
+
+    offset, confidence = estimate_offset(str(ref_p), str(phone_p), max_lag_s=400.0)
+    # shared content sits 300 s later in the reference: ref_time = source_time + 300
+    assert offset == pytest.approx(300.0, abs=0.5)
+    assert confidence is not None and confidence > 0.0
+
+
+def test_estimate_offset_processed_builtin_mic_resolves(tmp_path) -> None:
+    """A processed, band-limited copy with a modest offset resolves.
+
+    Its normalized coefficient (~0.17) sits *below* the old 0.25 floor, so the
+    single-window absolute threshold rejected it; the peak is nonetheless far
+    more prominent than the correlation background, so the prominence criterion
+    accepts it. The winning coefficient stays below 0.25 to pin that difference.
+    """
+    sr = 2000
+    x = _speech_like(int(60.0 * sr), seed=5)
+    shift = int(8 * sr)
+    builtin = _dissimilar_copy(x, seed=4, noise=0.3)
+    src = np.concatenate([np.zeros(shift, np.float32), builtin])[: x.size]
+    ref_p = tmp_path / "ref.wav"
+    src_p = tmp_path / "builtin.wav"
+    sf.write(str(ref_p), x, sr)
+    sf.write(str(src_p), src, sr)
+
+    offset, confidence = estimate_offset(str(ref_p), str(src_p))
+    # the source is delayed by 8 s, so ref_time = source_time - 8
+    assert offset == pytest.approx(-8.0, abs=0.5)
+    assert confidence is not None
+    assert 0.0 < confidence < 0.25
+
+
+def test_estimate_offset_same_device_pair_resolves(tmp_path) -> None:
+    """The common case still resolves with a high, scale-invariant confidence."""
+    sr = 2000
+    x = _speech_like(int(60.0 * sr), seed=9)
+    shift = int(5 * sr)
+    src = np.concatenate([np.zeros(shift, np.float32), x])[: x.size]
+    ref_p = tmp_path / "ref.wav"
+    src_p = tmp_path / "same.wav"
+    sf.write(str(ref_p), x, sr)
+    sf.write(str(src_p), src, sr)
+
+    offset, confidence = estimate_offset(str(ref_p), str(src_p))
+    assert offset == pytest.approx(-5.0, abs=0.5)
+    assert confidence is not None and confidence > 0.5
+
+
 def test_estimate_offset_unplaceable_source_is_unresolved(tmp_path) -> None:
     from cr_core import Source
     from cr_engine import align_sources
@@ -230,8 +317,8 @@ def test_estimate_offset_unplaceable_source_is_unresolved(tmp_path) -> None:
 
 
 def test_estimate_offset_uncorrelated_noise_is_unresolved(tmp_path) -> None:
-    """Unrelated audio yields only a weak positive correlation peak; below the
-    confidence floor it must be unplaceable, not recorded as a fake offset."""
+    """Unrelated audio yields only a weak, non-prominent correlation peak: it
+    must stay unplaceable, not recorded as a fake offset."""
     from cr_core import Source
     from cr_engine import align_sources
 
@@ -307,11 +394,14 @@ def test_estimate_offset_long_recording_confidence_is_scale_invariant(
 
 
 def test_estimate_offset_long_uncorrelated_noise_is_unresolved(tmp_path) -> None:
-    """Independent noise of realistic length stays below the re-calibrated floor.
+    """Independent noise of realistic length stays below the prominence floor.
 
-    The spurious max coefficient over 250 seeds of speech-band noise is ~0.14 at
-    1200 s (~0.16 at 3000 s); the 0.25 floor keeps real margin above it without
-    the old length-dependence.
+    Spurious correlation peaks over many seeds of speech-band noise measure
+    <=0.13 in coefficient and <=8.1 in ``(peak - median) / MAD`` prominence at
+    1200 s (the shipped pair here measures <=6.9); the 0.10 sanity floor and the
+    10.0 prominence floor keep real margin above that without the old
+    length-dependence. A lone spurious peak also cannot form the two-window
+    consensus that a genuine match does.
     """
     from cr_engine import align_sources
 
@@ -342,16 +432,16 @@ def test_estimate_offset_long_uncorrelated_noise_is_unresolved(tmp_path) -> None
     assert "noise" not in alignment.offsets
 
 
-def test_estimate_offset_rejects_reverberant_source_as_deliberate_tradeoff(
-    tmp_path, monkeypatch
-) -> None:
-    """Document the 0.25 floor's precision-over-recall tradeoff.
+def test_estimate_offset_resolves_reverberant_source(tmp_path) -> None:
+    """A genuine but strongly reverberant source resolves at low coefficient.
 
-    A *dry* reference against a strongly reverberant source of the same content
-    is genuine, not noise, but the reverb smears its coefficient down to
-    ~0.17-0.23: above the old 0.05 floor (which accepted it) and below the
-    current 0.25 floor (which rejects it). The rejection is intentional; lowering
-    the floor must make this test fail so the threshold change is conscious.
+    A *dry* reference against a same-content source with ``rir_s`` 0.16 smears
+    the coefficient down to ~0.17-0.23 — above the old 0.05 floor, below the
+    superseded 0.25 absolute floor (ticket 04's precision-over-recall tradeoff,
+    which wrongly hid microphones that genuinely share content). The peak is
+    still far more prominent than the correlation background (prominence ~19-27),
+    so the prominence criterion places it. If the criterion regresses to an
+    absolute 0.25 floor this fails.
     """
     from cr_engine import SYNTH_SR, make_scene, record
 
@@ -363,15 +453,9 @@ def test_estimate_offset_rejects_reverberant_source_as_deliberate_tradeoff(
     sf.write(str(ref_p), ref, SYNTH_SR)
     sf.write(str(src_p), src, SYNTH_SR)
 
-    # Shipped 0.25 floor: this genuine-but-smeared match is rejected.
-    _, confidence = estimate_offset(str(ref_p), str(src_p))
-    assert confidence is None
-
-    # The content is real and placeable — only the floor hides it. With the old
-    # 0.05 floor the coefficient lands in the documented ~0.17-0.23 band.
-    monkeypatch.setattr("cr_engine.align._MIN_CONFIDENCE", 0.05)
     offset, confidence = estimate_offset(str(ref_p), str(src_p))
     assert confidence is not None
+    # Placeable despite the coefficient falling under the old 0.25 floor.
     assert 0.15 < confidence < 0.25
     assert offset == pytest.approx(1.5, abs=0.5)
 

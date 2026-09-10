@@ -8,11 +8,16 @@ merge) and ``cr_providers`` (ASR). No vendor logic lives here.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import glob
 import os
 import random
+import shutil
+import subprocess
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
 import soundfile as sf
@@ -219,15 +224,136 @@ def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
 
 _DEFAULT_MAX_JOBS = 4
 
+# --- default job sizing vs. model size and VRAM ---------------------------- #
+#
+# Each concurrent transcription is its own ``whisper-cli`` process with its own
+# copy of the model, so N *large* models can OOM a small-VRAM GPU. The default
+# ``--jobs`` is therefore bounded by the model's resident size against the
+# detected VRAM. Explicit ``--jobs N`` / ``CR_JOBS=N`` always win (the operator
+# may know better); only the ``jobs=0`` auto path is affected.
+#
+# Approximate resident cost per process, in GB: the ggml checkpoint plus the
+# driver context and a 30 s-window activation budget, rounded up.
+_MODEL_VRAM_GB: dict[str, float] = {
+    "tiny": 0.6,
+    "base": 0.7,
+    "small": 1.1,
+    "medium": 2.1,
+    "large": 3.7,
+    "large-v1": 3.7,
+    "large-v2": 3.7,
+    "large-v3": 3.7,
+    "large-v3-turbo": 1.7,
+    "turbo": 1.7,
+    "distil-large-v3": 2.2,
+}
+# An unrecognised checkpoint is assumed to be a large model: that can only
+# lower the default, never raise it.
+_UNKNOWN_MODEL_VRAM_GB = _MODEL_VRAM_GB["large"]
+# VRAM floor assumed when the GPU cannot be probed. 8 GB matches the sizing
+# floor documented in the README; below it the pipeline still allows one worker.
+_DEFAULT_VRAM_GB = 8.0
+# Leave headroom for the display/compositor and driver overhead.
+_VRAM_SAFETY = 0.85
 
-def _resolve_jobs(parallelizable: bool, n_pending: int, requested: int) -> int:
+
+def _model_vram_gb(model: str | None) -> float:
+    """Approximate resident VRAM (GB) for one ``whisper-cli`` process.
+
+    Accepts a size name, a ``ggml-*.bin`` filename, or a path. A quantisation
+    suffix (``-q5_0``) is ignored, which over-estimates the model and so errs on
+    the safe side; an unknown name is treated as ``large``.
+    """
+    name = os.path.basename(model or "").lower()
+    if name.startswith("ggml-"):
+        name = name[len("ggml-") :]
+    if name.endswith(".bin"):
+        name = name[: -len(".bin")]
+    name = name.split("-q", 1)[0]
+    if name in _MODEL_VRAM_GB:
+        return _MODEL_VRAM_GB[name]
+    # Longest-prefix match so e.g. ``large-v3-turbo`` beats ``large``.
+    for known in sorted(_MODEL_VRAM_GB, key=len, reverse=True):
+        if name.startswith(known):
+            return _MODEL_VRAM_GB[known]
+    return _UNKNOWN_MODEL_VRAM_GB
+
+
+def _detect_vram_gb() -> float | None:
+    """Best-effort total VRAM (GB) of the machine's GPU, or ``None``.
+
+    Advisory only: it bounds the ``jobs=0`` default so a small-VRAM GPU cannot
+    OOM. It never gates backend availability — that stays in ``cr-providers``.
+    ``CR_VRAM_GB`` overrides the probe; NVIDIA is read from ``nvidia-smi`` and
+    AMD/Intel from the DRM card's ``mem_info_vram_total``.
+    """
+    override = os.environ.get("CR_VRAM_GB", "").strip()
+    if override:
+        try:
+            value = float(override)
+        except ValueError:
+            value = 0.0
+        if value > 0:
+            return value
+    best = 0
+    for node in glob.glob("/sys/class/drm/card*/device/mem_info_vram_total"):
+        try:
+            best = max(best, int(Path(node).read_text(encoding="ascii").strip()))
+        except (OSError, ValueError):
+            continue
+    if best > 0:
+        return best / (1024**3)
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return None
+    try:
+        proc = subprocess.run(
+            [smi, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    totals: list[float] = []
+    for line in (proc.stdout or "").splitlines():
+        try:
+            totals.append(float(line.strip()))
+        except ValueError:
+            continue
+    return max(totals) / 1024 if totals else None
+
+
+def _auto_jobs(
+    n_pending: int,
+    model: str | None,
+    vram_gb: float | None,
+    cpu: int | None = None,
+) -> int:
+    """Auto ``--jobs``: CPU, a small fan-out cap, and the VRAM/model budget."""
+    cpus = cpu if cpu and cpu > 0 else (os.cpu_count() or 1)
+    vram = vram_gb if vram_gb and vram_gb > 0 else _DEFAULT_VRAM_GB
+    budget = int(vram * _VRAM_SAFETY / _model_vram_gb(model))
+    return max(1, min(cpus, _DEFAULT_MAX_JOBS, max(1, budget), n_pending))
+
+
+def _resolve_jobs(
+    parallelizable: bool,
+    n_pending: int,
+    requested: int,
+    *,
+    model: str | None = None,
+    vram_gb: float | None = None,
+) -> int:
     """Choose the chunk-transcription worker count adaptively.
 
     Precedence: explicit ``requested`` (>0), then ``CR_JOBS``, else a small
     default for process-isolated backends. The GPU is the shared bottleneck, so
     the default is modest (measured ~93% ``gpu_busy`` at 4 concurrent
-    ``whisper-cli`` processes); a backend that shares in-process model state
-    (Apple ``pywhispercpp``) is always serialized, even when asked otherwise.
+    ``whisper-cli`` processes) and bounded by the model's resident size against
+    the detected VRAM (or the 8 GB floor when the GPU cannot be probed). A
+    backend that shares in-process model state (Apple ``pywhispercpp``) is
+    always serialized, even when asked otherwise.
     """
     if n_pending <= 1:
         return 1
@@ -238,7 +364,166 @@ def _resolve_jobs(parallelizable: bool, n_pending: int, requested: int) -> int:
     env = os.environ.get("CR_JOBS", "").strip()
     if env.isdigit() and int(env) > 0:
         return max(1, min(int(env), n_pending))
-    return max(1, min(os.cpu_count() or 1, _DEFAULT_MAX_JOBS, n_pending))
+    if vram_gb is None:
+        vram_gb = _detect_vram_gb()
+    return _auto_jobs(n_pending, model, vram_gb)
+
+
+# --- cancellation ---------------------------------------------------------- #
+_CANCEL_GRACE_S = 1.0
+
+
+class _PoolCancelled(Exception):
+    """Raised inside a pool worker once cancellation has been requested."""
+
+
+class _PoolCancel:
+    """A one-way cancellation signal shared by the main thread and workers."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+
+# The path-isolated backends shell out to ``whisper-cli`` with
+# ``subprocess.run``, so the pool never sees that ``Popen`` handle. On Ctrl-C
+# Python delivers ``KeyboardInterrupt`` only to the main thread, so worker
+# threads stay blocked in ``communicate()`` and the executor's ``wait=True``
+# exit hangs until every queued chunk is decoded. To stop promptly the pool
+# tracks the children its workers spawn and kills them itself. ``Popen.__init__``
+# is patched only for the pool's lifetime; only worker threads install a tracker,
+# so unrelated subprocesses are untouched.
+_ORIGINAL_POPEN_INIT = subprocess.Popen.__init__
+
+
+def _tracked_popen_init(self, *args, **kwargs) -> None:
+    _ORIGINAL_POPEN_INIT(self, *args, **kwargs)
+    tracker = getattr(_SubprocessTracker._local, "active", None)
+    if tracker is not None:
+        tracker.register(self)
+
+
+class _SubprocessTracker:
+    """Record child processes spawned by pool workers, and terminate them."""
+
+    _local = threading.local()
+    _install_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        self._procs: list[subprocess.Popen] = []
+        self._lock = threading.Lock()
+
+    def register(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._procs.append(proc)
+
+    def terminate_all(self, grace: float = _CANCEL_GRACE_S) -> None:
+        """Ask tracked processes to stop, then hard-kill any survivors.
+
+        Terminating closes the child's pipes, which unblocks the worker's
+        ``subprocess.run`` promptly; the bounded grace lets it exit cleanly
+        before a ``kill`` is used as a fallback.
+        """
+        with self._lock:
+            procs = list(self._procs)
+        for proc in procs:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if all(proc.poll() is not None for proc in procs):
+                return
+            time.sleep(0.02)
+        for proc in procs:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+@contextlib.contextmanager
+def _track_subprocesses(tracker: _SubprocessTracker):
+    """Install the ``Popen`` tracker for the duration of the pool."""
+    with _SubprocessTracker._install_lock:
+        subprocess.Popen.__init__ = _tracked_popen_init
+    try:
+        yield tracker
+    finally:
+        with _SubprocessTracker._install_lock:
+            subprocess.Popen.__init__ = _ORIGINAL_POPEN_INIT
+
+
+def _run_tracked(run_chunk, task, cancel, tracker):
+    """Run one chunk on a worker thread, marked as a tracked subprocess spawner."""
+    _SubprocessTracker._local.active = tracker
+    try:
+        if cancel.cancelled:
+            raise _PoolCancelled()
+        return run_chunk(task)
+    finally:
+        _SubprocessTracker._local.active = None
+
+
+def _run_pending(
+    pending,
+    plan_by_id,
+    workers: int,
+    run_chunk,
+    cancel: _PoolCancel,
+    tracker: _SubprocessTracker,
+) -> None:
+    """Run pending chunks, honouring prompt cancellation.
+
+    On operator interruption the queued futures are cancelled and the in-flight
+    ``whisper-cli`` children terminated, then the interrupt is re-raised — rather
+    than ``ThreadPoolExecutor.__exit__`` blocking until every queued chunk has
+    decoded.
+    """
+    if workers <= 1:
+        for task in pending:
+            if cancel.cancelled:
+                raise _PoolCancelled()
+            src_id, index, shifted = run_chunk(task)
+            plan_by_id[src_id].segments[index] = shifted
+        return
+
+    with _track_subprocesses(tracker):
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cr-chunk")
+        futures = []
+        try:
+            futures = [
+                pool.submit(_run_tracked, run_chunk, task, cancel, tracker)
+                for task in pending
+            ]
+            for future in as_completed(futures):
+                src_id, index, shifted = future.result()
+                plan_by_id[src_id].segments[index] = shifted
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                # Operator interruption: stop queued work and kill what is
+                # already decoding, then return promptly.
+                cancel.cancel()
+                for future in futures:
+                    future.cancel()
+                tracker.terminate_all()
+                wait(futures, timeout=_CANCEL_GRACE_S)
+                tracker.terminate_all(grace=0.0)
+                pool.shutdown(wait=False, cancel_futures=True)
+            else:
+                # A chunk failed (e.g. a backend error): finish the already
+                # submitted work so its cache is complete, then propagate.
+                pool.shutdown(wait=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
 
 @dataclasses.dataclass
@@ -331,8 +616,14 @@ def transcribe(
 
         reuse = resume and meta_file.exists() and _read_json_safe(meta_file) == run_meta
         if not reuse:
-            for stale in cache.glob("*.json"):
-                stale.unlink()
+            # Drop chunk results, transient WAVs and any half-written cache file
+            # from a previous interrupted pass: a stale body must never be read.
+            for stale in (
+                list(cache.glob("*.json"))
+                + list(cache.glob("*.wav"))
+                + list(cache.glob("*.tmp"))
+            ):
+                stale.unlink(missing_ok=True)
             write_json(meta_file, run_meta)
 
         _log_line(
@@ -355,9 +646,15 @@ def transcribe(
         plans.append(_SourcePlan(src, duration, chunks, segs))
 
     plan_by_id = {plan.source.id: plan for plan in plans}
-    workers = _resolve_jobs(backend.info.parallelizable, len(pending), jobs)
+    workers = _resolve_jobs(
+        backend.info.parallelizable, len(pending), jobs, model=chosen_model
+    )
     if pending:
-        _log_line(d, f"[transcribe] {len(pending)} pending chunk(s), jobs={workers}")
+        _log_line(
+            d,
+            f"[transcribe] {len(pending)} pending chunk(s), jobs={workers} "
+            f"({chosen_model})",
+        )
 
     def _run_chunk(task: _ChunkTask) -> tuple[str, int, list[Segment]]:
         chunk_wav = task.cache / f"{task.index:04d}.wav"
@@ -381,7 +678,7 @@ def transcribe(
             )
             for s in res.segments
         ]
-        write_json(task.cache / f"{task.index:04d}.json", [to_dict(s) for s in shifted])
+        _write_chunk_cache(task.cache / f"{task.index:04d}.json", shifted)
         _log_line(
             d,
             f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
@@ -389,16 +686,9 @@ def transcribe(
         )
         return task.source_id, task.index, shifted
 
-    if workers <= 1:
-        for task in pending:
-            src_id, i, shifted = _run_chunk(task)
-            plan_by_id[src_id].segments[i] = shifted
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_run_chunk, task) for task in pending]
-            for future in as_completed(futures):
-                src_id, i, shifted = future.result()
-                plan_by_id[src_id].segments[i] = shifted
+    cancel = _PoolCancel()
+    tracker = _SubprocessTracker()
+    _run_pending(pending, plan_by_id, workers, _run_chunk, cancel, tracker)
 
     per_source: dict[str, list[Segment]] = {}
     meta: dict = {
@@ -431,6 +721,18 @@ def _read_json_safe(path: Path):
         return load_json(path)
     except Exception:
         return None
+
+
+def _write_chunk_cache(path: Path, segments: list[Segment]) -> None:
+    """Publish a chunk's cached segments atomically.
+
+    A cancellation can strike while a worker is mid-write; writing to a sibling
+    ``.tmp`` and renaming means resume only ever sees a complete JSON body, or
+    no file at all — never a truncated one.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    write_json(tmp, [to_dict(s) for s in segments])
+    os.replace(tmp, path)
 
 
 def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> None:

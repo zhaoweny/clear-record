@@ -182,9 +182,17 @@ clearrecord transcribe <dir> --backend apple --model medium \
 one bounded worker pool, so the GPU stays fed (a single `whisper-cli` peaks well
 below saturation). `--jobs 0` (default) picks a small adaptive fan-out for
 process-isolated backends and serializes in-process ones (e.g. the Apple wheel
-fallback);
-`--jobs N` or `CR_JOBS=N` override. Measured on an RX 7900 XTX: four sources ×
+fallback). The default is capped by the CPU count, a 4-way fan-out ceiling, and
+— so N large models cannot OOM a small-VRAM GPU — the model's resident size
+against the detected VRAM. When the GPU cannot be probed (`nvidia-smi`, or the
+DRM `mem_info_vram_total`), an 8 GB minimum is assumed; `CR_VRAM_GB` overrides
+either. `--jobs N` or `CR_JOBS=N` bypass the advisory cap entirely. Measured on
+an RX 7900 XTX: four sources ×
 300 s fell from 37.5 s to 8.8 s (~4.3×).
+
+Pressing Ctrl-C stops the pool promptly: queued chunks are cancelled, in-flight
+`whisper-cli` processes are terminated, and the partial chunk cache is left
+consistent and resumable (each chunk result is published atomically).
 
 **Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
 has no per-speaker channels, so segments can be clustered into speakers from the

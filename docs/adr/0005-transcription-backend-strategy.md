@@ -47,7 +47,10 @@ Date: 2026-09-09
   feeds pending chunks through a bounded worker pool for those and serializes
   in-process ones. `apple` stays `False`: its CLI path is process-isolated, but
   its `pywhispercpp` fallback shares model state, so the safe common denominator
-  is sequential.
+  is sequential. The auto fan-out is bounded by the model size against the
+  detected VRAM (8 GB assumed when unprobed; `--jobs` / `CR_JOBS` override), and
+  an interrupted pool cancels queued chunks, terminates in-flight `whisper-cli`
+  children and leaves the chunk cache resumable.
 - [DECISION] `cr-core` never imports a vendor stack; it only depends on the
   interface. Vendor stacks are lazy-imported inside `cr-providers`.
 

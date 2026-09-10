@@ -296,8 +296,10 @@ docs/vox/voice-of-owner.md         owner voice
   is applied as the decoder's initial prompt (cache-keyed, so a background first
   pass can be corrected by a finished glossary). Pending chunks across **all
   sources** run through one bounded worker pool (`--jobs` / `CR_JOBS`; adaptive
-  default) so the GPU stays fed; `BackendInfo.parallelizable` serializes
-  in-process backends.
+  default sized against the model and detected VRAM so a large model cannot OOM
+  the documented minimum GPU) so the GPU stays fed; `BackendInfo.parallelizable`
+  serializes in-process backends. Ctrl-C cancels queued chunks and terminates
+  the in-flight `whisper-cli` processes, leaving a consistent, resumable cache.
 - `diarize` → baseline multi-speaker attribution for a **single mixed stream**
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.

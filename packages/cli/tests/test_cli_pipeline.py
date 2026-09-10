@@ -472,3 +472,195 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     )
     assert fake.max_active > 1  # chunks actually overlapped
     assert per_source["a"]  # and the merged output is complete
+
+
+def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> None:
+    """The `jobs=0` default is bounded by the model's resident size against the
+    GPU memory, so N large models cannot OOM the documented minimum GPU; an
+    explicit `--jobs` / `CR_JOBS` still wins."""
+    import os
+
+    from cr_cli.stages import (
+        _auto_jobs,
+        _detect_vram_gb,
+        _model_vram_gb,
+        _resolve_jobs,
+    )
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
+
+    # A large model cannot fan out on a small (8 GB) GPU; a medium one gets a
+    # few; the 4-way fan-out cap still applies on a big (24 GB) GPU.
+    assert _auto_jobs(10, "large-v3", 8.0) == 1
+    assert _auto_jobs(10, "medium", 8.0) == 3
+    assert _auto_jobs(10, "large-v3", 24.0) == 4
+    assert _auto_jobs(10, "small", 24.0) == 4
+    # Unknown / missing models are assumed large, which can only lower the cap.
+    assert _auto_jobs(10, None, 8.0) == 1
+
+    # Name parsing covers filenames, paths and quantisation suffixes.
+    assert _model_vram_gb("ggml-large-v3.bin") == 3.7
+    assert _model_vram_gb("/models/ggml-large-v3-q5_0.bin") == 3.7
+    assert _model_vram_gb("medium") == 2.1
+    assert _model_vram_gb("mystery") == 3.7
+
+    # CR_VRAM_GB overrides the (hardware-dependent) probe for the auto path...
+    monkeypatch.setenv("CR_VRAM_GB", "24")
+    assert _detect_vram_gb() == 24.0
+    assert _resolve_jobs(True, 10, 0, model="large-v3") == 4
+    # ...but explicit --jobs and CR_JOBS override the advisory cap.
+    assert _resolve_jobs(True, 10, 6, model="large-v3", vram_gb=8.0) == 6
+    monkeypatch.setenv("CR_JOBS", "5")
+    assert _resolve_jobs(True, 10, 0, model="large-v3", vram_gb=8.0) == 5
+
+
+def test_transcribe_interrupt_cancels_queue_and_kills_children(
+    tmp_path, monkeypatch
+) -> None:
+    """Ctrl-C cancels queued chunks and terminates the in-flight children
+    promptly, leaving a consistent, resumable chunk cache.
+
+    The backend is a hardware-free stub that spawns a real, killable child
+    process (a stand-in for `whisper-cli`), so this exercises the pool's real
+    process-termination path without a GPU or model weights.
+    """
+    import json
+    import os
+    import signal
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    import pytest
+
+    from cr_cli import workspace as ws
+    from cr_core import Segment, TranscriptionResult
+    from cr_engine import plan_chunks
+    from cr_providers import BackendInfo
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(10 * sr, dtype=np.float64) / sr
+    sf.write(
+        str(wd / "a.wav"), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr
+    )
+    stages.ingest(str(wd), split="mix")
+
+    started = threading.Event()
+    lock = threading.Lock()
+    procs: list[subprocess.Popen] = []
+
+    class BlockingFake:
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+        ):
+            # A real child process stands in for `whisper-cli`: the pool must
+            # find and terminate it, not merely abandon the worker thread.
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with lock:
+                procs.append(proc)
+            started.set()
+            code = proc.wait()
+            if code != 0:
+                raise RuntimeError(f"whisper-cli killed (exit {code})")
+            return TranscriptionResult(
+                source="fake",
+                segments=(Segment(0.0, 0.1, "x", "fake"),),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=0.1,
+            )
+
+    monkeypatch.setattr(stages, "get_backend", lambda _id: BlockingFake())
+
+    def interrupt_once() -> None:
+        started.wait(5)
+        time.sleep(0.2)  # let both workers spawn while the rest queue
+        os.kill(os.getpid(), signal.SIGINT)
+
+    helper = threading.Thread(target=interrupt_once, daemon=True)
+    helper.start()
+    began = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        stages.transcribe(
+            str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=2
+        )
+    elapsed = time.monotonic() - began
+    helper.join(timeout=2)
+
+    # Bounded: it did not block on the 30 s children.
+    assert elapsed < 5.0
+    # The in-flight children were terminated and queued chunks never ran.
+    assert procs, "at least one chunk should have started"
+    for proc in procs:
+        assert proc.wait(timeout=3) is not None
+    n_chunks = len(plan_chunks(10.0, 2.0, 0.5))
+    assert len(procs) < n_chunks
+
+    # Cache stays consistent and resumable: meta intact, every body complete,
+    # no half-written temp files.
+    cache_dir = ws.chunks_dir(wd) / "a"
+    meta = json.loads((cache_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["n_chunks"] == n_chunks
+    cached: list[int] = []
+    for body in cache_dir.glob("*.json"):
+        data = json.loads(body.read_text(encoding="utf-8"))
+        if body.name != "_meta.json":
+            assert isinstance(data, list)
+            cached.append(int(body.stem))
+    assert set(cached) <= set(range(n_chunks))
+    assert not list(cache_dir.glob("*.tmp"))
+
+    # Resuming completes the plan, recomputing only the uncached chunks.
+    class FastFake(BlockingFake):
+        calls = 0
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+        ):
+            type(self).calls += 1
+            return TranscriptionResult(
+                source="fake",
+                segments=(Segment(0.0, 0.1, "x", "fake"),),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=0.1,
+            )
+
+    fast = FastFake()
+    monkeypatch.setattr(stages, "get_backend", lambda _id: fast)
+    stages.transcribe(str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=2)
+    assert FastFake.calls == n_chunks - len(cached)
+    assert len(list(cache_dir.glob("[0-9]*.json"))) == n_chunks

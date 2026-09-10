@@ -17,6 +17,12 @@ import numpy as np
 
 __all__ = ["diarize", "logmel_stats", "pitch_stats"]
 
+# Minimum silhouette score for the automatic model count to accept more than one
+# speaker. This is deliberately a *strong* margin: a measured single-speaker
+# scene (``make_scene(n_speakers=1)``) scores only ~0.2, so a lower floor still
+# split one voice into two. A clear two-voice separation scores >~0.5.
+_MIN_SILHOUETTE = 0.45
+
 
 # --------------------------------------------------------------------------- #
 # Features
@@ -250,7 +256,12 @@ def diarize(
             score = _silhouette(x, candidate)
             if score > best_score:
                 best_score, best_lab = score, candidate
-        lab = best_lab if best_lab is not None else np.zeros(len(keep), dtype=int)
+        if best_lab is None or best_score < _MIN_SILHOUETTE:
+            # No clear multi-speaker structure: stay at one speaker rather than
+            # inventing a split (single-narrator and non-speech over-split before).
+            lab = np.zeros(len(keep), dtype=int)
+        else:
+            lab = best_lab
 
     for j, orig in enumerate(keep):
         labels[orig] = int(lab[j])

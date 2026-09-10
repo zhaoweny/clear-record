@@ -11,12 +11,16 @@ speaker name.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from cr_core import Alignment, Segment, Source
+from cr_engine.text import clean_segments
 
 # Treat same-source segments within this gap as continuous.
 _JOIN_GAP_S = 0.5
-# Overlap ratio above which a later segment may *replace* an earlier one.
-_REPLACE_OVERLAP = 0.6
+# Maximum length of a single cue; a longer continuous run is split so SRT/VTT
+# cues stay playable.
+_MAX_CUE_S = 30.0
 
 
 def _priority(seg: Segment, order: dict[str, int]) -> tuple[float, int]:
@@ -24,10 +28,77 @@ def _priority(seg: Segment, order: dict[str, int]) -> tuple[float, int]:
     return (seg.confidence or 0.0), -order.get(seg.source, 0)
 
 
+def _weighted_conf(a: Segment, b: Segment) -> float | None:
+    ca, cb = a.confidence, b.confidence
+    if ca is None and cb is None:
+        return None
+    ca = ca or 0.0
+    cb = cb or 0.0
+    return round((ca + cb) / 2.0, 4)
+
+
+def _join_continuous(segments: Sequence[Segment], max_cue_s: float) -> list[Segment]:
+    """Join same-source/speaker segments separated by <= the join gap, never
+    letting a joined cue exceed ``max_cue_s``."""
+    out: list[Segment] = []
+    cur: Segment | None = None
+    for seg in segments:
+        if (
+            cur is not None
+            and seg.source == cur.source
+            and (seg.speaker or "") == (cur.speaker or "")
+            and seg.start <= cur.end + _JOIN_GAP_S
+            and (max(cur.end, seg.end) - cur.start) <= max_cue_s
+        ):
+            cur = Segment(
+                start=cur.start,
+                end=max(cur.end, seg.end),
+                text=(cur.text + " " + seg.text).strip(),
+                source=cur.source,
+                speaker=cur.speaker,
+                confidence=_weighted_conf(cur, seg),
+                language=seg.language or cur.language,
+            )
+            continue
+        if cur is not None:
+            out.append(cur)
+        cur = seg
+    if cur is not None:
+        out.append(cur)
+    return out
+
+
+def _resolve_overlaps(
+    segments: Sequence[Segment], order: dict[str, int]
+) -> list[Segment]:
+    """Keep one survivor per connected component of mutually overlapping
+    segments (deterministic: confidence, then source order).
+
+    Resolving pairwise left ~ceil(N/2) duplicates when three or more sources
+    overlapped the same moment.
+    """
+    out: list[Segment] = []
+    cluster: list[Segment] = []
+    cluster_end = 0.0
+    for seg in segments:
+        if cluster and seg.start < cluster_end - 1e-9:
+            cluster.append(seg)
+            cluster_end = max(cluster_end, seg.end)
+            continue
+        if cluster:
+            out.append(max(cluster, key=lambda s: _priority(s, order)))
+        cluster = [seg]
+        cluster_end = seg.end
+    if cluster:
+        out.append(max(cluster, key=lambda s: _priority(s, order)))
+    return out
+
+
 def reconcile(
     per_source: dict[str, list[Segment]],
     alignment: Alignment | None,
     sources: list[Source],
+    max_cue_s: float = _MAX_CUE_S,
 ) -> list[Segment]:
     """Produce a reconciled, source-attributed segment list on the reference
     timebase. The reference source keeps its time; other sources are shifted by
@@ -53,58 +124,12 @@ def reconcile(
                 )
             )
 
+    shifted = clean_segments(shifted)
     shifted.sort(key=lambda s: (s.start, s.end))
-
-    out: list[Segment] = []
-    cur: Segment | None = None
-    for seg in shifted:
-        if not seg.text:
-            continue
-        if cur is None:
-            cur = seg
-            continue
-        if (
-            seg.source == cur.source
-            and (seg.speaker or "") == (cur.speaker or "")
-            and seg.start <= cur.end + _JOIN_GAP_S
-        ):
-            # same speaker, continuous -> join
-            cur = Segment(
-                start=cur.start,
-                end=max(cur.end, seg.end),
-                text=(cur.text + " " + seg.text).strip(),
-                source=cur.source,
-                speaker=cur.speaker,
-                confidence=_weighted_conf(cur, seg),
-                language=seg.language or cur.language,
-            )
-            continue
-        if seg.start < cur.end:
-            # different sources overlap -> keep the better one
-            if _priority(seg, order) > _priority(cur, order):
-                out.append(seg)
-            else:
-                out.append(cur)
-            cur = None
-            continue
-        out.append(cur)
-        cur = seg
-
-    if cur is not None:
-        out.append(cur)
-
-    # Re-sort by start (replacements can reorder) and drop empty.
-    out.sort(key=lambda s: (s.start, s.end))
-    return [s for s in out if s.text.strip()]
-
-
-def _weighted_conf(a: Segment, b: Segment) -> float | None:
-    ca, cb = a.confidence, b.confidence
-    if ca is None and cb is None:
-        return None
-    ca = ca or 0.0
-    cb = cb or 0.0
-    return round((ca + cb) / 2.0, 4)
+    joined = _join_continuous(shifted, max_cue_s)
+    resolved = _resolve_overlaps(joined, order)
+    resolved.sort(key=lambda s: (s.start, s.end))
+    return [s for s in resolved if s.text.strip()]
 
 
 __all__ = ["reconcile"]

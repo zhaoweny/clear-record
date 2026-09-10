@@ -16,6 +16,7 @@ from cr_engine.diarize import diarize, logmel_stats
 from cr_engine.merge import reconcile
 from cr_engine.synth import SR as SYNTH_SR
 from cr_engine.synth import make_scene, record
+from cr_engine.text import clean_segments, collapse_repetitions, is_non_speech
 
 __all__ = [
     "ASR_SAMPLE_RATE",
@@ -25,9 +26,12 @@ __all__ = [
     "SYNTH_SR",
     "align_sources",
     "channel_count",
+    "clean_segments",
+    "collapse_repetitions",
     "cross_correlate",
     "diarize",
     "estimate_offset",
+    "is_non_speech",
     "logmel_stats",
     "make_scene",
     "plan_chunks",

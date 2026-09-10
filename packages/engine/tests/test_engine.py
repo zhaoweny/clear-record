@@ -149,6 +149,152 @@ def test_plan_chunks_overlap() -> None:
         assert nxt_start == end - 2.0
 
 
+def test_plan_chunks_rejects_non_progressing_overlap() -> None:
+    """A reachable `overlap >= chunk` must error, not emit the same window
+    forever; ordinary planning is unchanged."""
+    from cr_engine import plan_chunks
+
+    with pytest.raises(ValueError):
+        plan_chunks(60.0, chunk_s=10.0, overlap_s=10.0)
+    with pytest.raises(ValueError):
+        plan_chunks(60.0, chunk_s=10.0, overlap_s=25.0)
+
+    chunks = plan_chunks(25.0, chunk_s=10.0, overlap_s=2.0)
+    assert chunks[0] == (0.0, 10.0)
+    assert chunks[-1][1] == 25.0
+    # starts strictly increase: planning always advances
+    assert all(
+        nxt_start > start for (start, _), (nxt_start, _) in zip(chunks, chunks[1:])
+    )
+
+
+def test_clean_segments_filters_non_speech_and_collapses_loops() -> None:
+    from cr_engine import clean_segments
+
+    def seg(start: float, text: str) -> Segment:
+        return Segment(start=start, end=start + 1.0, text=text, source="src")
+
+    raw = [
+        seg(0.0, "[S]"),
+        seg(1.0, "(music)"),
+        seg(2.0, "♪♪"),
+        seg(3.0, "   "),
+        seg(4.0, "hello"),
+        seg(5.0, "hello"),  # a decoder repetition loop
+        seg(6.0, "world"),
+    ]
+    out = clean_segments(raw)
+    # markers/blank dropped, the loop collapsed, genuine utterances kept
+    assert [s.text for s in out] == ["hello", "world"]
+
+
+def test_estimate_offset_recovers_window_beyond_previous_limit(tmp_path) -> None:
+    """The most energetic reference window can sit far into a long tape; the
+    offset must still be recovered (the old one-sided guard zeroed it)."""
+    sr = 8000
+    ref = tmp_path / "ref.wav"  # event at ref time ~200 s
+    src = tmp_path / "src.wav"  # same event at source time ~197 s
+    _write(ref, leading_silence_s=200.0, sr=sr)
+    _write(src, leading_silence_s=197.0, sr=sr)
+
+    offset, confidence = estimate_offset(str(ref), str(src))
+    assert offset == pytest.approx(3.0, abs=0.5)
+    assert confidence is not None and confidence > 0.0
+
+
+def test_estimate_offset_unplaceable_source_is_unresolved(tmp_path) -> None:
+    from cr_core import Source
+    from cr_engine import align_sources
+
+    ref = tmp_path / "ref.wav"
+    _write(ref, leading_silence_s=2.0)
+
+    # an unreadable source: confidence must be None, not a fake 0.0
+    missing = tmp_path / "missing.wav"
+    _, conf_missing = estimate_offset(str(ref), str(missing))
+    assert conf_missing is None
+
+    # a source too short to place is equally unresolved
+    short = tmp_path / "short.wav"
+    sf.write(str(short), np.zeros(100, dtype=np.float32), 8000)
+    _, conf_short = estimate_offset(str(ref), str(short))
+    assert conf_short is None
+
+    sources = [
+        Source(id="ref", path=str(ref), label="Alice"),
+        Source(id="bad", path=str(missing), label="Bob"),
+    ]
+    alignment = align_sources(sources, reference_id="ref")
+    assert alignment.unresolved == ("bad",)
+    assert "bad" not in alignment.offsets
+
+
+def test_reconcile_collapses_overlap_cluster() -> None:
+    """Three mutually-overlapping sources yield exactly one survivor, chosen by
+    confidence then source order — not ~ceil(N/2) pairwise survivors."""
+    sources = [Source(id=f"s{i}", path="", label=f"spk{i}") for i in range(3)]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0, "s1": 0.0, "s2": 0.0})
+    per_source = {
+        "s0": [Segment(0.0, 5.0, "hello", "s0", confidence=0.5)],
+        "s1": [Segment(1.0, 6.0, "hello", "s1", confidence=0.9)],
+        "s2": [Segment(2.0, 7.0, "hello", "s2", confidence=0.7)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    assert len(merged) == 1
+    assert merged[0].speaker == "spk1"  # highest confidence wins
+
+
+def test_reconcile_survivors_never_overlap() -> None:
+    sources = [Source(id=f"s{i}", path="", label=f"spk{i}") for i in range(3)]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0, "s1": 0.0, "s2": 0.0})
+    per_source = {
+        # one mutually-overlapping cluster near t=0 ...
+        "s0": [
+            Segment(0.0, 5.0, "alpha", "s0", confidence=0.5),
+            # ... and a second, disjoint event later
+            Segment(20.0, 25.0, "delta", "s0", confidence=0.4),
+        ],
+        "s1": [Segment(1.0, 6.0, "beta", "s1", confidence=0.9)],
+        "s2": [Segment(2.0, 7.0, "gamma", "s2", confidence=0.7)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    assert len(merged) == 2
+    assert any(s.text == "delta" for s in merged)
+    for earlier, later in zip(merged, merged[1:]):
+        assert earlier.end <= later.start + 1e-9
+
+
+def test_reconcile_caps_cue_length() -> None:
+    """A long continuous same-speaker run is split so no cue exceeds the cap."""
+    sources = [Source(id="s0", path="", label="Alice")]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0})
+    # 50 s of contiguous 5 s utterances (distinct text: not a repetition loop)
+    per_source = {
+        "s0": [
+            Segment(i * 5.0, (i + 1) * 5.0, f"word {i}", "s0", confidence=0.5)
+            for i in range(10)
+        ]
+    }
+
+    merged = reconcile(per_source, alignment, sources, max_cue_s=30.0)
+    assert len(merged) > 1  # the run was actually split
+    assert all(s.end - s.start <= 30.0 + 1e-9 for s in merged)
+
+
+def test_diarize_auto_keeps_single_speaker() -> None:
+    """Auto model-count must stay conservative on a one-speaker scene instead
+    of inventing a split."""
+    from cr_engine import SYNTH_SR, diarize, make_scene
+
+    scene, events = make_scene(duration_s=25.0, n_speakers=1, seed=0)
+    segments = [(e["start"], e["end"]) for e in events]
+
+    labels = diarize(scene, SYNTH_SR, segments)
+    assert len(set(labels)) == 1
+
+
 def test_diarize_separates_two_voices(tmp_path) -> None:
     from cr_engine import diarize
 

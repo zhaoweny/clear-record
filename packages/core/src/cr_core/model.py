@@ -37,6 +37,9 @@ class Alignment:
     offsets: dict[str, float]
     method: str = "cross-correlation"
     confidence: float | None = None
+    # Sources alignment could not place. They are deliberately absent from
+    # ``offsets`` so downstream stages do not read a fake ``0.0`` as "aligned".
+    unresolved: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -66,21 +66,22 @@ def estimate_offset(
     *,
     window_s: float = _WINDOW_S,
     max_lag_s: float = _MAX_LAG_S,
-) -> tuple[float, float]:
+) -> tuple[float, float | None]:
     """Estimate ``offset`` (seconds) mapping ``source`` onto ``reference``.
 
     Returns ``(offset, confidence)`` where ``offset = ref_time - source_time``.
-    If no meaningful peak is found, returns ``(0.0, 0.0)`` so callers can fall
-    back to "assume simultaneous start".
+    A ``confidence`` of ``None`` means the source could not be placed at all
+    (unreadable, too short, or no peak) — callers must not read that as a zero
+    offset.
     """
     try:
         ref, _ = read_audio(reference_path, _ALIGN_SR)
         src, _ = read_audio(source_path, _ALIGN_SR)
-    except AudioDecodeError:
-        return 0.0, 0.0
+    except (AudioDecodeError, FileNotFoundError):
+        return 0.0, None
 
     if ref.size < _ALIGN_SR // 2 or src.size < _ALIGN_SR // 2:
-        return 0.0, 0.0
+        return 0.0, None
 
     n_win = min(int(window_s * _ALIGN_SR), ref.size)
     # pick the most energetic window in the reference (more likely to be speech)
@@ -94,25 +95,32 @@ def estimate_offset(
     window = _normalized(ref[win_start : win_start + n_win])
 
     corr = cross_correlate(_normalized(src), window)
-    lag_index = int(np.argmax(corr))
-    lag = lag_index  # output index IS the source position of the window
-    value = float(corr[lag_index])
+    # Search *both* directions around the reference window position, bounded by
+    # max_lag. The previous one-sided guard rejected any window found beyond
+    # max_lag into the source — which silently zeroed every recording whose most
+    # energetic window sat more than max_lag into the tape.
+    max_lag = int(max_lag_s * _ALIGN_SR)
+    lo = max(0, win_start - max_lag)
+    hi = min(corr.size - 1, win_start + max_lag)
+    if hi < lo:
+        return 0.0, None
+    lag = lo + int(np.argmax(corr[lo : hi + 1]))
+    value = float(corr[lag])
 
     # offset = ref_window_start - source_position (in samples at _ALIGN_SR)
     offset = (win_start - lag) / _ALIGN_SR
-    # Reject peak if the window can't plausibly be located within max_lag.
-    if lag > int(max_lag_s * _ALIGN_SR):
-        return 0.0, 0.0
     confidence = float(min(1.0, max(0.0, value)))
+    if confidence <= 0.0:
+        return 0.0, None
     return float(offset), confidence
 
 
 def align_sources(sources, reference_id: str | None = None) -> Alignment:
     """Align a list of ``Source`` objects against a reference.
 
-    The first source is the reference by default. Any source that cannot be
-    loaded/aligned is given offset ``0.0``; the alignment's ``confidence`` is the
-    mean over the aligned (non-reference) sources.
+    The first source is the reference by default. Sources that cannot be placed
+    are recorded in ``Alignment.unresolved`` and omitted from ``offsets`` (no fake
+    zero); ``confidence`` is the mean over the sources that were aligned.
     """
     if not sources:
         raise ValueError("no sources to align")
@@ -120,12 +128,16 @@ def align_sources(sources, reference_id: str | None = None) -> Alignment:
     ref_path = next((s.path for s in sources if s.id == reference), sources[0].path)
 
     offsets: dict[str, float] = {}
+    unresolved: list[str] = []
     confs: list[float] = []
     for src in sources:
         if src.id == reference:
             offsets[src.id] = 0.0
             continue
         off, conf = estimate_offset(reference_path=ref_path, source_path=src.path)
+        if conf is None:
+            unresolved.append(src.id)
+            continue
         offsets[src.id] = round(off, 4)
         confs.append(conf)
 
@@ -135,6 +147,7 @@ def align_sources(sources, reference_id: str | None = None) -> Alignment:
         offsets=offsets,
         method="windowed-cross-correlation",
         confidence=mean_conf,
+        unresolved=tuple(unresolved),
     )
 
 

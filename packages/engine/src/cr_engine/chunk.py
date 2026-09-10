@@ -31,6 +31,15 @@ def plan_chunks(
         return []
     if chunk_s <= 0 or duration_s <= chunk_s:
         return [(0.0, float(duration_s))]
+    if overlap_s < 0:
+        raise ValueError(f"overlap_s must be >= 0 (got {overlap_s})")
+    if overlap_s >= chunk_s:
+        # Otherwise ``start = end - overlap`` never advances and planning loops
+        # forever (or walks backwards). Reject rather than emit identical windows.
+        raise ValueError(
+            f"overlap_s ({overlap_s}) must be smaller than chunk_s ({chunk_s}) "
+            "or chunk planning cannot make forward progress"
+        )
     chunks: list[tuple[float, float]] = []
     start = 0.0
     while start < duration_s:

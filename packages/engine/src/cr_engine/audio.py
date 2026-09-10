@@ -41,11 +41,15 @@ def _decode_with_ffmpeg(path: Path, target_sr: int | None) -> tuple[np.ndarray, 
 
 
 def read_audio(
-    path: str | Path, target_sr: int | None = None
+    path: str | Path,
+    target_sr: int | None = None,
+    channel: int | None = None,
 ) -> tuple[np.ndarray, int]:
     """Return ``(mono float32 in [-1, 1], sample_rate)``.
 
-    If ``target_sr`` is given, the returned sample rate is exactly ``target_sr``.
+    If ``channel`` is given, that channel is selected (0-based) instead of
+    downmixing a multi-channel file. If ``target_sr`` is given, the returned
+    sample rate is exactly ``target_sr``.
     """
     path = Path(path)
     if not path.exists():
@@ -54,16 +58,38 @@ def read_audio(
     try:
         data, sr = sf.read(str(path), dtype="float32", always_2d=False)
     except (RuntimeError, sf.LibsndfileError):  # libsndfile can't read it
+        if channel is not None:
+            raise AudioDecodeError(
+                f"cannot select channel {channel} of {path.name!r}: only "
+                "soundfile-readable containers support per-channel decode"
+            )
         return _decode_with_ffmpeg(path, target_sr)
 
-    if data.ndim > 1:  # mixdown to mono
-        data = data.mean(axis=1)
+    if data.ndim > 1:
+        if channel is not None:
+            if channel < 0 or channel >= data.shape[1]:
+                raise AudioDecodeError(
+                    f"channel {channel} out of range for {path.name!r} "
+                    f"({data.shape[1]} channel(s))"
+                )
+            data = data[:, channel]
+        else:
+            data = data.mean(axis=1)  # downmix to mono
     data = np.ascontiguousarray(data, dtype=np.float32)
 
     if target_sr is not None and sr != target_sr:
         data = _resample(data, sr, target_sr)
         sr = target_sr
     return data, sr
+
+
+def channel_count(path: str | Path) -> int:
+    """Number of channels in an audio file (1 on any probe failure)."""
+    try:
+        info = sf.info(str(path))
+        return int(info.channels)
+    except Exception:
+        return 1
 
 
 def _resample(x: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
@@ -91,9 +117,15 @@ def rms(x: np.ndarray) -> float:
 ASR_SAMPLE_RATE = 16000
 
 
-def prepare_16k_wav(src: str | Path, dst: str | Path) -> None:
-    """Decode ``src`` to a 16 kHz mono WAV at ``dst`` (created atomically-ish)."""
-    data, sr = read_audio(src, ASR_SAMPLE_RATE)
+def prepare_16k_wav(
+    src: str | Path, dst: str | Path, channel: int | None = None
+) -> None:
+    """Decode ``src`` to a 16 kHz mono WAV at ``dst``.
+
+    ``channel`` selects one channel of a multi-channel source (0-based); when
+    omitted the source is downmixed to mono.
+    """
+    data, sr = read_audio(src, ASR_SAMPLE_RATE, channel=channel)
     dst = Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(dst), data, ASR_SAMPLE_RATE)
@@ -102,6 +134,7 @@ def prepare_16k_wav(src: str | Path, dst: str | Path) -> None:
 __all__ = [
     "ASR_SAMPLE_RATE",
     "AudioDecodeError",
+    "channel_count",
     "prepare_16k_wav",
     "read_audio",
     "rms",

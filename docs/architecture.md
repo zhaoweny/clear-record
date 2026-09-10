@@ -183,7 +183,10 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
   every later stage + the ASR backend operate on canonical audio. This is also
-  what makes whisper.cpp's 16 kHz requirement a non-issue.
+  what makes whisper.cpp's 16 kHz requirement a non-issue. **Multi-channel files
+  are split per channel by default** (when >2 channels) so a 4-channel DJI
+  capture becomes four sources and per-speaker isolation is preserved
+  (`--split-channels` / `--mix-down` override).
 - [DESIGN] pywhispercpp reports segment `t0/t1` in a **10 ms** unit (not ms) in
   current versions; the adapter calibrates the scale against the known audio
   duration (`cr_providers.backends._time_scale`) so timestamps are correct
@@ -272,9 +275,11 @@ docs/vox/voice-of-owner.md         owner voice
 **Current status: runnable v0.1 pipeline.**
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
-  (`<dir>/audio/`).
-- `align` → `cr_engine.align_sources`, windowed cross-correlation (approximate
-  offset; low-confidence results fall back to simultaneous start).
+  (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
+  per-speaker channels; re-ingest is idempotent.
+- `align` → `cr_engine.align_sources`, windowed cross-correlation at 1 kHz
+  (~1 ms; memory scales to multi-hour tapes), approximate offset with a
+  simultaneous-start fallback.
 - `transcribe` → real ASR via `cr_providers`; **Apple Silicon (whisper.cpp /
   Metal) is proven on an Apple M4**, with auto language detection and per-segment
   confidence; validated against a known-good 11 s reference (coverage 1.0,
@@ -285,11 +290,16 @@ docs/vox/voice-of-owner.md         owner voice
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.
 
-`just verify` is green (17 tests); the CLI surface is derived from
-`PipelineSpec`. **Not yet:** the NVIDIA (faster-whisper/CUDA) and AMD
-(whisper.cpp/ROCm-Vulkan) backends are declared and capability-gated but not
-hot-tested here (no such hardware on the current host); and the exotic
-spatial-invention scope (§7) is deliberately out of scope.
+`just verify` is green (20 tests); the CLI surface is derived from
+`PipelineSpec`. **Meeting-tape readiness:** multi-channel capture is handled
+(per-channel split), tapes of any length are processable (1 kHz alignment), and
+Apple Silicon transcription is proven. **Remaining gaps for a heavy meeting
+workflow:** the NVIDIA (faster-whisper/CUDA) and AMD (whisper.cpp/ROCm-Vulkan)
+backends are declared and capability-gated but not hot-tested here; a **single
+mixed stream** yields one attributed speaker (no ML diarization); there is no
+**glossary / initial-prompt** support for names and domain terms yet; and long
+runs have no **chunked resume/progress**. The exotic spatial-invention scope
+(§7) is deliberately out of scope.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 

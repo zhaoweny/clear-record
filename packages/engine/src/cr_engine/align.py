@@ -26,7 +26,11 @@ from cr_engine.audio import AudioDecodeError, read_audio
 
 _WINDOW_S = 4.0
 _MAX_LAG_S = 120.0
-_ALIGN_SR = 8000
+# Alignment runs at 1 kHz: ~1 ms resolution is ample for the *approximate*
+# alignment this project promises, while keeping the FFT small. At 8 kHz a
+# multi-hour meeting tape would need multi-GB FFT buffers; at 1 kHz a 3 h file
+# is ~10.8 M samples (~hundreds of MB), so long tapes stay processable.
+_ALIGN_SR = 1000
 
 
 def _normalized(x: np.ndarray) -> np.ndarray:

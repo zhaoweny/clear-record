@@ -18,6 +18,7 @@ from cr_core import RecordDocument, Segment, Source, write_json
 from cr_engine import (
     SYNTH_SR,
     align_sources,
+    channel_count,
     make_scene,
     prepare_16k_wav,
     record as synth_record,
@@ -41,7 +42,21 @@ def _source_id(path: Path, directory: Path) -> str:
     return str(rel.with_suffix("")).replace("/", "__").replace("\\", "__")
 
 
-def ingest(directory: str, audio_files: list[str] | None = None) -> list[Source]:
+def ingest(
+    directory: str,
+    audio_files: list[str] | None = None,
+    split: str = "auto",
+) -> list[Source]:
+    """Discover/declare sources and normalize them to 16 kHz mono WAV.
+
+    ``split`` controls multi-channel handling:
+
+    - ``"auto"`` (default): split channels when a file has **more than two**
+      (clearly a multichannel meeting/DJI-quadraphonic capture); downmix 1–2 ch.
+    - ``"split"``: split every channel of any multichannel file into its own
+      source — preserves per-speaker isolation ("closest mic wins").
+    - ``"mix"``: always downmix to mono.
+    """
     d = Path(directory)
     files = [Path(a) for a in audio_files] if audio_files else ws.discover_audio(d)
     if not files:
@@ -51,16 +66,32 @@ def ingest(directory: str, audio_files: list[str] | None = None) -> list[Source]
 
     sources: list[Source] = []
     for p in files:
-        sid = _source_id(p, d)
-        norm = audio_dir / f"{sid}.wav"
-        # Normalize every source to 16 kHz mono WAV once, so align/ASR and the
-        # backend (whisper.cpp wants 16 kHz) all operate on the same canonical
-        # audio regardless of the original container.
-        print(f"[ingest] decode {p.name} -> {norm.name}")
-        prepare_16k_wav(p, norm)
-        sources.append(
-            Source(id=sid, path=str(norm), label=p.stem, clock_domain="wall")
-        )
+        base = _source_id(p, d)
+        nch = channel_count(p)
+        do_split = (split == "split") or (split == "auto" and nch > 2)
+        if do_split and nch > 1:
+            # One source per channel: this is the multi-mic meeting case, where
+            # each speaker is nearest one channel and diarization is nearly free.
+            for ch in range(nch):
+                sid = f"{base}__ch{ch + 1}"
+                norm = audio_dir / f"{sid}.wav"
+                print(f"[ingest] decode {p.name} ch{ch + 1}/{nch} -> {norm.name}")
+                prepare_16k_wav(p, norm, channel=ch)
+                sources.append(
+                    Source(
+                        id=sid,
+                        path=str(norm),
+                        label=f"{p.stem} ch{ch + 1}",
+                        clock_domain="wall",
+                    )
+                )
+        else:
+            norm = audio_dir / f"{base}.wav"
+            print(f"[ingest] decode {p.name} -> {norm.name}")
+            prepare_16k_wav(p, norm)
+            sources.append(
+                Source(id=base, path=str(norm), label=p.stem, clock_domain="wall")
+            )
     ws.write_manifest(d, sources)
     _print_sources(sources, d)
     return sources
@@ -276,10 +307,11 @@ def run(
     language: str | None = None,
     model_dir: str | None = None,
     audio_files: list[str] | None = None,
+    split: str = "auto",
     reference: str | None = None,
     formats: list[str] | None = None,
 ):
-    ingest(directory, audio_files)
+    ingest(directory, audio_files, split=split)
     align(directory, reference=None)
     transcribe(directory, backend, model=model, language=language, model_dir=model_dir)
     reconcile(directory, prefer=reference)

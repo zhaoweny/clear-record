@@ -6,6 +6,7 @@ from cr_engine.align import align_sources, cross_correlate, estimate_offset
 from cr_engine.audio import (
     ASR_SAMPLE_RATE,
     AudioDecodeError,
+    channel_count,
     prepare_16k_wav,
     read_audio,
     rms,
@@ -19,6 +20,7 @@ __all__ = [
     "AudioDecodeError",
     "SYNTH_SR",
     "align_sources",
+    "channel_count",
     "cross_correlate",
     "estimate_offset",
     "make_scene",

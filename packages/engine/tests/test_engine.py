@@ -113,3 +113,25 @@ def test_synth_align_recovers_true_offsets(tmp_path) -> None:
     for i in range(1, 4):
         got = alignment.offsets[f"d{i}"]
         assert got == pytest.approx(offsets_s[i], abs=0.15), f"device {i} offset {got}"
+
+
+def test_channel_count_and_channel_select(tmp_path) -> None:
+    import soundfile as sf
+
+    from cr_engine import channel_count, read_audio
+
+    sr = 8000
+    t = np.arange(sr, dtype=np.float64) / sr
+    left = np.sin(2 * np.pi * 200.0 * t).astype(np.float32)
+    right = np.sin(2 * np.pi * 700.0 * t).astype(np.float32)
+    p = tmp_path / "stereo.wav"
+    sf.write(str(p), np.stack([left, right], axis=1), sr)
+
+    assert channel_count(p) == 2
+    got_l, _ = read_audio(p, channel=0)
+    got_r, _ = read_audio(p, channel=1)
+    # channels must not be collapsed together (the meeting-tape isolation case)
+    assert not np.allclose(got_l, got_r)
+    # default downmixes to mono
+    mixed, _ = read_audio(p)
+    assert mixed.shape == got_l.shape

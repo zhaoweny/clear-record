@@ -31,7 +31,9 @@ DJI Mic 3   ─┘
 ```
 
 - **ingest** — decode/normalize every source to 16 kHz mono WAV (handles
-  wav/flac/ogg and, via ffmpeg, mp3/m4a/etc.).
+  wav/flac/ogg and, via ffmpeg, mp3/m4a/etc.). **Multi-channel files are split
+  per channel by default** (e.g. a 4-channel DJI capture → 4 sources), so
+  per-speaker isolation is preserved; `--mix-down` forces a downmix.
 - **align** — place every source onto a common timebase (windowed
   cross-correlation; *approximate*, not precision clock-sync).
 - **transcribe** — run a chosen local ASR backend (see *Backends*), with
@@ -100,6 +102,47 @@ uv run --all-packages clearrecord align /tmp/align-test
 
 `just verify` already asserts `align` recovers the true offsets on a synthetic
 4-device scene.
+
+## Running a real meeting tape
+
+```sh
+# put the tape(s) somewhere gitignored, then run the whole pipeline
+mkdir -p recordings && cp /path/to/meeting*.wav recordings/
+
+uv sync --all-packages --extra apple
+uv run --all-packages --extra apple clearrecord run recordings \
+    --backend apple --model medium --language zh   # zh/en; omit --language to auto-detect
+```
+
+Notes for a real meeting tape:
+
+- **Multi-channel (DJI / multichannel interface):** each channel becomes its own
+  source automatically when the file has **more than two** channels, so
+  `speaker ≈ channel` (closest-mic-wins). Use `--split-channels` to force
+  splitting of any multichannel file, `--mix-down` to collapse to mono.
+- **Long recordings:** alignment runs at 1 kHz (~1 ms) so multi-hour tapes do
+  not blow up memory; transcription is CPU/GPU-time-bound, not memory-bound.
+- **Mixed Chinese/English:** use a multilingual model (`small`/`medium`, not
+  `.en`) and optionally a language hint (`--language zh`).
+- **Single mixed stream** (phone/room mic/podcast): you get one attributed
+  speaker (the source), not diarization — per-speaker attribution needs
+  per-speaker channels.
+
+### Move it to a Mac (recommended node)
+
+The repo is fully portable — no local state, model weights are downloaded per
+machine. On the Mac:
+
+```sh
+gh repo clone zhaoweny/clear-record      # private repo
+cd clear-record
+uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
+uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple --model medium
+```
+
+Processing on an Apple Silicon Mac (Metal via `whisper.cpp`) is the intended
+always-on-node setup from the project concept; a 1–3 h tape is a batch job, not
+an interactive one.
 
 > **Privacy:** recordings and derived artifacts are environment-local data.
 > They are gitignored and never enter the repository. The clean-room boundary

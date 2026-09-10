@@ -85,9 +85,29 @@ def _build_parser() -> argparse.ArgumentParser:
 
         return fn
 
+    def _channel_args(p: argparse.ArgumentParser) -> None:
+        g = p.add_mutually_exclusive_group()
+        g.add_argument(
+            "--split-channels",
+            dest="split",
+            action="store_const",
+            const="split",
+            help="split every channel of a multichannel file into its own source",
+        )
+        g.add_argument(
+            "--mix-down",
+            dest="split",
+            action="store_const",
+            const="mix",
+            help="always downmix multichannel audio to mono",
+        )
+        p.set_defaults(split="auto")
+
     # pipeline stages
     add_pipeline_command(
-        "ingest", "discover/declare recording sources", lambda p: _paths(p)
+        "ingest",
+        "discover/declare recording sources",
+        lambda p: (_paths(p), _channel_args(p)),
     )
     add_pipeline_command(
         "align", "estimate source time offsets onto a common clock", _directory
@@ -106,7 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_pipeline_command(
         "run",
         "full pipeline: ingest -> align -> transcribe -> reconcile -> export",
-        _backend(directory_first=True),
+        lambda p: (_backend(directory_first=True)(p), _channel_args(p)),
     )
 
     # calibration convenience
@@ -116,6 +136,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cal.add_argument("directory", help="workspace directory")
     _backend_args(cal)
+    _channel_args(cal)
     cal.add_argument(
         "--reference-transcript",
         help="a reference transcript text file to compare (WER/similarity)",
@@ -181,7 +202,7 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if command == "ingest":
-        stages.ingest(args.directory, audio_files=args.inputs or None)
+        stages.ingest(args.directory, audio_files=args.inputs or None, split=args.split)
         return 0
 
     if command == "align":
@@ -214,6 +235,7 @@ def _main(args: argparse.Namespace) -> int:
             language=args.language,
             model_dir=args.models_dir,
             audio_files=None,
+            split=args.split,
         )
         return 0
 
@@ -224,6 +246,7 @@ def _main(args: argparse.Namespace) -> int:
             model=args.model,
             language=args.language,
             model_dir=args.models_dir,
+            split=args.split,
         )
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0

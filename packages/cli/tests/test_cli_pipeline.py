@@ -37,7 +37,6 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
     wd = _workspace(tmp_path)
     sources = stages.ingest(wd)
     assert len(sources) == 2
-
     alignment = stages.align(wd)
     assert alignment.reference == sources[0].id
 
@@ -78,3 +77,28 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
 
     report = stages.calibrate_report(wd)
     assert report["coverage"] is not None
+
+
+def test_ingest_splits_multichannel_sources(tmp_path) -> None:
+    """A 4-channel meeting/DJI capture becomes four per-channel sources (auto),
+    and `--mix-down` collapses it to one."""
+    sr = 8000
+    t = np.arange(int(3.0 * sr), dtype=np.float64) / sr
+    chans = [np.sin(2 * np.pi * f * t).astype(np.float32) for f in (200, 300, 400, 500)]
+    quad = tmp_path / "meeting.wav"
+    sf.write(str(quad), np.stack(chans, axis=1), sr)
+
+    wd = tmp_path / "sess"
+    wd.mkdir()
+    (wd / "meeting.wav").unlink(missing_ok=True)
+    import shutil
+
+    shutil.copy(str(quad), str(wd / "meeting.wav"))
+
+    split_sources = stages.ingest(str(wd), split="auto")
+    assert len(split_sources) == 4
+    assert all(s.id.endswith(("ch1", "ch2", "ch3", "ch4")) for s in split_sources)
+
+    mixed = stages.ingest(str(wd), split="mix")
+    assert len(mixed) == 1
+    assert not mixed[0].id.endswith("ch1")

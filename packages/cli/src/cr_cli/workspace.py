@@ -54,9 +54,26 @@ def is_audio(path: Path) -> bool:
     return path.suffix.lower() in AUDIO_SUFFIXES
 
 
+# Workspace-managed subdirectories that must never be re-discovered as sources
+# (they hold our own normalized/derived output).
+SKIP_DIRS = {"audio", "export"}
+
+
 def discover_audio(directory: Path) -> list[Path]:
-    """Recursively list audio files under ``directory`` (sorted, stable)."""
-    return sorted(p for p in directory.rglob("*") if p.is_file() and is_audio(p))
+    """Recursively list *input* audio files under ``directory`` (sorted, stable).
+
+    Excludes the workspace's own output dirs (``audio/``, ``export/``) so that
+    re-running `ingest` is idempotent.
+    """
+    found: list[Path] = []
+    for p in sorted(directory.rglob("*")):
+        if not p.is_file() or not is_audio(p):
+            continue
+        rel = p.relative_to(directory).parts
+        if rel and rel[0] in SKIP_DIRS:
+            continue
+        found.append(p)
+    return found
 
 
 def manifest_path(directory: Path) -> Path:

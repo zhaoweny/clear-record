@@ -12,8 +12,10 @@ major desktop compute families rather than only one.
 |---|---|---|
 | `apple` | Apple Silicon | Metal / Core ML / ANE (whisper.cpp) |
 | `nvidia` | NVIDIA | CUDA / cuBLAS / cuDNN (faster-whisper / CTranslate2) |
-| `amd` | AMD Radeon | ROCm / Vulkan (whisper.cpp, e.g. `gfx1100`) |
+| `amd` | AMD Radeon | ROCm / Vulkan (system `whisper-cli` + `ggml-vulkan`/`ggml-hip`, e.g. `gfx1100`) |
 
-Each backend is a *capability*, not a hard dependency: it is only available when
-its optional dependency extra is installed and its runtime probe succeeds. See
+Each backend is a *capability*, not a hard dependency: it is available only when
+its runtime probe succeeds. `apple`/`nvidia` are provided by their optional
+dependency extras; `amd` is system-provided (`whisper-cpp` + `ggml-vulkan`) and
+its extra installs no Python package. See
 `docs/adr/0005-transcription-backend-strategy.md`.

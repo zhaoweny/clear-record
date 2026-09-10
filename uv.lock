@@ -285,7 +285,7 @@ all = [
     { name = "cr-providers", extra = ["all"] },
 ]
 amd = [
-    { name = "cr-providers", extra = ["amd"] },
+    { name = "cr-providers" },
 ]
 apple = [
     { name = "cr-providers", extra = ["apple"] },
@@ -385,9 +385,6 @@ all = [
     { name = "faster-whisper" },
     { name = "pywhispercpp" },
 ]
-amd = [
-    { name = "pywhispercpp" },
-]
 apple = [
     { name = "pywhispercpp" },
 ]
@@ -401,7 +398,6 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'all'", specifier = ">=1.1.0" },
     { name = "faster-whisper", marker = "extra == 'nvidia'", specifier = ">=1.1.0" },
     { name = "pywhispercpp", marker = "extra == 'all'", specifier = ">=1.1.3" },
-    { name = "pywhispercpp", marker = "extra == 'amd'", specifier = ">=1.1.3" },
     { name = "pywhispercpp", marker = "extra == 'apple'", specifier = ">=1.1.3" },
 ]
 provides-extras = ["apple", "nvidia", "amd", "all"]

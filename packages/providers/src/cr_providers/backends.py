@@ -10,14 +10,25 @@ Mapping to compute families (ADR-0005):
 
 - ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE).
 - ``nvidia`` — NVIDIA via ``faster-whisper`` / CTranslate2 (CUDA / cuBLAS / cuDNN).
-- ``amd``    — AMD Radeon via ``whisper.cpp`` (ROCm / Vulkan), Linux-only probe.
+- ``amd``    — AMD Radeon via the *system* ``whisper-cli`` (Vulkan / ROCm),
+  Linux-only probe.
+
+The first two use Python wheels; the AMD one cannot. PyPI's ``pywhispercpp``
+wheels are CPU-only, so ``amd`` drives a distro ``whisper-cli`` linked against
+the system ``ggml``, which loads GPU backends as plugins (Arch ``ggml-vulkan`` /
+``ggml-hip``). The capability probe checks for that, not just an import.
 """
 
 from __future__ import annotations
 
+import glob
+import json
 import math
 import os
 import platform
+import shutil
+import subprocess
+import tempfile
 
 from cr_core import Segment, TranscriptionResult
 
@@ -83,7 +94,11 @@ def _whispercpp_available() -> bool:
 
 
 class _WhisperCppBackend:
-    """Shared whisper.cpp backend (used by both apple and amd)."""
+    """In-process whisper.cpp backend (Apple Metal / Core ML / ANE).
+
+    Uses the ``pywhispercpp`` wheel, whose bundled ggml is CPU-only; this is the
+    proven Apple path. AMD does **not** use it — see :class:`_WhisperCliBackend`.
+    """
 
     def __init__(self, info: BackendInfo) -> None:
         self.info = info
@@ -157,6 +172,191 @@ def _whispercpp_duration(audio_path: str) -> float | None:
         return None
 
 
+# --------------------------------------------------------------------------- #
+# system ``whisper-cli`` adapter (AMD Radeon: Vulkan / HIP via ggml plugins)
+# --------------------------------------------------------------------------- #
+# ``pywhispercpp`` wheels are CPU-only, so the AMD adapter shells out to the
+# distro's ``whisper-cli`` (e.g. Arch ``whisper-cpp``), which links the system
+# ``ggml`` and loads a GPU backend plugin (``ggml-vulkan`` / ``ggml-hip``). A
+# backend is only offered when such a plugin and a DRM render node are present.
+_WHISPER_CLI_CANDIDATES = ("whisper-cli", "whisper-cpp", "whisper")
+_GGML_BACKEND_DIRS = ("/usr/lib/ggml", "/usr/lib64/ggml", "/usr/local/lib/ggml")
+
+
+def _find_whisper_cli() -> str | None:
+    """Path to a system ``whisper-cli`` (``CR_WHISPER_CLI`` overrides)."""
+    override = os.environ.get("CR_WHISPER_CLI")
+    if override and os.path.isfile(override):
+        return override
+    for name in _WHISPER_CLI_CANDIDATES:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _find_ggml_gpu_backend() -> str | None:
+    """Path to an installed ggml GPU backend plugin (Vulkan/HIP), if any."""
+    for directory in _GGML_BACKEND_DIRS:
+        for pattern in (
+            "libggml-vulkan*.so*",
+            "libggml-hip*.so*",
+            "libggml-rocm*.so*",
+        ):
+            matches = sorted(glob.glob(os.path.join(directory, pattern)))
+            if matches:
+                return matches[0]
+    return None
+
+
+def _has_gpu_render_node() -> bool:
+    return bool(glob.glob("/dev/dri/renderD*"))
+
+
+def _is_special_token(text: str) -> bool:
+    return text.startswith("[") and text.endswith("]")
+
+
+def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, ...]:
+    """Normalize ``whisper-cli -ojf`` entries into core ``Segment`` objects.
+
+    ``offsets`` are milliseconds; per-segment confidence is the mean token
+    probability (control tokens such as ``[_BEG_]`` are excluded).
+    """
+    out: list[Segment] = []
+    for entry in entries:
+        offsets = entry.get("offsets") or {}
+        try:
+            start = float(offsets.get("from", 0.0)) / 1000.0
+            end = float(offsets.get("to", 0.0)) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        if end < start:
+            start, end = end, start
+        text = (entry.get("text") or "").strip()
+        if not text:
+            continue
+        probs = [
+            float(token["p"])
+            for token in (entry.get("tokens") or [])
+            if isinstance(token.get("p"), (int, float))
+            and not _is_special_token(str(token.get("text", "")))
+        ]
+        confidence = sum(probs) / len(probs) if probs else None
+        out.append(
+            Segment(
+                start=round(start, 3),
+                end=round(end, 3),
+                text=text,
+                source=source,
+                confidence=confidence,
+                language=language,
+            )
+        )
+    return tuple(out)
+
+
+def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
+    """Resolve a model name/size (e.g. ``small``) to a ``ggml-*.bin`` path.
+
+    Accepts an explicit existing path, or a name resolved against ``model_dir``
+    (then ``CR_MODELS_DIR``, then ``<cwd>/models``).
+    """
+    expanded = os.path.expanduser(model)
+    if os.path.isfile(expanded):
+        return expanded
+    base = (
+        model_dir
+        or os.environ.get("CR_MODELS_DIR")
+        or os.path.join(os.getcwd(), "models")
+    )
+    name = os.path.basename(model)
+    if not name.startswith("ggml-"):
+        name = f"ggml-{name}"
+    if not name.endswith(".bin"):
+        name = f"{name}.bin"
+    candidate = os.path.join(base, name)
+    if os.path.isfile(candidate):
+        return candidate
+    raise FileNotFoundError(
+        f"ggml model not found for {model!r}; looked for {candidate}. "
+        f"Download one, e.g. `hf download ggerganov/whisper.cpp {name} "
+        f"--local-dir {base}`."
+    )
+
+
+class _WhisperCliBackend:
+    """System ``whisper-cli`` backend (AMD Radeon: Vulkan / HIP via ggml)."""
+
+    def __init__(self, info: BackendInfo) -> None:
+        self.info = info
+
+    def available(self) -> bool:
+        return (
+            platform.system() == "Linux"
+            and _find_whisper_cli() is not None
+            and _find_ggml_gpu_backend() is not None
+            and _has_gpu_render_node()
+        )
+
+    def transcribe(
+        self,
+        audio_path: str,
+        *,
+        language: str | None = None,
+        model: str | None = None,
+        model_dir: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
+        cli = _find_whisper_cli()
+        if cli is None:  # defensive: available() already checked this
+            raise RuntimeError("whisper-cli not found on PATH (set CR_WHISPER_CLI).")
+        name = model or self.info.default_model
+        model_path = _resolve_ggml_model(name, model_dir)
+        lang = language if language and language not in ("", "auto") else "auto"
+
+        with tempfile.TemporaryDirectory(prefix="cr-whisper-") as tmp:
+            out_prefix = os.path.join(tmp, "out")
+            cmd = [
+                cli,
+                "-m",
+                model_path,
+                "-f",
+                audio_path,
+                "-l",
+                lang,
+                "-ojf",
+                "-of",
+                out_prefix,
+            ]
+            if initial_prompt:
+                cmd += ["--prompt", initial_prompt]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            if proc.returncode != 0:
+                tail = (proc.stderr or "").strip()[-800:]
+                raise RuntimeError(
+                    f"whisper-cli failed (exit {proc.returncode}): {tail}"
+                )
+            with open(out_prefix + ".json", encoding="utf-8") as fh:
+                data = json.load(fh)
+
+        detected = (data.get("result") or {}).get("language") or (
+            "" if lang == "auto" else lang
+        )
+        duration = _whispercpp_duration(audio_path)
+        segments = _whispercli_segments(
+            data.get("transcription", []), source=self.info.id, language=detected
+        )
+        return TranscriptionResult(
+            source=self.info.id,
+            segments=segments,
+            language=detected,
+            backend=self.info.id,
+            model=name,
+            audio_duration=duration,
+        )
+
+
 class AppleBackend(_WhisperCppBackend):
     """Apple Silicon: Metal / Core ML / ANE via whisper.cpp."""
 
@@ -174,8 +374,8 @@ class AppleBackend(_WhisperCppBackend):
         return platform.system() == "Darwin" and _whispercpp_available()
 
 
-class AmdBackend(_WhisperCppBackend):
-    """AMD Radeon on Linux: ROCm / Vulkan via whisper.cpp."""
+class AmdBackend(_WhisperCliBackend):
+    """AMD Radeon on Linux: Vulkan / ROCm via the system ``whisper-cli``."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -183,12 +383,10 @@ class AmdBackend(_WhisperCppBackend):
                 id="amd",
                 vendor="AMD",
                 frameworks=("ROCm", "Vulkan"),
-                description="AMD Radeon ASR via whisper.cpp (ROCm / Vulkan, e.g. gfx1100).",
+                description="AMD Radeon ASR via the system whisper-cli "
+                "(ggml Vulkan/HIP backend, e.g. gfx1100).",
             )
         )
-
-    def available(self) -> bool:
-        return platform.system() == "Linux" and _whispercpp_available()
 
 
 class NvidiaBackend:

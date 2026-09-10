@@ -24,16 +24,21 @@ cr-core = { workspace = true }
 #
 #   uv sync --all-packages --extra apple     (Apple Silicon: whisper.cpp/Metal)
 #   uv sync --all-packages --extra nvidia    (NVIDIA: faster-whisper/CUDA)
-#   uv sync --all-packages --extra amd       (AMD Radeon: whisper.cpp/ROCm-Vulkan)
-#   uv sync --all-packages --extra all       (all three)
+#   uv sync --all-packages --extra amd       (AMD Radeon: system stack, see below)
+#   uv sync --all-packages --extra all       (apple + nvidia)
 #
 # See docs/adr/0005-transcription-backend-strategy.md. No backend is required;
-# a backend is only usable when its extra is installed AND its runtime checks
-# are satisfied (see `cr_providers.base.Backend.available()`).
+# a backend is only usable when its runtime checks are satisfied (see
+# `cr_providers.base.Backend.available()`).
+#
+# AMD is the exception to the "extra installs the stack" rule: no PyPI wheel
+# ships a Vulkan/HIP ggml backend, so `amd` carries no Python dependency. The
+# capability comes from the *system* `whisper-cli` plus a ggml GPU backend
+# plugin (e.g. Arch `whisper-cpp` + `ggml-vulkan`); `available()` probes both.
 [project.optional-dependencies]
 apple = ["pywhispercpp>=1.1.3"]
 nvidia = ["faster-whisper>=1.1.0"]
-amd = ["pywhispercpp>=1.1.3"]
+amd = []
 all = ["pywhispercpp>=1.1.3", "faster-whisper>=1.1.0"]
 
 [tool.hatch.build.targets.wheel]

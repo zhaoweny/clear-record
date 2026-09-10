@@ -170,16 +170,22 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
    apple       nvidia       amd
  Metal/CoreML   CUDA       ROCm/Vulkan
  ANE           cuBLAS       gfx1100…
- whisper.cpp    cuDNN      whisper.cpp
+ whisper.cpp    cuDNN      whisper-cli
              faster-whisper
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
-  its optional dependency extra is installed **and** its runtime probe succeeds
-  (see `cr_providers.base.Backend.available()`). `clearrecord backends` lists
-  what is available on the current machine.
-- The vendor stacks are **not imported by `cr-core`** and are imported lazily in
-  `cr-providers`, so a plain dev/CI environment needs no GPU framework.
+  its runtime probe succeeds (see `cr_providers.base.Backend.available()`).
+  `clearrecord backends` lists what is available on the current machine.
+- Apple runs `whisper.cpp` **in process** via `pywhispercpp`; NVIDIA runs
+  `faster-whisper`/CTranslate2. AMD **shells out to the system `whisper-cli`**:
+  PyPI's `pywhispercpp` wheels are CPU-only, while a distro `whisper-cpp` links
+  the system `ggml` and loads a GPU backend plugin (`ggml-vulkan`/`ggml-hip`).
+  The `amd` extra is therefore a no-op marker; `available()` requires Linux,
+  `whisper-cli`, a ggml GPU plugin, and a DRM render node.
+- The vendor stacks are **not imported by `cr-core`**; wheel-backed stacks are
+  imported lazily in `cr-providers`, so a plain dev/CI environment needs no GPU
+  framework.
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
   every later stage + the ASR backend operate on canonical audio. This is also
@@ -187,11 +193,11 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   are split per channel by default** (when >2 channels) so a 4-channel DJI
   capture becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
-- [DESIGN] pywhispercpp reports segment `t0/t1` in a **10 ms** unit (not ms) in
-  current versions; the adapter calibrates the scale against the known audio
-  duration (`cr_providers.backends._time_scale`) so timestamps are correct
-  regardless of binding version. Note: cross-device clock sync is still **out of
-  scope** (§7).
+- [DESIGN] The in-process adapter (Apple) calibrates against the known audio
+  duration because `pywhispercpp` reports segment `t0/t1` in a **10 ms** unit
+  (not ms) in current versions (`cr_providers.backends._time_scale`); the
+  `whisper-cli` adapter instead reads millisecond `offsets` from its JSON. Note:
+  cross-device clock sync is still **out of scope** (§7).
 - The reference/open hardware laboratory (owner's own, generic and personal):
 
   | Machine | Role |
@@ -305,11 +311,12 @@ docs/vox/voice-of-owner.md         owner voice
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple Silicon transcription are all landed.
-**Remaining gaps:** the NVIDIA (faster-whisper/CUDA) and AMD
-(whisper.cpp/ROCm-Vulkan) backends are declared and capability-gated but not
-hot-tested here; diarization is a transparent baseline (not a deep-embedding
-system) and will struggle with same-pitch speakers and heavy overlap; and the
-exotic spatial-invention scope (§7) remains out of scope.
+**Remaining gaps:** the NVIDIA (faster-whisper/CUDA) backend is declared and
+capability-gated but not yet hot-tested on real hardware — the AMD path is now
+hot-tested on an RX 7900 XTX via system `whisper-cli` + `ggml-vulkan` (its
+ROCm/HIP half is not exercised); diarization is a transparent baseline (not a
+deep-embedding system) and will struggle with same-pitch speakers and heavy
+overlap; and the exotic spatial-invention scope (§7) remains out of scope.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
@@ -317,7 +324,9 @@ exotic spatial-invention scope (§7) remains out of scope.
    a checksum); *(normalize + channel split landed)*.
 2. `align` — per-source alignment confidence and a manual-offset override;
    *(synthesized-badness harness landed)*.
-3. `transcribe` — hot-test the **nvidia** and **amd** backends on real hardware;
+3. `transcribe` — hot-test the **nvidia** backend on real hardware (**amd**
+   hot-tested via system `whisper-cli` + `ggml-vulkan`); retire the AMD
+   subprocess if a maintained Vulkan/HIP wheel appears;
    *(chunked resume + glossary landed)*.
 4. `diarize` — replace/augment the spectral+F0 baseline with a deep embedding
    provider behind the same seam; handle same-pitch speakers and overlap.

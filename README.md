@@ -58,10 +58,12 @@ three major desktop compute families behind one interface:
 |---|---|---|---|
 | `apple` | Apple Silicon | Metal, Core ML, ANE | `whisper.cpp` |
 | `nvidia` | NVIDIA | CUDA, cuBLAS, cuDNN | `faster-whisper` / CTranslate2 |
-| `amd` | AMD Radeon | ROCm, Vulkan | `whisper.cpp` (`gfx1100`…) |
+| `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
 Each backend is a *capability*, not a hard dependency — it is usable only when
-its optional extra is installed **and** its runtime probe succeeds. `clearrecord
+its runtime probe succeeds. `apple`/`nvidia` install their stack with
+`--extra <backend>`; `amd` uses the system `whisper-cli` (Arch: `whisper-cpp` +
+`ggml-vulkan`) and `--extra amd` installs no Python package. `clearrecord
 backends` shows what is available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 

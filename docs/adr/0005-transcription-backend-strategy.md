@@ -24,11 +24,16 @@ Date: 2026-09-09
 - [DECISION] Define a single vendor-neutral backend interface in `cr-providers`
   (`Backend`, with `info`, `available()`, `transcribe()`).
 - [DECISION] Provide three backend adapters, each a **capability**:
-  - `apple`   — Apple Silicon (Metal / Core ML / ANE), via `whisper.cpp`;
+  - `apple`   — Apple Silicon (Metal / Core ML / ANE), via `whisper.cpp`
+    (`pywhispercpp`, in process);
   - `nvidia`  — NVIDIA CUDA (cuBLAS / cuDNN), via `faster-whisper` / CTranslate2;
-  - `amd`     — AMD Radeon (ROCm / Vulkan), via `whisper.cpp`.
-- [DECISION] A backend is usable only when its optional dependency extra is
-  installed **and** its runtime probe succeeds (`available()`). `clearrecord
+  - `amd`     — AMD Radeon (Vulkan / ROCm), via the **system `whisper-cli`**
+    (subprocess), because no PyPI wheel ships a Vulkan/HIP ggml backend.
+- [DECISION] A backend is usable only when its runtime probe succeeds
+  (`available()`). For the wheel-backed families the optional extra provides the
+  stack; for `amd` the stack is a **system** one (`whisper-cpp` +
+  `ggml-vulkan`/`ggml-hip`), so the probe requires Linux, `whisper-cli` on PATH,
+  an installed ggml GPU backend plugin, and a DRM render node. `clearrecord
   backends` lists the current availability. The default dev/CI env installs
   **no** vendor framework.
 - [DECISION] `cr-core` never imports a vendor stack; it only depends on the
@@ -55,11 +60,16 @@ Date: 2026-09-09
 
 ## Consequences / review hook
 
-- Adding a backend = one extra -> one adapter + one optional dependency group +
-  one `available()` probe. Each new backend must stay behind the interface and
-  keep `cr-core` vendor-free (ADR-0003).
+- Adding a backend = one adapter + one `available()` probe (plus, for
+  wheel-backed families, one optional dependency extra). Each new backend must
+  stay behind the interface and keep `cr-core` vendor-free (ADR-0003).
 - **Apple is proven** (Apple M4, whisper.cpp/Metal, 16 kHz normalize + 10 ms
-  time-scale calibration); the nvidia/amd adapters are declared and
-  capability-gated but not yet hot-tested on real hardware.
-- Revisit if a hardware family's recommended stack changes materially (e.g. a
-  new Apple ASR runtime or an AMD CUDA-compat path).
+  time-scale calibration). **AMD is proven** on an RX 7900 XTX (RADV NAVI31,
+  Mesa 26.2.2): `whisper-cli` loads `libggml-vulkan.so`, and on 300 s of a real
+  tape `ggml-small` ran 6.5 s wall / 6.4 s compute versus 46.0 s on CPU (~7×
+  wall, encoder ~80×). The `nvidia` adapter is declared and capability-gated but
+  not yet hot-tested on real hardware.
+- The AMD mechanism deliberately deviates from "the extra installs the stack":
+  the extra is a no-op marker and the capability is system-provided. Revisit if a
+  maintained Vulkan/HIP `pywhispercpp` wheel appears (the subprocess could then
+  be retired), or if a hardware family's stack changes materially.

@@ -45,6 +45,9 @@ dev = [
 # Convenience extras that aggregate the corresponding cr-providers backend
 # stacks, so a single `--extra <backend>` switch activates everything a backend
 # needs (in both `uv sync` and `uv run`). These mirror ADR-0005.
+#
+# `amd` intentionally resolves no Python deps: the AMD path uses the system
+# `whisper-cli` + a ggml GPU plugin (see cr-providers/pyproject.toml).
 [project.optional-dependencies]
 apple = ["cr-providers[apple]"]
 nvidia = ["cr-providers[nvidia]"]

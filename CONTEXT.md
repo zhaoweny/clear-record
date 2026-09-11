@@ -32,7 +32,7 @@ reconcile → export. It runs fully offline with your own models.
 |---|---|
 | Architecture + provenance (the primary doc) | `docs/architecture.md` |
 | Owner voice (what the owner actually wants) | `docs/vox/voice-of-owner.md` |
-| Decision records (0001–0005) | `docs/adr/` |
+| Decision records (0001–0007) | `docs/adr/` |
 | Agent workflow / landing geometry | `AGENTS.md`, `docs/agents/git-worktree.toml` |
 | Issue tracker + triage | `docs/agents/` |
 

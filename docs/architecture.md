@@ -53,13 +53,14 @@ restating it. A `SUGGESTION` must never be presented as owner voice.
    use local AI to turn them into useful transcripts."** It should not be
    limited to a single capture device; it ingests heterogeneous sources (e.g. a
    laptop/stereo mic, an H1n field recorder, DJI Mic transmitters).
-4. It must be **offline and subscription-free**: you own the hardware and the
-   models, so there is no per-minute or cloud cost, and no dependence on a
-   vendor's service continuing to exist.
+4. It must be **offline and subscription-free**. Processing runs offline once
+   models are provisioned: no cloud processing, no subscription. You own the
+   hardware and the models, so there is no per-minute or cloud cost, and no
+   dependence on a vendor's service continuing to exist.
 5. **Backends — support all three major desktop compute families**, inspired by
    the observation (Marco Arment / Overcast) that Mac frameworks are excellent
-   for on-device transcription: Apple Silicon (Metal / Core ML / ANE), NVIDIA
-   (CUDA), and AMD Radeon (ROCm / Vulkan). No single-vendor lock-in. (ADR-0005.)
+   for on-device transcription: Apple/macOS (Metal), NVIDIA (CUDA), and AMD
+   Radeon (ROCm / Vulkan). No single-vendor lock-in. (ADR-0005.)
 6. **Reliability is a first-class property.** Workstation/OS instability and
    huge recordings should not destroy progress: ingestion and processing must be
    **timestamped and chunked/durable**, and the pipeline should be
@@ -153,9 +154,11 @@ restarted-from-zero.
 [VOICE] Support all three desktop compute families behind **one interface**
 instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 
-- Apple Silicon: `whisper.cpp` treats Apple Silicon as a first-class target with
-  **Metal** and **Core ML** acceleration; a June-2026 community experiment
-  reported an **ANE**-native encoder roughly 2× its Core ML path.
+- Apple/macOS: the **implemented** backend uses `whisper.cpp`'s **Metal**
+  backend (`ggml-metal`). `whisper.cpp` also has a **Core ML** path, and a
+  June-2026 community experiment reported an **ANE**-native encoder roughly 2×
+  that; Core ML and ANE are **not implemented** in clear-record — future
+  ecosystem possibilities, not claimed capabilities.
 - NVIDIA: `whisper.cpp`'s ggml supports a **CUDA** backend (and Vulkan).
 - AMD Radeon: `whisper.cpp` supports **Vulkan** and **ROCm**, and targets the
   **`gfx1100`** (RX 7900 XTX) family.
@@ -169,9 +172,9 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
        cr-providers
      ┌───────────┬───────────┬───────────┐
    apple       nvidia       amd
- Metal/CoreML   CUDA       ROCm/Vulkan
- ANE          Vulkan       gfx1100…
- whisper-cli  whisper-cli  whisper-cli
+ Metal         CUDA         ROCm/Vulkan
+ ggml-metal    Vulkan       gfx1100…
+ whisper-cli   whisper-cli  whisper-cli
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
@@ -186,7 +189,9 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   `whisper-cli`, an accepted plugin, and — on Linux — the vendor's GPU device.
   Metal needs no device probe; the CLI plus plugin is the check. A missing
   `ggml-*.bin` is downloaded on first use into `model_dir` / `CR_MODELS_DIR` /
-  `<cwd>/models`; offline, the actionable `hf download …` error is raised.
+  `<cwd>/models`; the download is a **provisioning** step, not an execution
+  dependency (once the model is on disk the pipeline needs no network), and
+  offline, the actionable `hf download …` error is raised.
 - The vendor stacks are **not imported by `cr-core`**; the CLI adapter is driven
   as a subprocess in `cr-providers`, so a plain dev/CI environment needs no GPU
   framework.
@@ -204,7 +209,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 
   | Machine | Role |
   |---|---|
-  | Apple Silicon Mac mini | always-on production-ish transcription node (Metal/Core ML/ANE) |
+  | Apple Silicon Mac mini | always-on production-ish transcription node (Metal) |
   | AMD Radeon RX 7900 XTX Linux box | high-throughput ROCm/Vulkan worker |
   | Laptop / phone | client / control surface |
   | NAS | raw tapes + derived artifacts |
@@ -243,10 +248,9 @@ unlearned; what this rule prevents is importing concrete company **artifacts**.
 
 ## 7. Out of scope (deliberately excluded from the open repo)
 
-The original concept explored a set of more exotic, **invention-grade** ideas
-that sit on the wrong side of an OSS/company boundary and were **not** part of
-the generic "recording → transcript" concept. These are **not** in scope for
-this repository:
+The original concept also explored the following ideas, which sit outside the
+generic "recording → transcript" concept and are **not** in scope for this
+repository:
 
 - turning several distributed microphone transmitters into a **spatial array /
   beamforming** rig;
@@ -288,9 +292,9 @@ docs/vox/voice-of-owner.md         owner voice
 - `align` → `cr_engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback.
-- `transcribe` → real ASR via `cr_providers`; **Apple Silicon (system
-  whisper.cpp / Metal) is hot-tested end-to-end on an Apple M4** (164 segments,
-  no wheel installed), with auto language detection and per-segment
+- `transcribe` → real ASR via `cr_providers`; **Apple/macOS (system
+  `whisper-cli` + `ggml-metal`) is hot-tested end-to-end on an Apple M4** (164
+  segments, no wheel installed), with auto language detection and per-segment
   confidence; validated against a known-good 11 s reference (coverage 1.0,
   WER 0.0). Long tapes run **chunked and resumable** (`<dir>/chunks/<source>/`,
   progress in `<dir>/transcribe.log`), and a **glossary** (`<dir>/glossary.txt`)
@@ -319,7 +323,7 @@ docs/vox/voice-of-owner.md         owner voice
 `just verify` is green; the CLI surface is derived from
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel input (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
-glossary initial prompt, and Apple Silicon transcription are all landed. Apple
+glossary initial prompt, and Apple/macOS transcription are all landed. Apple
 is CLI-only (system `whisper-cli` + `ggml-metal`) and auto-downloads its ggml
 model on first use.
 **Remaining gaps:** the NVIDIA path (system `whisper-cli` + ggml CUDA/Vulkan)

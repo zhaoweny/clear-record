@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cr-providers"
 version = "0.1.0"
-description = "Per-vendor ASR backend adapters for clear-record, behind a single interface (Apple Metal/CoreML/ANE, NVIDIA CUDA, AMD ROCm/Vulkan)."
+description = "Per-vendor ASR backend adapters for clear-record, behind a single interface (Apple Metal, NVIDIA CUDA/Vulkan, AMD ROCm/Vulkan)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

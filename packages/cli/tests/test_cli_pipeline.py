@@ -377,7 +377,7 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     assert Fake.calls == first
 
     # a new glossary invalidates the cache -> re-transcribes
-    stages.glossary(str(wd), add=["Zhaoweny"])
+    stages.glossary(str(wd), add=["ProjectX"])
     stages.transcribe(str(wd), "fake", chunk_seconds=3.0, overlap_seconds=1.0)
     assert Fake.calls > first
 

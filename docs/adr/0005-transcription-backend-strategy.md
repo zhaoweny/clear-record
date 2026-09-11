@@ -10,9 +10,11 @@ Date: 2026-09-09
   observation (Marco Arment / Overcast) that **Mac frameworks are excellent for
   on-device transcription**, and wants the same "own the hardware, no
   subscription" property on every family.
-- [FACT] Apple Silicon: `whisper.cpp` supports **Metal** and **Core ML**; a
-  June-2026 community experiment reported an **ANE**-native encoder ~2× its
-  Core ML path.
+- [FACT] Apple/macOS: `whisper.cpp` supports **Metal**, and also has a
+  **Core ML** path; a June-2026 community experiment reported an **ANE**-native
+  encoder roughly 2× that Core ML path. clear-record **implements only the Metal
+  path** — Core ML and ANE are future ecosystem possibilities, not claimed
+  capabilities.
 - [FACT] NVIDIA: `whisper.cpp`'s ggml provides a **CUDA** backend (and Vulkan).
 - [FACT] AMD Radeon: `whisper.cpp` supports **Vulkan** and **ROCm**, and targets
   the **`gfx1100`** (RX 7900 XTX) family.
@@ -23,9 +25,9 @@ Date: 2026-09-09
 - [DECISION] Define a single vendor-neutral backend interface in `cr-providers`
   (`Backend`, with `info`, `available()`, `transcribe()`).
 - [DECISION] Provide three backend adapters, each a **capability**:
-  - `apple`   — Apple Silicon (Metal / Core ML / ANE), via the **system
-    `whisper-cli`** (`brew install whisper-cpp`) linked against a `ggml` Metal
-    plugin; the ggml model is auto-downloaded on first use;
+  - `apple`   — Apple/macOS (Metal), via the **system `whisper-cli`**
+    (`brew install whisper-cpp`) linked against a `ggml` Metal plugin; the ggml
+    model is auto-downloaded on first use;
   - `nvidia`  — NVIDIA CUDA / Vulkan, via the **system `whisper-cli`** (the
     same process-isolated path as `amd`);
   - `amd`     — AMD Radeon (Vulkan / ROCm), via the **system `whisper-cli`**
@@ -62,8 +64,8 @@ Date: 2026-09-09
 
 ## Discarded alternatives
 
-- Single-vendor (e.g. CUDA-only) — rejected: leaves the Apple Silicon node and
-  the AMD ROCm box unserved, and contradicts the owner's explicit requirement.
+- Single-vendor (e.g. CUDA-only) — rejected: leaves the Apple node and the AMD
+  ROCm box unserved, and contradicts the owner's explicit requirement.
 - Hard-requiring all three stacks — rejected: burdens dev/CI and anyone without
   a GPU; backends should be optional capabilities.
 - Serving NVIDIA through `faster-whisper`/CTranslate2 — the original choice (the

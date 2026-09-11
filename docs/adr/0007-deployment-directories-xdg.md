@@ -36,9 +36,14 @@ Date: 2026-09-11
 
   Respect the variables when set; when unset, use the spec defaults. The macOS
   fallback and the Windows mapping are `[OPEN]` (see Consequences).
-- [DECISION] **No config → the user deployment.** Models, workspace data and
-  caches resolve under the XDG directories above. There is no source-build
+- [DECISION] **No config → the user deployment.** Config, models, cache and
+  logs/state resolve under the XDG directories above. There is no source-build
   default.
+- [DECISION] **The workspace is not app-owned XDG data.** The `directory`
+  argument names a user-chosen workspace holding the source recordings and the
+  derived record. Those are the user's documents, kept wherever the user points,
+  not `clear-record`'s own data (see ADR-0006). Only config, models, cache and
+  logs/state are app-owned under XDG.
 - [DECISION] **The supported override is a minimal TOML config file.** When a
   config is present, its paths are used for anything not set by a CLI flag or a
   `CR_*` variable; it may point paths at a checkout (e.g. `models/` and a
@@ -57,9 +62,11 @@ Date: 2026-09-11
 
 - One consistent layout across operating systems beats per-OS ad hoc paths, and
   matches what Linux-native users already expect.
-- Separating **data / cache / state** lets the chunk cache (written by the
-  `whisper-cli` worker pool) be evicted without touching durable models or
-  exported recordings.
+- Separating **config / data / cache / state** lets the chunk cache (written by
+  the `whisper-cli` worker pool) be evicted without touching durable models or
+  config. The user's recordings and derived record live in the user's own
+  workspace, outside these app directories, so they are never silently treated
+  as evictable app data.
 - The config override keeps the **source build clean** (everything in the
   checkout) while giving a real **user deployment** a conventional place to
   live, so dev assumptions are not baked into the shipped layout.
@@ -87,8 +94,10 @@ Date: 2026-09-11
 - The models-directory resolver becomes the single seam the config drives; the
   ADR-0005 auto-download path changes only there.
 - `[OPEN]` to settle before implementing: the exact keys/schema (TOML is
-  decided); the macOS fallback and the Windows mapping; which artifacts are
-  `data` vs `cache` vs `state` (models and glossary → data, chunk cache → cache,
-  logs and resume state → state, tentatively).
+  decided); the macOS fallback and the Windows mapping; which **app-owned**
+  artifacts are `data` vs `cache` vs `state` (models and glossary → data, chunk
+  cache → cache, logs and resume state → state, tentatively). Recordings and the
+  derived record are **not** app-owned artifacts — they stay in the user's
+  workspace wherever the `directory` argument points.
 - Revisit at the first real packaging/distribution push (mirrors ADR-0004's
   review hook).

@@ -10,7 +10,7 @@ major desktop compute families rather than only one.
 
 | Backend id | Vendor / framework | Typical stack |
 |---|---|---|
-| `apple` | Apple Silicon | Metal / Core ML / ANE (system `whisper-cli` + `ggml-metal`) |
+| `apple` | Apple/macOS | Metal (system `whisper-cli` + `ggml-metal`) |
 | `nvidia` | NVIDIA | CUDA / Vulkan (system `whisper-cli` + `ggml-cuda`/`ggml-vulkan`) |
 | `amd` | AMD Radeon | ROCm / Vulkan (system `whisper-cli` + `ggml-vulkan`/`ggml-hip`, e.g. `gfx1100`) |
 
@@ -20,9 +20,11 @@ its runtime probe succeeds. All three drive a system `whisper-cli`
 /`ggml-hip` on Linux), so all three extras — including `apple` — install no
 Python package (they are no-op markers). A missing `ggml-*.bin` is
 **downloaded on first use** from `huggingface.co/ggerganov/whisper.cpp` into
-`model_dir` / `CR_MODELS_DIR` / `<cwd>/models`; offline, `transcribe()` raises
-the actionable `hf download …` pre-fetch error. The download honours
-`HF_ENDPOINT` (a Hugging Face-compatible mirror or self-hosted endpoint, e.g.
+`model_dir` / `CR_MODELS_DIR` / `<cwd>/models` — a **provisioning** step, not an
+execution dependency: once the model is on disk, `transcribe()` needs no
+network. Offline, the actionable `hf download …` pre-fetch error is raised. The
+download honours `HF_ENDPOINT` (a Hugging Face-compatible mirror or self-hosted
+endpoint, e.g.
 `https://hf-mirror.com` for restricted networks); the default is
 `https://huggingface.co`. `BackendInfo.parallelizable`
 marks adapters that are safe to run concurrently (process-isolated ones, which

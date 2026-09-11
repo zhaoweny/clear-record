@@ -1,0 +1,26 @@
+name: verify
+
+# The verify gate is hardware-independent: the Apple/whisper-cli tests fake the
+# platform and `subprocess`, so this is green on a plain Linux runner with no
+# GPU, no `whisper-cli` and no model weights.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: just verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+      - name: Run the verify gate
+        run: just verify

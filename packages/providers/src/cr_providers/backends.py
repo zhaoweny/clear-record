@@ -7,9 +7,8 @@ reports itself unavailable and the CLI proceeds without crashing.
 
 Mapping to compute families (ADR-0005):
 
-- ``apple``  — Apple Silicon via ``whisper.cpp`` (Metal / Core ML / ANE),
-  driving the *system* ``whisper-cli`` (Homebrew ``whisper-cpp`` + a ggml
-  ``libggml-metal`` plugin).
+- ``apple``  — Apple/macOS via ``whisper.cpp`` (Metal), driving the *system*
+  ``whisper-cli`` (Homebrew ``whisper-cpp`` + a ggml ``libggml-metal`` plugin).
 - ``nvidia`` — NVIDIA via the *system* ``whisper-cli`` (CUDA / Vulkan),
   Linux-only probe.
 - ``amd``    — AMD Radeon via the *system* ``whisper-cli`` (Vulkan / ROCm),
@@ -540,12 +539,14 @@ def _has_metal_device() -> bool:
 
 
 class AppleBackend(_WhisperCliBackend):
-    """Apple Silicon on macOS: Metal / Core ML / ANE via the system ``whisper-cli``.
+    """Apple/macOS: Metal via the system ``whisper-cli``.
 
     Drives the same process-isolated path as AMD and NVIDIA — a Homebrew
     ``whisper-cpp`` links the system ``ggml`` and loads the ``libggml-metal``
-    plugin (ADR-0005). There is no in-process wheel fallback; the ggml model is
-    downloaded on first use by :func:`_resolve_ggml_model`.
+    plugin (ADR-0005). It does **not** select Core ML or ANE (those remain
+    future ecosystem possibilities, not implemented capabilities). There is no
+    in-process wheel fallback; the ggml model is downloaded on first use by
+    :func:`_resolve_ggml_model`.
     """
 
     def __init__(self) -> None:
@@ -553,9 +554,8 @@ class AppleBackend(_WhisperCliBackend):
             BackendInfo(
                 id="apple",
                 vendor="Apple",
-                frameworks=("Metal", "Core ML", "ANE"),
-                description="macOS Apple Silicon ASR via the system whisper-cli "
-                "(ggml Metal backend).",
+                frameworks=("Metal",),
+                description="macOS ASR via the system whisper-cli + ggml-metal.",
                 parallelizable=True,
             ),
             gpu_backends=("metal",),

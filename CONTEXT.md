@@ -10,18 +10,20 @@ authoritative, living record is `docs/architecture.md` + the ADRs under
 record-reconstruction** pipeline. It is a post-processing tool: it starts at
 `ingest`, taking several recordings of the same event (e.g. a MacBook mic, an
 H1n field recorder, a DJI Mic 3 transmitter), and reconstructs **one clear,
-attributable record**: ingest → align → transcribe → reconcile → export. It
-runs fully offline with your own models.
+attributable record**: ingest → align → transcribe → reconcile → export.
+Processing runs offline once models are provisioned: no cloud processing, no
+subscription.
 
 - **License:** MIT (own code). Vendor ASR stacks are consumed behind a
   provider interface; permissive stacks are preferred, copyleft components are
   never linked or vendored into the MIT core (ADR-0003).
-- **Backends:** Apple (Metal/Core ML/ANE), NVIDIA (CUDA/Vulkan), AMD
-  (ROCm/Vulkan) — one interface, three families (ADR-0005). All three drive the
-  system `whisper-cli` + a ggml plugin (`ggml-metal` on macOS, `ggml-cuda`/
+- **Backends:** Apple/macOS (Metal), NVIDIA (CUDA/Vulkan), AMD (ROCm/Vulkan) —
+  one interface, three families (ADR-0005). All three drive the system
+  `whisper-cli` + a ggml plugin (`ggml-metal` on macOS, `ggml-cuda`/
   `ggml-vulkan`/`ggml-hip` on Linux); every backend extra (including `apple`) is
-  a no-op Python marker. A missing ggml model auto-downloads on first use
-  (offline → the actionable `hf download` pre-fetch error).
+  a no-op Python marker. A missing ggml model auto-downloads on first use — a
+  **provisioning** step, not an execution dependency: once present, transcription
+  needs no network (offline → the actionable `hf download` pre-fetch error).
 - **Clean-room:** independently implemented from a generic public problem
   statement; no work/company artifacts are imported (ADR-0001, architecture §6).
 - **Privacy:** recordings and model weights are environment-local data — always
@@ -55,8 +57,8 @@ without evidence. The owner's authoritative words live in
   provenance labeling, and a green `just verify` gate.
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
   files per channel**; `align` estimates source offsets via windowed
-  cross-correlation; `transcribe` runs a real local ASR backend (Apple Silicon
-  via the system whisper.cpp/Metal `whisper-cli`, hot-tested end-to-end on Apple
+  cross-correlation; `transcribe` runs a real local ASR backend (Apple/macOS
+  via the system `whisper-cli` + `ggml-metal`, hot-tested end-to-end on Apple
   M4; CLI-only, ggml model auto-downloaded) with **chunked, resumable**
   processing and a **glossary** initial prompt; `diarize` does baseline
   multi-speaker attribution for a single mixed stream; `reconcile` produces a

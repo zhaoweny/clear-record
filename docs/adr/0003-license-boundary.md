@@ -7,7 +7,8 @@ Date: 2026-09-09
 
 - [DECISION] ADR-0002 licenses clear-record's own code under MIT.
 - [VOICE] The ASR backends must support Apple (Metal/Core ML/ANE), NVIDIA (CUDA)
-  and AMD (ROCm/Vulkan) — see ADR-0005.
+  and AMD (ROCm/Vulkan) — see ADR-0005. (The **implemented** Apple capability is
+  Metal via `whisper-cli`/`ggml-metal`; Core ML and ANE are not implemented.)
 - [FACT] The transcription stacks now in use are permissive: `whisper.cpp`,
   including its `ggml` backends (`ggml-metal`/`ggml-cuda`/`ggml-vulkan`/
   `ggml-hip`), all MIT. All three families drive the system `whisper-cli`

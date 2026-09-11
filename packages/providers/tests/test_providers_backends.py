@@ -18,6 +18,10 @@ def test_backend_metadata() -> None:
     assert isinstance(apple.info, BackendInfo)
     assert apple.info.vendor == "Apple"
     assert "Metal" in apple.info.frameworks
+    # Guard against silent overclaiming: the implemented Apple path is Metal
+    # (`whisper-cli` + `ggml-metal`) and does not select Core ML or ANE.
+    assert "Core ML" not in apple.info.frameworks
+    assert "ANE" not in apple.info.frameworks
     nvidia = get_backend("nvidia")
     assert "CUDA" in nvidia.info.frameworks
     amd = get_backend("amd")

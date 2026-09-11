@@ -7,8 +7,8 @@
 > a common clock, transcribe the result with a local model, reconcile it into an
 > attributable record, and export a searchable/archiveable artifact. It is a
 > post-processing tool — the pipeline starts at `ingest` and does not capture —
-> and runs entirely offline on your own hardware and models. No cloud, no
-> subscription.
+> and processing runs offline once models are provisioned: no cloud processing,
+> no subscription.
 
 ## Provenance note
 
@@ -58,7 +58,7 @@ three major desktop compute families behind one interface:
 
 | id | Vendor | Frameworks | Stack |
 |---|---|---|---|
-| `apple` | Apple Silicon | Metal, Core ML, ANE | system `whisper-cli` + `ggml-metal` |
+| `apple` | Apple/macOS | Metal | system `whisper-cli` + `ggml-metal` |
 | `nvidia` | NVIDIA | CUDA, Vulkan | system `whisper-cli` + `ggml-cuda`/`ggml-vulkan` |
 | `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
@@ -89,6 +89,8 @@ available on this machine. See
   ggml-small.bin --local-dir models` is the offline/manual route. On a
   restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
   Face-compatible endpoint works); the default is `https://huggingface.co`.
+  The download is a **provisioning** step, not an execution dependency: once
+  the model is present on disk, transcription needs no network.
 
 ## Calibrate your own model (recommended workflow)
 
@@ -160,7 +162,7 @@ The repo is fully portable — no local state, model weights are downloaded per
 machine. On the Mac:
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/zhaoweny/clear-record.git
 cd clear-record
 uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple --model medium
@@ -245,13 +247,14 @@ just test           # pytest
 ./scripts/verify    # thin shim -> `just verify`
 
 # backend stacks are optional no-op extra markers (system `whisper-cli`):
-uv sync --all-packages --extra apple       # Apple: system whisper.cpp/Metal
+uv sync --all-packages --extra apple       # Apple: system `whisper-cli` + `ggml-metal`
 uv run --all-packages --extra apple clearrecord --help
 ```
 
 > `uv sync --all-packages` creates the env and installs all workspace members +
-> dev deps (this is the `just verify` step). Add `--extra <backend>` to bring in
-> that backend's ASR stack.
+> dev deps (this is the `just verify` step). The `--extra <backend>` markers are
+> no-ops: they install no Python package, because every backend drives the
+> system `whisper-cli` + a ggml plugin (see *Backends* above).
 
 ## Repository layout
 

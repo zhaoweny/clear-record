@@ -39,7 +39,8 @@ is now all three); the transcribe stage uses it to size its worker pool. See
   GPU plugin (`ggml-cuda` / `ggml-vulkan` / `ggml-hip`); point the probe at a
   from-source build with `CR_WHISPER_CLI` and `CR_GGML_BACKEND_DIRS`.
 - **NVIDIA platforms:** Linux or **WSL2** (CUDA pass-through via `/dev/dxg`).
-  Validated under WSL2 on an RTX 4090 with the **`ggml-cuda`** backend; native
+  Validated under WSL2 on an RTX 4090 with **`ggml-cuda`**; **`ggml-vulkan` also
+  works there but is noticeably slower**, so CUDA is the preferred path. Native
   Windows is not currently probed — a native-Windows path would be a fresh
   decision.
 

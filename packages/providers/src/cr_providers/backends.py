@@ -275,8 +275,12 @@ def _whispercli_segments(entries, source: str, language: str) -> tuple[Segment, 
     return tuple(out)
 
 
-# where first-use model downloads come from (Hugging Face's whisper.cpp repo)
-_GGML_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+# where first-use model downloads come from (Hugging Face's whisper.cpp repo).
+# The endpoint honours ``HF_ENDPOINT`` -- the huggingface_hub/hf convention -- so
+# restricted networks can use a reachable mirror (e.g. ``https://hf-mirror.com``)
+# or a self-hosted, HF-compatible endpoint.
+_DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+_GGML_MODEL_REPO = "ggerganov/whisper.cpp/resolve/main"
 # Socket timeout per read/write: a stalled connection must not block a pool
 # worker (or the single-threaded prefetch) indefinitely.
 _GGML_DOWNLOAD_TIMEOUT_S = 60
@@ -288,6 +292,17 @@ _DOWNLOAD_LOCK = threading.Lock()
 # Per-call unique temp suffix; combined with the (cross-process) pid it makes
 # concurrent callers and separate CLI invocations unable to share a temp file.
 _PART_COUNTER = itertools.count()
+
+
+def _ggml_model_url(name: str) -> str:
+    """Return the download URL for the ggml model ``name``.
+
+    The base is ``HF_ENDPOINT`` when set (trailing slashes stripped), else the
+    public ``https://huggingface.co``; a mirror or self-hosted HF-compatible
+    endpoint therefore works unchanged.
+    """
+    endpoint = os.environ.get("HF_ENDPOINT", _DEFAULT_HF_ENDPOINT).rstrip("/")
+    return f"{endpoint}/{_GGML_MODEL_REPO}/{name}"
 
 
 def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
@@ -330,7 +345,7 @@ def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> st
     interrupt still cleans the temp before propagating.
     """
     os.makedirs(base, exist_ok=True)
-    url = _GGML_MODEL_URL + name
+    url = _ggml_model_url(name)
     with _DOWNLOAD_LOCK:
         # Another caller may have finished the download while we waited.
         if os.path.isfile(candidate):

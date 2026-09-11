@@ -131,6 +131,57 @@ def test_resolve_ggml_model_respects_cr_models_dir(tmp_path, monkeypatch) -> Non
     assert (tmp_path / "ggml-tiny.bin").read_bytes() == b"tiny-bytes"
 
 
+def test_resolve_ggml_model_honours_hf_endpoint(tmp_path, monkeypatch) -> None:
+    """A reachable mirror served via ``HF_ENDPOINT`` replaces the pinned host."""
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    calls: list[tuple[str, float | None]] = []
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
+    )
+
+    _resolve_ggml_model("medium", str(tmp_path))
+
+    assert len(calls) == 1
+    url = calls[0][0]
+    assert url.startswith("https://hf-mirror.com/")
+    assert url.endswith("ggml-medium.bin")
+
+
+def test_resolve_ggml_model_defaults_to_huggingface(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    calls: list[tuple[str, float | None]] = []
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
+    )
+
+    _resolve_ggml_model("medium", str(tmp_path))
+
+    assert len(calls) == 1
+    url = calls[0][0]
+    assert url.startswith("https://huggingface.co/")
+    assert url.endswith("ggml-medium.bin")
+
+
+def test_resolve_ggml_model_strips_trailing_slash_from_endpoint(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com/")
+    calls: list[tuple[str, float | None]] = []
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
+    )
+
+    _resolve_ggml_model("medium", str(tmp_path))
+
+    assert len(calls) == 1
+    url = calls[0][0]
+    assert (
+        url
+        == "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+    )
+    assert "com//" not in url
+
+
 def test_resolve_ggml_model_download_failure_raises_clear_error(
     tmp_path, monkeypatch
 ) -> None:

@@ -21,7 +21,10 @@ its runtime probe succeeds. All three drive a system `whisper-cli`
 Python package (they are no-op markers). A missing `ggml-*.bin` is
 **downloaded on first use** from `huggingface.co/ggerganov/whisper.cpp` into
 `model_dir` / `CR_MODELS_DIR` / `<cwd>/models`; offline, `transcribe()` raises
-the actionable `hf download …` pre-fetch error. `BackendInfo.parallelizable`
+the actionable `hf download …` pre-fetch error. The download honours
+`HF_ENDPOINT` (a Hugging Face-compatible mirror or self-hosted endpoint, e.g.
+`https://hf-mirror.com` for restricted networks); the default is
+`https://huggingface.co`. `BackendInfo.parallelizable`
 marks adapters that are safe to run concurrently (process-isolated ones, which
 is now all three); the transcribe stage uses it to size its worker pool. See
 `docs/adr/0005-transcription-backend-strategy.md`.

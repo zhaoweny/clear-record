@@ -84,7 +84,9 @@ available on this machine. See
   **downloaded automatically on first use** (from
   `huggingface.co/ggerganov/whisper.cpp`, into `--model-dir` / `CR_MODELS_DIR` /
   `./models`); a path works too, and `hf download ggerganov/whisper.cpp
-  ggml-small.bin --local-dir models` is the offline/manual route.
+  ggml-small.bin --local-dir models` is the offline/manual route. On a
+  restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
+  Face-compatible endpoint works); the default is `https://huggingface.co`.
 
 ## Calibrate your own model (recommended workflow)
 

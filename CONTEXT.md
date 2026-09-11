@@ -6,11 +6,12 @@ authoritative, living record is `docs/architecture.md` + the ADRs under
 
 ## What this is
 
-**clear-record** is a **local-first, open-source multitrack recording and
-transcription** application. It takes several recordings of the same event
-(e.g. a MacBook mic, an H1n field recorder, a DJI Mic 3 transmitter) and
-reconstructs **one clear, attributable record**: ingest → align → transcribe →
-reconcile → export. It runs fully offline with your own models.
+**clear-record** is a **local-first, open-source multitrack transcription and
+record-reconstruction** pipeline. It is a post-processing tool: it starts at
+`ingest`, taking several recordings of the same event (e.g. a MacBook mic, an
+H1n field recorder, a DJI Mic 3 transmitter), and reconstructs **one clear,
+attributable record**: ingest → align → transcribe → reconcile → export. It
+runs fully offline with your own models.
 
 - **License:** MIT (own code). Vendor ASR stacks are consumed behind a
   provider interface; permissive stacks are preferred, copyleft components are
@@ -51,9 +52,9 @@ without evidence. The owner's authoritative words live in
 
 - uv workspace (`cr-core` domain · `cr-engine` audio/align/reconcile ·
   `cr-providers` ASR adapters · `cr-cli` the `clearrecord` command), MIT license,
-  provenance labeling, and a passing `just verify` gate (109 tests).
+  provenance labeling, and a green `just verify` gate.
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
-  captures per channel**; `align` estimates source offsets via windowed
+  files per channel**; `align` estimates source offsets via windowed
   cross-correlation; `transcribe` runs a real local ASR backend (Apple Silicon
   via the system whisper.cpp/Metal `whisper-cli`, hot-tested end-to-end on Apple
   M4; CLI-only, ggml model auto-downloaded) with **chunked, resumable**

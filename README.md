@@ -2,11 +2,13 @@
 
 > **From many recordings to one clear record.**
 >
-> A local-first, open-source multitrack **recording and transcription**
-> application: ingest several audio sources, align them onto a common clock,
-> transcribe the result with a local model, reconcile it into an attributable
-> record, and export a searchable/archiveable artifact. Runs entirely offline on
-> your own hardware and models — no cloud, no subscription.
+> A local-first, open-source multitrack **transcription and
+> record-reconstruction** pipeline: ingest several audio sources, align them onto
+> a common clock, transcribe the result with a local model, reconcile it into an
+> attributable record, and export a searchable/archiveable artifact. It is a
+> post-processing tool — the pipeline starts at `ingest` and does not capture —
+> and runs entirely offline on your own hardware and models. No cloud, no
+> subscription.
 
 ## Provenance note
 
@@ -32,7 +34,7 @@ DJI Mic 3   ─┘
 
 - **ingest** — decode/normalize every source to 16 kHz mono WAV (handles
   wav/flac/ogg and, via ffmpeg, mp3/m4a/etc.). **Multi-channel files are split
-  per channel by default** (e.g. a 4-channel DJI capture → 4 sources), so
+  per channel by default** (e.g. a 4-channel DJI file → 4 sources), so
   per-speaker isolation is preserved; `--mix-down` forces a downmix.
 - **align** — place every source onto a common timebase (windowed
   cross-correlation; *approximate*, not precision clock-sync).
@@ -45,7 +47,7 @@ DJI Mic 3   ─┘
 
 The pipeline's core idea is **observation-first**: store timestamped,
 source-attributed observations first, and reconstruct transcript, speakers and
-meaning afterward. That keeps capture cheap and reliability a property of
+meaning afterward. That keeps ingestion cheap and reliability a property of
 *storage*, not of a fragile online model (`docs/architecture.md` §4).
 
 ## Backends (Apple · NVIDIA · AMD)
@@ -158,7 +160,7 @@ The repo is fully portable — no local state, model weights are downloaded per
 machine. On the Mac:
 
 ```sh
-gh repo clone zhaoweny/clear-record      # private repo
+git clone <repo-url>
 cd clear-record
 uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple --model medium
@@ -201,7 +203,7 @@ consistent and resumable (each chunk result is published atomically).
 **Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
 has no per-speaker channels, so segments can be clustered into speakers from the
 audio itself (log-mel + F0 fingerprint, k-means; baseline, dependency-free). A
-per-channel capture already attributes per source, and a single voice must not be
+per-channel file already attributes per source, and a single voice must not be
 split on weak evidence, so diarization is **opt-in**: enable it explicitly, or
 pass a known count, and it otherwise reports one speaker per source.
 
@@ -259,7 +261,7 @@ packages/engine     → cr-engine     audio I/O, cross-correlation alignment, re
 packages/providers  → cr-providers  per-vendor ASR adapters (apple / nvidia / amd)
 packages/cli        → cr-cli        the `clearrecord` command
 docs/architecture.md                (spec + provenance, the primary doc)
-docs/adr/                           (decision records 0001–0006)
+docs/adr/                           (decision records 0001–0007)
 ```
 
 ## License
@@ -273,7 +275,7 @@ boundaries, never linked or vendored into the MIT core).
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md) — architecture + provenance
-  document distilled from the record (FACT / VOICE / REQ / DESIGN / SUGGESTION
+  document distilled from the original concept (FACT / VOICE / REQ / DESIGN / SUGGESTION
   / OPEN labels).
 - [docs/test-corpus.md](docs/test-corpus.md) — the owner's public reference
   anchors & the synthesize-the-badness strategy.

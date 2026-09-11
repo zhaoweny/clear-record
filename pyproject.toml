@@ -13,7 +13,7 @@
 [project]
 name = "clear-record"
 version = "0.1.0"
-description = "Local-first open-source multitrack recording and transcription: from many recordings to one clear record (workspace root)."
+description = "Local-first open-source multitrack transcription and record-reconstruction: from many recordings to one clear record (workspace root)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

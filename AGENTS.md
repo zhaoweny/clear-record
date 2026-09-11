@@ -16,7 +16,7 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
-> ⚙️ Agentic git workflow: main = control plane, task worktrees under `.wt/`, geometry/authority in `docs/agents/git-worktree.toml`. The workflow, review-gate, and wording skills are not vendored here — canonical copies live in the personal logbook under `50-59-engineering/57-agent-skills/` (`git-worktree`, `code-review-loop`, `proofreading`).
+> ⚙️ Agentic git workflow: main = control plane, task worktrees under `.wt/`, geometry/authority in `docs/agents/git-worktree.toml`. The workflow, review-gate, and wording skills are not vendored here; keep them in your own local agent setup.
 
 ## Hard rules
 

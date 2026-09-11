@@ -2,8 +2,8 @@
 
 The authoritative recorded owner intent. A `VOICE` entry in
 `docs/architecture.md` or an ADR should trace back to a line here (or to a dated
-ADR). These are the owner's own words/positions, distilled from the source
-record (see `docs/architecture.md` §9).
+ADR). These are the owner's own words/positions, distilled from the original
+concept (see `docs/architecture.md` §9).
 
 ## Project framing
 
@@ -33,9 +33,9 @@ record (see `docs/architecture.md` §9).
 
 ## Reliability
 
-- Capture must be **timestamped and chunked/durable**; the pipeline must be
-  **resumable**, so workstation/OS instability and multi-GB recordings do not
-  destroy progress.
+- Ingestion and processing must be **timestamped and chunked/durable**; the
+  pipeline must be **resumable**, so workstation/OS instability and multi-GB
+  recordings do not destroy progress.
 
 ## What is deliberately NOT part of the open repo
 

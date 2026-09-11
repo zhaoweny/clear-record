@@ -1,4 +1,4 @@
-# ADR-0007 — Deployment directories: XDG Base Directory + a source/user mode
+# ADR-0007 — Deployment directories: XDG Base Directory with a config-file override
 
 Status: active
 Date: 2026-09-11
@@ -8,8 +8,10 @@ Date: 2026-09-11
 - [VOICE] (2026-09-11) "when we deploy: we follow XDG Base Dir spec for all
   supported platform. but we should have a config file to indicate it's source
   build or it's user-mode."
-- [FACT] Development and validation runs are **source-only** for now — run from
-  the checkout (`uv run`), not from a packaged install.
+- [FACT] Development and validation runs currently execute from the checkout
+  (`uv run`), not from a packaged install.
+- [DESIGN] The **source build** is expressed by a config that points paths at
+  the checkout, not by a separate mode key.
 - [FACT] Today the models directory defaults to `<cwd>/models`
   (`_default_models_dir`), the workspace is an arbitrary directory, and the chunk
   cache lives inside that workspace. Environment overrides already exist:
@@ -34,19 +36,22 @@ Date: 2026-09-11
 
   Respect the variables when set; when unset, use the spec defaults. The macOS
   fallback and the Windows mapping are `[OPEN]` (see Consequences).
-- [DECISION] **A configuration file declares the run mode** — `source` or
-  `user`:
-  - `source` → persistent data stays **in the checkout** (`models/`,
-    `recordings/`): today's behaviour. A checkout-local equivalent for
-    XDG-style state is `[OPEN]`.
-  - `user` → persistent data lives under the XDG directories above.
-  - Proposed location `$XDG_CONFIG_HOME/clear-record/config.toml` (path and keys
-    `[OPEN]`).
-- [DECISION] The **mode selects where models are looked up and downloaded** (the
+- [DECISION] **No config → the user deployment.** Models, workspace data and
+  caches resolve under the XDG directories above. There is no source-build
+  default.
+- [DECISION] **The supported override is a minimal TOML config file.** When a
+  config is present, its paths are used for anything not set by a CLI flag or a
+  `CR_*` variable; it may point paths at a checkout (e.g. `models/` and a
+  workspace inside the repo), which is how the **source build** is expressed.
+  Source build vs user deployment is therefore *not a mode key*: it is simply
+  **"no config = user deployment under XDG; a config may point at the
+  checkout"**. Proposed location `$XDG_CONFIG_HOME/clear-record/config.toml`;
+  the exact keys/schema are `[OPEN]`.
+- [DECISION] The config selects where models are looked up and downloaded (the
   ADR-0005 auto-download target); that target becomes the models-directory
   resolver rather than a hard-coded `<cwd>/models`.
 - [DESIGN] Precedence: explicit CLI flags > environment variables (`CR_*`) > the
-  config file > built-in defaults.
+  config file > built-in defaults (the XDG directories).
 
 ## Rationale
 
@@ -55,32 +60,35 @@ Date: 2026-09-11
 - Separating **data / cache / state** lets the chunk cache (written by the
   `whisper-cli` worker pool) be evicted without touching durable models or
   exported recordings.
-- The mode switch keeps the **source build clean** (everything in the checkout)
-  while giving a real install a conventional place to live, so dev assumptions
-  are not baked into the shipped layout.
+- The config override keeps the **source build clean** (everything in the
+  checkout) while giving a real **user deployment** a conventional place to
+  live, so dev assumptions are not baked into the shipped layout.
 - A single models-directory resolver lets the `HF_ENDPOINT` mirror override, the
-  auto-download, and the mode switch work together.
+  auto-download, and the config override work together.
 
 ## Discarded alternatives
 
 - **Platform-native directories** (`~/Library/Application Support` on macOS,
   `%APPDATA%` on Windows) — more "native" per OS, but the owner asked for XDG on
   every platform for one consistent layout.
-- **Always XDG, no mode switch** — would move dev artifacts out of the checkout
-  and surprise the source-only workflow.
+- **A `mode = source|user` key** — rejected: the presence and contents of the
+  config already express source build vs user deployment, so a mode key would
+  add a second source of truth that can contradict the paths.
+- **Always XDG, no config override** — would move dev artifacts out of the
+  checkout and surprise the source build workflow.
 - **Keep `<cwd>/models` everywhere** — no notion of an installed user
   deployment.
 
 ## Consequences / review hook
 
-- **Inert in dev for now:** with source-only runs, `source` keeps today's
-  behaviour and the XDG layout only activates once the mode config lands.
-- The models-directory resolver becomes the single seam the mode config drives;
-  the ADR-0005 auto-download path changes only there.
-- `[OPEN]` to settle before implementing: auto-detect `source` vs `user` or
-  always read the config; the exact config format and keys; the macOS fallback
-  and the Windows mapping; which artifacts are `data` vs `cache` vs `state`
-  (models and glossary → data, chunk cache → cache, logs and resume state →
-  state, tentatively).
+- **Default is the user deployment:** with no config, an installed run writes
+  under the XDG directories. The source build opts in with a config that points
+  at the checkout, so the shipped default is the conventional user layout.
+- The models-directory resolver becomes the single seam the config drives; the
+  ADR-0005 auto-download path changes only there.
+- `[OPEN]` to settle before implementing: the exact keys/schema (TOML is
+  decided); the macOS fallback and the Windows mapping; which artifacts are
+  `data` vs `cache` vs `state` (models and glossary → data, chunk cache → cache,
+  logs and resume state → state, tentatively).
 - Revisit at the first real packaging/distribution push (mirrors ADR-0004's
   review hook).

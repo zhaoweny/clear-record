@@ -1,9 +1,7 @@
 # Test corpus & public references
 
 The owner-sanctioned, **clean-room-safe** (public, non-work) reference material
-and the calibration strategy for `clear-record`. Provenance traced to the
-logbook project page
-(`10-19-projects/15-clear-record/README.md`).
+and the calibration strategy for `clear-record`.
 
 ## Why synthesize the `align` badness
 

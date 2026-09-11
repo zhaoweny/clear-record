@@ -19,7 +19,7 @@ Date: 2026-09-09
 ## Decision
 
 - [DECISION] Establish a **new** open-source repository named **clear-record**
-  (product/repo name, per the naming resolution in the record; CLI binary
+  (product/repo name, per the naming resolution in the original concept; CLI binary
   `clearrecord`).
 - [DECISION] The implementation is a **clean-room reimplementation** of the
   *generic* concept ("record several audio sources reliably and use local AI to
@@ -50,7 +50,8 @@ Date: 2026-09-09
 - Keeping it private indefinitely — not the owner's stated intent (they want it
   under MIT / open).
 - Importing the company-side deployment as a feature — out of scope; that is a
-  separate, proprietary concern (the "company deployment" split in the record).
+  separate, proprietary concern (the "company deployment" split in the original
+  concept).
 
 ## Consequences / review hook
 

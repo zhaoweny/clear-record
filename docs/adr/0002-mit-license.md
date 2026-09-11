@@ -6,7 +6,7 @@ Date: 2026-09-09
 ## Context
 
 - [VOICE] Personal, work-unrelated OSS project; the owner wants it under MIT.
-- [VOICE] The software itself (audio capture, alignment, ASR orchestration,
+- [VOICE] The software itself (audio ingestion, alignment, ASR orchestration,
   reconciliation, export) should be broadly adoptable — MIT is the most
   permissive, lowest-friction choice and carries no copyleft deterrent for a
   future company that might want to adopt or contribute.

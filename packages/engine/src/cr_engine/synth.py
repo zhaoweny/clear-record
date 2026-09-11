@@ -1,11 +1,11 @@
 """Synthetic multi-view recorder generator (owner strategy: synthesize badness).
 
-The owner's reasoning (logbook `10-19-projects/15-clear-record`): genuinely bad
-published multi-track audio is scarce, and when it exists it usually has no
-*clean correct answer* to score recovery against. So the **`align`** test set is
-synthesized: take a clean scene, then degrade it *per recorder* with a known
-time offset (and optionally clock drift, gain/FR mismatch, reverberation, noise,
-dropouts), while **retaining the exact aligned ground truth**.
+The owner's reasoning: genuinely bad published multi-track audio is scarce, and
+when it exists it usually has no *clean correct answer* to score recovery
+against. So the **`align`** test set is synthesized: take a clean scene, then
+degrade it *per recorder* with a known time offset (and optionally clock drift,
+gain/FR mismatch, reverberation, noise, dropouts), while **retaining the exact
+aligned ground truth**.
 
 This module builds that scene and the degraded per-device recordings. It is
 numpy-only (no scipy) and vendor-free. The output is:

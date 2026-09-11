@@ -1,18 +1,18 @@
 # clear-record — Architecture & Provenance
 
-Status: **scaffold** (~v0.1.0) · Updated: 2026-09-09
+Status: **runnable v0.1** (~v0.1.0) · Updated: 2026-09-11
 
-This document distills the record into an architecture + provenance record using
-the project's provenance labels (**FACT / VOICE / REQ / DESIGN / SUGGESTION /
-OPEN**). It is a **clean-room** reimplementation: it is scoped to a generic
-public problem statement and deliberately excludes the company-side, and the
-exotic/invention-grade, parts of the original concept. It does **not** promote
-agent suggestions or open questions into requirements.
+This document distills the original concept into an architecture + provenance
+document using the project's provenance labels (**FACT / VOICE / REQ / DESIGN /
+SUGGESTION / OPEN**). It is a **clean-room** reimplementation: it is scoped to a
+generic public problem statement and deliberately excludes the company-side, and
+the exotic/invention-grade, parts of the original concept. It does **not**
+promote agent suggestions or open questions into requirements.
 
-**Source of truth (provenance):** the original personal concept was worked out
-across several private chat conversations (see §9). Those conversations are the
-record; this document is the *generic, public* rendering of them. It is kept in
-this repository; the raw record is not.
+**Source of truth (provenance):** this document is the *generic, public*
+rendering of an independently developed personal idea. The clean-room origin
+history is recorded in §9; the original personal concept is kept outside this
+repository.
 
 ---
 
@@ -40,10 +40,10 @@ restating it. A `SUGGESTION` must never be presented as owner voice.
 
 ## 1. VOICE — project owner
 
-1. This is a **local-first, open-source, work-unrelated** recording/
-   transcription project. It is a **clean-room** reimplementation: do not import
-   work/company code, assets, credentials, recordings, datasets or internal
-   docs into it (ADR-0001; §6).
+1. This is a **local-first, open-source, work-unrelated** transcription and
+   record-reconstruction project. It is a **clean-room** reimplementation: do
+   not import work/company code, assets, credentials, recordings, datasets or
+   internal docs into it (ADR-0001; §6).
 2. The original concept is a **post-processing** system: several imperfect
    recordings of one event go in, **one reconstructed, attributable record
    comes out**. Taglines: *"reconstruct the record"* and *"from many recordings
@@ -61,7 +61,7 @@ restating it. A `SUGGESTION` must never be presented as owner voice.
    for on-device transcription: Apple Silicon (Metal / Core ML / ANE), NVIDIA
    (CUDA), and AMD Radeon (ROCm / Vulkan). No single-vendor lock-in. (ADR-0005.)
 6. **Reliability is a first-class property.** Workstation/OS instability and
-   huge recordings should not destroy progress: capture must be
+   huge recordings should not destroy progress: ingestion and processing must be
    **timestamped and chunked/durable**, and the pipeline should be
    **resumable** rather than all-or-nothing.
 
@@ -69,10 +69,10 @@ restating it. A `SUGGESTION` must never be presented as owner voice.
 
 ## 2. What ClearRecord is (public problem statement)
 
-> A local-first, open-source multitrack recording and transcription application
-> for meetings, interviews, field recordings, podcasts and research. It
-> supports heterogeneous audio inputs, timestamped/chunked durable recording,
-> offline ASR, diarization, synchronization and export.
+> A local-first, open-source multitrack transcription and record-reconstruction
+> tool for meetings, interviews, field recordings, podcasts and research. It is
+> a post-processing pipeline that starts at `ingest`: it supports heterogeneous
+> audio inputs, offline ASR, diarization, synchronization and export.
 
 It is deliberately scoped as a **generic tool**, not "describe a company
 deployment." The company-side workflow, infrastructure, partner integration,
@@ -97,7 +97,7 @@ into a stable, user-facing surface:
 | ingest | `clearrecord ingest` | pull in heterogeneous audio sources + their metadata |
 | align | `clearrecord align` | place every source onto a common clock/timebase |
 | transcribe | `clearrecord transcribe` | run a chosen local ASR backend (see §5) |
-| reconcile | `clearrecord reconcile` | merge segments; speaker attribution; decision / action-item extraction |
+| reconcile | `clearrecord reconcile` | merge segments; speaker attribution |
 | export | `clearrecord export` | write a searchable, archiveable artifact (links back to source) |
 
 [DESIGN] The `cr-core` package owns the *shape* of these stages (the
@@ -109,7 +109,8 @@ keeps the domain model vendor-free (§5).
 
 ## 4. Observation-first domain model
 
-The central architectural principle, carried over deliberately from the record:
+The central architectural principle, carried over deliberately from the
+original concept:
 
 > **Store observations first; reconstruct state and meaning afterward.**
 
@@ -139,8 +140,8 @@ action item
 topic transition
 ```
 
-This is the same **"record cheaply now, normalize later"** instinct that drives
-the whole project: capture is lightweight and append-only; interpretation is a
+This is the same **"ingest cheaply now, normalize later"** instinct that drives
+the whole project: ingestion is lightweight and append-only; interpretation is a
 heavier, offline, reconstructable step. It also makes the pipeline **resumable**
 — if a run dies, the durable observations survive and the run is restarted, not
 restarted-from-zero.
@@ -194,7 +195,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   every later stage + the ASR backend operate on canonical audio. This is also
   what makes whisper.cpp's 16 kHz requirement a non-issue. **Multi-channel files
   are split per channel by default** (when >2 channels) so a 4-channel DJI
-  capture becomes four sources and per-speaker isolation is preserved
+  file becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
 - [DESIGN] The `whisper-cli` adapter reads millisecond `offsets` from its `-ojf`
   JSON (`cr_providers.backends._whispercli_segments`).
@@ -205,7 +206,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   |---|---|
   | Apple Silicon Mac mini | always-on production-ish transcription node (Metal/Core ML/ANE) |
   | AMD Radeon RX 7900 XTX Linux box | high-throughput ROCm/Vulkan worker |
-  | Laptop / phone | capture / client / control surface |
+  | Laptop / phone | client / control surface |
   | NAS | raw tapes + derived artifacts |
 
 ---
@@ -275,7 +276,7 @@ packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlat
 packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
 packages/cli       → cr-cli       the `clearrecord` command; stages live in cr_cli.stages
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0006
+docs/adr/                          decision records 0001–0007
 docs/vox/voice-of-owner.md         owner voice
 ```
 
@@ -315,8 +316,8 @@ docs/vox/voice-of-owner.md         owner voice
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.
 
-`just verify` is green (109 tests); the CLI surface is derived from
-`PipelineSpec`. **Meeting-tape readiness:** multi-channel capture (per-channel
+`just verify` is green; the CLI surface is derived from
+`PipelineSpec`. **Meeting-tape readiness:** multi-channel input (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple Silicon transcription are all landed. Apple
 is CLI-only (system `whisper-cli` + `ggml-metal`) and auto-downloads its ggml
@@ -348,19 +349,23 @@ out of scope.
 
 ---
 
-## 9. Record provenance (where the concept came from)
+## 9. Record provenance (origin history)
 
-The source record is the owner's private chat archive (ChatGPT export) under the
-personal logbook, `data/chatgpt-export/`. The conversations that define the
-concept (kept outside this repo; referenced for traceability only):
+[VOICE] The concept began as a **personal idea** and was developed
+independently. The public specification in §§1–5 is scoped from a **generic
+public problem statement**: reconstruct one clear, attributable record from
+several imperfect recordings of the same event.
 
-| Conversation | Date (UTC) | Topic |
-|---|---|---|
-| `6a97ea09-…` (命名建議) | 2026-09-02 09:20 | Naming: `clear-transcript` → `ClearRecord`; "reconstruct the record"; CLI surface |
-| `6a982644-…` (Local Development Plan) | 2026-09-02 13:38 | Local-first dev loop; generic-vs-work split; IP caution |
-| `6a98f33a-…` (Dedicated AI Hardware) | 2026-09-03 04:11 | Dedicated compute; Apple / AMD / NVIDIA backend matrix; offline + subscription-free |
-| `6a996848-…` (Open Source IP Risks) | 2026-09-03 12:36 | The clean-room boundary adopted in §6; the three-projects split (generic / company / exotic) |
-| `6a9e0282-…` (Compare Recording Setups) | 2026-09-07 00:18 | Capture topologies; iPhone + DJI Mic; field/podcast recorders |
+[DESIGN] The origin history is:
 
-These are the *facts and decisions* that seeded the public spec in §§1–5; the
-**generic** public problem statement in §2 is the re-derived, clean-room scope.
+```text
+personal idea
+  → work-context implementation
+  → clean-room personal-context implementation   (this repository)
+```
+
+The first two entries are context, not sources: the private conversation
+**content** is not reproduced or imported, and no path, identifier, artifact or
+work material is referenced. The generic public problem statement in §2 is the
+re-derived, clean-room scope.
+

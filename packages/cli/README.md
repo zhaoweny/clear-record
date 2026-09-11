@@ -12,6 +12,5 @@ clearrecord export       # write a searchable/archiveable artifact
 clearrecord backends     # list which ASR backends are currently available
 ```
 
-Currently a skeletal scaffold: subcommands are declared and wired to the
-pipeline spec, but the real pipeline execution is not implemented yet (see
-`docs/architecture.md` §8 for what's next).
+The subcommands are declared from the pipeline spec and execute the real
+pipeline stages against a workspace directory (see `docs/architecture.md` §8).

@@ -1115,8 +1115,7 @@ def synth(
     """Generate a clean multi-speaker scene + degraded per-device recordings,
     plus an exact ground-truth alignment/event timeline.
 
-    This realizes the owner's strategy (logbook
-    `10-19-projects/15-clear-record`): genuine bad published multi-track is
+    This realizes the owner's strategy: genuine bad published multi-track is
     scarce and usually has no correct answer, so we **synthesize the badness**
     and keep the clean aligned ground truth to score recovery against — the
     reliable way to calibrate `align`/`reconcile`.

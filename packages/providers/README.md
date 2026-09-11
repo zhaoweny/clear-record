@@ -39,8 +39,9 @@ is now all three); the transcribe stage uses it to size its worker pool. See
   GPU plugin (`ggml-cuda` / `ggml-vulkan` / `ggml-hip`); point the probe at a
   from-source build with `CR_WHISPER_CLI` and `CR_GGML_BACKEND_DIRS`.
 - **NVIDIA platforms:** Linux or **WSL2** (CUDA pass-through via `/dev/dxg`).
-  Validated under WSL2 on an RTX 4090 (`ggml-cuda`/`ggml-vulkan`); native Windows
-  is not currently probed — a native-Windows path would be a fresh decision.
+  Validated under WSL2 on an RTX 4090 with the **`ggml-cuda`** backend; native
+  Windows is not currently probed — a native-Windows path would be a fresh
+  decision.
 
 > **Probe caveat (residual risk).** For the `whisper-cli` paths, `available()`
 > proves *presence*, not *loadability*: it checks that a `whisper-cli` binary, a

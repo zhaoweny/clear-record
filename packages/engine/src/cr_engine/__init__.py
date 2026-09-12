@@ -15,6 +15,7 @@ from cr_engine.audio import (
 from cr_engine.chunk import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S, plan_chunks, write_chunk
 from cr_engine.diarize import diarize, logmel_stats
 from cr_engine.merge import reconcile
+from cr_engine.synth import DEFAULT_F0_HZ
 from cr_engine.synth import SR as SYNTH_SR
 from cr_engine.synth import (
     make_crosstalk_scene,
@@ -29,6 +30,7 @@ __all__ = [
     "ASR_SAMPLE_RATE",
     "AudioDecodeError",
     "DEFAULT_CHUNK_S",
+    "DEFAULT_F0_HZ",
     "DEFAULT_OVERLAP_S",
     "SYNTH_SR",
     "align_sources",

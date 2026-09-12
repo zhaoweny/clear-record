@@ -20,13 +20,23 @@ dominant speaker plus attenuated bleed from the others, and
 ``make_crosstalk_scene`` builds one lav-style device per speaker. Each event keeps
 its true speaker, so per-segment attribution can be scored against ground truth
 (the cross-talk failure mode behind ticket 09).
+
+**Two voice modes.** By default a stem is **aperiodic noise** (:func:`_voice_noise`)
+— deliberately *unvoiced*, so align/energy tests see a speech-shaped burst with no
+pitch. Voiced experiments (pitch / F0) opt in with ``voiced=True`` to a **harmonic
+glottal source** (:func:`_voiced_source`): a harmonic stack with natural roll-off,
+a syllabic envelope and a mild timbre lowpass, at a per-speaker ``f0_hz``. The
+noise default is byte-for-byte unchanged.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 SR = 16000
+DEFAULT_F0_HZ = 120.0
 
 
 # --------------------------------------------------------------------------- #
@@ -58,6 +68,65 @@ def _voice_noise(rng: np.random.Generator, n: int) -> np.ndarray:
     return (noise * env).astype(np.float32)
 
 
+def _voiced_source(
+    rng: np.random.Generator, n: int, f0_hz: float, sr: int
+) -> np.ndarray:
+    """A periodic harmonic glottal source at ``f0_hz`` (no scipy, additive).
+
+    A stack of harmonics of ``f0_hz`` with a natural ~1/k amplitude roll-off (a
+    sawtooth-like glottal pulse), random phase per harmonic, multiplied by a
+    syllabic amplitude envelope. The periodicity is explicit, so autocorrelation /
+    :func:`cr_engine.diarize.pitch_stats` finds a strong peak at ``f0_hz`` — unlike
+    the aperiodic :func:`_voice_noise` default.
+    """
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n, dtype=np.float64) / sr
+    n_harm = max(1, min(40, int((sr / 2.0) / max(f0_hz, 1e-6))))
+    x = np.zeros(n, dtype=np.float64)
+    for k in range(1, n_harm + 1):
+        phase = rng.uniform(0.0, 2.0 * np.pi)
+        x += (1.0 / k) * np.sin(2.0 * np.pi * f0_hz * k * t + phase)
+    # syllabic envelope: a few humps, never fully silent (so F0 stays measurable)
+    cycles = rng.uniform(3.0, 6.0)
+    env = 0.55 + 0.45 * np.abs(np.sin(np.linspace(0.0, cycles * np.pi, n)))
+    return (x * env).astype(np.float32)
+
+
+def _speaker_f0s(
+    f0_hz: float | Sequence[float] | None,
+    f0_gap_semitones: float,
+    n_speakers: int,
+) -> list[float]:
+    """Resolve a per-speaker F0 list from the voiced-mode parameters.
+
+    ``f0_hz`` is either a base F0 (Hz) for every speaker, or an explicit
+    per-speaker sequence. With a base, speaker ``s`` sits ``s *
+    f0_gap_semitones`` semitones above it, so a two-speaker scene has exactly the
+    requested F0 gap. ``None`` uses :data:`DEFAULT_F0_HZ`. A scalar is anything
+    with ``np.ndim(...) == 0`` (Python/numpy scalars and 0-d arrays alike);
+    sequences must match ``n_speakers``. F0 values must be positive and the gap
+    must be non-negative.
+    """
+    if f0_gap_semitones < 0:
+        raise ValueError(f"f0_gap_semitones must be >= 0, got {f0_gap_semitones}")
+    # ``np.ndim`` (not ``np.isscalar``) so a 0-d array like ``np.array(120.0)``
+    # is treated as one base F0 rather than an iterable.
+    if f0_hz is not None and np.ndim(f0_hz) != 0:
+        f0s = [float(value) for value in f0_hz]
+        if len(f0s) != n_speakers:
+            raise ValueError(
+                f"f0_hz has {len(f0s)} values but n_speakers is {n_speakers}"
+            )
+        if any(f0 <= 0 for f0 in f0s):
+            raise ValueError(f"f0_hz values must be > 0, got {f0s}")
+        return f0s
+    base = DEFAULT_F0_HZ if f0_hz is None else float(f0_hz)
+    if base <= 0:
+        raise ValueError(f"f0_hz must be > 0, got {base}")
+    return [base * 2.0 ** (s * f0_gap_semitones / 12.0) for s in range(n_speakers)]
+
+
 def make_speaker_stems(
     duration_s: float,
     n_speakers: int = 3,
@@ -65,6 +134,9 @@ def make_speaker_stems(
     sr: int = SR,
     seed: int = 0,
     non_overlapping: bool = False,
+    voiced: bool = False,
+    f0_hz: float | Sequence[float] | None = None,
+    f0_gap_semitones: float = 0.0,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """Build clean per-speaker stems and their exact event timeline.
 
@@ -79,6 +151,12 @@ def make_speaker_stems(
     By default utterances may overlap (as the existing generator does); set
     ``non_overlapping`` for a scene where every window has exactly one speaker,
     which is what lets a test score attribution without overlap ambiguity.
+
+    **Voiced mode.** The default (``voiced=False``) is the original aperiodic noise
+    stem. Set ``voiced=True`` for a periodic harmonic glottal source: ``f0_hz`` is
+    a base F0 (or an explicit per-speaker sequence) and ``f0_gap_semitones`` spaces
+    successive speakers, so a two-speaker pitch test can sweep e.g. 12/7/3/1/0
+    semitones. Voiced mode does not change the event timeline or the noise default.
     """
     rng = np.random.default_rng(seed)
     n = int(duration_s * sr)
@@ -87,6 +165,7 @@ def make_speaker_stems(
     speaker_voice: dict[int, float] = {
         s: rng.uniform(180.0, 320.0) for s in range(n_speakers)
     }
+    speaker_f0 = _speaker_f0s(f0_hz, f0_gap_semitones, n_speakers) if voiced else None
 
     t = 0.2
     while t < duration_s - 0.6:
@@ -96,11 +175,20 @@ def make_speaker_stems(
         end_s = min(duration_s - 0.1, t + dur)
         i0, i1 = int(start_s * sr), int(end_s * sr)
         if i1 > i0:
-            seg = _voice_noise(rng, i1 - i0)
-            # per-speaker timbre: map the speaker's base freq to a lowpass cutoff
-            alpha = float(
-                np.clip(0.05 + (speaker_voice[speaker] - 180.0) / 4000.0, 0.03, 0.20)
-            )
+            if voiced:
+                seg = _voiced_source(rng, i1 - i0, speaker_f0[speaker], sr)
+                # mild per-speaker timbre lowpass: keep F0 and low harmonics
+                alpha = float(
+                    np.clip(0.35 + (speaker_f0[speaker] - 100.0) / 2000.0, 0.2, 0.6)
+                )
+            else:
+                seg = _voice_noise(rng, i1 - i0)
+                # per-speaker timbre: map the speaker's base freq to a lowpass cutoff
+                alpha = float(
+                    np.clip(
+                        0.05 + (speaker_voice[speaker] - 180.0) / 4000.0, 0.03, 0.20
+                    )
+                )
             stems[speaker][i0:i1] += _one_pole_lowpass(seg, alpha).astype(np.float32)
             events.append(
                 {"speaker": speaker, "start": round(start_s, 4), "end": round(end_s, 4)}
@@ -124,9 +212,24 @@ def make_scene(
     *,
     sr: int = SR,
     seed: int = 0,
+    voiced: bool = False,
+    f0_hz: float | Sequence[float] | None = None,
+    f0_gap_semitones: float = 0.0,
 ) -> tuple[np.ndarray, list[dict]]:
-    """Build a clean multi-speaker scene and its exact event timeline."""
-    stems, events = make_speaker_stems(duration_s, n_speakers, sr=sr, seed=seed)
+    """Build a clean multi-speaker scene and its exact event timeline.
+
+    Defaults to the aperiodic noise stems unchanged; ``voiced`` / ``f0_hz`` /
+    ``f0_gap_semitones`` forward to :func:`make_speaker_stems` for pitch/F0 scenes.
+    """
+    stems, events = make_speaker_stems(
+        duration_s,
+        n_speakers,
+        sr=sr,
+        seed=seed,
+        voiced=voiced,
+        f0_hz=f0_hz,
+        f0_gap_semitones=f0_gap_semitones,
+    )
     scene = np.zeros(int(duration_s * sr), dtype=np.float32)
     for stem in stems:
         scene += stem
@@ -170,16 +273,28 @@ def make_crosstalk_scene(
     sr: int = SR,
     seed: int = 0,
     non_overlapping: bool = False,
+    voiced: bool = False,
+    f0_hz: float | Sequence[float] | None = None,
+    f0_gap_semitones: float = 0.0,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """Build one lav-style device per speaker, with modelled cross-talk.
 
     Device ``s`` has speaker ``s`` dominant (0 dB) and every other speaker present
     at ``bleed_db``. Returns ``(device_audio, events)`` where each event's
     ``speaker`` is the **true** source, so a test can score attribution against
-    it. Pair with :func:`record` for per-device degradation if wanted.
+    it. Pair with :func:`record` for per-device degradation if wanted. The
+    ``voiced`` / ``f0_hz`` / ``f0_gap_semitones`` options forward to
+    :func:`make_speaker_stems`.
     """
     stems, events = make_speaker_stems(
-        duration_s, n_speakers, sr=sr, seed=seed, non_overlapping=non_overlapping
+        duration_s,
+        n_speakers,
+        sr=sr,
+        seed=seed,
+        non_overlapping=non_overlapping,
+        voiced=voiced,
+        f0_hz=f0_hz,
+        f0_gap_semitones=f0_gap_semitones,
     )
     devices = [
         mix_crosstalk(stems, speaker, bleed_db=bleed_db)
@@ -263,6 +378,7 @@ def record(
 
 
 __all__ = [
+    "DEFAULT_F0_HZ",
     "SR",
     "make_crosstalk_scene",
     "make_scene",

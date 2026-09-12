@@ -21,6 +21,22 @@ This is implemented by `clearrecord synth` (see `cr_engine.synth`): it builds a
 clean multi-speaker scene, degrades it per device, and writes an exact
 `ground_truth.json`. `just verify` proves `align` recovers the true offsets.
 
+### Voice modes: noise (default) vs voiced
+
+`[FACT]` `cr_engine.synth` renders each speaker stem in one of two modes:
+
+- **noise** (default, `voiced=False`) — aperiodic, speech-shaped noise. This is
+  the default because the `align` and energy tests do not depend on pitch, and
+  changing it would move the event-timeline / seed contract.
+- **voiced** (`voiced=True`, with a per-speaker `f0_hz` and a
+  `f0_gap_semitones` spacing) — a harmonic glottal source: a harmonic stack with
+  natural roll-off, a syllabic envelope and a mild timbre lowpass. This is the
+  mode for **pitch / F0** experiments; the noise default is byte-for-byte
+  unchanged.
+
+`make_scene`, `make_speaker_stems` and `make_crosstalk_scene` take the same
+opt-in keywords.
+
 ## The three public anchors
 
 Source material falls into two buckets:

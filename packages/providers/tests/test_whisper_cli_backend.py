@@ -339,13 +339,24 @@ def test_ggml_backend_dirs_cover_real_distro_layouts() -> None:
     for path in (
         "/usr/lib/ggml",  # Arch ggml-*
         "/usr/lib/x86_64-linux-gnu/ggml",  # Ubuntu 25.10 / Debian
-        "/usr/lib/x86_64-linux-gnu/ggml/backends0",  # Ubuntu 26.04, ggml >= 0.9
+        "/usr/lib/x86_64-linux-gnu/ggml/backends*",  # Ubuntu 26.04, ggml >= 0.9
         "/usr/lib64",  # Fedora whisper-cpp (direct)
         "/usr/lib",  # upstream `cmake --install` prefix=/usr (direct)
         "/nix/store/*whisper-cpp*/lib",  # Nix
     ):
         assert path in _GGML_BACKEND_DIRS
-    assert "/usr/lib/aarch64-linux-gnu/ggml/backends0" in _GGML_BACKEND_DIRS
+    assert "/usr/lib/aarch64-linux-gnu/ggml/backends*" in _GGML_BACKEND_DIRS
+    # A ggml >= 0.9 nested build can appear under *any* base dir, not only the
+    # multiarch tuple.
+    for nested in (
+        "/usr/lib/ggml/backends*",
+        "/usr/lib64/ggml/backends*",
+        "/usr/lib/x86_64-linux-gnu/backends*",
+        "/usr/lib/backends*",
+        "/usr/lib64/backends*",
+        "/nix/store/*whisper-cpp*/lib/backends*",
+    ):
+        assert nested in _GGML_BACKEND_DIRS
 
 
 def test_ggml_backend_dirs_override_is_prepended(monkeypatch) -> None:
@@ -363,6 +374,21 @@ def test_find_ggml_gpu_backend_finds_backends0_layout(tmp_path, monkeypatch) -> 
     plugin = d / "libggml-vulkan.so"
     plugin.write_bytes(b"stub")
     monkeypatch.setenv("CR_GGML_BACKEND_DIRS", str(d))
+    assert backends._find_ggml_gpu_backend(("vulkan",)) == str(plugin)
+
+
+def test_find_ggml_gpu_backend_expands_nested_backends_glob(
+    tmp_path, monkeypatch
+) -> None:
+    """The static ``backends*`` globs find a nested (future ``backendsN``) dir."""
+    d = tmp_path / "ggml" / "backends1"
+    d.mkdir(parents=True)
+    plugin = d / "libggml-vulkan.so"
+    plugin.write_bytes(b"stub")
+    monkeypatch.delenv("CR_GGML_BACKEND_DIRS", raising=False)
+    monkeypatch.setattr(
+        backends, "_GGML_BACKEND_DIRS", (str(tmp_path / "ggml" / "backends*"),)
+    )
     assert backends._find_ggml_gpu_backend(("vulkan",)) == str(plugin)
 
 
@@ -409,6 +435,35 @@ def test_probe_ggml_plugin_load_flags_a_different_backend(monkeypatch) -> None:
 def test_probe_ggml_plugin_load_accepts_release_device_banner(monkeypatch) -> None:
     """Release builds suppress ``load_backend``; a device banner still counts."""
     _probe_with_output(monkeypatch, "ggml_vulkan: No devices found.\n")
+    assert backends.probe_ggml_plugin_load(AmdBackend()).loaded is True
+
+
+def test_probe_ggml_plugin_load_rejects_negative_context(monkeypatch) -> None:
+    """A family named only in a failure must not be read as loaded.
+
+    Regression: a bare substring match used to classify ``error: failed to load
+    vulkan backend`` as ``loaded=True`` -- a false OK from the probe whose job is
+    to catch exactly that.
+    """
+    _probe_with_output(monkeypatch, "error: failed to load vulkan backend\n")
+    probe = backends.probe_ggml_plugin_load(AmdBackend())
+    assert probe.loaded is False
+    assert "failure" in probe.detail.lower()
+
+
+def test_probe_ggml_plugin_load_rejects_no_backend_line(monkeypatch) -> None:
+    _probe_with_output(monkeypatch, "warning: no vulkan backend available\n")
+    assert backends.probe_ggml_plugin_load(AmdBackend()).loaded is False
+
+
+def test_probe_ggml_plugin_load_accepts_positive_after_a_negative_line(
+    monkeypatch,
+) -> None:
+    """A later positive banner still wins over an earlier failure line."""
+    _probe_with_output(
+        monkeypatch,
+        "error: failed to load vulkan backend\nggml_vulkan: Found 1 Vulkan devices:\n",
+    )
     assert backends.probe_ggml_plugin_load(AmdBackend()).loaded is True
 
 

@@ -114,25 +114,38 @@ _WHISPER_CLI_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 # - Nixpkgs `whisper-cpp` sets GGML_BACKEND_DIR=$out/lib, so the plugins live in
 #   the (hash-named) package output's lib/; some builds put them in bin/
 #   (NixOS/nixpkgs#3420). The store hash varies, so those two entries glob.
+#
+# ggml >= 0.9 may nest the backends under a `backends<N>/` subdir of *any* of
+# those dirs (the distro package uses `backends0`), so every base dir also gets
+# a `backends*` glob variant.
 _GGML_BACKEND_DIRS = (
     "/usr/lib/ggml",
+    "/usr/lib/ggml/backends*",
     "/usr/lib64/ggml",
+    "/usr/lib64/ggml/backends*",
     "/usr/local/lib/ggml",
+    "/usr/local/lib/ggml/backends*",
     # Debian/Ubuntu multiarch: the plugin may sit directly in the tuple, under
-    # `ggml/`, or (ggml >= 0.9) under `ggml/backends0/`.
+    # `ggml/`, or (ggml >= 0.9) nested under a `backends*/` subdir.
     "/usr/lib/x86_64-linux-gnu",
     "/usr/lib/aarch64-linux-gnu",
     "/usr/lib/x86_64-linux-gnu/ggml",
     "/usr/lib/aarch64-linux-gnu/ggml",
-    "/usr/lib/x86_64-linux-gnu/ggml/backends0",
-    "/usr/lib/aarch64-linux-gnu/ggml/backends0",
+    "/usr/lib/x86_64-linux-gnu/ggml/backends*",
+    "/usr/lib/aarch64-linux-gnu/ggml/backends*",
+    "/usr/lib/x86_64-linux-gnu/backends*",
+    "/usr/lib/aarch64-linux-gnu/backends*",
     # Direct lib/lib64 installs (upstream prefix=/usr; Fedora's bundled ggml).
     "/usr/lib",
+    "/usr/lib/backends*",
     "/usr/lib64",
+    "/usr/lib64/backends*",
     # Nix (hash-named store path, so glob it): package lib/, or bin/ on builds
-    # that install the backends next to the CLI.
+    # that install the backends next to the CLI; either may nest `backends*/`.
     "/nix/store/*whisper-cpp*/lib",
+    "/nix/store/*whisper-cpp*/lib/backends*",
     "/nix/store/*whisper-cpp*/bin",
+    "/nix/store/*whisper-cpp*/bin/backends*",
     # macOS / Homebrew (Apple Silicon prefix, then Intel prefix).
     "/opt/homebrew/lib",
     "/opt/homebrew/libexec",
@@ -210,7 +223,9 @@ def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
 # substrings the CLI / backend plugins print. The probe accepts the debug-build
 # ``load_backend: loaded <name> backend`` line as well as a backend's own device
 # banner (``ggml_vulkan:``, ``ggml_cuda``, ...), because release builds compile
-# the load line out (``NDEBUG`` makes the loader silent).
+# the load line out (``NDEBUG`` makes the loader silent). A line that names a
+# family but only in a failure context (``error: failed to load vulkan backend``)
+# is never read as loaded -- see ``_PLUGIN_LOAD_NEGATIVE``.
 _GGML_FAMILY_MARKERS: dict[str, tuple[str, ...]] = {
     "vulkan": ("vulkan",),
     "cuda": ("cuda",),
@@ -218,16 +233,38 @@ _GGML_FAMILY_MARKERS: dict[str, tuple[str, ...]] = {
     "metal": ("metal",),
 }
 
+# Failure context for a CLI line that names a family. The release-banner fallback
+# requires a *positive* line; this keeps a failed load from being reported as OK.
+_PLUGIN_LOAD_NEGATIVE = (
+    "failed",
+    "fail to",
+    "cannot",
+    "can't",
+    "could not",
+    "unable to",
+    "not loaded",
+    "not supported",
+    "error",
+)
+
+
+def _is_negative_load_line(line: str) -> bool:
+    """True when ``line`` names a family only in a failure context."""
+    if any(negative in line for negative in _PLUGIN_LOAD_NEGATIVE):
+        return True
+    # "no <family> backend" / "no <family> device" style.
+    return "no " in line and "backend" in line
+
 
 @dataclasses.dataclass(frozen=True)
 class PluginLoadProbe:
     """Result of the opt-in plugin-load probe.
 
     ``loaded`` is ``True`` when the CLI reported a matching backend, ``False``
-    when it reported a *different* backend (or could not run), and ``None`` when
-    the output carried no backend-load evidence at all -- a release build
-    suppresses it, so the caller should treat ``None`` as inconclusive, never as
-    a failure.
+    when it reported a *different* backend, a matching one only in a failure
+    context, or could not run at all, and ``None`` when the output carried no
+    backend-load evidence at all -- a release build suppresses it, so the caller
+    should treat ``None`` as inconclusive, never as a failure.
     """
 
     loaded: bool | None
@@ -247,7 +284,11 @@ def _clear_plugin_load_cache() -> None:
 
 
 def _classify_plugin_load(output: str, markers: tuple[str, ...]) -> PluginLoadProbe:
-    """Interpret the CLI's combined output for the probe (see the class doc)."""
+    """Interpret the CLI's combined output for the probe (see the class doc).
+
+    A matching family is only accepted from a positive load/device line; a
+    family that appears only in a failure context returns ``False``.
+    """
     output = output.lower()
     if not output.strip():
         return PluginLoadProbe(None, "the CLI produced no output")
@@ -259,9 +300,25 @@ def _classify_plugin_load(output: str, markers: tuple[str, ...]) -> PluginLoadPr
             if any(marker in line for marker in markers):
                 return PluginLoadProbe(True, line)
         return PluginLoadProbe(False, f"a non-matching backend loaded: {load_lines[0]}")
-    for marker in markers:
-        if marker in output:
-            return PluginLoadProbe(True, f"backend banner mentions {marker!r}")
+
+    # Release builds suppress the ``load_backend`` line; a backend's own device
+    # banner still names it. Require a positive line: a matching family that
+    # appears only in a failure (e.g. "failed to load vulkan backend") is not
+    # loaded. ``ggml_vulkan: No devices found.`` is still positive -- the plugin
+    # loaded, and the vendor-device check lives in ``available()``.
+    negative_hit: str | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or not any(marker in line for marker in markers):
+            continue
+        if _is_negative_load_line(line):
+            negative_hit = negative_hit or line
+            continue
+        return PluginLoadProbe(True, f"backend banner: {line}")
+    if negative_hit is not None:
+        return PluginLoadProbe(
+            False, f"matching family appeared only in a load failure: {negative_hit}"
+        )
     return PluginLoadProbe(
         None,
         "the CLI ran but printed no backend-load line (release builds suppress it)",

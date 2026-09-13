@@ -49,10 +49,12 @@ format:
 test:
     uv run --all-packages pytest
 
-# Build the dist (wheel + sdist) into dist/ (never committed). `--no-sources`
-# proves the published graph resolves without `tool.uv.sources` (the workspace pins).
+# Build the release dist (wheel + sdist) into dist/ (never committed). Names the
+# published package explicitly — NOT `--all-packages` — so a future workspace
+# member (a GUI, an MCP server) can never silently join the PyPI payload.
+# `--no-sources` proves the published graph resolves without `tool.uv.sources`.
 build:
-    uv build --all-packages --no-sources
+    uv build --package clear-record --no-sources
 
 # Show the published version. The member `clear-record` is the single published
 # dist; the virtual root is bumped in step with it by the recipes below, so the

@@ -279,9 +279,12 @@ even via a manual dispatch. A PyPI pre-release is **opt-in for installers**
 
 Both publishing workflows' `build` jobs run `just verify` + `just build`, then
 smoke-install the just-built dist into a clean venv and run
-`clear-record --help`. `just build` passes `--no-sources`, so the published
-graph is proven to resolve without `tool.uv.sources`. The wheel and sdist bundle
-the MIT `LICENSE` (`license-files = ["LICENSE"]`).
+`clear-record --help`. `just build` names the package explicitly
+(`uv build --package clear-record --no-sources`) rather than building
+`--all-packages`, so a future workspace member can never silently join the PyPI
+payload; `--no-sources` proves the published graph resolves without
+`tool.uv.sources`. The wheel and sdist bundle the MIT `LICENSE`
+(`license-files = ["LICENSE"]`).
 
 ### Sanity-check the built metadata
 

@@ -53,7 +53,20 @@ meaning afterward. That keeps ingestion cheap and reliability a property of
 
 ## Install
 
-**Today the source checkout is the way** — there is no PyPI release yet:
+**Install from PyPI** — the package is
+[`clear-record`](https://pypi.org/project/clear-record/) (Python 3.12+):
+
+```sh
+uvx clear-record --help              # run without installing
+uv tool install clear-record         # or: pipx install clear-record
+```
+
+Its four internal layers (`core`, `engine`, `providers`, `cli`) are `clear_record`
+subpackages, not separate distributions — see ADR-0012. Transcription needs the
+system `whisper-cli` + a ggml plugin (see Backends below); `clear-record backends`
+reports what the machine can run.
+
+For development, work from a source checkout:
 
 ```sh
 git clone https://github.com/zhaoweny/clear-record.git
@@ -62,20 +75,8 @@ uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clear-record --help
 ```
 
-The release workflow ([`docs/releasing.md`](docs/releasing.md)) builds and
-publishes a wheel and an sdist for the single workspace member. The install name
-is **`clear-record`**; its four internal layers (`core`, `engine`, `providers`,
-`cli`) are `clear_record` subpackages, not separate distributions — see
-ADR-0012. Once the first release is out:
-
-```sh
-uvx clear-record --help              # run without installing
-uv tool install clear-record         # or: pipx install clear-record
-clear-record --help
-```
-
-Until the first release is on PyPI these commands will not resolve, so use the
-source checkout above in the meantime.
+The release flow — version bump, TestPyPI rehearsal, tag, and the OIDC publish —
+is in [`docs/releasing.md`](docs/releasing.md).
 
 ## Backends (Apple · NVIDIA · AMD)
 

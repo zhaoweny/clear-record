@@ -9,6 +9,19 @@ description = "Backend-agnostic application core for clear-record: the audio->re
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "zhaoweny", email = "zhaoweny@users.noreply.github.com" }]
+keywords = ["transcription", "audio", "pipeline", "reconciliation", "record-reconstruction"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+]
 requires-python = ">=3.12"
 dependencies = []
 

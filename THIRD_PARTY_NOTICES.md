@@ -47,6 +47,7 @@ Not installed in a runtime environment; used by the `just verify` gate.
 | --- | --- | --- |
 | [`pytest`](https://pypi.org/project/pytest/) | 9.1.1 | MIT |
 | [`ruff`](https://pypi.org/project/ruff/) | 0.16.6 | MIT |
+| [`trove-classifiers`](https://pypi.org/project/trove-classifiers/) | 2026.6.1.19 | Apache-2.0 |
 | [`iniconfig`](https://pypi.org/project/iniconfig/) *(transitive, via pytest)* | 2.3.0 | MIT |
 | [`packaging`](https://pypi.org/project/packaging/) *(transitive, via pytest)* | 26.3 | Apache-2.0 OR BSD-2-Clause |
 | [`pluggy`](https://pypi.org/project/pluggy/) *(transitive, via pytest)* | 1.6.0 | MIT |

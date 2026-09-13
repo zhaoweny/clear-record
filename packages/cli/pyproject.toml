@@ -9,6 +9,19 @@ description = "CLI implementation (`cr_cli`) for clear-record; the `clear-record
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "zhaoweny", email = "zhaoweny@users.noreply.github.com" }]
+keywords = ["cli", "transcription", "audio", "speech-to-text", "asr"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Environment :: Console",
+    "Topic :: Utilities",
+]
 requires-python = ">=3.12"
 dependencies = [
     "cr-core==0.1.1.dev0",

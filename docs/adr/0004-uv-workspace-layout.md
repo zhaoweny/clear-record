@@ -30,7 +30,7 @@ Date: 2026-09-09
 
 - Root `pyproject.toml` is the uv workspace root (`[tool.uv.workspace]
   members = ["packages/*"]`, `requires-python = ">=3.12"`, root dev group with
-  `ruff` + `pytest`). The root is a **virtual project** (`package = false`),
+  `ruff`, `pytest` + `trove-classifiers`). The root is a **virtual project** (`package = false`),
   never built/published. It is named `clear-record-workspace` because uv
   requires every workspace member to have a distinct name and the published
   `clear-record` name belongs to the facade member.

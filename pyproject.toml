@@ -46,6 +46,7 @@ cr-providers = { workspace = true }
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
+    "trove-classifiers>=2026.6.1",
 ]
 
 # Convenience extras that mirror the cr-providers backend extras, so a single

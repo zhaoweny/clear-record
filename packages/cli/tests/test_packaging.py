@@ -2,7 +2,8 @@
 
 The five workspace members ship one version and every intra-project (`cr-*`)
 dependency is exact-pinned, so a released set of wheels cannot resolve to mixed
-versions. Static checks over pyproject.toml only — no network, no build.
+versions. Static checks over pyproject.toml plus the packaged Trove
+classifier list — no network, no build.
 """
 
 from __future__ import annotations
@@ -141,6 +142,33 @@ def test_every_package_ships_the_root_license() -> None:
         if (p / "LICENSE").read_bytes() != root_license
     ]
     assert not drifted, f"LICENSE copies differ from the root LICENSE: {drifted}"
+
+
+def test_publishable_manifests_carry_pypi_metadata() -> None:
+    """Every publishable dist declares authors, keywords and real classifiers.
+
+    A manifest with none of these renders a PyPI page with no author and no
+    classifiers, so each member must carry non-empty `authors`, `keywords` and
+    `classifiers` (the virtual root is never published and is not checked here).
+    Every classifier must exist in the canonical Trove list: PyPI rejects an
+    unknown one at upload, so a typo would otherwise surface only after the
+    artefacts are built. Static check over pyproject.toml plus the
+    `trove-classifiers` dataset — no network, no build."""
+    from trove_classifiers import classifiers as trove_classifiers
+
+    problems: list[str] = []
+    for path in MEMBER_PYPROJECTS:
+        rel = path.relative_to(REPO_ROOT)
+        project = _load(path)["project"]
+        for field in ("authors", "keywords", "classifiers"):
+            if not project.get(field):
+                problems.append(f"{rel}: missing or empty {field!r}")
+        problems.extend(
+            f"{rel}: unknown classifier {c!r}"
+            for c in project.get("classifiers", [])
+            if c not in trove_classifiers
+        )
+    assert not problems, "incomplete PyPI metadata:\n" + "\n".join(problems)
 
 
 @pytest.mark.parametrize("bad", ["banana", "0.1.1+g1"])

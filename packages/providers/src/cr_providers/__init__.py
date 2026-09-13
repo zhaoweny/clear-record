@@ -14,9 +14,14 @@ from cr_providers.backends import (
     available_backend_ids,
     get_backend,
     probe_ggml_plugin_load,
-    resolve_backend_model,
 )
-from cr_providers.base import Backend, BackendId, BackendInfo, DEFAULT_MODEL
+from cr_providers.base import (
+    Backend,
+    BackendBase,
+    BackendId,
+    BackendInfo,
+    DEFAULT_MODEL,
+)
 from cr_providers.process import (
     CancellableProcessRunner,
     ProcessCancelled,
@@ -27,6 +32,7 @@ from cr_providers.process import (
 __all__ = [
     "BACKENDS",
     "Backend",
+    "BackendBase",
     "BackendId",
     "BackendInfo",
     "CancellableProcessRunner",
@@ -38,5 +44,4 @@ __all__ = [
     "available_backend_ids",
     "get_backend",
     "probe_ggml_plugin_load",
-    "resolve_backend_model",
 ]

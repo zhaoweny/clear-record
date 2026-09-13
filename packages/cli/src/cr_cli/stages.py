@@ -51,7 +51,6 @@ from cr_providers import (
     CancellableProcessRunner,
     get_backend,
     probe_ggml_plugin_load,
-    resolve_backend_model,
 )
 
 from cr_cli import eval as _eval
@@ -532,7 +531,7 @@ def transcribe(
     # Resolve/download the model once, single-threaded, before the chunk pool:
     # ``apple`` is parallelizable, so workers must never race the first-use
     # download the provider would otherwise trigger per chunk.
-    resolve_backend_model(backend, model, model_dir)
+    backend.prepare(model, model_dir)
     prompt, prompt_src = _load_glossary(d, glossary)
     if prompt:
         _log_line(d, f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")

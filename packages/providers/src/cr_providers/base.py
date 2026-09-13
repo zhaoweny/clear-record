@@ -44,6 +44,18 @@ class Backend(Protocol):
 
     def available(self) -> bool: ...
 
+    def prepare(self, model: str | None, model_dir: str | None) -> str | None:
+        """Prepare this backend's model before transcription (or no-op).
+
+        A backend that owns model selection/resolution/download — e.g. the
+        ``whisper-cli`` adapters' ggml resolve/download — implements this and
+        returns the resolved model path. One with nothing to prepare inherits
+        the no-op default in :class:`BackendBase` and returns ``None``. Callers
+        invoke it once, single-threaded, before fanning out so workers never
+        race a first-use download.
+        """
+        ...
+
     def transcribe(
         self,
         audio_path: str,
@@ -66,4 +78,17 @@ class Backend(Protocol):
         ...
 
 
-__all__ = ["Backend", "BackendId", "BackendInfo", "DEFAULT_MODEL"]
+class BackendBase:
+    """Concrete no-op defaults for the optional parts of :class:`Backend`.
+
+    ``Backend`` is a structural ``Protocol``, so a backend that only satisfies
+    ``info`` / ``available()`` / ``transcribe()`` would still be missing
+    ``prepare`` at the call site. Inherit this for the no-op default, and
+    override ``prepare`` when the backend owns a downloadable model.
+    """
+
+    def prepare(self, model: str | None, model_dir: str | None) -> str | None:
+        return None
+
+
+__all__ = ["Backend", "BackendBase", "BackendId", "BackendInfo", "DEFAULT_MODEL"]

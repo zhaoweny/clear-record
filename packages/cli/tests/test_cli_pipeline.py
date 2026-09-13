@@ -12,6 +12,7 @@ import numpy as np
 import soundfile as sf
 
 from cr_cli import stages
+from cr_providers import BackendBase
 
 
 def _write_tone(
@@ -365,7 +366,7 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     )
     stages.ingest(str(wd), split="mix")
 
-    class Fake:
+    class Fake(BackendBase):
         calls = 0
         info = BackendInfo(
             id="fake",
@@ -453,7 +454,7 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     )
     stages.ingest(str(wd), split="mix")
 
-    class Fake:
+    class Fake(BackendBase):
         info = BackendInfo(
             id="fake",
             vendor="test",
@@ -540,7 +541,7 @@ def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -
 
     events: list[str] = []
 
-    class Fake:
+    class Fake(BackendBase):
         info = BackendInfo(
             id="fake",
             vendor="test",
@@ -553,7 +554,7 @@ def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -
         def available(self) -> bool:
             return True
 
-        def resolve_model(self, model, model_dir):
+        def prepare(self, model, model_dir):
             events.append(f"resolve:{threading.current_thread().name}")
             return "/tmp/fake-model.bin"
 
@@ -683,7 +684,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
     lock = threading.Lock()
     procs: list[subprocess.CompletedProcess] = []
 
-    class BlockingFake:
+    class BlockingFake(BackendBase):
         info = BackendInfo(
             id="fake",
             vendor="test",
@@ -822,7 +823,7 @@ def test_transcribe_check_plugin_gates_on_the_load_probe(tmp_path, monkeypatch) 
     )
     stages.ingest(str(wd), split="mix")
 
-    class Fake:
+    class Fake(BackendBase):
         info = BackendInfo(
             id="fake",
             vendor="test",
@@ -889,7 +890,7 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     runners: list = []
     lock = threading.Lock()
 
-    class Fake:
+    class Fake(BackendBase):
         info = BackendInfo(
             id="fake",
             vendor="test",

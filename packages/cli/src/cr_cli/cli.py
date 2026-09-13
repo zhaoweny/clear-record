@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-from cr_providers import available_backend_ids
+from cr_providers import BACKENDS, available_backend_ids
 from cr_engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 from cr_cli import stages
@@ -49,12 +49,13 @@ def _build_parser() -> argparse.ArgumentParser:
         )
 
     def _backend_args(p: argparse.ArgumentParser) -> None:
+        default_backend = next(iter(BACKENDS))
         p.add_argument(
             "--backend",
             "-b",
-            default="apple",
-            choices=("apple", "nvidia", "amd"),
-            help="ASR backend (default apple)",
+            default=default_backend,
+            choices=tuple(BACKENDS),
+            help=f"ASR backend (default {default_backend})",
         )
         p.add_argument(
             "--model",
@@ -311,7 +312,7 @@ def _main(args: argparse.Namespace) -> int:
     command = args.command
 
     if command == "backends":
-        known = ("apple", "nvidia", "amd")
+        known = tuple(BACKENDS)
         available = available_backend_ids()
         for bid in known:
             state = "available" if bid in available else "unavailable"

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from cr_providers import BackendInfo, available_backend_ids, get_backend
+from cr_providers import BackendBase, BackendInfo, available_backend_ids, get_backend
 from cr_providers.backends import BACKENDS
 
 
@@ -36,3 +36,15 @@ def test_available_is_a_subset_and_never_imports_a_framework() -> None:
 def test_get_backend_unknown_raises() -> None:
     with pytest.raises(KeyError):
         get_backend("does-not-exist")
+
+
+def test_backend_base_prepare_is_a_no_op() -> None:
+    """A backend with no downloadable model inherits the no-op default."""
+    assert BackendBase().prepare("small", "/tmp/models") is None
+
+
+def test_whisper_cli_prepare_resolves_a_local_model(tmp_path) -> None:
+    """The whisper-cli adapter owns model resolution through the seam."""
+    model = tmp_path / "ggml-small.bin"
+    model.write_bytes(b"stub")
+    assert get_backend("apple").prepare("small", str(tmp_path)) == str(model)

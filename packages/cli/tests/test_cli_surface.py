@@ -27,6 +27,20 @@ def test_subcommands_match_pipeline() -> None:
     assert set(subparsers_action.choices) == expected
 
 
+def test_backend_choices_come_from_the_catalog() -> None:
+    """The `--backend` choices and default follow the provider catalog, so a new
+    backend is offered without a CLI edit (no literal tuple)."""
+    from cr_providers import BACKENDS
+
+    parser = _build_parser()
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    backend_action = next(
+        a for a in sub.choices["transcribe"]._actions if a.dest == "backend"
+    )
+    assert tuple(backend_action.choices) == tuple(BACKENDS)
+    assert backend_action.default == next(iter(BACKENDS))
+
+
 def test_run_and_calibrate_expose_reference() -> None:
     parser = _build_parser()
     assert parser.parse_args(["run", "dir", "--reference", "b"]).reference == "b"

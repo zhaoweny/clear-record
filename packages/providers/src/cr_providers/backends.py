@@ -42,7 +42,7 @@ from collections.abc import Callable
 
 from cr_core import Segment, TranscriptionResult
 
-from cr_providers.base import Backend, BackendInfo
+from cr_providers.base import Backend, BackendBase, BackendInfo
 from cr_providers.process import ProcessRunner, SubprocessRunner
 
 
@@ -605,7 +605,7 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
     return data
 
 
-class _WhisperCliBackend:
+class _WhisperCliBackend(BackendBase):
     """System ``whisper-cli`` backend, accelerated by a ggml backend plugin.
 
     Subclasses declare which ggml backend families they accept, how to probe the
@@ -654,7 +654,7 @@ class _WhisperCliBackend:
             and self._device_check()
         )
 
-    def resolve_model(self, model: str | None, model_dir: str | None) -> str:
+    def prepare(self, model: str | None, model_dir: str | None) -> str:
         """Resolve (downloading on first use) this backend's ggml model path.
 
         The CLI calls this once, **single-threaded before the chunk pool**, so
@@ -678,7 +678,7 @@ class _WhisperCliBackend:
         if cli is None:  # defensive: available() already checked this
             raise RuntimeError("whisper-cli not found on PATH (set CR_WHISPER_CLI).")
         name = model or self.info.default_model
-        model_path = _resolve_ggml_model(name, model_dir)
+        model_path = self.prepare(name, model_dir)
         lang = language if language and language not in ("", "auto") else "auto"
         runner = process_runner or self._runner
 
@@ -822,27 +822,10 @@ def get_backend(backend_id: str) -> Backend:
         raise KeyError(f"unknown ASR backend {backend_id!r}") from exc
 
 
-def resolve_backend_model(
-    backend: Backend, model: str | None, model_dir: str | None
-) -> str | None:
-    """Resolve (and download, once) a backend's model before a chunk pool.
-
-    Returns the resolved path for backends that own a downloadable ggml model
-    (the ``whisper-cli`` adapters), else ``None``. Callers should invoke this
-    single-threaded before fanning out so pool workers never race a first-use
-    download.
-    """
-    resolver = getattr(backend, "resolve_model", None)
-    if resolver is None:
-        return None
-    return resolver(model, model_dir)
-
-
 __all__ = [
     "BACKENDS",
     "PluginLoadProbe",
     "available_backend_ids",
     "get_backend",
     "probe_ggml_plugin_load",
-    "resolve_backend_model",
 ]

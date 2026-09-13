@@ -167,7 +167,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 
 ```text
           cr-core            (no vendor code)
-            │  Backend interface: available() / transcribe()
+            │  Backend interface: available() / prepare() / transcribe()
             ▼
        cr-providers
      ┌───────────┬───────────┬───────────┐

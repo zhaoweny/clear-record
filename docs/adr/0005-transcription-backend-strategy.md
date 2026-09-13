@@ -23,7 +23,7 @@ Date: 2026-09-09
 ## Decision
 
 - [DECISION] Define a single vendor-neutral backend interface in `cr-providers`
-  (`Backend`, with `info`, `available()`, `transcribe()`).
+  (`Backend`, with `info`, `available()`, `prepare()`, `transcribe()`).
 - [DECISION] Provide three backend adapters, each a **capability**:
   - `apple`   — Apple/macOS (Metal), via the **system `whisper-cli`**
     (`brew install whisper-cpp`) linked against a `ggml` Metal plugin; the ggml
@@ -124,3 +124,13 @@ Date: 2026-09-09
   dir and atomically renamed on success; a network failure rolls the part file
   back and raises the existing clear `hf download …` error. The wheel's
   auto-download behaviour is therefore preserved on the CLI path.
+
+## Update (2026-09-13) — the interface states `prepare()`
+
+- [DESIGN] `Backend` gains `prepare(model, model_dir)` with a no-op default
+  (`BackendBase`), so the whole contract is declared rather than reached by a
+  duck-typed `getattr(backend, "resolve_model")`. The `whisper-cli` adapters
+  implement it (the ggml resolve/download formerly named `resolve_model`); the
+  transcribe stage calls it once, single-threaded, before the chunk pool. This
+  mildly extends the interface enumerated above; `docs/architecture.md` and
+  `packages/providers/README.md` describe the same seam.

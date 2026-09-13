@@ -39,7 +39,7 @@ just format-check   # ruff format --check
 
 ## Guidelines
 
-- **Please avoid work/company material.** Keep the repository free of company
+- **Keep work/company material out of the repository.** Do not add company
   source code, prompts/specs, partner names, internal docs or credentials, and
   don't commit private recordings. Recordings, derived transcripts and model
   weights are environment-local data — gitignored, never committed (ADR-0006).

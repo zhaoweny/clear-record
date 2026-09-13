@@ -3,15 +3,15 @@ name: publish-testpypi
 # Manual release rehearsal to TestPyPI — no automatic trigger.
 #
 #   * There is no push/tag trigger. Dispatch this workflow by hand on the exact
-#     commit that will become the release tag; it publishes the five members at
+#     commit that will become the release tag; it publishes the dist at
 #     whatever version the manifests carry. This lane carries release
 #     candidates (`X.Y.ZrcN`, cut with `just bump-rc`) and the final stable
 #     rehearsal (`X.Y.Z`, via `just set-version X.Y.Z`), so the exact commit is
 #     qualified before the real tag. A dev version is refused (see the guard
 #     below). `publish.yml` then runs on the real tag and publishes the same
 #     candidate (or the stable release) to PyPI.
-#   * TestPyPI is a SEPARATE index with its OWN one-time pending publishers
-#     (distinct from the PyPI ones in `publish.yml`): same owner/repo, workflow
+#   * TestPyPI is a SEPARATE index with its OWN one-time pending publisher
+#     (distinct from the PyPI one in `publish.yml`): same owner/repo, workflow
 #     `publish-testpypi.yml`, environment `testpypi`. Publishing `X.Y.Z` here
 #     does not consume `X.Y.Z` on PyPI, so the same version can still be
 #     released for real.

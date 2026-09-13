@@ -3,6 +3,8 @@
 Status: active (amended by the 2026-09-13 Updates below)
 Date: 2026-09-13
 
+- Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
+
 ## Context
 
 - [VOICE: owner] 2026-09-13: called for a work-in-progress `-dev` build tag

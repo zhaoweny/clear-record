@@ -17,13 +17,13 @@ you want, **while retaining the clean aligned transcript as ground truth**. This
 is the only reliable way to get the desired badness *with a known-correct
 answer*.
 
-This is implemented by `clear-record synth` (see `cr_engine.synth`): it builds a
+This is implemented by `clear-record synth` (see `clear_record.engine.synth`): it builds a
 clean multi-speaker scene, degrades it per device, and writes an exact
 `ground_truth.json`. `just verify` proves `align` recovers the true offsets.
 
 ### Voice modes: noise (default) vs voiced
 
-`[FACT]` `cr_engine.synth` renders each speaker stem in one of two modes:
+`[FACT]` `clear_record.engine.synth` renders each speaker stem in one of two modes:
 
 - **noise** (default, `voiced=False`) — aperiodic, speech-shaped noise. This is
   the default because the `align` and energy tests do not depend on pitch, and
@@ -81,7 +81,7 @@ per-mic sources may bleed, also record a mixed/room reference.** The room mic is
 neutral, speaker-independent witness: it shows that a segment was spoken even
 when no identified per-mic channel is loud in that window, so attribution can
 keep the incoming speaker instead of guessing a bleed channel. This is implemented
-by `clear-record attribute` → `cr_engine.attribute.attribute_segments` (relative,
+by `clear-record attribute` → `clear_record.engine.attribute.attribute_segments` (relative,
 gain-normalized per-source energy). The room is excluded from the candidate set
 even when it is also listed in the manifest, so it is never emitted as a speaker.
 The gate is calibrated for a room reference that carries every speaker at a
@@ -90,7 +90,7 @@ for **non-overlapping** speech — overlapping utterances blur the level compari
 so the fence is scoped to that regime. A room mic far below the per-mic level can
 leave a covered speaker uncorrected, in which case attribution conservatively keeps
 the incoming speaker. The badness is synthesized with exact ground truth by
-`cr_engine.synth.make_crosstalk_scene` (`non_overlapping=True` for the calibrated
+`clear_record.engine.synth.make_crosstalk_scene` (`non_overlapping=True` for the calibrated
 regime). `[FACT]` A synthetic ground-truth study found **per-source level
 normalization** does the work, not pitch: stateless closest-mic collapses to ~0.5
 accuracy once the hot device's bleed wins, while normalizing each source against

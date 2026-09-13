@@ -63,10 +63,10 @@ uv run --all-packages --extra apple clear-record --help
 ```
 
 The release workflow ([`docs/releasing.md`](docs/releasing.md)) builds and
-publishes wheels and sdists for all five workspace members. The public install
-name is **`clear-record`**, a facade dist over the `cr-cli` implementation
-package (which provides no command of its own); the facade forwards through a
-small `clear_record` module — see ADR-0009. Once the first release is out:
+publishes a wheel and an sdist for the single workspace member. The install name
+is **`clear-record`**; its four internal layers (`core`, `engine`, `providers`,
+`cli`) are `clear_record` subpackages, not separate distributions — see
+ADR-0012. Once the first release is out:
 
 ```sh
 uvx clear-record --help              # run without installing
@@ -300,13 +300,13 @@ uv run --all-packages --extra apple clear-record --help
 ## Repository layout
 
 ```text
-packages/core         → cr-core       backend-agnostic domain model (no vendor/ML code)
-packages/engine       → cr-engine     audio I/O, cross-correlation alignment, reconcile (numpy)
-packages/providers    → cr-providers  per-vendor ASR adapters (apple / nvidia / amd)
-packages/cli          → cr-cli        the CLI implementation package (`cr_cli`), which provides no command
-packages/clear-record → clear-record  the public install name; a facade that forwards to cr-cli
-docs/architecture.md                  (spec + provenance, the primary doc)
-docs/adr/                             (decision records 0001–0011)
+packages/clear-record → dist clear-record, import clear_record
+  src/clear_record/core       backend-agnostic domain model (no vendor/ML code)
+  src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
+  src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
+  src/clear_record/cli        the CLI implementation and the `clear-record` command
+docs/architecture.md          (spec + provenance, the primary doc)
+docs/adr/                     (decision records 0001–0012)
 ```
 
 ## License

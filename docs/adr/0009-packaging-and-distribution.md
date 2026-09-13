@@ -125,3 +125,24 @@ Date: 2026-09-13
   re-uploading.
 - Resolves the review hooks in ADR-0004 and ADR-0007. The concrete dev/user
   deployment layout remains ADR-0007's subject.
+
+## Update (2026-09-13) — the published set is one dist
+
+Owner (2026-09-13, verbatim): *"I propose we hide all the `cr_*` layers behind
+the scene … I'm not sure I'd release all `cr_*` as different wheels"* — recorded
+in [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md). The five-dist
+Decision, facade shape, exact `==` pins and multi-publisher setup above are kept
+for the record; this Update supersedes them for the published set.
+
+- [DECISION] The published set is now **one** dist, `clear-record` (import
+  `clear_record`), with the former `cr-core` / `cr-engine` / `cr-providers` /
+  `cr-cli` layers as subpackages. See
+  [ADR-0012](0012-single-distribution.md).
+- [DECISION] The published wheel declares only **`numpy`/`soundfile`**; there are
+  no `cr-*` dependencies and no `[tool.uv.sources]`. The vendor-free boundary is
+  no longer the packaging fact it was ("`cr-core` has no deps"); it is enforced
+  by `packages/clear-record/tests/test_layering.py`.
+- [DESIGN] The lockstep bump, five pending publishers and multi-dist build are
+  now overbuilt for one dist. `scripts/bump-version.py` and the publish
+  workflows are left **working as-is** in this slice; reshaping them for a single
+  publisher is a follow-up slice.

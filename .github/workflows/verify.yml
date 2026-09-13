@@ -4,8 +4,8 @@ name: verify
 # platform and `subprocess`, so this is green on a plain Linux runner with no
 # GPU, no `whisper-cli` and no model weights.
 #
-# This is also the build-artifact path: after `just verify`, CI builds all five
-# dists and keeps them as a workflow artifact named with the manifest version,
+# This is also the build-artifact path: after `just verify`, CI builds the dist
+# and keeps it as a workflow artifact named with the manifest version,
 # `dist-<version>` (no "dev" label — an rc version ships through this path too).
 # Dev builds are never published — not to TestPyPI, not to PyPI. TestPyPI is a
 # manual release rehearsal (`publish-testpypi.yml`); PyPI is tag-triggered

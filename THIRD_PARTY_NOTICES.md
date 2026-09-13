@@ -15,7 +15,7 @@ for the license text shipped by each component.
 
 | Component | License |
 | --- | --- |
-| Code — `cr-core`, `cr-engine`, `cr-providers`, `cr-cli`, `clear-record` (this repo) | MIT |
+| Code — `clear-record` (this repo) | MIT |
 | Documentation and authored content/assets (none currently committed) | CC BY 4.0 |
 
 ## Python dependencies
@@ -25,8 +25,8 @@ taken from each package's metadata (`License` / `License-Expression`) in the
 resolved environment. They are installed from PyPI via `uv`, not vendored into
 this repository.
 
-> Build tooling: the workspace members declare `uv_build` in their
-> `[build-system]` tables. It is used only to build/install the distributions and
+> Build tooling: the workspace member declares `uv_build` in its
+> `[build-system]` table. It is used only to build/install the distribution and
 > is not part of the locked runtime/dev set below.
 
 ### Runtime dependencies (installed by default)

@@ -3,6 +3,8 @@
 Status: active
 Date: 2026-09-09
 
+- Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
+
 ## Context
 
 - [VOICE] Personal, work-unrelated OSS project; the owner wants it under MIT.

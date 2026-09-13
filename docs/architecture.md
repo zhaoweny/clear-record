@@ -90,7 +90,7 @@ audio ingest → normalization/VAD → ASR → diarization → alignment
             → searchable/archive output
 ```
 
-The CLI (and the `cr-core` `PipelineSpec`) exposes five stages that group that
+The CLI (and the core layer's `PipelineSpec`) exposes five stages that group that
 into a stable, user-facing surface:
 
 | Stage | CLI | Job |
@@ -101,10 +101,10 @@ into a stable, user-facing surface:
 | reconcile | `clear-record reconcile` | merge segments; speaker attribution |
 | export | `clear-record export` | write a searchable, archiveable artifact (links back to source) |
 
-[DESIGN] The `cr-core` package owns the *shape* of these stages (the
+[DESIGN] The `clear_record.core` layer owns the *shape* of these stages (the
 `PipelineSpec`); executing a stage against real audio and a real ASR backend is
-the job of a provider (`cr-providers`) wired in by the CLI (`cr-cli`). This
-keeps the domain model vendor-free (§5).
+the job of a provider (`clear_record.providers`) wired in by the CLI
+(`clear_record.cli`). This keeps the domain model vendor-free (§5).
 
 ---
 
@@ -166,10 +166,10 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 [DESIGN] Model:
 
 ```text
-          cr-core            (no vendor code)
+     clear_record.core      (no vendor code)
             │  Backend interface: available() / prepare() / transcribe()
             ▼
-       cr-providers
+   clear_record.providers
      ┌───────────┬───────────┬───────────┐
    apple       nvidia       amd
  Metal         CUDA         ROCm/Vulkan
@@ -178,7 +178,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
-  its runtime probe succeeds (see `cr_providers.base.Backend.available()`).
+  its runtime probe succeeds (see `clear_record.providers.base.Backend.available()`).
   `clear-record backends` lists what is available on the current machine.
 - All three **drive the system `whisper-cli`**, which links the system `ggml`
   and loads a backend plugin (`ggml-metal` on macOS via Homebrew `whisper-cpp`;
@@ -192,9 +192,9 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   `<cwd>/models`; the download is a **provisioning** step, not an execution
   dependency (once the model is on disk the pipeline needs no network), and
   offline, the actionable `hf download …` error is raised.
-- The vendor stacks are **not imported by `cr-core`**; the CLI adapter is driven
-  as a subprocess in `cr-providers`, so a plain dev/CI environment needs no GPU
-  framework.
+- The vendor stacks are **not imported by the core layer**; the CLI adapter is
+  driven as a subprocess in the providers layer, so a plain dev/CI environment
+  needs no GPU framework.
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
   every later stage + the ASR backend operate on canonical audio. This is also
@@ -203,7 +203,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   file becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
 - [DESIGN] The `whisper-cli` adapter reads millisecond `offsets` from its `-ojf`
-  JSON (`cr_providers.backends._whispercli_segments`).
+  JSON (`clear_record.providers.backends._whispercli_segments`).
   Note: cross-device clock sync is still **out of scope** (§7).
 - The reference/open hardware laboratory (owner's own, generic and personal):
 
@@ -275,14 +275,14 @@ evidence-backed scope decision (new ADR), not a retroactive import.
 Layout:
 
 ```text
-packages/core      → cr-core      backend-agnostic domain model — NO vendor/ML code
-packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
-packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
-packages/cli       → cr-cli       the CLI implementation (`cr-cli`); stages live in cr_cli.stages
-packages/clear-record → clear-record  the CLI's public install name; a facade over cr-cli
-docs/architecture.md               this document
-docs/adr/                          decision records 0001–0011
-docs/vox/voice-of-owner.md         owner voice
+packages/clear-record → clear-record  single published dist; import clear_record
+  src/clear_record/core       domain model — NO vendor/ML code
+  src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
+  src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
+  src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
+docs/architecture.md          this document
+docs/adr/                     decision records 0001–0012
+docs/vox/voice-of-owner.md    owner voice
 ```
 
 **Current status: runnable v0.1 pipeline.**
@@ -290,10 +290,10 @@ docs/vox/voice-of-owner.md         owner voice
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
   per-speaker channels; re-ingest is idempotent.
-- `align` → `cr_engine.align_sources`, windowed cross-correlation at 1 kHz
+- `align` → `clear_record.engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback.
-- `transcribe` → real ASR via `cr_providers`; **Apple/macOS (system
+- `transcribe` → real ASR via `clear_record.providers`; **Apple/macOS (system
   `whisper-cli` + `ggml-metal`) is hot-tested end-to-end on an Apple M4** (164
   segments, no wheel installed), with auto language detection and per-segment
   confidence; validated against a known-good 11 s reference (coverage 1.0,
@@ -311,7 +311,7 @@ docs/vox/voice-of-owner.md         owner voice
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
 - `attribute` → cross-talk-aware per-segment attribution by **relative,
-  gain-normalized source energy** (`cr_engine.attribute`), with an optional
+  gain-normalized source energy** (`clear_record.engine.attribute`), with an optional
   mixed/room reference as a presence gate (never a speaker itself). Each source is
   normalized against its **own** level; `--window-s` switches from one static
   whole-recording level to a **causal rolling window** (≈15 s default) that tracks
@@ -320,7 +320,7 @@ docs/vox/voice-of-owner.md         owner voice
   cue** (a well-calibrated F0 cue still lost accuracy on synthetic truth). `run
   --attribute-energy` opts in without changing the default `diarize` path, and
   the corrected speaker is preserved by `reconcile`. See `docs/test-corpus.md`.
-- `reconcile` → `cr_engine.reconcile`; shift by alignment, collapse overlaps,
+- `reconcile` → `clear_record.engine.reconcile`; shift by alignment, collapse overlaps,
   join only same-speaker runs, attribute speaker per source or diarizer.
 - `export` → Markdown / SRT / VTT / JSON.
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional

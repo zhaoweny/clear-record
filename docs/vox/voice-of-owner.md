@@ -146,3 +146,26 @@ this repository. See `docs/architecture.md` §7.
      `--pre`, an explicit pin, or no stable version satisfying the range. See
      [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md)
      (`## Update (2026-09-13)`) and [`docs/releasing.md`](../releasing.md).
+
+## Single published distribution (2026-09-13)
+
+- Owner proposal, verbatim: *"I propose we hide all the `cr_*` layers behind
+  the scene … I'm not sure I'd release all `cr_*` as different wheels"*. This
+  is an **owner proposal**, hedged ("I propose…", "I'm not sure I'd…"), not a
+  firm directive. The four `cr_*` layers therefore collapse into **one published
+  distribution**, `clear-record`, with the layers kept as subpackages
+  (`clear_record.{core,engine,providers,cli}`). `uv_build` ships one import
+  package per dist, so keeping four top-level modules would mean four wheels
+  (ADR-0012).
+- The mechanics below are agent-authored `[DESIGN]` framing, **not** owner
+  quotes:
+  1. [DESIGN] The vendor-free boundary moves from `cr-core`'s empty dependency
+     list (a packaging fact) to
+     `packages/clear-record/tests/test_layering.py`, an explicit stdlib-`ast`
+     import-boundary test.
+  2. [DESIGN] The workspace is kept (one member) so a future GUI/MCP member is
+     a new `packages/*` member, not a reparenting; the root's aggregate extras
+     now reference `clear-record[apple|nvidia|amd|all]`.
+  3. [DESIGN] `scripts/bump-version.py` and the publish workflows are left
+     working as-is; the release machinery is simplified for one publisher in a
+     follow-up slice. See [`docs/adr/0012-single-distribution.md`](../adr/0012-single-distribution.md).

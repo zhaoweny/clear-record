@@ -42,8 +42,9 @@ may also change or document behaviour without a deprecation period.
 
 **In scope** — this repository's own code and packaging:
 
-- the `clear-record` CLI command (implemented by the `cr-cli` dist);
-- the `cr-core`, `cr-engine` and `cr-providers` libraries;
+- the `clear-record` CLI command (the `clear_record.cli` layer);
+- the `clear_record.core`, `clear_record.engine` and `clear_record.providers`
+  layers of the single `clear-record` dist;
 - the build, test and CI configuration in this repository;
 - unexpected behaviour triggered by processing untrusted local input (for
   example a crafted audio file, path or glossary) that escapes what the

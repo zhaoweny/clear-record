@@ -43,10 +43,12 @@ just format-check   # ruff format --check
   source code, prompts/specs, partner names, internal docs or credentials, and
   don't commit private recordings. Recordings, derived transcripts and model
   weights are environment-local data — gitignored, never committed (ADR-0006).
-- **Keep the core vendor-free.** `cr-core` must never import CUDA, ROCm,
-  Metal/Core ML, torch/tensorflow or a specific ASR library; `cr-engine` may use
-  numpy/soundfile but no vendor/ASR code. Vendor stacks live in `cr-providers`,
-  behind the `Backend` interface.
+- **Keep the core vendor-free.** `clear_record.core` must never import CUDA,
+  ROCm, Metal/Core ML, torch/tensorflow or a specific ASR library;
+  `clear_record.engine` may use numpy/soundfile but no vendor/ASR code. Vendor
+  stacks live in `clear_record.providers`, behind the `Backend` interface. This
+  layering and the vendor-free core are enforced by
+  `packages/clear-record/tests/test_layering.py` (ADR-0012).
 - **Preserve provenance.** Label statements `FACT` / `VOICE` / `REQ` / `DESIGN`
   / `SUGGESTION` / `OPEN`. Do not promote a suggestion or an open question to a
   requirement without owner evidence.
@@ -61,12 +63,13 @@ spells this out.
 
 ## Tests
 
-Tests live next to each package (`packages/*/tests/`) and run with pytest:
+Tests live under `packages/clear-record/tests/` (organized by layer) and run with
+pytest:
 
 ```sh
-just test                                          # everything
-uv run --all-packages pytest packages/providers    # one package
-uv run --all-packages pytest -k apple              # one pattern
+just test                                                             # everything
+uv run --all-packages pytest packages/clear-record/tests/providers    # one layer
+uv run --all-packages pytest -k apple                                 # one pattern
 ```
 
 Add a test for every behaviour change. Hardware-dependent behaviour must be

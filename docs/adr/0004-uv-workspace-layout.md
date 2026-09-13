@@ -74,3 +74,29 @@ Date: 2026-09-09
 - Any future member (e.g. a GUI, an MCP server, a `cr-ingest` recorder) is a
   *new* member, not a reparenting.
 - Resolved by [ADR-0009](0009-packaging-and-distribution.md) (2026-09-13).
+
+## Update (2026-09-13) — the four `cr_*` members collapse into one dist
+
+Owner (2026-09-13, verbatim): *"I propose we hide all the `cr_*` layers behind
+the scene … I'm not sure I'd release all `cr_*` as different wheels"* — recorded
+in [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md). The five-member
+Decision and Rationale above are kept for the record; this Update supersedes
+them for the workspace layout.
+
+- [DECISION] The four library/CLI members become **subpackages of one published
+  dist**, `clear-record` → `clear_record.{core,engine,providers,cli}`. The
+  workspace is kept (`members = ["packages/*"]` now resolves to one member), so
+  a future GUI/MCP member is still a new member, not a reparenting. See
+  [ADR-0012](0012-single-distribution.md).
+- [DECISION] The dependency edges are unchanged in substance —
+  `engine → core`, `providers → core`, `cli → {core, engine, providers}` — but
+  are now subpackage imports enforced by
+  `packages/clear-record/tests/test_layering.py` rather than by
+  member-to-member packaging. `core` still declares/uses no third-party
+  dependency.
+- [DECISION] The `clear-record` **facade member is gone**: the single dist owns
+  the `clear-record` command (`clear_record.cli:main`) and the top-level
+  `clear_record` module stays light.
+- [DESIGN] `[tool.pytest.ini_options] testpaths` now points at the one
+  `packages/clear-record/tests/`; the root's aggregate extras reference
+  `clear-record[apple|nvidia|amd|all]`.

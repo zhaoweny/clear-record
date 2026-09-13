@@ -26,10 +26,12 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
   **never commit user recordings, derived transcripts, or downloaded model
   weights** — they are environment-local data (ADR-0006). Proposed changes that
   would commit such material are rejected and escalated.
-- **Keep the core vendor-free.** `cr-core` must never import CUDA, ROCm,
-  Metal/CoreML, torch/tensorflow or a specific ASR library. `cr-engine` may use
-  numpy/soundfile but no vendor/ASR code. Vendor things go in `cr-providers`,
-  behind the `Backend` interface.
+- **Keep the core vendor-free.** `clear_record.core` must never import CUDA,
+  ROCm, Metal/CoreML, torch/tensorflow or a specific ASR library.
+  `clear_record.engine` may use numpy/soundfile but no vendor/ASR code. Vendor
+  things go in `clear_record.providers`, behind the `Backend` interface. The
+  layering and the vendor-free core are enforced by
+  `packages/clear-record/tests/test_layering.py` (ADR-0012).
 - **Preserve provenance.** Label statements FACT / VOICE / REQ / DESIGN /
   SUGGESTION / OPEN. Do not promote a suggestion or an open question to a
   requirement without owner evidence.

@@ -1,30 +1,25 @@
 # Releasing clear-record
 
-The five workspace members are published as five PyPI distributions in lockstep:
+The workspace publishes **one** PyPI distribution, `clear-record`:
 
 | Distribution | Import | Contents |
 |---|---|---|
-| `cr-core` | `cr_core` | backend-agnostic domain model (no third-party deps) |
-| `cr-engine` | `cr_engine` | audio I/O, alignment, reconcile (numpy, soundfile) |
-| `cr-providers` | `cr_providers` | per-vendor ASR adapters (optional extras) |
-| `cr-cli` | `cr_cli` | CLI implementation package; declares no console script |
-| `clear-record` | `clear_record` | facade over `cr-cli`; the public install name (a `clear_record` module) |
+| `clear-record` | `clear_record` | the whole tool: `clear_record.{core,engine,providers,cli}` layers as subpackages |
 
-Each release moves all six `version =` fields **together** — the virtual root
-plus the five members — and every intra-project dependency is exact-pinned
-(`cr-engine==X.Y.Z`), so a half-released set cannot resolve. There are **no PyPI
-tokens or repository secrets**: publishing uses OIDC trusted publishing
+Each release moves both `version =` fields **together** — the virtual root and
+the single member — and there are no intra-project dependencies left to pin
+(ADR-0012). There are **no PyPI tokens or repository secrets**: publishing uses
+OIDC trusted publishing
 ([`docs/adr/0009-packaging-and-distribution.md`](adr/0009-packaging-and-distribution.md));
 the train and versioning are
 [`docs/adr/0011-versioning-and-release-train.md`](adr/0011-versioning-and-release-train.md).
 
-`clear-record` is a **facade**: it ships a small `clear_record` module
-(`clear_record.main` re-exports `cr_cli.cli.main`) and is the **sole owner** of
-the `clear-record` console script, so `uvx clear-record` resolves and runs it
-without the dependency-provided-command warning. `cr-cli` is the CLI
-implementation package and declares **no console script**, so `uvx cr-cli`
-provides no command by design; the public install name is `clear-record`. The
-facade depends on `cr-cli==X.Y.Z`, so the two belong to the same release.
+`clear-record` is the **sole owner** of the `clear-record` console script
+(`clear_record.cli:main`), so `uvx clear-record` resolves and runs it without the
+dependency-provided-command warning. The four former `cr-*` members are now
+internal `clear_record` subpackages (ADR-0012); the release machinery that used
+to coordinate them is being simplified in a follow-up slice, so the workflow
+files still build the workspace and smoke-install the command.
 
 ## Three publishing tiers
 
@@ -60,10 +55,9 @@ through this path as `dist-0.1.1rc1` too), so any CI run's build is downloadable
 and identifiable. Nothing on this path uploads: `vX.Y.Z.devN` is **not** a
 publishing trigger anywhere.
 
-## One-time setup (per index, per project)
+## One-time setup (per index)
 
-Do this once for each of `cr-core`, `cr-engine`, `cr-providers`, `cr-cli`, and
-`clear-record`, before its first upload on that index.
+Do this once for **`clear-record`**, before its first upload on that index.
 
 ### PyPI pending publisher
 
@@ -76,13 +70,13 @@ publisher**:
 
    | Field | Value |
    |---|---|
-   | PyPI project name | `cr-core` (then `cr-engine`, `cr-providers`, `cr-cli`, `clear-record`) |
+   | PyPI project name | `clear-record` |
    | Owner | `zhaoweny` |
    | Repository name | `clear-record` |
    | Workflow name | `publish.yml` |
    | Environment name | `pypi` |
 
-3. Repeat for the other four projects.
+3. That is the only project to claim on this index.
 
 ### TestPyPI pending publisher
 
@@ -91,7 +85,7 @@ same three steps at <https://test.pypi.org> with the rehearsal workflow identity
 
 | Field | Value |
 |---|---|
-| PyPI project name | `cr-core` (then `cr-engine`, `cr-providers`, `cr-cli`, `clear-record`) |
+| PyPI project name | `clear-record` |
 | Owner | `zhaoweny` |
 | Repository name | `clear-record` |
 | Workflow name | `publish-testpypi.yml` |
@@ -105,19 +99,19 @@ so every upload waits for a human approval. The PyPI upload uses `publish.yml`
 + the `pypi` environment; the TestPyPI rehearsal uses `publish-testpypi.yml` +
 the `testpypi` environment.
 
-> The CLI dist name is settled: `cr-cli` is the implementation package and
-> `clear-record` is the public install name (a facade over `cr-cli`; ADR-0009,
-> owner direction 2026-09-13). Claim **both** pending publishers on each index.
+> The package name is settled: `clear-record` is the single published dist
+> (ADR-0012), and its four layers are internal subpackages. Claim one pending
+> publisher per index.
 
 ## Versioning: one dev series on `main`
 
-The six manifests carry one **static** version (ADR-0011) — `uv_build` forbids
-`dynamic = ["version"]`, and `uv version --bump dev` does not rewrite the
-sibling `==` pins, so a script owns the bump. `scripts/bump-version.py` (wrapped
-by `just`) replaces the exact old literal in all six manifests at once:
+The root and the single member carry one **static** version (ADR-0011) —
+`uv_build` forbids `dynamic = ["version"]`, so a script owns the bump.
+`scripts/bump-version.py` (wrapped by `just`) replaces the exact old literal in
+both manifests at once:
 
 ```sh
-just version                 # print the current version (aborts if the six disagree)
+just version                 # print the current version (aborts if the two disagree)
 just bump-dev                # 0.1.1.dev0 -> 0.1.1.dev1 (a new dev series)
 just bump-rc                 # 0.1.1.dev0 or 0.1.1 -> 0.1.1rc1; 0.1.1rcN -> 0.1.1rc{N+1}
 just set-version 0.1.1       # drop the suffix (stable release)
@@ -177,23 +171,23 @@ can never be reused; on TestPyPI it is only a rehearsal). TestPyPI may also be
    commit — or `gh workflow run publish-testpypi.yml --ref <branch>`), then
    approve the `testpypi` environment when prompted.
 
-4. Inspect all five projects on TestPyPI at the just-published version:
-   <https://test.pypi.org/project/cr-core/> (then `cr-engine`, `cr-providers`,
-   `cr-cli`, `clear-record`). Each should show a **wheel and an sdist** with the
-   expected metadata (exact `==` sibling pins, bundled license files).
+4. Inspect `clear-record` on TestPyPI at the just-published version:
+   <https://test.pypi.org/project/clear-record/>. It should show a **wheel and an
+   sdist** with the expected metadata (bundled license file, no `cr-*`
+   requirements).
 
 5. Run the external resolver smoke below against the rehearsal (adjust the pins
    to the version you published).
 
 ### External resolver smoke (TestPyPI)
 
-Prove a fresh environment can resolve and run the published graph. TestPyPI
-hosts only the five dists, so it must be an **explicit** index (third-party
-dependencies keep coming from PyPI):
+Prove a fresh environment can resolve and run the published distribution.
+TestPyPI hosts only `clear-record`, so it must be an **explicit** index
+(third-party dependencies keep coming from PyPI):
 
 ```sh
-# A disposable uv project. TestPyPI is separate from PyPI, so the five dists
-# are pinned to an explicit TestPyPI index; numpy/soundfile and friends resolve
+# A disposable uv project. TestPyPI is separate from PyPI, so the dist is
+# pinned to an explicit TestPyPI index; numpy/soundfile and friends resolve
 # from PyPI as usual.
 mkdir -p /tmp/cr-testpypi-smoke && cd /tmp/cr-testpypi-smoke
 cat > pyproject.toml <<'TOML'
@@ -203,10 +197,6 @@ version = "0"
 requires-python = ">=3.12"
 dependencies = [
   "clear-record==0.1.1",
-  "cr-cli==0.1.1",
-  "cr-core==0.1.1",
-  "cr-engine==0.1.1",
-  "cr-providers==0.1.1",
 ]
 
 [tool.uv]
@@ -219,21 +209,17 @@ explicit = true
 
 [tool.uv.sources]
 clear-record = { index = "testpypi" }
-cr-cli = { index = "testpypi" }
-cr-core = { index = "testpypi" }
-cr-engine = { index = "testpypi" }
-cr-providers = { index = "testpypi" }
 TOML
 
 uv sync
 uv run clear-record --help
 uv run clear-record backends
-uv run python -c "import cr_core, cr_engine, cr_providers, cr_cli, clear_record"
+uv run python -c "import clear_record, clear_record.core, clear_record.engine, clear_record.providers, clear_record.cli"
 ```
 
-All three checks must succeed. `clear-record --help` proves the console
-script; `backends` exercises a real command; the import check proves all five
-modules load. Delete `/tmp/cr-testpypi-smoke` afterward.
+All three checks must succeed. `clear-record --help` proves the console script;
+`backends` exercises a real command; the import check proves every layer loads.
+Delete `/tmp/cr-testpypi-smoke` afterward.
 
 ## Release loops
 
@@ -254,7 +240,7 @@ even via a manual dispatch. A PyPI pre-release is **opt-in for installers**
 
 3. Create the matching **GitHub Release**, marked as a **pre-release**.
 
-4. `publish.yml` builds and publishes all five members to **PyPI** as a PEP 440
+4. `publish.yml` builds and publishes the single `clear-record` dist to **PyPI** as a PEP 440
    pre-release. Approve the `pypi` environment when prompted.
 
 5. To advance the candidate, `just bump-rc` (for example `rc1` → `rc2`), relock,
@@ -272,40 +258,38 @@ even via a manual dispatch. A PyPI pre-release is **opt-in for installers**
 
 3. Create the matching **GitHub Release**.
 
-4. `publish.yml` builds and publishes all five members to **PyPI**. Approve the
+4. `publish.yml` builds and publishes the single `clear-record` dist to **PyPI**. Approve the
    `pypi` environment when prompted.
 
 Both publishing workflows' `build` jobs run `just verify` + `just build`, then
-smoke-install the just-built facade into a clean venv and run
+smoke-install the just-built dist into a clean venv and run
 `clear-record --help`. `just build` passes `--no-sources`, so the published
-graph is proven to resolve without `tool.uv.sources`. Every wheel and sdist
-bundles the MIT `LICENSE` (`license-files = ["LICENSE"]`).
+graph is proven to resolve without `tool.uv.sources`. The wheel and sdist bundle
+the MIT `LICENSE` (`license-files = ["LICENSE"]`).
 
 ### Sanity-check the built metadata
 
 The release commit is on `main`; the tag points at it. After a build you can
-read the pins back locally:
+read the wheel back locally:
 
 ```sh
 just build
 version="$(just version)"
-unzip -p dist/cr_cli-${version}-py3-none-any.whl '*/METADATA' | grep Requires-Dist
+unzip -p dist/clear_record-${version}-py3-none-any.whl '*/METADATA' | grep -E 'Requires-Dist|Provides-Extra|License-File'
 ```
 
-You should see `cr-core==X.Y.Z`, `cr-engine==X.Y.Z`, `cr-providers==X.Y.Z`.
-
-The facade wheel should show the `cr-cli` pin, the `clear_record` module, the
-console script, and the bundled license:
+You should see `Requires-Dist: numpy>=2.0`, `Requires-Dist: soundfile>=0.12`,
+the four backend extras (`Provides-Extra`) and `License-File: LICENSE` — and
+**no `cr-*` requirement**. The wheel also contains the four layers and the
+bundled license, and the console script targets the CLI layer:
 
 ```sh
-unzip -l dist/clear_record-${version}-py3-none-any.whl | grep -E 'clear_record/__init__.py|licenses/LICENSE'
-unzip -p dist/clear_record-${version}-py3-none-any.whl '*/METADATA' | grep -E 'Requires-Dist|Provides-Extra|License-File'
+unzip -l dist/clear_record-${version}-py3-none-any.whl | grep -E 'clear_record/(core|engine|providers|cli)/|licenses/LICENSE'
 unzip -p dist/clear_record-${version}-py3-none-any.whl '*/entry_points.txt'
 ```
 
-You should see `clear_record/__init__.py`, `dist-info/licenses/LICENSE`,
-`Requires-Dist: cr-cli==X.Y.Z`, the backend extras, `License-File: LICENSE`, and
-`clear-record = clear_record:main`.
+You should see the `clear_record/{core,engine,providers,cli}` packages,
+`dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli:main`.
 
 ## The release train is lazy
 

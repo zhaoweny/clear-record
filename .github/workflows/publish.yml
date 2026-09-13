@@ -1,13 +1,13 @@
 name: publish
 
-# Publish the five workspace dists (cr-core, cr-engine, cr-providers, cr-cli,
-# clear-record) to PyPI on a release tag. PyPI receives stable releases
-# (`vX.Y.Z`) and release candidates (`vX.Y.ZrcN`). A candidate is a PEP 440
-# pre-release, so installers only pick it up when they opt in: `pip`/`uv` select
-# it only with `--pre`, an explicit pin, or when no stable version satisfies the
-# range. Dev builds (`vX.Y.Z.devN`) are never published — they are CI workflow
-# artifacts from `verify.yml`. The tag filter below excludes dev tags, and the
-# publish job also refuses a manifest version carrying `.devN`.
+# Publish the single `clear-record` dist to PyPI on a release tag. PyPI
+# receives stable releases (`vX.Y.Z`) and release candidates (`vX.Y.ZrcN`). A
+# candidate is a PEP 440 pre-release, so installers only pick it up when they
+# opt in: `pip`/`uv` select it only with `--pre`, an explicit pin, or when no
+# stable version satisfies the range. Dev builds (`vX.Y.Z.devN`) are never
+# published — they are CI workflow artifacts from `verify.yml`. The tag filter
+# below excludes dev tags, and the publish job also refuses a manifest version
+# carrying `.devN`.
 #
 # The release commit is qualified first by a manual TestPyPI rehearsal
 # (`publish-testpypi.yml`); see docs/releasing.md.
@@ -18,7 +18,7 @@ name: publish
 #       publish job requests a short-lived OIDC token from GitHub via
 #       `id-token: write`, scoped to the `pypi` environment; PyPI verifies the
 #       workflow identity instead.
-#   (b) Each PyPI project needs a one-time pending publisher configured by hand
+#   (b) The PyPI project needs a one-time pending publisher configured by hand
 #       (owner `zhaoweny`, repo `clear-record`, workflow `publish.yml`,
 #       environment `pypi`). See docs/releasing.md.
 #   (c) The `pypi` GitHub environment is the deployment gate: require a reviewer

@@ -35,7 +35,7 @@ subscription.
 |---|---|
 | Architecture + provenance (the primary doc) | `docs/architecture.md` |
 | Owner voice (what the owner actually wants) | `docs/vox/voice-of-owner.md` |
-| Decision records (0001–0011) | `docs/adr/` |
+| Decision records (0001–0012) | `docs/adr/` |
 | Agent workflow / landing geometry | `AGENTS.md`, `docs/agents/git-worktree.toml` |
 | Issue tracker + triage | `docs/agents/` |
 
@@ -52,11 +52,11 @@ without evidence. The owner's authoritative words live in
 
 **Runnable v0.1 pipeline.** The repo now does real work end-to-end:
 
-- uv workspace (`cr-core` domain · `cr-engine` audio/align/reconcile ·
-  `cr-providers` ASR adapters · `cr-cli` the CLI implementation package ·
-  `clear-record` the public install name — a facade dist that owns the command
-  and forwards to `cr-cli`), MIT license, provenance labeling, and a green
-  `just verify` gate.
+- uv workspace publishing a single **`clear-record`** dist whose internal layers
+  are `clear_record.core` (domain) · `clear_record.engine` (audio/align/reconcile) ·
+  `clear_record.providers` (ASR adapters) · `clear_record.cli` (the CLI and the
+  `clear-record` command) — one install name, layers hidden behind it (ADR-0012),
+  MIT license, provenance labeling, and a green `just verify` gate.
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
   files per channel**; `align` estimates source offsets via windowed
   cross-correlation; `transcribe` runs a real local ASR backend (Apple/macOS

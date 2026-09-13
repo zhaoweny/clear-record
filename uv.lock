@@ -6,10 +6,6 @@ requires-python = ">=3.12"
 members = [
     "clear-record",
     "clear-record-workspace",
-    "cr-cli",
-    "cr-core",
-    "cr-engine",
-    "cr-providers",
 ]
 
 [[package]]
@@ -102,11 +98,15 @@ name = "clear-record"
 version = "0.1.1.dev0"
 source = { editable = "packages/clear-record" }
 dependencies = [
-    { name = "cr-cli" },
+    { name = "numpy" },
+    { name = "soundfile" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cr-cli", editable = "packages/cli" }]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "soundfile", specifier = ">=0.12" },
+]
 provides-extras = ["apple", "nvidia", "amd", "all"]
 
 [[package]]
@@ -116,16 +116,16 @@ source = { virtual = "." }
 
 [package.optional-dependencies]
 all = [
-    { name = "cr-providers" },
+    { name = "clear-record" },
 ]
 amd = [
-    { name = "cr-providers" },
+    { name = "clear-record" },
 ]
 apple = [
-    { name = "cr-providers" },
+    { name = "clear-record" },
 ]
 nvidia = [
-    { name = "cr-providers" },
+    { name = "clear-record" },
 ]
 
 [package.dev-dependencies]
@@ -137,10 +137,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cr-providers", extras = ["all"], marker = "extra == 'all'", editable = "packages/providers" },
-    { name = "cr-providers", extras = ["amd"], marker = "extra == 'amd'", editable = "packages/providers" },
-    { name = "cr-providers", extras = ["apple"], marker = "extra == 'apple'", editable = "packages/providers" },
-    { name = "cr-providers", extras = ["nvidia"], marker = "extra == 'nvidia'", editable = "packages/providers" },
+    { name = "clear-record", extras = ["all"], marker = "extra == 'all'", editable = "packages/clear-record" },
+    { name = "clear-record", extras = ["amd"], marker = "extra == 'amd'", editable = "packages/clear-record" },
+    { name = "clear-record", extras = ["apple"], marker = "extra == 'apple'", editable = "packages/clear-record" },
+    { name = "clear-record", extras = ["nvidia"], marker = "extra == 'nvidia'", editable = "packages/clear-record" },
 ]
 provides-extras = ["apple", "nvidia", "amd", "all"]
 
@@ -159,57 +159,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
 ]
-
-[[package]]
-name = "cr-cli"
-version = "0.1.1.dev0"
-source = { editable = "packages/cli" }
-dependencies = [
-    { name = "cr-core" },
-    { name = "cr-engine" },
-    { name = "cr-providers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cr-core", editable = "packages/core" },
-    { name = "cr-engine", editable = "packages/engine" },
-    { name = "cr-providers", editable = "packages/providers" },
-]
-
-[[package]]
-name = "cr-core"
-version = "0.1.1.dev0"
-source = { editable = "packages/core" }
-
-[[package]]
-name = "cr-engine"
-version = "0.1.1.dev0"
-source = { editable = "packages/engine" }
-dependencies = [
-    { name = "cr-core" },
-    { name = "numpy" },
-    { name = "soundfile" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cr-core", editable = "packages/core" },
-    { name = "numpy", specifier = ">=2.0" },
-    { name = "soundfile", specifier = ">=0.12" },
-]
-
-[[package]]
-name = "cr-providers"
-version = "0.1.1.dev0"
-source = { editable = "packages/providers" }
-dependencies = [
-    { name = "cr-core" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "cr-core", editable = "packages/core" }]
-provides-extras = ["apple", "nvidia", "amd", "all"]
 
 [[package]]
 name = "iniconfig"

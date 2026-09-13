@@ -1,20 +1,25 @@
 # clear-record-workspace — uv workspace root.
 #
-# Workspace members under packages/:
-#   packages/core         -> dist "cr-core",      import "cr_core"      (backend-agnostic application core)
-#   packages/engine       -> dist "cr-engine",    import "cr_engine"    (audio I/O, alignment, reconcile)
-#   packages/providers    -> dist "cr-providers", import "cr_providers" (per-vendor ASR backend adapters)
-#   packages/cli          -> dist "cr-cli",       import "cr_cli"       (the `clear-record` CLI implementation)
-#   packages/clear-record -> dist "clear-record", import "clear_record" (facade / public command; forwards to cr-cli)
+# One workspace member is published:
+#   packages/clear-record -> dist "clear-record", import "clear_record"
+#     with four internal layers as subpackages:
+#       clear_record.core       backend-agnostic application core (no third-party deps)
+#       clear_record.engine     audio I/O, alignment, reconcile (numpy, soundfile)
+#       clear_record.providers  per-vendor ASR backend adapters
+#       clear_record.cli        the `clear-record` command implementation
+#
+# The workspace is kept (rather than flattened to a root package) so a future
+# GUI/MCP member is a new `packages/*` member, not a reparenting.
 #
 # See docs/adr/0004-uv-workspace-layout.md,
-# docs/adr/0009-packaging-and-distribution.md and
-# docs/adr/0010-build-backend-uv-build.md.
+# docs/adr/0009-packaging-and-distribution.md,
+# docs/adr/0010-build-backend-uv-build.md and
+# docs/adr/0012-single-distribution.md.
 #
 # The root is a virtual project (never built/published); only the workspace
 # members are real packages. Its name must differ from every member, so it is
 # `clear-record-workspace` — the published `clear-record` name belongs to the
-# facade dist in packages/clear-record/.
+# member in packages/clear-record/.
 
 [project]
 name = "clear-record-workspace"
@@ -35,12 +40,11 @@ package = false
 [tool.uv.workspace]
 members = ["packages/*"]
 
-# The root references workspace members through the convenience extras above, so
-# pin those member dependencies to the in-workspace versions.
+# The root's aggregate extras reference the single member, so pin that
+# dependency to the in-workspace version. (The member itself has no
+# `tool.uv.sources` — it depends only on numpy/soundfile from PyPI.)
 [tool.uv.sources]
-cr-core = { workspace = true }
-cr-engine = { workspace = true }
-cr-providers = { workspace = true }
+clear-record = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -49,18 +53,18 @@ dev = [
     "trove-classifiers>=2026.6.1",
 ]
 
-# Convenience extras that mirror the cr-providers backend extras, so a single
+# Convenience extras that mirror the single dist's backend extras, so a single
 # `--extra <backend>` switch stays valid in both `uv sync` and `uv run`. These
 # mirror ADR-0005.
 #
 # `apple`, `nvidia` and `amd` all intentionally resolve no Python deps: every
 # path uses the system `whisper-cli` + a ggml GPU plugin, so the backend extras
-# are no-op markers (see cr-providers/pyproject.toml).
+# are no-op markers (see packages/clear-record/pyproject.toml).
 [project.optional-dependencies]
-apple = ["cr-providers[apple]==0.1.1.dev0"]
-nvidia = ["cr-providers[nvidia]==0.1.1.dev0"]
-amd = ["cr-providers[amd]==0.1.1.dev0"]
-all = ["cr-providers[all]==0.1.1.dev0"]
+apple = ["clear-record[apple]==0.1.1.dev0"]
+nvidia = ["clear-record[nvidia]==0.1.1.dev0"]
+amd = ["clear-record[amd]==0.1.1.dev0"]
+all = ["clear-record[all]==0.1.1.dev0"]
 
 [tool.ruff]
 target-version = "py312"
@@ -71,8 +75,5 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = [
-    "packages/core/tests",
-    "packages/engine/tests",
-    "packages/providers/tests",
-    "packages/cli/tests",
+    "packages/clear-record/tests",
 ]

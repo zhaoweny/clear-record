@@ -5,12 +5,27 @@ build-backend = "uv_build"
 [project]
 name = "clear-record"
 version = "0.1.1.dev0"
-description = "Public install name for the `clear-record` CLI (a facade over cr-cli)."
+description = "Local-first multitrack transcription and record reconstruction: from many recordings to one clear record."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "zhaoweny", email = "zhaoweny@users.noreply.github.com" }]
-keywords = ["cli", "transcription", "audio", "speech-to-text", "asr"]
+keywords = [
+    "cli",
+    "transcription",
+    "audio",
+    "speech-to-text",
+    "asr",
+    "pipeline",
+    "reconciliation",
+    "signal-processing",
+    "alignment",
+    "whisper",
+    "cuda",
+    "rocm",
+    "metal",
+    "backend",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -19,19 +34,28 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
     "Environment :: Console",
     "Topic :: Utilities",
 ]
 requires-python = ">=3.12"
-dependencies = ["cr-cli==0.1.1.dev0"]
+dependencies = [
+    "numpy>=2.0",
+    "soundfile>=0.12",
+]
 
 [project.urls]
 Homepage = "https://github.com/zhaoweny/clear-record"
 Repository = "https://github.com/zhaoweny/clear-record"
 Issues = "https://github.com/zhaoweny/clear-record/issues"
 
-# Backend extras are no-op markers, mirroring cr-providers and the workspace
-# root (every path uses the system `whisper-cli` + a ggml plugin). See ADR-0005.
+# Backend extras are no-op markers (every path uses the system `whisper-cli` +
+# a ggml plugin); they exist so `--extra <backend>` stays a valid switch. See
+# ADR-0005.
 [project.optional-dependencies]
 apple = []
 nvidia = []
@@ -39,7 +63,4 @@ amd = []
 all = []
 
 [project.scripts]
-clear-record = "clear_record:main"
-
-[tool.uv.sources]
-cr-cli = { workspace = true }
+clear-record = "clear_record.cli:main"

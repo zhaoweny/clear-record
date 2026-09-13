@@ -1,6 +1,6 @@
 # ADR-0011 — Versioning and the release train
 
-Status: active (amended by the 2026-09-13 Update below)
+Status: active (amended by the 2026-09-13 Updates below)
 Date: 2026-09-13
 
 ## Context
@@ -19,8 +19,8 @@ Date: 2026-09-13
   **six** manifests — the root plus `cr-core`, `cr-engine`, `cr-providers`,
   `cr-cli`, `clear-record` — and their pins together.
 - [FACT] PyPI rejects **local versions** (`0.1.1.dev0+g<sha>`); a version that
-  carries a git hash cannot be uploaded. `X.Y.Z.devN` is the furthest a
-  publishable snapshot can go.
+  carries a git hash cannot be uploaded. The `.devN` form is a CI-artifact
+  marker and is never published; the publishable pre-release is `X.Y.ZrcN`.
 - [FACT] The intra-project dependencies are exact-pinned and released in
   lockstep (ADR-0009), so a half-released set cannot resolve; the version is a
   release-train property, not a per-package one.
@@ -91,8 +91,8 @@ Date: 2026-09-13
 - **`bump-version.py` is the version source of truth.** It discovers the root
   plus `packages/*/pyproject.toml`, so a new workspace member is picked up by
   the lockstep check with no list edit.
-- Revisit when 0.2 development starts (cut `releases/v0.1.x`) or if the
-  publishable-version shape ever needs more than `X.Y.Z[.devN]`.
+- Revisit when 0.2 development starts (cut `releases/v0.1.x`) or if the version
+  shapes the manifests carry ever need more than `X.Y.Z[{a|b|rc}N][.devN]`.
 
 ## Update (2026-09-13) — dev builds are CI artifacts; TestPyPI is a manual rehearsal
 
@@ -100,9 +100,11 @@ Owner (2026-09-13, verbatim): *"dev builds are not going to test.pypi.org, dev
 builds (if any) can become a artifact of automated pipeline"*. This
 **supersedes** the snapshot-to-TestPyPI decision in the Decision section and the
 "TestPyPI first. Snapshots are pre-releases…" bullet in the Rationale section;
-that text is kept for the record. The bullets below are agent-authored framing,
-not owner quotes: bullet 1 records the owner's decision, bullets 2–4 are
-`[DESIGN]` choices for implementing it.
+that text is kept for the record. The first four bullets below are
+agent-authored framing, not owner quotes: bullet 1 records the owner's decision,
+bullets 2–4 are `[DESIGN]` choices for implementing it. (The release-candidate
+policy added later the same day is a separate Update below, so this section
+stays readable as the dev-build record.)
 
 - [DECISION] **Dev builds never publish anywhere.** Every `push`/`pull_request`
   build is uploaded as a CI workflow artifact by `verify.yml` (named with the
@@ -115,20 +117,51 @@ not owner quotes: bullet 1 records the owner's decision, bullets 2–4 are
   `X.Y.Z` on PyPI.
 - [DESIGN] TestPyPI keeps its **own** pending publishers, separate from
   PyPI's: workflow `publish-testpypi.yml`, environment `testpypi`.
-- [DESIGN] **PyPI stays release-tag only.** `vX.Y.Z` triggers `publish.yml`
-  with the unchanged filters (`"v[0-9]*"` + `"!v[0-9]*.dev*"`) and the
-  tag↔manifest guard. The `vX.Y.Z.devN` form is no longer a publishing trigger
-  anywhere; `main` may still carry `X.Y.Z.devN` as the work-in-progress version.
+- [DESIGN] **PyPI stays tag-triggered.** `vX.Y.Z` triggers `publish.yml` with
+  the unchanged filters (`"v[0-9]*"` + `"!v[0-9]*.dev*"`) and the tag↔manifest
+  guard. The `vX.Y.Z.devN` form is no longer a publishing trigger anywhere;
+  `main` may still carry `X.Y.Z.devN` as the work-in-progress version.
 
-The three tiers are therefore:
+## Update (2026-09-13) — release candidates publish to PyPI
 
-| Tier | Trigger | Where it goes |
-| --- | --- | --- |
-| Dev build | push / PR | **CI workflow artifact only** — never published |
-| Release rehearsal | **manual** dispatch, on the exact release commit | **TestPyPI** |
-| Release | `vX.Y.Z` tag | **PyPI** |
+Owner (2026-09-13, verbatim): *"let's make a change. the rc build could go
+test-pypi; real pypi sees stable releases"* — recorded in
+[`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md). Its "real pypi sees
+stable releases" clause was superseded later the same day, when the owner
+**accepted** publishing release candidates to PyPI as well. That acceptance is
+hedged (*"I think I'd accept"*), not a firm directive; the verbatim is recorded
+in [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).
 
-The static version literal, `scripts/bump-version.py`, the lockstep manifests
-and the exact `==` pins are unchanged — only the publishing policy changed. See
-[`docs/releasing.md`](../releasing.md) and
+- [DECISION] **A release candidate (`X.Y.ZrcN`) is rehearsed on TestPyPI and
+  then published to PyPI.** The `publish-testpypi.yml` lane stays manual
+  (`workflow_dispatch`) and refuses `.devN`; it carries both `X.Y.ZrcN` and the
+  final stable `X.Y.Z` rehearsal.
+- [DECISION, owner-accepted] **PyPI receives stable releases *and* release
+  candidates.** The earlier "PyPI receives stable releases only" rule is
+  superseded: a `vX.Y.ZrcN` tag publishes the candidate to PyPI as a PEP 440
+  pre-release, and `vX.Y.Z` publishes the stable release. PyPI is **publishable
+  as an `rc`, never as a dev version**; dev builds publish to neither index.
+  (Owner acceptance above, not an unqualified directive.)
+- [DESIGN] The mechanics of the decisions above: `scripts/bump-version.py`
+  accepts `X.Y.Z[{a|b|rc}N][.devN]` and gains `--rc` (`X.Y.Z` → `X.Y.Zrc1`;
+  `X.Y.ZrcN` → `X.Y.Zrc{N+1}`; an accepted-but-unused `a`/`b` advances to
+  `rc1`), wrapped as `just bump-rc`; `publish.yml` excludes only dev tags
+  (`"v[0-9]*"`, `"!v[0-9]*.dev*"`), and its publish job refuses a manifest
+  version carrying `.devN`, so stable and `rc` tags both publish while a dev
+  build can never reach PyPI — not even via a manual `workflow_dispatch`. The
+  version literal, the lockstep manifests and the exact `==` pins stay static;
+  what changed is the accepted shapes (`--rc`), the tag filter, and the policy.
+
+The tiers are therefore:
+
+| Tier | Version | Trigger | Where it goes |
+| --- | --- | --- | --- |
+| Dev build | `X.Y.Z.devN` | push / PR | **CI workflow artifact only** — never published |
+| Release candidate | `X.Y.ZrcN` | **manual** dispatch of `publish-testpypi.yml`, then tag `vX.Y.ZrcN` | **TestPyPI** (rehearsal), then **PyPI** (pre-release) |
+| Stable release | `X.Y.Z` | **manual** rehearsal on the exact release commit, then tag `vX.Y.Z` | **PyPI** |
+
+A PyPI pre-release is opt-in for installers: `pip`/`uv` select `X.Y.ZrcN` only
+with `--pre`, an explicit pin, or when no stable version satisfies the range.
+
+See [`docs/releasing.md`](../releasing.md) and
 [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).

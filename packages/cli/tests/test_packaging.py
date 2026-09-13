@@ -8,8 +8,12 @@ versions. Static checks over pyproject.toml only — no network, no build.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 # This file lives at packages/cli/tests/, so parents[3] is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -22,9 +26,14 @@ ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 ALL_PYPROJECTS = [ROOT_PYPROJECT, *MEMBER_PYPROJECTS]
 PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
 
-# The publishable shapes: X.Y.Z or X.Y.Z.devN (no local versions; PyPI rejects
-# them — ADR-0011).
-_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(\.dev\d+)?$")
+# The version shapes the manifests carry: stable X.Y.Z, a pre-release
+# X.Y.Z{a|b|rc}N (a/b accepted but unused), and the in-development X.Y.Z.devN
+# marker, which is a CI artifact and never published (no local versions; PyPI
+# rejects them — ADR-0011).
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+((?:a|b|rc)\d+)?(?:\.dev\d+)?$")
+
+# The version script owns every manifest literal (ADR-0011).
+BUMP_SCRIPT = REPO_ROOT / "scripts" / "bump-version.py"
 
 # A PEP 508 dependency string starts with the distribution name; split it off.
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
@@ -54,7 +63,7 @@ def test_all_manifests_share_one_pep440_version() -> None:
     unique = set(by_path.values())
     assert len(unique) == 1, f"manifests diverge: {by_path}"
     version = unique.pop()
-    assert _VERSION_RE.match(version), f"not X.Y.Z[.devN]: {version!r}"
+    assert _VERSION_RE.match(version), f"not X.Y.Z[{{a|b|rc}}N][.devN]: {version!r}"
 
 
 def test_intra_project_dependencies_are_exact_pinned() -> None:
@@ -132,3 +141,22 @@ def test_every_package_ships_the_root_license() -> None:
         if (p / "LICENSE").read_bytes() != root_license
     ]
     assert not drifted, f"LICENSE copies differ from the root LICENSE: {drifted}"
+
+
+@pytest.mark.parametrize("bad", ["banana", "0.1.1+g1"])
+def test_bump_version_rejects_an_invalid_target_without_mutating(bad: str) -> None:
+    """`bump-version.py` refuses anything outside the version shapes it carries.
+
+    The script validates the requested version before it rewrites a manifest, so
+    a rejected argument must exit non-zero and leave every manifest
+    byte-identical (ADR-0011). Exercised through a real subprocess."""
+    before = {path: path.read_bytes() for path in ALL_PYPROJECTS}
+    result = subprocess.run(
+        [sys.executable, str(BUMP_SCRIPT), bad],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, f"{bad!r} should be refused: {result.stdout}"
+    assert result.stderr.startswith("error:"), result.stderr
+    after = {path: path.read_bytes() for path in ALL_PYPROJECTS}
+    assert after == before, f"a rejected version mutated a manifest: {bad!r}"

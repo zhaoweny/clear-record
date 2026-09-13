@@ -104,6 +104,45 @@ this repository. See `docs/architecture.md` §7.
   2. [DESIGN] TestPyPI is a separate index, so rehearsing `X.Y.Z` there does
      **not** consume `X.Y.Z` on PyPI.
 - The automatic `v*.dev*` → TestPyPI snapshot workflow was deleted. PyPI stays
-  release-tag-only (`vX.Y.Z` → `publish.yml`). See
+  tag-triggered (`vX.Y.Z` → `publish.yml`). See
   [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md)
   (`## Update (2026-09-13)`) and [`docs/releasing.md`](../releasing.md).
+
+## Release candidates and stable-only PyPI (2026-09-13) (superseded below)
+
+- Owner directive, verbatim: *"let's make a change. the rc build could go
+  test-pypi; real pypi sees stable releases"*. Release candidates (`X.Y.ZrcN`)
+  go to **TestPyPI**; **PyPI receives stable releases only**. The TestPyPI lane
+  stays manual (`workflow_dispatch` only) and still refuses `.devN`; dev builds
+  remain CI workflow artifacts.
+- The two mechanics below are agent-authored framing, **not** owner quotes:
+  1. [DESIGN] `scripts/bump-version.py` gains `--rc` (`just bump-rc`): `X.Y.Z`
+     → `X.Y.Zrc1`; `X.Y.ZrcN` → `X.Y.Zrc{N+1}`, mirroring `--dev`. Its
+     validation now accepts stable, `a`/`b`/`rc`, and `.devN`.
+  2. [DESIGN] `publish.yml` excludes pre-release tags (`!v[0-9]*rc*`,
+     `!v[0-9]*a*`, `!v[0-9]*b*`) alongside dev tags, and its publish job refuses
+     a manifest version that is not stable `X.Y.Z`. See
+     [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md)
+     (`## Update (2026-09-13)`) and [`docs/releasing.md`](../releasing.md).
+
+## Release candidates also publish to PyPI (2026-09-13, owner acceptance)
+
+- Owner acceptance, verbatim: *"chat gpt recommends rc build also goes real
+  pypi. I think I'd accept."* This is a **hedged acceptance** ("I think I'd
+  accept"), not a firm directive. It **supersedes** the "Release candidates and
+  stable-only PyPI" entry above: **PyPI receives release candidates as well as
+  stable releases.** A `vX.Y.ZrcN` tag publishes the candidate to real PyPI as a
+  PEP 440 pre-release; a `vX.Y.Z` tag publishes the stable release. PyPI is
+  **publishable as an `rc`, never as a dev version** — dev builds (`X.Y.Z.devN`)
+  remain CI workflow artifacts and are never published.
+- The mechanics below are agent-authored framing, **not** owner quotes:
+  1. [DESIGN] `publish.yml` drops the `rc`/`a`/`b` tag exclusions; its tag filter
+     is back to `["v[0-9]*", "!v[0-9]*.dev*"]`, and its publish job refuses only
+     a `.devN` manifest version. Stable and `rc` tags therefore both publish.
+  2. [DESIGN] The TestPyPI lane (`publish-testpypi.yml`) rehearses the candidate
+     before the `vX.Y.ZrcN` tag publishes it to PyPI; the dev-refusal guard is
+     now identical in both lanes.
+  3. [DESIGN] A PyPI pre-release is opt-in for installers: `pip`/`uv` need
+     `--pre`, an explicit pin, or no stable version satisfying the range. See
+     [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md)
+     (`## Update (2026-09-13)`) and [`docs/releasing.md`](../releasing.md).

@@ -63,6 +63,10 @@ version:
 bump-dev:
     uv run --frozen scripts/bump-version.py --dev
 
-# Set an explicit version (release: drop the dev suffix, e.g. `just set-version 0.1.1`).
+# Cut or advance the rc segment: 0.1.1.dev0 -> 0.1.1rc1; 0.1.1rcN -> 0.1.1rc{N+1}. Follow with `uv lock`.
+bump-rc:
+    uv run --frozen scripts/bump-version.py --rc
+
+# Set an explicit version (stable release: drop the dev suffix, e.g. `just set-version 0.1.1`).
 set-version VERSION:
     uv run --frozen scripts/bump-version.py {{VERSION}}

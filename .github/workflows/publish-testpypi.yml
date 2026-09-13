@@ -4,10 +4,12 @@ name: publish-testpypi
 #
 #   * There is no push/tag trigger. Dispatch this workflow by hand on the exact
 #     commit that will become the release tag; it publishes the five members at
-#     whatever version the manifests carry. The runbook sets that version to the
-#     release version (`X.Y.Z`, dropping the `.devN` marker) before dispatching,
-#     so the rehearsal qualifies the release commit; a dev version is refused
-#     (see the guard below). `publish.yml` then runs on the real tag.
+#     whatever version the manifests carry. This lane carries release
+#     candidates (`X.Y.ZrcN`, cut with `just bump-rc`) and the final stable
+#     rehearsal (`X.Y.Z`, via `just set-version X.Y.Z`), so the exact commit is
+#     qualified before the real tag. A dev version is refused (see the guard
+#     below). `publish.yml` then runs on the real tag and publishes the same
+#     candidate (or the stable release) to PyPI.
 #   * TestPyPI is a SEPARATE index with its OWN one-time pending publishers
 #     (distinct from the PyPI ones in `publish.yml`): same owner/repo, workflow
 #     `publish-testpypi.yml`, environment `testpypi`. Publishing `X.Y.Z` here
@@ -32,12 +34,10 @@ jobs:
       - uses: actions/checkout@v5
       - name: Guard — refuse a dev version
         run: |
-          version="$(python3 scripts/bump-version.py --show)"
-          if printf '%s' "${version}" | grep -Eq '\.dev[0-9]+$'; then
-            echo "::error::manifest version '${version}' is a dev version; run 'just set-version X.Y.Z' and relock before rehearsing"
-            exit 1
+          if ! out="$(python3 scripts/bump-version.py --check-publishable 2>&1)"; then
+            echo "::error::${out}"; exit 1
           fi
-          echo "OK: manifest version ${version} is a release version"
+          echo "OK: manifest version ${out} is a release candidate or stable release"
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:

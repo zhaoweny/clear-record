@@ -4,11 +4,11 @@ name: verify
 # platform and `subprocess`, so this is green on a plain Linux runner with no
 # GPU, no `whisper-cli` and no model weights.
 #
-# This is also the dev-build path: after `just verify`, CI builds all five
-# dists and keeps them as a workflow artifact (named with the manifest version,
-# `dist-dev-<version>`).
+# This is also the build-artifact path: after `just verify`, CI builds all five
+# dists and keeps them as a workflow artifact named with the manifest version,
+# `dist-<version>` (no "dev" label — an rc version ships through this path too).
 # Dev builds are never published — not to TestPyPI, not to PyPI. TestPyPI is a
-# manual release rehearsal (`publish-testpypi.yml`); PyPI is release-tag only
+# manual release rehearsal (`publish-testpypi.yml`); PyPI is tag-triggered
 # (`publish.yml`). See docs/releasing.md.
 on:
   push:
@@ -36,8 +36,8 @@ jobs:
       - name: Read the version for the artifact name
         id: version
         run: echo "version=$(uv run --frozen scripts/bump-version.py --show)" >> "$GITHUB_OUTPUT"
-      - name: Upload the dev build
+      - name: Upload the built dists
         uses: actions/upload-artifact@v4
         with:
-          name: dist-dev-${{ steps.version.outputs.version }}
+          name: dist-${{ steps.version.outputs.version }}
           path: dist/

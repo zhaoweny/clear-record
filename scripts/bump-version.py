@@ -15,9 +15,13 @@ Usage::
 
     uv run scripts/bump-version.py --show      # print, aborting if they differ
     uv run scripts/bump-version.py --dev       # 0.1.1 -> 0.1.1.dev0; .devN -> .devN+1
-    uv run scripts/bump-version.py 0.1.1       # explicit (a release drops the suffix)
+    uv run scripts/bump-version.py --rc        # 0.1.1 -> 0.1.1rc1; rcN -> rc{N+1}
+    uv run scripts/bump-version.py --check-publishable
+                                       # print; exit 1 on a .devN CI artifact
+    uv run scripts/bump-version.py 0.1.1       # explicit (a stable release drops the suffix)
 
-The branchy part lives here; the ``just`` recipes are thin pointers.
+``a``/``b`` are accepted but unused; ``--rc`` advances one to ``rc1``. The
+branchy part lives here; the ``just`` recipes are thin pointers.
 """
 
 import re
@@ -33,10 +37,14 @@ MANIFESTS = [
     *sorted(REPO_ROOT.glob("packages/*/pyproject.toml")),
 ]
 
-# PEP 440 for the two shapes this project publishes: X.Y.Z or X.Y.Z.devN.
+# PEP 440 for the version shapes the manifests carry: stable X.Y.Z, a
+# pre-release X.Y.Z{a|b|rc}N, and the in-development X.Y.Z.devN marker (`a`/`b`
+# are accepted but unused; `.devN` is a CI artifact and is never published).
 # Local versions (`+g<sha>`) are deliberately absent — PyPI rejects them.
-_VERSION_RE = re.compile(r"\d+\.\d+\.\d+(?:\.dev\d+)?")
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+((?:a|b|rc)\d+)?(?:\.dev\d+)?$")
 _VERSION_LINE_RE = re.compile(r'^version = "([^"]+)"$', re.MULTILINE)
+# A `.devN` tail is the CI-artifact marker, never a publishable version.
+_DEV_RE = re.compile(r"\.dev\d+$")
 
 
 def fail(message: str) -> None:
@@ -71,6 +79,20 @@ def next_dev(version: str) -> str:
     return f"{base}.dev0" if not dev else f"{base}.dev{int(dev) + 1}"
 
 
+def next_rc(version: str) -> str:
+    """Cut (or advance) the rc segment: 0.1.1 -> 0.1.1rc1; rcN -> rc{N+1}.
+
+    Any in-development marker (`.devN`) is dropped first, so an rc can be cut
+    straight from the `X.Y.Z.devN` version `main` carries. An earlier
+    pre-release phase (`aN`/`bN`) advances to the rc phase rather than being
+    carried along.
+    """
+    base = version.partition(".dev")[0]
+    base = re.sub(r"(?:a|b)\d+$", "", base)
+    base, _, rc = base.partition("rc")
+    return f"{base}rc1" if not rc else f"{base}rc{int(rc) + 1}"
+
+
 def rewrite(old: str, new: str) -> None:
     """Replace the exact old version literal in every manifest.
 
@@ -81,9 +103,31 @@ def rewrite(old: str, new: str) -> None:
         path.write_text(path.read_text().replace(old, new))
 
 
+def check_publishable(version: str) -> int:
+    """Print the version and return 0 if it can be published, else 1.
+
+    Stable and pre-release shapes (``rc``, and the accepted-but-unused
+    ``a``/``b``) are publishable. A ``.devN`` version is a CI artifact, not a
+    release, so it is refused with a message on stderr.
+    """
+    if _DEV_RE.search(version):
+        print(
+            f"manifest version '{version}' is a dev version; dev builds are CI "
+            "artifacts, so publish an X.Y.ZrcN release candidate or a stable "
+            "X.Y.Z release",
+            file=sys.stderr,
+        )
+        return 1
+    print(version)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
-        fail("usage: bump-version.py {--show|--dev|X.Y.Z[.devN]}")
+        fail(
+            "usage: bump-version.py "
+            "{--show|--dev|--rc|--check-publishable|X.Y.Z[{a|b|rc}N][.devN]}"
+        )
 
     old = current_version()
     arg = argv[0]
@@ -92,12 +136,17 @@ def main(argv: list[str]) -> int:
         print(old)
         return 0
 
+    if arg == "--check-publishable":
+        return check_publishable(old)
+
     if arg == "--dev":
         new = next_dev(old)
+    elif arg == "--rc":
+        new = next_rc(old)
     elif _VERSION_RE.fullmatch(arg):
         new = arg
     else:
-        fail(f"not a PEP 440 X.Y.Z[.devN] version: {arg!r}")
+        fail(f"not a PEP 440 X.Y.Z[{{a|b|rc}}N][.devN] version: {arg!r}")
 
     if new == old:
         print(f"{old} => {new} (unchanged)")

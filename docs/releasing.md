@@ -28,26 +28,37 @@ facade depends on `cr-cli==X.Y.Z`, so the two belong to the same release.
 
 ## Three publishing tiers
 
-| Tier | Trigger | Where it goes |
-|---|---|---|
-| Dev build | push / PR | **CI workflow artifact only** — never published |
-| Release rehearsal | **manual** dispatch of `publish-testpypi.yml` on the exact release commit | **TestPyPI** |
-| Release | `vX.Y.Z` tag | **PyPI** |
+| Tier | Version | Trigger | Where it goes |
+|---|---|---|---|
+| Dev build | `X.Y.Z.devN` | push / PR | **CI workflow artifact only** — never published |
+| Release candidate | `X.Y.ZrcN` | **manual** dispatch of `publish-testpypi.yml`, then tag `vX.Y.ZrcN` | **TestPyPI** (rehearsal), then **PyPI** (as a PEP 440 pre-release) |
+| Stable release | `X.Y.Z` | `vX.Y.Z` tag | **PyPI** |
 
-Only the rehearsal and the release upload anything. This policy comes from the
-owner directive (2026-09-13), verbatim: *"dev builds are not going to
-test.pypi.org, dev builds (if any) can become a artifact of automated
-pipeline"* — recorded in [`docs/vox/voice-of-owner.md`](vox/voice-of-owner.md)
-and as the `## Update (2026-09-13)` in
+Only the TestPyPI and PyPI lanes upload anything, and both are gated by a human
+approval. Dev builds never publish; TestPyPI rehearses the release candidate
+before it goes to PyPI, and PyPI receives both the candidate and the stable
+release. This policy comes from the owner (2026-09-13): dev builds are CI
+artifacts, not TestPyPI uploads, and the owner accepted publishing release
+candidates to PyPI as pre-releases. The owner's verbatim wording — including
+that later acceptance, which superseded "real pypi sees stable releases" — is
+recorded in [`docs/vox/voice-of-owner.md`](vox/voice-of-owner.md), and the
+policy as the `## Update (2026-09-13)` sections in
 [`docs/adr/0011-versioning-and-release-train.md`](adr/0011-versioning-and-release-train.md).
+
+PyPI pre-releases are **opt-in for installers**: `pip`/`uv` only select
+`X.Y.ZrcN` when told to allow pre-releases (`--pre`), when the requirement pins
+it explicitly (for example `clear-record==0.1.1rc1`), or when no stable version
+satisfies the range. A bare `pip install clear-record` therefore keeps getting
+the newest stable release.
 
 ### Dev builds — CI artifacts, never published
 
 `.github/workflows/verify.yml` runs on every `push` and `pull_request`. After
 `just verify` it runs `just build` and uploads `dist/` as a workflow artifact
-named `dist-dev-<version>` (for example `dist-dev-0.1.1.dev0`), so any CI run's
-build is downloadable and identifiable. Nothing on this path uploads: `vX.Y.Z.devN`
-is **not** a publishing trigger anywhere.
+named `dist-<version>` (for example `dist-0.1.1.dev0`; an rc version ships
+through this path as `dist-0.1.1rc1` too), so any CI run's build is downloadable
+and identifiable. Nothing on this path uploads: `vX.Y.Z.devN` is **not** a
+publishing trigger anywhere.
 
 ## One-time setup (per index, per project)
 
@@ -108,7 +119,8 @@ by `just`) replaces the exact old literal in all six manifests at once:
 ```sh
 just version                 # print the current version (aborts if the six disagree)
 just bump-dev                # 0.1.1.dev0 -> 0.1.1.dev1 (a new dev series)
-just set-version 0.1.1       # drop the suffix (release)
+just bump-rc                 # 0.1.1.dev0 or 0.1.1 -> 0.1.1rc1; 0.1.1rcN -> 0.1.1rc{N+1}
+just set-version 0.1.1       # drop the suffix (stable release)
 ```
 
 After any bump, regenerate and commit the lockfile — `just verify` runs
@@ -118,19 +130,35 @@ After any bump, regenerate and commit the lockfile — `just verify` runs
 uv lock
 ```
 
-The publishable version shape is `X.Y.Z`. `X.Y.Z.devN` is the **in-development
-marker** `main` carries, not a publishable version: a rehearsal or release first
-runs `just set-version X.Y.Z`. **No local versions** (`+g<sha>`): PyPI rejects
-them, so even a dev version stops at `.devN`.
+The version shapes the manifests carry are `X.Y.Z` (**stable**) and `X.Y.ZrcN`
+(**release candidate**) — both go to PyPI, the candidate after its TestPyPI
+rehearsal. `X.Y.Z.devN` is the **in-development marker** `main` carries and is
+never published; `a`/`b` are accepted by the validator but unused, and `--rc`
+advances an `a`/`b` to `rc1`. To move off the dev marker, cut an `rc` with `just
+bump-rc`, or go straight to stable with `just set-version X.Y.Z`. **No local
+versions** (`+g<sha>`): PyPI rejects them, so even a dev version stops at
+`.devN`.
 
 ## Release rehearsal loop (TestPyPI)
 
-The rehearsal qualifies the **exact commit** that will become `vX.Y.Z`. TestPyPI
-is a **separate index**, so publishing `0.1.1` there does **not** consume
-`0.1.1` on PyPI (a version on PyPI can never be reused; on TestPyPI it is only a
-rehearsal). TestPyPI may also be **pruned**, so it is not an archive.
+This lane qualifies the **exact commit** that will become the release tag
+(`vX.Y.ZrcN` for a candidate, `vX.Y.Z` for the stable release), and it carries
+both **release candidates** (`X.Y.ZrcN`) and the **final stable rehearsal**
+(`X.Y.Z`). It is manual (`workflow_dispatch`) and refuses a `.devN`
+version; there is no tag trigger. TestPyPI is a **separate index**, so
+publishing `0.1.1` there does **not** consume `0.1.1` on PyPI (a version on PyPI
+can never be reused; on TestPyPI it is only a rehearsal). TestPyPI may also be
+**pruned**, so it is not an archive.
 
-1. Set the release version and relock:
+1. Set the version and relock. To cut a release candidate, roll the rc segment:
+
+   ```sh
+   just bump-rc      # 0.1.1.dev0 -> 0.1.1rc1 (then 0.1.1rc1 -> 0.1.1rc2, ...)
+   uv lock
+   just verify
+   ```
+
+   To rehearse the final stable release, drop the suffix instead:
 
    ```sh
    just set-version 0.1.1
@@ -141,7 +169,7 @@ rehearsal). TestPyPI may also be **pruned**, so it is not an archive.
 2. Commit that exact version — **do not tag yet**:
 
    ```sh
-   git add -A && git commit -m "release: v0.1.1"
+   git add -A && git commit -m "release: v0.1.1rc1"   # or "release: v0.1.1"
    ```
 
 3. Dispatch `publish-testpypi.yml` **on that commit** (GitHub → Actions →
@@ -154,7 +182,8 @@ rehearsal). TestPyPI may also be **pruned**, so it is not an archive.
    `cr-cli`, `clear-record`). Each should show a **wheel and an sdist** with the
    expected metadata (exact `==` sibling pins, bundled license files).
 
-5. Run the external resolver smoke below against the rehearsal.
+5. Run the external resolver smoke below against the rehearsal (adjust the pins
+   to the version you published).
 
 ### External resolver smoke (TestPyPI)
 
@@ -206,12 +235,38 @@ All three checks must succeed. `clear-record --help` proves the console
 script; `backends` exercises a real command; the import check proves all five
 modules load. Delete `/tmp/cr-testpypi-smoke` afterward.
 
-## Release loop (PyPI)
+## Release loops
 
-A release is "drop the dev suffix and tag the rehearsed commit":
+A **release candidate** publishes to PyPI by tagging `vX.Y.ZrcN`, and a
+**stable release** by tagging `vX.Y.Z`. Both are tag-driven: dev tags are
+excluded from `publish.yml` by its tag filter, and its publish job refuses a
+manifest version carrying `.devN`, so a dev build can never reach PyPI — not
+even via a manual dispatch. A PyPI pre-release is **opt-in for installers**
+(see the tiers above): it is published, but not installed by default.
+
+### Release candidate loop
+
+1. **Rehearse first** (above): the `X.Y.ZrcN` commit was published and
+   smoke-tested on TestPyPI.
+
+2. Tag and push that same commit: `git tag v0.1.1rc1 && git push origin
+   v0.1.1rc1`.
+
+3. Create the matching **GitHub Release**, marked as a **pre-release**.
+
+4. `publish.yml` builds and publishes all five members to **PyPI** as a PEP 440
+   pre-release. Approve the `pypi` environment when prompted.
+
+5. To advance the candidate, `just bump-rc` (for example `rc1` → `rc2`), relock,
+   commit, rehearse on TestPyPI again, and tag `vX.Y.Zrc2`. A PyPI version can
+   never be reused, so a bad candidate is superseded, never re-tagged.
+
+### Stable release loop
 
 1. **Rehearse first** (above): the exact commit was published and smoke-tested
-   on TestPyPI.
+   on TestPyPI. If the last candidate was an rc (`0.1.1rcN`), drop the suffix so
+   the manifest is stable, relock and commit: `just set-version 0.1.1 &&
+   uv lock`.
 
 2. Tag and push that same commit: `git tag v0.1.1 && git push origin v0.1.1`.
 
@@ -262,16 +317,17 @@ There is no maintenance branch until 0.2 development starts; at that point cut
 ## First upload: clean history
 
 `v0.1.0` was a **source-only OSS tag** — nothing was ever uploaded for it. The
-first PyPI release is **`v0.1.1`**, tag-driven: land the release commit, rehearse
-it on TestPyPI (`publish-testpypi.yml`, above), then
+first **stable** PyPI release is **`v0.1.1`**, tag-driven: land the release
+commit, rehearse it on TestPyPI (`publish-testpypi.yml`, above), then
 `git tag v0.1.1 && git push origin v0.1.1`. No special first-run incantation is
 needed.
 
 `workflow_dispatch` remains on `publish.yml` only as an **emergency hatch** (the
 TestPyPI rehearsal is a separate, intentional manual workflow). The publish job
-refuses to run unless the checked-out ref is a tag whose `v<manifest version>`
-matches the manifests, so a dispatch from an arbitrary `main` commit cannot
-publish a mismatched artifact.
+refuses to run unless the manifest is publishable (a stable `X.Y.Z` or a
+candidate `X.Y.ZrcN`, but never a dev version) and the checked-out ref is a tag
+whose `v<manifest version>` matches the manifests, so neither a dev build nor a
+dispatch from an arbitrary `main` commit can publish a mismatched artifact.
 
 ## Version immutability
 

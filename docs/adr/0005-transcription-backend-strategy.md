@@ -49,7 +49,11 @@ Date: 2026-09-09
   and serializes in-process ones. The auto fan-out is bounded by the model size
   against the detected VRAM (8 GB assumed when unprobed; `--jobs` / `CR_JOBS`
   override), and an interrupted pool cancels queued chunks, terminates in-flight
-  `whisper-cli` children and leaves the chunk cache resumable.
+  `whisper-cli` children and leaves the chunk cache resumable. Cancellation is
+  **scoped**: the pool injects an explicit `CancellableProcessRunner` into the
+  backend (`cr_providers.process`), which launches every child, rather than
+  monkey-patching `subprocess.Popen` globally — so two pools in one process, or
+  `cr_cli` embedded as a library, cannot interfere.
 - [DECISION] `cr-core` never imports a vendor stack; it only depends on the
   interface. Vendor stacks are driven only from `cr-providers` (as a
   subprocess).

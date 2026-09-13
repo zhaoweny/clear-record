@@ -386,6 +386,7 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
             model=None,
             model_dir=None,
             initial_prompt=None,
+            process_runner=None,
         ):
             type(self).calls += 1
             data, file_sr = sf.read(audio_path)
@@ -478,6 +479,7 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
             model=None,
             model_dir=None,
             initial_prompt=None,
+            process_runner=None,
         ):
             with self.lock:
                 self.active += 1
@@ -563,6 +565,7 @@ def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -
             model=None,
             model_dir=None,
             initial_prompt=None,
+            process_runner=None,
         ):
             events.append(f"transcribe:{threading.current_thread().name}")
             time.sleep(0.02)
@@ -673,9 +676,12 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
     )
     stages.ingest(str(wd), split="mix")
 
+    # The pool must not monkey-patch the global Popen (ticket 08).
+    original_popen_init = subprocess.Popen.__init__
+
     started = threading.Event()
     lock = threading.Lock()
-    procs: list[subprocess.Popen] = []
+    procs: list[subprocess.CompletedProcess] = []
 
     class BlockingFake:
         info = BackendInfo(
@@ -698,20 +704,24 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
             model=None,
             model_dir=None,
             initial_prompt=None,
+            process_runner=None,
         ):
-            # A real child process stands in for `whisper-cli`: the pool must
+            from cr_providers import SubprocessRunner
+
+            runner = process_runner or SubprocessRunner()
+            started.set()
+            # A real child process stands in for `whisper-cli`, launched through
+            # the pool's injected runner (no global Popen patch): the pool must
             # find and terminate it, not merely abandon the worker thread.
-            proc = subprocess.Popen(
+            result = runner.run(
                 [sys.executable, "-c", "import time; time.sleep(30)"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
             )
             with lock:
-                procs.append(proc)
-            started.set()
-            code = proc.wait()
-            if code != 0:
-                raise RuntimeError(f"whisper-cli killed (exit {code})")
+                procs.append(result)
+            if result.returncode != 0:
+                raise RuntimeError(f"whisper-cli killed (exit {result.returncode})")
             return TranscriptionResult(
                 source="fake",
                 segments=(Segment(0.0, 0.1, "x", "fake"),),
@@ -738,12 +748,15 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
     elapsed = time.monotonic() - began
     helper.join(timeout=2)
 
+    # No global patch was installed (or left behind) by the pool.
+    assert subprocess.Popen.__init__ is original_popen_init
+
     # Bounded: it did not block on the 30 s children.
     assert elapsed < 5.0
     # The in-flight children were terminated and queued chunks never ran.
     assert procs, "at least one chunk should have started"
     for proc in procs:
-        assert proc.wait(timeout=3) is not None
+        assert proc.returncode != 0
     n_chunks = len(plan_chunks(10.0, 2.0, 0.5))
     assert len(procs) < n_chunks
 
@@ -773,6 +786,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
             model=None,
             model_dir=None,
             initial_prompt=None,
+            process_runner=None,
         ):
             type(self).calls += 1
             return TranscriptionResult(
@@ -833,3 +847,100 @@ def test_transcribe_check_plugin_gates_on_the_load_probe(tmp_path, monkeypatch) 
     with pytest.raises(SystemExit, match="did not load"):
         stages.transcribe(str(wd), "fake", check_plugin=True)
     assert len(calls) == 1, "the probe must run exactly once per invocation"
+
+
+def test_no_global_popen_patch_is_left_behind() -> None:
+    """Regression for ticket 08: the pool must not monkey-patch ``Popen``."""
+    for name in (
+        "_ORIGINAL_POPEN_INIT",
+        "_tracked_popen_init",
+        "_track_subprocesses",
+        "_SubprocessTracker",
+        "_run_tracked",
+        "_PoolCancel",
+    ):
+        assert not hasattr(stages, name), f"stale global patch helper: {name}"
+
+
+def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> None:
+    """Two pools in one process each get their own runner, so cancellation stays
+    scoped; both complete with independent caches."""
+    import threading
+    from pathlib import Path
+
+    from cr_cli import workspace as ws
+    from cr_core import Segment, TranscriptionResult
+    from cr_providers import BackendInfo
+
+    def make_ws(name: str) -> str:
+        wd = tmp_path / name
+        wd.mkdir()
+        sr = 8000
+        t = np.arange(sr, dtype=np.float64) / sr
+        sf.write(
+            str(wd / "a.wav"),
+            (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32),
+            sr,
+        )
+        stages.ingest(str(wd), split="mix")
+        return str(wd)
+
+    wd1, wd2 = make_ws("one"), make_ws("two")
+    runners: list = []
+    lock = threading.Lock()
+
+    class Fake:
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+            process_runner=None,
+        ):
+            with lock:
+                runners.append(process_runner)
+            return TranscriptionResult(
+                source="fake",
+                segments=(Segment(0.0, 0.1, "x", "fake"),),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=0.1,
+            )
+
+    monkeypatch.setattr(stages, "get_backend", lambda _id: Fake())
+    errors: list = []
+
+    def worker(wd: str) -> None:
+        try:
+            stages.transcribe(wd, "fake", jobs=1)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(wd,)) for wd in (wd1, wd2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert errors == []
+    assert len(runners) == 2
+    assert runners[0] is not runners[1], "each pool needs its own runner"
+    for wd in (wd1, wd2):
+        per_source, _ = ws.load_segments(Path(wd))
+        assert per_source

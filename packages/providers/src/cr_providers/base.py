@@ -7,6 +7,8 @@ from typing import Protocol
 
 from cr_core import TranscriptionResult
 
+from cr_providers.process import ProcessRunner
+
 BackendId = str
 
 # Multilingual checkpoint used unless overridden. Multilingual (non-`.en`) models
@@ -50,13 +52,16 @@ class Backend(Protocol):
         model: str | None = None,
         model_dir: str | None = None,
         initial_prompt: str | None = None,
+        process_runner: ProcessRunner | None = None,
     ) -> TranscriptionResult:
         """Transcribe ``audio_path`` and return timestamped segments.
 
         ``language`` is the BCP-47-ish whisper hint, or ``None``/"auto" to
         auto-detect. ``model`` selects the checkpoint name/size (or a path).
         ``model_dir`` is where to download/read model weights. ``initial_prompt``
-        biases decoding toward a glossary of names/terms.
+        biases decoding toward a glossary of names/terms. ``process_runner``
+        optionally overrides how the backend launches its CLI, so a caller can
+        scope cancellation to its own children (see ``cr_providers.process``).
         """
         ...
 

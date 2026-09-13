@@ -43,6 +43,7 @@ from collections.abc import Callable
 from cr_core import Segment, TranscriptionResult
 
 from cr_providers.base import Backend, BackendInfo
+from cr_providers.process import ProcessRunner, SubprocessRunner
 
 
 def _make_segment(
@@ -573,11 +574,15 @@ class _WhisperCliBackend:
         gpu_backends: tuple[str, ...],
         device_check: Callable[[], bool],
         system: str = "Linux",
+        runner: ProcessRunner | None = None,
     ) -> None:
         self.info = info
         self._gpu_backends = gpu_backends
         self._device_check = device_check
         self._system = system
+        # Children launch through this runner; a pool injects a cancellable one
+        # per ``transcribe`` call so cancellation stays scoped to that pool.
+        self._runner: ProcessRunner = runner or SubprocessRunner()
 
     @property
     def gpu_backends(self) -> tuple[str, ...]:
@@ -610,6 +615,7 @@ class _WhisperCliBackend:
         model: str | None = None,
         model_dir: str | None = None,
         initial_prompt: str | None = None,
+        process_runner: ProcessRunner | None = None,
     ) -> TranscriptionResult:
         cli = _find_whisper_cli()
         if cli is None:  # defensive: available() already checked this
@@ -617,6 +623,7 @@ class _WhisperCliBackend:
         name = model or self.info.default_model
         model_path = _resolve_ggml_model(name, model_dir)
         lang = language if language and language not in ("", "auto") else "auto"
+        runner = process_runner or self._runner
 
         with tempfile.TemporaryDirectory(prefix="cr-whisper-") as tmp:
             out_prefix = os.path.join(tmp, "out")
@@ -634,7 +641,7 @@ class _WhisperCliBackend:
             ]
             if initial_prompt:
                 cmd += ["--prompt", initial_prompt]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = runner.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
                 tail = (proc.stderr or "").strip()[-800:]
                 raise RuntimeError(

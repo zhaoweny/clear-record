@@ -8,7 +8,6 @@ merge) and ``cr_providers`` (ASR). No vendor logic lives here.
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import glob
 import os
@@ -16,7 +15,6 @@ import random
 import shutil
 import subprocess
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
@@ -49,7 +47,12 @@ from cr_engine import (
     write_chunk,
 )
 from cr_engine.audio import read_audio
-from cr_providers import get_backend, probe_ggml_plugin_load, resolve_backend_model
+from cr_providers import (
+    CancellableProcessRunner,
+    get_backend,
+    probe_ggml_plugin_load,
+    resolve_backend_model,
+)
 
 from cr_cli import eval as _eval
 from cr_cli import workspace as ws
@@ -378,153 +381,70 @@ class _PoolCancelled(Exception):
     """Raised inside a pool worker once cancellation has been requested."""
 
 
-class _PoolCancel:
-    """A one-way cancellation signal shared by the main thread and workers."""
-
-    def __init__(self) -> None:
-        self._event = threading.Event()
-
-    @property
-    def cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def cancel(self) -> None:
-        self._event.set()
-
-
-# The path-isolated backends shell out to ``whisper-cli`` with
-# ``subprocess.run``, so the pool never sees that ``Popen`` handle. On Ctrl-C
-# Python delivers ``KeyboardInterrupt`` only to the main thread, so worker
-# threads stay blocked in ``communicate()`` and the executor's ``wait=True``
-# exit hangs until every queued chunk is decoded. To stop promptly the pool
-# tracks the children its workers spawn and kills them itself. ``Popen.__init__``
-# is patched only for the pool's lifetime; only worker threads install a tracker,
-# so unrelated subprocesses are untouched.
-_ORIGINAL_POPEN_INIT = subprocess.Popen.__init__
-
-
-def _tracked_popen_init(self, *args, **kwargs) -> None:
-    _ORIGINAL_POPEN_INIT(self, *args, **kwargs)
-    tracker = getattr(_SubprocessTracker._local, "active", None)
-    if tracker is not None:
-        tracker.register(self)
-
-
-class _SubprocessTracker:
-    """Record child processes spawned by pool workers, and terminate them."""
-
-    _local = threading.local()
-    _install_lock = threading.Lock()
-
-    def __init__(self) -> None:
-        self._procs: list[subprocess.Popen] = []
-        self._lock = threading.Lock()
-
-    def register(self, proc: subprocess.Popen) -> None:
-        with self._lock:
-            self._procs.append(proc)
-
-    def terminate_all(self, grace: float = _CANCEL_GRACE_S) -> None:
-        """Ask tracked processes to stop, then hard-kill any survivors.
-
-        Terminating closes the child's pipes, which unblocks the worker's
-        ``subprocess.run`` promptly; the bounded grace lets it exit cleanly
-        before a ``kill`` is used as a fallback.
-        """
-        with self._lock:
-            procs = list(self._procs)
-        for proc in procs:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-        deadline = time.monotonic() + grace
-        while time.monotonic() < deadline:
-            if all(proc.poll() is not None for proc in procs):
-                return
-            time.sleep(0.02)
-        for proc in procs:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-
-
-@contextlib.contextmanager
-def _track_subprocesses(tracker: _SubprocessTracker):
-    """Install the ``Popen`` tracker for the duration of the pool."""
-    with _SubprocessTracker._install_lock:
-        subprocess.Popen.__init__ = _tracked_popen_init
-    try:
-        yield tracker
-    finally:
-        with _SubprocessTracker._install_lock:
-            subprocess.Popen.__init__ = _ORIGINAL_POPEN_INIT
-
-
-def _run_tracked(run_chunk, task, cancel, tracker):
-    """Run one chunk on a worker thread, marked as a tracked subprocess spawner."""
-    _SubprocessTracker._local.active = tracker
-    try:
-        if cancel.cancelled:
-            raise _PoolCancelled()
-        return run_chunk(task)
-    finally:
-        _SubprocessTracker._local.active = None
-
-
 def _run_pending(
     pending,
     plan_by_id,
     workers: int,
     run_chunk,
-    cancel: _PoolCancel,
-    tracker: _SubprocessTracker,
+    runner: CancellableProcessRunner,
 ) -> None:
     """Run pending chunks, honouring prompt cancellation.
 
-    On operator interruption the queued futures are cancelled and the in-flight
-    ``whisper-cli`` children terminated, then the interrupt is re-raised — rather
-    than ``ThreadPoolExecutor.__exit__`` blocking until every queued chunk has
-    decoded.
+    The backend launches every ``whisper-cli`` child through ``runner`` -- an
+    explicit, pool-scoped :class:`CancellableProcessRunner` -- so on operator
+    interruption we cancel the queued futures and terminate only this pool's
+    in-flight children, then re-raise, rather than letting
+    ``ThreadPoolExecutor.__exit__`` block until every queued chunk has decoded.
+    Two pools in one process have separate runners and cannot interfere.
     """
     if workers <= 1:
-        for task in pending:
-            if cancel.cancelled:
-                raise _PoolCancelled()
-            src_id, index, shifted = run_chunk(task)
-            plan_by_id[src_id].segments[index] = shifted
-        return
-
-    with _track_subprocesses(tracker):
-        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cr-chunk")
-        futures = []
         try:
-            futures = [
-                pool.submit(_run_tracked, run_chunk, task, cancel, tracker)
-                for task in pending
-            ]
-            for future in as_completed(futures):
-                src_id, index, shifted = future.result()
+            for task in pending:
+                if runner.cancelled:
+                    raise _PoolCancelled()
+                src_id, index, shifted = run_chunk(task)
                 plan_by_id[src_id].segments[index] = shifted
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                # Operator interruption: stop queued work and kill what is
-                # already decoding, then return promptly.
-                cancel.cancel()
-                for future in futures:
-                    future.cancel()
-                tracker.terminate_all()
-                wait(futures, timeout=_CANCEL_GRACE_S)
-                tracker.terminate_all(grace=0.0)
-                pool.shutdown(wait=False, cancel_futures=True)
-            else:
-                # A chunk failed (e.g. a backend error): finish the already
-                # submitted work so its cache is complete, then propagate.
-                pool.shutdown(wait=True)
+                runner.cancel()
+                runner.terminate_all()
             raise
+        return
+
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cr-chunk")
+    futures = []
+    try:
+        futures = [
+            pool.submit(_run_chunk_checked, run_chunk, task, runner) for task in pending
+        ]
+        for future in as_completed(futures):
+            src_id, index, shifted = future.result()
+            plan_by_id[src_id].segments[index] = shifted
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            # Operator interruption: stop queued work and kill what is already
+            # decoding, then return promptly.
+            runner.cancel()
+            for future in futures:
+                future.cancel()
+            runner.terminate_all()
+            wait(futures, timeout=_CANCEL_GRACE_S)
+            runner.terminate_all(grace=0.0)
+            pool.shutdown(wait=False, cancel_futures=True)
         else:
+            # A chunk failed (e.g. a backend error): finish the already
+            # submitted work so its cache is complete, then propagate.
             pool.shutdown(wait=True)
+        raise
+    else:
+        pool.shutdown(wait=True)
+
+
+def _run_chunk_checked(run_chunk, task, runner: CancellableProcessRunner):
+    """Run one chunk on a worker thread, unless the pool already cancelled."""
+    if runner.cancelled:
+        raise _PoolCancelled()
+    return run_chunk(task)
 
 
 @dataclasses.dataclass
@@ -679,6 +599,10 @@ def transcribe(
             f"({chosen_model})",
         )
 
+    # One explicit, pool-scoped runner: the backend launches every child
+    # through it, so cancellation can terminate exactly this pool's processes.
+    runner = CancellableProcessRunner()
+
     def _run_chunk(task: _ChunkTask) -> tuple[str, int, list[Segment]]:
         chunk_wav = task.cache / f"{task.index:04d}.wav"
         write_chunk(task.audio_path, chunk_wav, task.start_s, task.end_s)
@@ -689,6 +613,7 @@ def transcribe(
                 model=model,
                 model_dir=model_dir,
                 initial_prompt=prompt or None,
+                process_runner=runner,
             )
         finally:
             chunk_wav.unlink(missing_ok=True)  # segments cached; wav regenerable
@@ -709,9 +634,7 @@ def transcribe(
         )
         return task.source_id, task.index, shifted
 
-    cancel = _PoolCancel()
-    tracker = _SubprocessTracker()
-    _run_pending(pending, plan_by_id, workers, _run_chunk, cancel, tracker)
+    _run_pending(pending, plan_by_id, workers, _run_chunk, runner)
 
     per_source: dict[str, list[Segment]] = {}
     meta: dict = {

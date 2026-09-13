@@ -12,15 +12,15 @@
 
 ## Provenance note
 
-This is a **clean-room** reimplementation of a personal concept. It was built
-independently from a public problem statement, using personally owned hardware,
-publicly available documentation, models, libraries and reference technology. No
-work/company source code, generated artifacts, specifications, recordings,
-datasets, partner names, internal documents or credentials are imported; see
-[docs/architecture.md](docs/architecture.md) §6 for the exact clean-room
-boundary. This note records *facts* (that the work was done independently) and
-is not a legal opinion; see [`NOTICE.md`](NOTICE.md) for the full origin,
-authorship and AI-agent-use notice.
+This is the author's own idea, implemented independently from a public problem
+statement, using personally owned hardware and publicly available documentation,
+models and libraries. It is a personal open-source release; the history of how
+the idea evolved lives in
+[ADR-0001](docs/adr/0001-project-identity-and-provenance.md) and
+[`docs/architecture.md`](docs/architecture.md) §9, and isn't the point of this
+project. This note records *facts* (that the work was done independently) and is
+not a legal opinion; see [`NOTICE.md`](NOTICE.md) for authorship and AI-agent
+use.
 
 ## What it does
 

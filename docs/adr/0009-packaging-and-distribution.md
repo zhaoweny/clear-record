@@ -1,6 +1,7 @@
 # ADR-0009 — Packaging and distribution: five dists, exact pins, OpenID Connect (OIDC) publishing
 
-Status: active
+Status: active — amended 2026-09-13: the published set is now one dist (see the
+Update below, and ADR-0012)
 Date: 2026-09-13
 
 ## Context

@@ -367,6 +367,78 @@ def test_find_ggml_gpu_backend_finds_backends0_layout(tmp_path, monkeypatch) -> 
 
 
 # --------------------------------------------------------------------------- #
+# Opt-in plugin-load probe (`--check-plugin`) -- mocked whisper-cli
+# --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _isolate_plugin_probe_cache():
+    backends._clear_plugin_load_cache()
+    yield
+    backends._clear_plugin_load_cache()
+
+
+def _probe_with_output(monkeypatch, output: str, *, calls=None):
+    monkeypatch.setattr(backends, "_find_whisper_cli", lambda: "/usr/bin/whisper-cli")
+
+    def fake_run(cmd, **kwargs):
+        if calls is not None:
+            calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, "", output)
+
+    monkeypatch.setattr(backends.subprocess, "run", fake_run)
+
+
+def test_probe_ggml_plugin_load_confirms_matching_backend(monkeypatch) -> None:
+    _probe_with_output(
+        monkeypatch,
+        "load_backend: loaded Vulkan backend from /usr/lib/ggml/libggml-vulkan.so\n",
+    )
+    probe = backends.probe_ggml_plugin_load(AmdBackend())
+    assert probe.loaded is True
+    assert "vulkan" in probe.detail.lower()
+
+
+def test_probe_ggml_plugin_load_flags_a_different_backend(monkeypatch) -> None:
+    _probe_with_output(
+        monkeypatch, "load_backend: loaded CUDA backend from /usr/lib/libggml-cuda.so\n"
+    )
+    probe = backends.probe_ggml_plugin_load(AmdBackend())
+    assert probe.loaded is False
+    assert "cuda" in probe.detail.lower()
+
+
+def test_probe_ggml_plugin_load_accepts_release_device_banner(monkeypatch) -> None:
+    """Release builds suppress ``load_backend``; a device banner still counts."""
+    _probe_with_output(monkeypatch, "ggml_vulkan: No devices found.\n")
+    assert backends.probe_ggml_plugin_load(AmdBackend()).loaded is True
+
+
+def test_probe_ggml_plugin_load_inconclusive_when_output_is_silent(monkeypatch) -> None:
+    _probe_with_output(monkeypatch, "whisper.cpp version: 1.9.3\n")
+    probe = backends.probe_ggml_plugin_load(AmdBackend())
+    assert probe.loaded is None
+
+
+def test_probe_ggml_plugin_load_is_cached_per_invocation(monkeypatch) -> None:
+    calls: list = []
+    _probe_with_output(
+        monkeypatch,
+        "load_backend: loaded Vulkan backend from /usr/lib/ggml/libggml-vulkan.so\n",
+        calls=calls,
+    )
+    backend = AmdBackend()
+    assert backends.probe_ggml_plugin_load(backend).loaded is True
+    assert backends.probe_ggml_plugin_load(backend).loaded is True
+    assert len(calls) == 1, "the probe must run at most once per CLI invocation"
+
+
+def test_probe_ggml_plugin_load_without_cli(monkeypatch) -> None:
+    monkeypatch.setattr(backends, "_find_whisper_cli", lambda: None)
+    probe = backends.probe_ggml_plugin_load(AmdBackend())
+    assert probe.loaded is False
+    assert "not found" in probe.detail
+
+
+# --------------------------------------------------------------------------- #
 # `transcribe()` against a mocked whisper-cli (hardware-independent)
 # --------------------------------------------------------------------------- #
 def _stub_model(tmp_path) -> str:

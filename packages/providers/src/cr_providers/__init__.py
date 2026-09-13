@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from cr_providers.backends import (
     BACKENDS,
+    PluginLoadProbe,
     available_backend_ids,
     get_backend,
+    probe_ggml_plugin_load,
     resolve_backend_model,
 )
 from cr_providers.base import Backend, BackendId, BackendInfo, DEFAULT_MODEL
@@ -22,7 +24,9 @@ __all__ = [
     "BackendId",
     "BackendInfo",
     "DEFAULT_MODEL",
+    "PluginLoadProbe",
     "available_backend_ids",
     "get_backend",
+    "probe_ggml_plugin_load",
     "resolve_backend_model",
 ]

@@ -92,6 +92,21 @@ available on this machine. See
   The download is a **provisioning** step, not an execution dependency: once
   the model is present on disk, transcription needs no network.
 
+**Verify the GPU plugin actually loads (opt-in).** The default runtime probe is
+cheap: it checks that `whisper-cli`, a matching `libggml-*` plugin *file* and
+the vendor device are present. An ABI/build mismatch can still pass that and
+fall back to CPU silently, so `--check-plugin` runs a one-shot `whisper-cli`
+load probe (no model, no network; cached for the invocation) and refuses to
+transcribe when the plugin does not load:
+
+```sh
+clearrecord transcribe <dir> --backend amd --check-plugin
+```
+
+On release builds the CLI may not print its backend-load line, in which case
+the probe reports `inconclusive` rather than failing. `available()` never runs
+the probe — it stays cheap.
+
 ## Calibrate your own model (recommended workflow)
 
 Drop a private recording into a gitignored folder and run the pipeline; if you

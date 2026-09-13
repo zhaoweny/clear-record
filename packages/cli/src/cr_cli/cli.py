@@ -99,6 +99,13 @@ def _build_parser() -> argparse.ArgumentParser:
             help="parallel transcription workers (0 = auto; process-isolated "
             "backends only, e.g. the AMD/NVIDIA whisper-cli)",
         )
+        p.add_argument(
+            "--check-plugin",
+            action="store_true",
+            help="one-shot whisper-cli load probe to confirm the ggml GPU plugin "
+            "actually loads before transcribing (opt-in; the default probe only "
+            "checks that the plugin file is present)",
+        )
 
     def _diarize_args(p: argparse.ArgumentParser) -> None:
         g = p.add_mutually_exclusive_group()
@@ -343,6 +350,7 @@ def _main(args: argparse.Namespace) -> int:
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
             jobs=args.jobs,
+            check_plugin=args.check_plugin,
         )
         return 0
 
@@ -384,6 +392,7 @@ def _main(args: argparse.Namespace) -> int:
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
             jobs=args.jobs,
+            check_plugin=args.check_plugin,
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,
@@ -406,6 +415,7 @@ def _main(args: argparse.Namespace) -> int:
             overlap_seconds=args.overlap_seconds,
             resume=args.resume,
             jobs=args.jobs,
+            check_plugin=args.check_plugin,
             do_diarize=args.diarize,
             speakers=args.speakers,
             reference=args.reference,

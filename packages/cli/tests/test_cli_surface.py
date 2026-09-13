@@ -56,6 +56,15 @@ def test_attribute_surface_wires_energy_and_mixed_reference() -> None:
     assert opted.mixed_source == "room"
 
 
+def test_check_plugin_is_opt_in_surface() -> None:
+    """The plugin-load probe is off by default and opt-in on the backend paths."""
+    parser = _build_parser()
+    assert parser.parse_args(["transcribe", "dir"]).check_plugin is False
+    assert parser.parse_args(["run", "dir"]).check_plugin is False
+    assert parser.parse_args(["transcribe", "dir", "--check-plugin"]).check_plugin
+    assert parser.parse_args(["run", "dir", "--check-plugin"]).check_plugin
+
+
 def test_eval_error_rates_perfect_and_bad() -> None:
     from cr_cli.eval import error_rates
 

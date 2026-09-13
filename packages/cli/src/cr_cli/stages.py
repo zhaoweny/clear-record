@@ -49,7 +49,7 @@ from cr_engine import (
     write_chunk,
 )
 from cr_engine.audio import read_audio
-from cr_providers import get_backend, resolve_backend_model
+from cr_providers import get_backend, probe_ggml_plugin_load, resolve_backend_model
 
 from cr_cli import eval as _eval
 from cr_cli import workspace as ws
@@ -561,6 +561,7 @@ def transcribe(
     overlap_seconds: float = DEFAULT_OVERLAP_S,
     resume: bool = True,
     jobs: int = 0,
+    check_plugin: bool = False,
 ):
     """Transcribe every source, in **resumable overlapping chunks** for long
     tapes, with an optional **glossary** as the decoder's initial prompt.
@@ -589,6 +590,23 @@ def transcribe(
             f"[transcribe] backend '{backend_id}' is not available on this machine.\n"
             f"  Install {hint}; runtime requirements are in docs/adr/0005."
         )
+
+    if check_plugin:
+        # Opt-in: `available()` proves the plugin *file* is present, not that the
+        # CLI can load it. A one-shot probe (cached per CLI invocation) catches an
+        # ABI/build mismatch that would otherwise fall back to CPU silently.
+        probe = probe_ggml_plugin_load(backend)
+        if probe.loaded is True:
+            _log_line(d, f"[transcribe] plugin load probe OK: {probe.detail}")
+        elif probe.loaded is False:
+            raise SystemExit(
+                f"[transcribe] backend '{backend_id}' ggml plugin did not load: "
+                f"{probe.detail}.\n  The plugin file is present but whisper-cli "
+                f"could not load it (often a ggml ABI/build mismatch); it would "
+                f"fall back to CPU."
+            )
+        else:
+            _log_line(d, f"[transcribe] plugin load probe inconclusive: {probe.detail}")
 
     chosen_model = model or backend.info.default_model
     # Resolve/download the model once, single-threaded, before the chunk pool:
@@ -1040,6 +1058,7 @@ def run(
     mixed_source: str | None = None,
     window_s: float | None = None,
     jobs: int = 0,
+    check_plugin: bool = False,
 ):
     ingest(directory, audio_files, split=split)
     align(directory, reference=reference)
@@ -1054,6 +1073,7 @@ def run(
         overlap_seconds=overlap_seconds,
         resume=resume,
         jobs=jobs,
+        check_plugin=check_plugin,
     )
     sources, _ = ws.load_manifest(Path(directory))
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to

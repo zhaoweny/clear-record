@@ -26,6 +26,7 @@ error when offline).
 
 from __future__ import annotations
 
+import dataclasses
 import glob
 import itertools
 import json
@@ -202,6 +203,108 @@ def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
                 if matches:
                     return matches[0]
     return None
+
+
+# Recognised GPU families for the opt-in plugin-load probe, mapped to the
+# substrings the CLI / backend plugins print. The probe accepts the debug-build
+# ``load_backend: loaded <name> backend`` line as well as a backend's own device
+# banner (``ggml_vulkan:``, ``ggml_cuda``, ...), because release builds compile
+# the load line out (``NDEBUG`` makes the loader silent).
+_GGML_FAMILY_MARKERS: dict[str, tuple[str, ...]] = {
+    "vulkan": ("vulkan",),
+    "cuda": ("cuda",),
+    "hip": ("hip", "rocm"),
+    "metal": ("metal",),
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class PluginLoadProbe:
+    """Result of the opt-in plugin-load probe.
+
+    ``loaded`` is ``True`` when the CLI reported a matching backend, ``False``
+    when it reported a *different* backend (or could not run), and ``None`` when
+    the output carried no backend-load evidence at all -- a release build
+    suppresses it, so the caller should treat ``None`` as inconclusive, never as
+    a failure.
+    """
+
+    loaded: bool | None
+    detail: str
+
+
+# One-shot cache: a CLI invocation is one process, so caching per
+# ``(cli, families)`` makes the probe once-per-run, never once-per-chunk.
+_PLUGIN_LOAD_CACHE: dict[tuple[str, tuple[str, ...]], PluginLoadProbe] = {}
+_PLUGIN_LOAD_CACHE_LOCK = threading.Lock()
+
+
+def _clear_plugin_load_cache() -> None:
+    """Drop cached probe results (tests only)."""
+    with _PLUGIN_LOAD_CACHE_LOCK:
+        _PLUGIN_LOAD_CACHE.clear()
+
+
+def _classify_plugin_load(output: str, markers: tuple[str, ...]) -> PluginLoadProbe:
+    """Interpret the CLI's combined output for the probe (see the class doc)."""
+    output = output.lower()
+    if not output.strip():
+        return PluginLoadProbe(None, "the CLI produced no output")
+    load_lines = [
+        line.strip() for line in output.splitlines() if "load_backend: loaded" in line
+    ]
+    if load_lines:
+        for line in load_lines:
+            if any(marker in line for marker in markers):
+                return PluginLoadProbe(True, line)
+        return PluginLoadProbe(False, f"a non-matching backend loaded: {load_lines[0]}")
+    for marker in markers:
+        if marker in output:
+            return PluginLoadProbe(True, f"backend banner mentions {marker!r}")
+    return PluginLoadProbe(
+        None,
+        "the CLI ran but printed no backend-load line (release builds suppress it)",
+    )
+
+
+def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
+    """Opt-in: confirm ``backend``'s ggml plugin actually *loads*.
+
+    ``available()`` only proves the plugin file is present -- an ABI/build
+    mismatch still passes and the CLI silently falls back to CPU. This runs the
+    system CLI once with no model and no network and inspects its output for the
+    backend's load banner. The result is cached per ``(CLI, families)`` for the
+    process, so it is a one-shot cost per CLI invocation, never per chunk. It
+    never runs on the default ``available()`` path.
+    """
+    families = tuple(getattr(backend, "gpu_backends", ()) or ())
+    if not families:
+        return PluginLoadProbe(None, "backend does not use ggml plugins")
+    cli = _find_whisper_cli()
+    if cli is None:
+        return PluginLoadProbe(False, "whisper-cli not found on PATH")
+    key = (cli, families)
+    with _PLUGIN_LOAD_CACHE_LOCK:
+        cached = _PLUGIN_LOAD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    markers = tuple(
+        marker for family in families for marker in _GGML_FAMILY_MARKERS.get(family, ())
+    )
+    try:
+        # ``--version`` still runs ``ggml_backend_load_all()`` (the first thing
+        # ``main`` does) and then exits, so no model is touched.
+        proc = subprocess.run(
+            [cli, "--version"], capture_output=True, text=True, timeout=30
+        )
+        output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        result = PluginLoadProbe(False, f"could not run {cli!r}: {exc}")
+    else:
+        result = _classify_plugin_load(output, markers)
+    with _PLUGIN_LOAD_CACHE_LOCK:
+        _PLUGIN_LOAD_CACHE[key] = result
+    return result
 
 
 _AMD_VENDOR_ID = "0x1002"
@@ -459,6 +562,8 @@ class _WhisperCliBackend:
     run, which would make ``available()`` expensive. The failure surfaces at
     ``transcribe()`` time, where a missing/invalid ``-ojf`` result now raises a
     clear ``RuntimeError`` instead of an unhelpful ``FileNotFoundError``.
+    :func:`probe_ggml_plugin_load` is the documented, opt-in way to close that
+    gap: it runs the CLI once and confirms the plugin actually loads.
     """
 
     def __init__(
@@ -473,6 +578,11 @@ class _WhisperCliBackend:
         self._gpu_backends = gpu_backends
         self._device_check = device_check
         self._system = system
+
+    @property
+    def gpu_backends(self) -> tuple[str, ...]:
+        """The ggml backend families this adapter accepts (for the load probe)."""
+        return self._gpu_backends
 
     def available(self) -> bool:
         return (
@@ -666,7 +776,9 @@ def resolve_backend_model(
 
 __all__ = [
     "BACKENDS",
+    "PluginLoadProbe",
     "available_backend_ids",
     "get_backend",
+    "probe_ggml_plugin_load",
     "resolve_backend_model",
 ]

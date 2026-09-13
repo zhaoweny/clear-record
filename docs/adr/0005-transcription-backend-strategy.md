@@ -98,7 +98,10 @@ Date: 2026-09-09
   `apple`/`nvidia`/`amd` the extras are no-op markers and the capability is
   system-provided (`brew install whisper-cpp` on macOS; e.g. Arch `whisper-cpp`
   + a ggml plugin on Linux). The residual risk is the same for all three: the
-  probe proves presence, not plugin loadability.
+  probe proves presence, not plugin loadability. An **opt-in** `--check-plugin`
+  closes that gap with a one-shot `whisper-cli` load probe (cached per CLI
+  invocation, never on the default `available()` path); on a release build whose
+  CLI prints no load banner the probe reports `inconclusive` rather than failing.
 - The ggml model is **auto-downloaded on first use** from
   `https://huggingface.co/ggerganov/whisper.cpp/` if it is not already in
   `model_dir` / `CR_MODELS_DIR` / `<cwd>/models`; offline, the actionable

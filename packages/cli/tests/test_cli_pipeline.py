@@ -789,3 +789,47 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
     stages.transcribe(str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=2)
     assert FastFake.calls == n_chunks - len(cached)
     assert len(list(cache_dir.glob("[0-9]*.json"))) == n_chunks
+
+
+def test_transcribe_check_plugin_gates_on_the_load_probe(tmp_path, monkeypatch) -> None:
+    """`check_plugin=True` runs the opt-in probe once and refuses to transcribe
+    when the ggml plugin fails to load. The default path never probes (the
+    surface test pins the opt-in flag)."""
+    import pytest
+
+    from cr_providers import BackendInfo, PluginLoadProbe
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(sr, dtype=np.float64) / sr
+    sf.write(
+        str(wd / "a.wav"), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr
+    )
+    stages.ingest(str(wd), split="mix")
+
+    class Fake:
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def available(self) -> bool:
+            return True
+
+    monkeypatch.setattr(stages, "get_backend", lambda _id: Fake())
+    calls: list = []
+
+    def fake_probe(backend):
+        calls.append(backend)
+        return PluginLoadProbe(False, "a non-matching backend loaded: cuda")
+
+    monkeypatch.setattr(stages, "probe_ggml_plugin_load", fake_probe)
+
+    with pytest.raises(SystemExit, match="did not load"):
+        stages.transcribe(str(wd), "fake", check_plugin=True)
+    assert len(calls) == 1, "the probe must run exactly once per invocation"

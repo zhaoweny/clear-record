@@ -127,15 +127,10 @@ just bump-rc                 # X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc{N+1}
 just set-version 0.1.1       # force an explicit version (stable release)
 ```
 
-After any bump, regenerate and commit the lockfile — `just verify` runs
-`uv sync --locked` and fails on a stale lock:
-
-```sh
-uv lock
-```
-
-The recipes pass `--frozen` so the bump does not re-lock mid-edit; the explicit
-`uv lock` above is the deliberate relock. **`uv version --bump` refuses a bump
+The bump recipes **relock** `uv.lock` as they go (`--no-sync`, so the venv is
+not synced): the lock records the member's version, so a bump without a relock
+would leave `just verify` (which runs `uv sync --locked`) failing on a stale
+lock. Commit `uv.lock` with the version change. **`uv version --bump` refuses a bump
 that would not increase the version** and rejects a lowered version, so
 `bump-dev` / `bump-rc` only apply while the member carries a version they can
 advance:
@@ -168,11 +163,10 @@ publishing `0.1.1` there does **not** consume `0.1.1` on PyPI (a version on PyPI
 can never be reused; on TestPyPI it is only a rehearsal). TestPyPI may also be
 **pruned**, so it is not an archive.
 
-1. Set the version and relock. To cut a release candidate, roll the rc segment:
+1. Set the version — the recipe relocks `uv.lock`. To cut a release candidate, roll the rc segment:
 
    ```sh
    just bump-rc      # 0.1.1.dev0 -> 0.1.1rc1 (then 0.1.1rc1 -> 0.1.1rc2, ...)
-   uv lock
    just verify
    ```
 
@@ -180,7 +174,6 @@ can never be reused; on TestPyPI it is only a rehearsal). TestPyPI may also be
 
    ```sh
    just set-version 0.1.1
-   uv lock
    just verify
    ```
 
@@ -267,16 +260,15 @@ even via a manual dispatch. A PyPI pre-release is **opt-in for installers**
 4. `publish.yml` builds and publishes the single `clear-record` dist to **PyPI** as a PEP 440
    pre-release. Approve the `pypi` environment when prompted.
 
-5. To advance the candidate, `just bump-rc` (for example `rc1` → `rc2`), relock,
-   commit, rehearse on TestPyPI again, and tag `vX.Y.Zrc2`. A PyPI version can
+5. To advance the candidate, `just bump-rc` (for example `rc1` → `rc2`), commit,
+   rehearse on TestPyPI again, and tag `vX.Y.Zrc2`. A PyPI version can
    never be reused, so a bad candidate is superseded, never re-tagged.
 
 ### Stable release loop
 
 1. **Rehearse first** (above): the exact commit was published and smoke-tested
    on TestPyPI. If the last candidate was an rc (`0.1.1rcN`), drop the suffix so
-   the manifest is stable, relock and commit: `just set-version 0.1.1 &&
-   uv lock`.
+   the manifest is stable: `just set-version 0.1.1` (the recipe relocks).
 
 2. Tag and push that same commit: `git tag v0.1.1 && git push origin v0.1.1`.
 

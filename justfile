@@ -57,29 +57,29 @@ build:
 # Show the published version. The member `clear-record` is the single published
 # dist; the virtual root is bumped in step with it by the recipes below, so the
 # two `version =` literals never drift. `--short` prints only the version string
-# (scriptable). `--frozen` keeps the version tools from re-locking mid-edit (the
-# lockfile follows in a separate, explicit `uv lock`).
+# (scriptable). This read passes `--frozen`; the bump/set recipes below pass
+# `--no-sync` so they relock `uv.lock` (it records the member's version) without
+# syncing the venv.
 version:
     uv version --frozen --package clear-record --short
 
 # Advance the dev segment (a new dev snapshot): X.Y.Z.devN -> X.Y.Z.dev(N+1).
 # Native `uv version` refuses a bump that would not increase the version, so this
 # only applies while the member carries a dev version; to open the next dev series
-# from a stable release use `just set-version X.Y.(Z+1).dev0`. Follow with
-# `uv lock`.
+# from a stable release use `just set-version X.Y.(Z+1).dev0`.
 bump-dev:
-    uv version --frozen --package clear-record --bump dev
-    uv version --frozen --bump dev
+    uv version --no-sync --package clear-record --bump dev
+    uv version --no-sync --bump dev
 
 # Cut or advance the rc segment: X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc(N+1).
 # (uv's `--bump rc` cannot cut an rc from a stable X.Y.Z: it refuses the bump, which
-# would not increase the version. Use `set-version` for that.) Follow with `uv lock`.
+# would not increase the version. Use `set-version` for that.)
 bump-rc:
-    uv version --frozen --package clear-record --bump rc
-    uv version --frozen --bump rc
+    uv version --no-sync --package clear-record --bump rc
+    uv version --no-sync --bump rc
 
 # Set an explicit version (stable release: drop the suffix, e.g. `just set-version 0.1.1`).
 # Unlike `--bump`, an explicit value forces the write (it may lower the version).
 set-version VERSION:
-    uv version --frozen --package clear-record {{VERSION}}
-    uv version --frozen {{VERSION}}
+    uv version --no-sync --package clear-record {{VERSION}}
+    uv version --no-sync {{VERSION}}

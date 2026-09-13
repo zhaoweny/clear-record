@@ -238,7 +238,7 @@ workflow is: **start a first pass in the background, build the glossary while it
 runs, then re-run** — the chunks are re-decoded with the finished terms.
 
 ```sh
-clearrecord glossary <dir> --add "李工" "Wenyuan" "ATE-2000"
+clearrecord glossary <dir> --add "李工" "Project Falcon" "ZX-2000"
 clearrecord transcribe <dir> --backend apple --model medium   # picks up glossary.txt
 ```
 

@@ -107,5 +107,5 @@ Open a GitHub issue on the repository:
 <https://github.com/zhaoweny/clear-record/issues>. For anything that should not
 be public (for example a security-relevant data-handling bug), use the private
 route in [`SECURITY.md`](SECURITY.md) instead. Do not attach private recordings
-or transcripts — use synthetic audio (`clearrecord synth`) where a reproduction
+or transcripts — use synthetic audio (`clear-record synth`) where a reproduction
 is needed.

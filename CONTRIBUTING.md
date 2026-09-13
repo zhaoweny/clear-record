@@ -92,7 +92,7 @@ behaviour. Reviewers judge the diff, not who or what typed it.
 When you open an issue or a pull request, the templates under
 [`.github/`](.github/) ask for the details a reviewer needs (platform, backend,
 and the status of `just verify`). **Never attach private audio, transcripts, or
-model weights** — use synthetic material (`clearrecord synth`) for a
+model weights** — use synthetic material (`clear-record synth`) for a
 reproduction.
 
 ## License

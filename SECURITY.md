@@ -21,7 +21,7 @@ asks for a private contact channel — do not put the vulnerability, a proof of
 concept, or affected input into the public issue text.
 
 Please do **not** send a report by attaching a private recording, transcript, or
-model weight. Use synthetic audio (the CLI ships a `clearrecord synth` command
+model weight. Use synthetic audio (the CLI ships a `clear-record synth` command
 that generates test material) or a file you are free to share.
 
 ## Supported versions
@@ -42,7 +42,7 @@ may also change or document behaviour without a deprecation period.
 
 **In scope** — this repository's own code and packaging:
 
-- the `clearrecord` CLI (`cr-cli`);
+- the `clear-record` CLI (`cr-cli`);
 - the `cr-core`, `cr-engine` and `cr-providers` libraries;
 - the build, test and CI configuration in this repository;
 - unexpected behaviour triggered by processing untrusted local input (for

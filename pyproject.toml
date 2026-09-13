@@ -3,7 +3,7 @@
 # Workspace members under packages/:
 #   packages/core      -> dist "cr-core",      import "cr_core"      (backend-agnostic application core)
 #   packages/providers -> dist "cr-providers", import "cr_providers" (per-vendor ASR backend adapters)
-#   packages/cli       -> dist "cr-cli",       import "cr_cli"       (the `clearrecord` command)
+#   packages/cli       -> dist "cr-cli",       import "cr_cli"       (the `clear-record` command)
 #
 # See docs/adr/0004-uv-workspace-layout.md for the decision record.
 #
@@ -50,10 +50,10 @@ dev = [
 # path uses the system `whisper-cli` + a ggml GPU plugin, so the backend extras
 # are no-op markers (see cr-providers/pyproject.toml).
 [project.optional-dependencies]
-apple = ["cr-providers[apple]"]
-nvidia = ["cr-providers[nvidia]"]
-amd = ["cr-providers[amd]"]
-all = ["cr-providers[all]"]
+apple = ["cr-providers[apple]==0.1.0"]
+nvidia = ["cr-providers[nvidia]==0.1.0"]
+amd = ["cr-providers[amd]==0.1.0"]
+all = ["cr-providers[all]==0.1.0"]
 
 [tool.ruff]
 target-version = "py312"

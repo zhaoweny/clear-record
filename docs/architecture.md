@@ -48,7 +48,7 @@ restating it. A `SUGGESTION` must never be presented as owner voice.
    recordings of one event go in, **one reconstructed, attributable record
    comes out**. Taglines: *"reconstruct the record"* and *"from many recordings
    to one clear record."* The natural surface is a CLI, one subcommand per
-   stage: `clearrecord ingest | align | transcribe | reconcile | export`.
+   stage: `clear-record ingest | align | transcribe | reconcile | export`.
 3. The concept was, at its heart, **"record several audio sources reliably and
    use local AI to turn them into useful transcripts."** It should not be
    limited to a single capture device; it ingests heterogeneous sources (e.g. a
@@ -95,11 +95,11 @@ into a stable, user-facing surface:
 
 | Stage | CLI | Job |
 |---|---|---|
-| ingest | `clearrecord ingest` | pull in heterogeneous audio sources + their metadata |
-| align | `clearrecord align` | place every source onto a common clock/timebase |
-| transcribe | `clearrecord transcribe` | run a chosen local ASR backend (see §5) |
-| reconcile | `clearrecord reconcile` | merge segments; speaker attribution |
-| export | `clearrecord export` | write a searchable, archiveable artifact (links back to source) |
+| ingest | `clear-record ingest` | pull in heterogeneous audio sources + their metadata |
+| align | `clear-record align` | place every source onto a common clock/timebase |
+| transcribe | `clear-record transcribe` | run a chosen local ASR backend (see §5) |
+| reconcile | `clear-record reconcile` | merge segments; speaker attribution |
+| export | `clear-record export` | write a searchable, archiveable artifact (links back to source) |
 
 [DESIGN] The `cr-core` package owns the *shape* of these stages (the
 `PipelineSpec`); executing a stage against real audio and a real ASR backend is
@@ -179,7 +179,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
   its runtime probe succeeds (see `cr_providers.base.Backend.available()`).
-  `clearrecord backends` lists what is available on the current machine.
+  `clear-record backends` lists what is available on the current machine.
 - All three **drive the system `whisper-cli`**, which links the system `ggml`
   and loads a backend plugin (`ggml-metal` on macOS via Homebrew `whisper-cpp`;
   `ggml-vulkan`/`ggml-hip` for AMD, `ggml-cuda`/`ggml-vulkan` for NVIDIA). There
@@ -278,9 +278,9 @@ Layout:
 packages/core      → cr-core      backend-agnostic domain model — NO vendor/ML code
 packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
 packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
-packages/cli       → cr-cli       the `clearrecord` command; stages live in cr_cli.stages
+packages/cli       → cr-cli       the `clear-record` command; stages live in cr_cli.stages
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0008
+docs/adr/                          decision records 0001–0009
 docs/vox/voice-of-owner.md         owner voice
 ```
 

@@ -8,11 +8,12 @@ Date: 2026-09-09
 - [VOICE] The pipeline domain model must stay **vendor-free**: no CUDA, ROCm,
   Metal/CoreML, torch/tensorflow or a specific ASR library in the core.
 - [VOICE] The `clearrecord` CLI surface should derive from the pipeline spec
-  (`ingest → align → transcribe → reconcile → export`) so the CLI and domain
-  cannot drift.
+  (`ingest → align → transcribe → reconcile → export`; the command was renamed to
+  `clear-record` on 2026-09-13 — see ADR-0009) so the CLI and domain cannot
+  drift.
 - [OWNER] Toolchain decision: use **uv** as the workspace/project tool,
   Python `>= 3.12` (3.14 in use), a single committed `uv.lock`, lint/test via
-  ruff + pytest in a root dev group (mirrors the sibling `maa-whirlwind` repo).
+  ruff + pytest in a root dev group.
 
 ## Decision
 
@@ -23,7 +24,7 @@ Date: 2026-09-09
   packages/core      → dist cr-core,      import cr_core      (backend-agnostic domain model)
   packages/engine    → dist cr-engine,    import cr_engine    (audio I/O, alignment, reconcile)
   packages/providers → dist cr-providers, import cr_providers (per-vendor ASR adapters)
-  packages/cli       → dist cr-cli,       import cr_cli       (the `clearrecord` command)
+  packages/cli       → dist cr-cli,       import cr_cli       (the `clear-record` command)
   ```
 
 - Root `pyproject.toml` is the uv workspace root (`[tool.uv.workspace]
@@ -38,7 +39,7 @@ Date: 2026-09-09
   **optional extras** on `cr-providers` (`apple` / `nvidia` / `amd`), mirrored as
   aggregate extras at the workspace root.
 - Each member declares `license = "MIT"`. `cr-cli` exposes the
-  `clearrecord` console script.
+  `clear-record` console script.
 
 ## Rationale
 
@@ -66,4 +67,4 @@ Date: 2026-09-09
 
 - Any future member (e.g. a GUI, an MCP server, a `cr-ingest` recorder) is a
   *new* member, not a reparenting.
-- Revisit on the first real packaging/distribution push.
+- Resolved by [ADR-0009](0009-packaging-and-distribution.md) (2026-09-13).

@@ -1,4 +1,4 @@
-"""The `clearrecord` CLI.
+"""The `clear-record` CLI.
 
 One subcommand per pipeline stage (plus `run`/`calibrate` conveniences). The
 subcommand surface is derived from the pipeline spec so the CLI and domain cannot
@@ -22,7 +22,7 @@ from cr_cli import stages
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="clearrecord",
+        prog="clear-record",
         description="clear-record: from many recordings to one clear record.",
     )
     sub = parser.add_subparsers(dest="command", required=True)

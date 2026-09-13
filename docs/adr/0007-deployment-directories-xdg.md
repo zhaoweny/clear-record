@@ -99,8 +99,7 @@ Date: 2026-09-11
   cache → cache, logs and resume state → state, tentatively). Recordings and the
   derived record are **not** app-owned artifacts — they stay in the user's
   workspace wherever the `directory` argument points.
-- Revisit at the first real packaging/distribution push (mirrors ADR-0004's
-  review hook).
+- Resolved by [ADR-0009](0009-packaging-and-distribution.md) (2026-09-13).
 
 ## Update (2026-09-13) — the models-directory resolver exists
 

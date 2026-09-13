@@ -40,7 +40,8 @@ Date: 2026-09-09
   `whisper-cli` on PATH (Homebrew bin dirs are a fallback), an accepted plugin
   (search dirs are overridable via `CR_GGML_BACKEND_DIRS`), and — on Linux — the
   vendor's GPU device. Metal needs no separate device probe: the plugin plus the
-  CLI *is* the check. `clearrecord backends` lists the current availability. The
+  CLI *is* the check. `clearrecord backends` lists the current availability (the
+  command was renamed to `clear-record` on 2026-09-13 — see ADR-0009). The
   default dev/CI env installs **no** vendor framework, and the `apple` extra
   (like `nvidia`/`amd`) is a no-op marker.
 - [DECISION] Backends declare `parallelizable` in `BackendInfo` — true for the

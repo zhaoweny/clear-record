@@ -396,6 +396,7 @@ def reconcile(directory: str, prefer: str | None = None):
         alignment=alignment,
         segments=tuple(segments),
         metadata={
+            "title": w.root.name,
             "backend": meta.get("backend"),
             "model": meta.get("model"),
             "language": meta.get("language"),
@@ -458,7 +459,8 @@ def export(directory: str, formats: list[str] | None = None) -> dict[str, Path]:
 
 
 def _render_markdown(record: RecordDocument) -> str:
-    lines = ["# Record", ""]
+    title = record.metadata.get("title")
+    lines = [f"# Record — {title}" if title else "# Record", ""]
     lines.append(f"- Sources: {len(record.sources)} · Segments: {len(record.segments)}")
     lines.append(
         f"- Backend: {record.metadata.get('backend')} / {record.metadata.get('model')}"

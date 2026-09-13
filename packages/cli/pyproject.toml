@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "cr-cli"
 version = "0.1.0"
-description = "The `clearrecord` command-line entry point for clear-record."
+description = "The `clear-record` command-line entry point for clear-record."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "cr-core",
-    "cr-engine",
-    "cr-providers",
+    "cr-core==0.1.0",
+    "cr-engine==0.1.0",
+    "cr-providers==0.1.0",
 ]
 
 # This member is a uv workspace member and depends on sibling members; pin the
@@ -23,7 +23,7 @@ cr-engine = { workspace = true }
 cr-providers = { workspace = true }
 
 [project.scripts]
-clearrecord = "cr_cli.cli:main"
+clear-record = "cr_cli.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cr_cli"]

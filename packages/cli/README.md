@@ -1,15 +1,15 @@
 # cr-cli
 
-The `clearrecord` command. One subcommand per pipeline stage, mirroring the
+The `clear-record` command. One subcommand per pipeline stage, mirroring the
 original concept's intended surface:
 
 ```sh
-clearrecord ingest       # pull in several audio sources + their metadata
-clearrecord align        # align sources onto a common clock/timebase
-clearrecord transcribe   # run a chosen ASR backend (apple / nvidia / amd)
-clearrecord reconcile    # merge segments into an attributable record
-clearrecord export       # write a searchable/archiveable artifact
-clearrecord backends     # list which ASR backends are currently available
+clear-record ingest       # pull in several audio sources + their metadata
+clear-record align        # align sources onto a common clock/timebase
+clear-record transcribe   # run a chosen ASR backend (apple / nvidia / amd)
+clear-record reconcile    # merge segments into an attributable record
+clear-record export       # write a searchable/archiveable artifact
+clear-record backends     # list which ASR backends are currently available
 ```
 
 The subcommands are declared from the pipeline spec and execute the real

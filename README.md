@@ -51,6 +51,27 @@ source-attributed observations first, and reconstruct transcript, speakers and
 meaning afterward. That keeps ingestion cheap and reliability a property of
 *storage*, not of a fragile online model (`docs/architecture.md` §4).
 
+## Install
+
+**Today the source checkout is the way** — there is no PyPI release yet:
+
+```sh
+git clone https://github.com/zhaoweny/clear-record.git
+cd clear-record
+uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
+uv run --all-packages --extra apple clear-record --help
+```
+
+The release workflow ([`docs/releasing.md`](docs/releasing.md)) builds and
+publishes wheels and sdists for all four workspace members. Once the first
+release is out, the packaged install becomes available:
+
+```sh
+uv tool install cr-cli                   # or: pipx install cr-cli — dist name
+                                         # open, see ADR-0009
+clear-record --help                       # the command is `clear-record`
+```
+
 ## Backends (Apple · NVIDIA · AMD)
 
 Inspired by the observation (Marco Arment / Overcast) that Mac frameworks are
@@ -67,7 +88,7 @@ Each backend is a *capability*, not a hard dependency — it is usable only when
 its runtime probe succeeds. All three drive the system `whisper-cli`
 (macOS/Homebrew: `whisper-cpp` + `ggml-metal`; Arch: `whisper-cpp` +
 `ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and their extras install no
-Python package (they are no-op markers). `clearrecord backends` shows what is
+Python package (they are no-op markers). `clear-record backends` shows what is
 available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
@@ -101,7 +122,7 @@ load probe (no model, no network; cached for the invocation) and refuses to
 transcribe when the plugin does not load:
 
 ```sh
-clearrecord transcribe <dir> --backend amd --check-plugin
+clear-record transcribe <dir> --backend amd --check-plugin
 ```
 
 On release builds the CLI may not print its backend-load line, in which case
@@ -122,11 +143,11 @@ mkdir -p recordings && cp ~/Downloads/my-take.wav recordings/
 uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 
 # full pipeline:
-uv run --all-packages --extra apple clearrecord calibrate recordings \
+uv run --all-packages --extra apple clear-record calibrate recordings \
     --backend apple --model small --reference-transcript recordings/ref.txt
 
 # or run and just get the report:
-uv run --all-packages --extra apple clearrecord run recordings --backend apple --model medium
+uv run --all-packages --extra apple clear-record run recordings --backend apple --model medium
 ```
 
 `calibrate` prints `coverage`, `mean_confidence`, `wer` and `similarity` and
@@ -139,8 +160,8 @@ Real "4-channel pre-mixed badness with a correct answer" is scarce, so the
 [docs/test-corpus.md](docs/test-corpus.md)):
 
 ```sh
-uv run --all-packages clearrecord synth /tmp/align-test --devices 4 --duration 25 --seed 1
-uv run --all-packages clearrecord align /tmp/align-test
+uv run --all-packages clear-record synth /tmp/align-test --devices 4 --duration 25 --seed 1
+uv run --all-packages clear-record align /tmp/align-test
 # compare the printed offsets against /tmp/align-test/ground_truth.json
 ```
 
@@ -154,7 +175,7 @@ uv run --all-packages clearrecord align /tmp/align-test
 mkdir -p recordings && cp /path/to/meeting*.wav recordings/
 
 uv sync --all-packages --extra apple
-uv run --all-packages --extra apple clearrecord run recordings \
+uv run --all-packages --extra apple clear-record run recordings \
     --backend apple --model medium --language zh   # zh/en; omit --language to auto-detect
 ```
 
@@ -181,7 +202,7 @@ machine. On the Mac:
 git clone https://github.com/zhaoweny/clear-record.git
 cd clear-record
 uv sync --all-packages --extra apple     # or --extra nvidia / --extra amd
-uv run --all-packages --extra apple clearrecord run <tape-dir> --backend apple --model medium
+uv run --all-packages --extra apple clear-record run <tape-dir> --backend apple --model medium
 ```
 
 Processing on an Apple Silicon Mac is the intended always-on-node setup from the
@@ -198,7 +219,7 @@ stopped and restarted (a second run reuses the cache). Progress is printed and
 appended to `<dir>/transcribe.log`, so you can watch a background run.
 
 ```sh
-clearrecord transcribe <dir> --backend apple --model medium \
+clear-record transcribe <dir> --backend apple --model medium \
     --chunk-seconds 600 --overlap-seconds 5 --jobs 4   # --no-resume to force a redo
 ```
 
@@ -226,10 +247,10 @@ split on weak evidence, so diarization is **opt-in**: enable it explicitly, or
 pass a known count, and it otherwise reports one speaker per source.
 
 ```sh
-clearrecord run <dir> --backend apple --diarize         # enable auto diarization
-clearrecord run <dir> --backend apple --speakers 2      # known count
-clearrecord diarize <dir> --speakers 3                  # re-diarize existing segments
-clearrecord diarize <dir> --no-diarize                  # off
+clear-record run <dir> --backend apple --diarize         # enable auto diarization
+clear-record run <dir> --backend apple --speakers 2      # known count
+clear-record diarize <dir> --speakers 3                  # re-diarize existing segments
+clear-record diarize <dir> --no-diarize                  # off
 ```
 
 **Glossary (initial prompt).** Put names/terms one per line in
@@ -239,8 +260,8 @@ workflow is: **start a first pass in the background, build the glossary while it
 runs, then re-run** — the chunks are re-decoded with the finished terms.
 
 ```sh
-clearrecord glossary <dir> --add "李工" "Project Falcon" "ZX-2000"
-clearrecord transcribe <dir> --backend apple --model medium   # picks up glossary.txt
+clear-record glossary <dir> --add "李工" "Project Falcon" "ZX-2000"
+clear-record transcribe <dir> --backend apple --model medium   # picks up glossary.txt
 ```
 
 > **Privacy:** recordings and derived artifacts are environment-local data.
@@ -263,7 +284,7 @@ just test           # pytest
 
 # backend stacks are optional no-op extra markers (system `whisper-cli`):
 uv sync --all-packages --extra apple       # Apple: system `whisper-cli` + `ggml-metal`
-uv run --all-packages --extra apple clearrecord --help
+uv run --all-packages --extra apple clear-record --help
 ```
 
 > `uv sync --all-packages` creates the env and installs all workspace members +
@@ -277,9 +298,9 @@ uv run --all-packages --extra apple clearrecord --help
 packages/core       → cr-core       backend-agnostic domain model (no vendor/ML code)
 packages/engine     → cr-engine     audio I/O, cross-correlation alignment, reconcile (numpy)
 packages/providers  → cr-providers  per-vendor ASR adapters (apple / nvidia / amd)
-packages/cli        → cr-cli        the `clearrecord` command
+packages/cli        → cr-cli        the `clear-record` command
 docs/architecture.md                (spec + provenance, the primary doc)
-docs/adr/                           (decision records 0001–0008)
+docs/adr/                           (decision records 0001–0009)
 ```
 
 ## License

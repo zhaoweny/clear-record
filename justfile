@@ -48,3 +48,7 @@ format:
 # Run the test suite.
 test:
     uv run --all-packages pytest
+
+# Build all workspace wheels + sdists into dist/ (never committed).
+build:
+    uv build --all-packages

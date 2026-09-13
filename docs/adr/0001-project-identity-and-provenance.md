@@ -19,8 +19,8 @@ Date: 2026-09-09
 ## Decision
 
 - [DECISION] Establish a **new** open-source repository named **clear-record**
-  (product/repo name, per the naming resolution in the original concept; CLI binary
-  `clearrecord`).
+  (product/repo name, per the naming resolution in the original concept; CLI
+  binary `clearrecord`, renamed to `clear-record` on 2026-09-13 — see ADR-0009).
 - [DECISION] The implementation is a **clean-room reimplementation** of the
   *generic* concept ("record several audio sources reliably and use local AI to
   turn them into useful transcripts"), scoped from the public problem statement

@@ -17,7 +17,7 @@ you want, **while retaining the clean aligned transcript as ground truth**. This
 is the only reliable way to get the desired badness *with a known-correct
 answer*.
 
-This is implemented by `clearrecord synth` (see `cr_engine.synth`): it builds a
+This is implemented by `clear-record synth` (see `cr_engine.synth`): it builds a
 clean multi-speaker scene, degrades it per device, and writes an exact
 `ground_truth.json`. `just verify` proves `align` recovers the true offsets.
 
@@ -81,7 +81,7 @@ per-mic sources may bleed, also record a mixed/room reference.** The room mic is
 neutral, speaker-independent witness: it shows that a segment was spoken even
 when no identified per-mic channel is loud in that window, so attribution can
 keep the incoming speaker instead of guessing a bleed channel. This is implemented
-by `clearrecord attribute` → `cr_engine.attribute.attribute_segments` (relative,
+by `clear-record attribute` → `cr_engine.attribute.attribute_segments` (relative,
 gain-normalized per-source energy). The room is excluded from the candidate set
 even when it is also listed in the manifest, so it is never emitted as a speaker.
 The gate is calibrated for a room reference that carries every speaker at a

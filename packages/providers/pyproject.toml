@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "cr-core",
+    "cr-core==0.1.0",
 ]
 
 # This member is a uv workspace member and depends on a sibling member; pin the

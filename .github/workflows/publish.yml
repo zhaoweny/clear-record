@@ -1,0 +1,62 @@
+name: publish
+
+# Publish the four workspace dists (cr-core, cr-engine, cr-providers, cr-cli) to
+# PyPI. Prep-only notes for maintainers:
+#
+#   (a) OIDC trusted publishing — no API tokens and no repository secrets. The
+#       publish job requests a short-lived OIDC token from GitHub via
+#       `id-token: write`, scoped to the `pypi` environment; PyPI verifies the
+#       workflow identity instead.
+#   (b) Each PyPI project needs a one-time pending publisher configured by hand
+#       (owner `zhaoweny`, repo `clear-record`, workflow `publish.yml`,
+#       environment `pypi`). See docs/releasing.md.
+#   (c) The `pypi` GitHub environment is the deployment gate: require a reviewer
+#       there and every publish waits for a human approval before the upload.
+#
+# Tag-triggered, but also manually dispatchable — `v0.1.0` already exists, so
+# the first upload is a `workflow_dispatch`, not a new tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build dists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+      - name: Run the verify gate
+        run: just verify
+      - name: Build all workspace wheels + sdists
+        run: just build
+      - name: Upload dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - name: Download dists
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

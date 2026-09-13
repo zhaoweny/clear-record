@@ -80,6 +80,58 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
     assert report["coverage"] is not None
 
 
+def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
+    """The workspace directory name travels into the record metadata and becomes
+    the exported H1, so a qmd index can tell recordings apart."""
+    wd = _workspace(tmp_path)
+    sources = stages.ingest(wd)
+    stages.align(wd)
+
+    # Seed segments "by hand" (transcribe stage is backend-gated).
+    from cr_core import Segment
+
+    per_source = {
+        sources[0].id: [
+            Segment(
+                start=0.0,
+                end=1.5,
+                text="first line",
+                source=sources[0].id,
+                confidence=0.9,
+            )
+        ],
+    }
+    from cr_cli.workspace import Workspace
+
+    Workspace.at(tmp_path / "rec").write_segments(
+        per_source, {"backend": "none", "model": "none"}
+    )
+
+    record = stages.reconcile(wd)
+    assert record.metadata["title"] == "rec"
+
+    written = stages.export(wd, formats=["md"])
+    first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
+    assert first_line == "# Record — rec"
+
+
+def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
+    """Backward compatibility: a record written before titles were stored (no
+    `title` metadata) still renders the bare `# Record`."""
+    from cr_core import RecordDocument
+    from cr_cli.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(sources=(), alignment=None, segments=())
+    )
+
+    written = stages.export(str(wd), formats=["md"])
+    first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
+    assert first_line == "# Record"
+
+
 def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     """A 4-channel meeting/DJI capture becomes four per-channel sources (auto),
     and `--mix-down` collapses it to one."""

@@ -44,3 +44,10 @@ arrays/beamforming, camera fusion, relative 3-D speaker localization
 (acoustic triangulation, DOA/TDOA fusion), cross-device clock sync as a product
 feature, network-attached world-reconstruction pods — are **not** in scope for
 this repository. See `docs/architecture.md` §7.
+
+## Command naming (2026-09-13)
+
+- The CLI **command** is spelled `clear-record`, not `clearrecord`: *"the cli
+  reads as 'clear-record' instead of 'clearrecord'"*. This supersedes the
+  `clearrecord` spelling in "Project framing" above; it concerns the command
+  only — the distribution name (`cr-cli`) is unaffected (ADR-0009).

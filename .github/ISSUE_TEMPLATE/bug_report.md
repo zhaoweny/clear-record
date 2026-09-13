@@ -9,7 +9,7 @@ The `labels:` line above applies only if a `needs-triage` label exists in the
 repository (see `docs/agents/triage-labels.md`); remove it if it does not.
 
 ⚠️ Do not attach private recordings, transcripts, or model weights. Use
-synthetic audio (`clearrecord synth`) or a file you are free to share, and
+synthetic audio (`clear-record synth`) or a file you are free to share, and
 redact anything sensitive from logs.
 -->
 
@@ -49,7 +49,7 @@ redact anything sensitive from logs.
 
 ## Logs / output
 
-<!-- Redact private audio, transcripts, names, and paths. `clearrecord synth`
+<!-- Redact private audio, transcripts, names, and paths. `clear-record synth`
      can generate shareable test material. -->
 
 ```text

@@ -11,6 +11,11 @@ from cr_cli import stages
 from cr_cli.cli import _build_parser
 
 
+def test_parser_prog_is_clear_record() -> None:
+    """The usage/help command name matches the owner's spelling (ADR-0009)."""
+    assert _build_parser().prog == "clear-record"
+
+
 def test_subcommands_match_pipeline() -> None:
     parser = _build_parser()
     expected = set(pipeline_spec().cli_commands()) | {

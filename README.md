@@ -18,8 +18,9 @@ publicly available documentation, models, libraries and reference technology. No
 work/company source code, generated artifacts, specifications, recordings,
 datasets, partner names, internal documents or credentials are imported; see
 [docs/architecture.md](docs/architecture.md) §6 for the exact clean-room
-boundary. That note records *facts* (that the work was done independently) and
-is not a legal opinion.
+boundary. This note records *facts* (that the work was done independently) and
+is not a legal opinion; see [`NOTICE.md`](NOTICE.md) for the full origin,
+authorship and AI-agent-use notice.
 
 ## What it does
 

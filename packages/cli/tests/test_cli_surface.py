@@ -39,10 +39,15 @@ def test_attribute_surface_wires_energy_and_mixed_reference() -> None:
     parser = _build_parser()
     standalone = parser.parse_args(["attribute", "dir", "--mixed-source", "room"])
     assert standalone.mixed_source == "room"
+    assert standalone.window_s is None
+
+    windowed = parser.parse_args(["attribute", "dir", "--window-s", "15"])
+    assert windowed.window_s == 15.0
 
     default = parser.parse_args(["run", "dir"])
     assert default.attribute_energy is False
     assert default.mixed_source is None
+    assert default.window_s is None
 
     opted = parser.parse_args(
         ["run", "dir", "--attribute-energy", "--mixed-source", "room"]

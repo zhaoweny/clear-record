@@ -37,6 +37,7 @@ from cr_engine import (
     SYNTH_SR,
     align_sources,
     attribute_segments,
+    attribute_segments_windowed,
     channel_count,
     clean_segments,
     diarize as diarize_segments,
@@ -797,7 +798,9 @@ def diarize(directory: str, speakers: int | None = None):
 # --------------------------------------------------------------------------- #
 # attribute (cross-talk-aware attribution by relative source energy)
 # --------------------------------------------------------------------------- #
-def attribute(directory: str, mixed_source: str | None = None):
+def attribute(
+    directory: str, mixed_source: str | None = None, window_s: float | None = None
+):
     """Re-attribute each segment's speaker from the relative source energy.
 
     Cross-talk correction for close microphones: instead of trusting the source a
@@ -806,6 +809,11 @@ def attribute(directory: str, mixed_source: str | None = None):
     aligned window. A mixed/room reference named by ``mixed_source`` gates weak
     claims and is never itself a speaker candidate. Composable with `reconcile`,
     which preserves the assigned speaker.
+
+    With ``window_s`` set, normalize against each source's **recent** level over a
+    causal rolling window of that many seconds (tracking drifting gain) and write
+    a calibrated per-segment confidence. Without it, the static whole-recording
+    correction is unchanged.
     """
     d = Path(directory)
     sources, alignment = ws.load_manifest(d)
@@ -825,7 +833,12 @@ def attribute(directory: str, mixed_source: str | None = None):
         print("[attribute] no segments to attribute")
         return per_source
 
-    attributed = attribute_segments(flat, candidates, offsets=offsets, mixed=mixed)
+    if window_s is not None:
+        attributed = attribute_segments_windowed(
+            flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
+        )
+    else:
+        attributed = attribute_segments(flat, candidates, offsets=offsets, mixed=mixed)
     changed = 0
     pos = 0
     for sid in order:
@@ -838,10 +851,14 @@ def attribute(directory: str, mixed_source: str | None = None):
     for before, after in zip(flat, attributed):
         if before.speaker != after.speaker:
             changed += 1
-    if changed:
+    # The windowed path also writes a confidence, so persist even if no label
+    # changed (otherwise the new confidence would be lost to reconcile).
+    if changed or window_s is not None:
         ws.write_segments(d, per_source, meta)
     speakers = {s.speaker for s in attributed}
     suffix = f" (room reference: {mixed_source})" if mixed_source else ""
+    if window_s is not None:
+        suffix += f" (rolling window: {window_s:g}s)"
     print(
         f"[attribute] {len(flat)} segment(s), {len(speakers)} speaker(s), "
         f"{changed} re-attributed{suffix}"
@@ -1021,6 +1038,7 @@ def run(
     formats: list[str] | None = None,
     attribute_energy: bool = False,
     mixed_source: str | None = None,
+    window_s: float | None = None,
     jobs: int = 0,
 ):
     ingest(directory, audio_files, split=split)
@@ -1041,7 +1059,7 @@ def run(
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to
     # spectral diarization; when off, the default `diarize` path is unchanged.
     if attribute_energy and sources:
-        attribute(directory, mixed_source=mixed_source)
+        attribute(directory, mixed_source=mixed_source, window_s=window_s)
     else:
         # Per-channel capture already attributes per source, and a single voice
         # must not be split on weak evidence, so diarization is opt-in:

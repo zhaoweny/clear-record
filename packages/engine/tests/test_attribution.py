@@ -10,6 +10,7 @@ from cr_core import Segment, Source
 from cr_engine import (
     SYNTH_SR,
     attribute_segments,
+    attribute_segments_windowed,
     make_crosstalk_scene,
     make_scene,
     make_speaker_stems,
@@ -216,3 +217,250 @@ def test_attribute_segments_short_or_bad_sources_are_safe(tmp_path) -> None:
     got = attribute_segments(segments, sources)
     assert got[0].speaker == "Bob"
     assert got[0].start == pytest.approx(0.7)
+
+
+# --------------------------------------------------------------------------- #
+# Gain-normalized attribution: per-source level, rolling window, confidence
+# --------------------------------------------------------------------------- #
+
+_GAIN_BLEED_DB = -9.0
+# ±6 dB per device (12 dB total) is the imbalance the synthetic experiment showed
+# collapses stateless closest-mic to ~chance once `imb/2 + bleed > 0`.
+_GAIN_IMBALANCE_DB = 12.0
+# Mid-tape step: device 0 loud first half, device 1 loud second half. Averaging
+# the two halves cancels it, so a single static correction cannot track it.
+_GAIN_STEP_DB = 8.0
+_GAIN_SCENES_S = 120.0
+
+
+def _write_gained(directory, devices, gains, prefix: str) -> list[Source]:
+    """Write devices to wav (optionally × per-sample ``gains``) as Sources."""
+    directory.mkdir(parents=True, exist_ok=True)
+    sources = []
+    for i, audio in enumerate(devices):
+        if gains is not None:
+            audio = (audio * gains[i]).astype(np.float32)
+        path = directory / f"{prefix}{i}.wav"
+        sf.write(str(path), audio, SYNTH_SR)
+        sources.append(Source(id=f"{prefix}{i}", path=str(path), label=f"Speaker {i}"))
+    return sources
+
+
+def _gain_segments(events: list[dict]) -> list[Segment]:
+    """One segment per event, deliberately tagged with the wrong speaker.
+
+    The incoming speaker is not load-bearing (attribution overwrites it), so the
+    test scores the recovered speaker against the generator's known truth.
+    """
+    return [
+        Segment(
+            start=e["start"],
+            end=e["end"],
+            text="word",
+            source="dev0",
+            speaker="Speaker 0",
+        )
+        for e in events
+    ]
+
+
+def _gain_accuracy(got: list[Segment], events: list[dict]) -> float:
+    return sum(
+        seg.speaker == f"Speaker {e['speaker']}" for seg, e in zip(got, events)
+    ) / max(1, len(events))
+
+
+def _ece(results: list[Segment], events: list[dict], nbins: int = 10) -> float:
+    """Expected calibration error of the emitted confidence (10 equal bins)."""
+    conf = np.array([float(s.confidence or 0.0) for s in results])
+    correct = np.array(
+        [s.speaker == f"Speaker {e['speaker']}" for s, e in zip(results, events)],
+        dtype=float,
+    )
+    edges = np.linspace(0.0, 1.0, nbins + 1)
+    ece = 0.0
+    for i in range(nbins):
+        if i < nbins - 1:
+            mask = (conf >= edges[i]) & (conf < edges[i + 1])
+        else:
+            mask = (conf >= edges[i]) & (conf <= edges[i + 1])
+        if not np.any(mask):
+            continue
+        ece += (mask.sum() / conf.size) * abs(correct[mask].mean() - conf[mask].mean())
+    return float(ece)
+
+
+@pytest.fixture(scope="module")
+def gain_scenes(tmp_path_factory):
+    """Two synthetic cross-talk scenes under a static and a step gain imbalance.
+
+    Built once per module. Each scene is one lav per speaker with -9 dB cross-talk
+    (the repo generator's model), then a per-device gain is applied: constant ±6 dB
+    (static) or a mid-tape ±8 dB step that swaps the hot device (time-varying).
+    """
+    root = tmp_path_factory.mktemp("gain_scenes")
+    scenes = []
+    for seed in (1, 2):
+        devices, events = make_crosstalk_scene(
+            _GAIN_SCENES_S,
+            2,
+            bleed_db=_GAIN_BLEED_DB,
+            seed=seed,
+            non_overlapping=True,
+        )
+        half = _GAIN_IMBALANCE_DB / 2.0
+        static_gains = [10.0 ** (half / 20.0), 10.0 ** (-half / 20.0)]
+
+        n = devices[0].size
+        t = np.arange(n, dtype=np.float64) / SYNTH_SR
+        step = np.where(t < t[-1] / 2.0, _GAIN_STEP_DB, -_GAIN_STEP_DB)
+        step_gains = [10.0 ** (step / 20.0), 10.0 ** (-step / 20.0)]
+
+        scenes.append(
+            {
+                "events": events,
+                "segments": _gain_segments(events),
+                "static_sources": _write_gained(
+                    root / f"static{seed}", devices, static_gains, "d"
+                ),
+                "step_sources": _write_gained(
+                    root / f"step{seed}", devices, step_gains, "d"
+                ),
+            }
+        )
+    return scenes
+
+
+def test_gain_normalized_beats_stateless_closest_mic(gain_scenes) -> None:
+    """Per-source level normalization decisively beats stateless closest-mic.
+
+    In the cross-talk + static gain-imbalance regime the raw loudest-mic rule is
+    near chance; normalizing each source against its own level recovers the true
+    speaker with a large margin (the mechanism, not an incidental win).
+    """
+    stateless_acc, normalized_acc = [], []
+    for scene in gain_scenes:
+        segs, events = scene["segments"], scene["events"]
+        # gain_normalize=False is the control: raw window energy, no correction.
+        stateless = attribute_segments_windowed(
+            segs, scene["static_sources"], gain_normalize=False
+        )
+        normalized = attribute_segments_windowed(segs, scene["static_sources"])
+        stateless_acc.append(_gain_accuracy(stateless, events))
+        normalized_acc.append(_gain_accuracy(normalized, events))
+
+    stateless_mean = float(np.mean(stateless_acc))
+    normalized_mean = float(np.mean(normalized_acc))
+    assert stateless_mean < 0.7, "the control must actually be in the failure regime"
+    assert normalized_mean >= 0.9, "normalized attribution must recover the speaker"
+    assert normalized_mean - stateless_mean >= 0.35, (
+        "expected a large, real margin over stateless closest-mic"
+    )
+
+
+def test_rolling_window_beats_static_correction_on_drifting_gain(
+    gain_scenes,
+) -> None:
+    """The rolling window is what handles a time-varying (mid-tape step) gain.
+
+    A single static per-source correction averages the two halves and cancels the
+    step, so it is near chance; the ~15 s causal rolling level tracks the step.
+    """
+    static_acc, window_acc = [], []
+    for scene in gain_scenes:
+        segs, events = scene["segments"], scene["events"]
+        static = attribute_segments(segs, scene["step_sources"])
+        windowed = attribute_segments_windowed(segs, scene["step_sources"])
+        static_acc.append(_gain_accuracy(static, events))
+        window_acc.append(_gain_accuracy(windowed, events))
+
+    static_mean = float(np.mean(static_acc))
+    window_mean = float(np.mean(window_acc))
+    assert static_mean < 0.7, "a static correction must fail across the step"
+    assert window_mean >= 0.85, "the rolling window must track the step"
+    assert window_mean - static_mean >= 0.3, (
+        "the rolling window must beat the static correction by a real margin"
+    )
+
+
+def test_rolling_window_ties_static_correction_on_static_gain(gain_scenes) -> None:
+    """On a *constant* imbalance the rolling window must not lose to the simple
+    single static correction -- normalization, not window length, does the work."""
+    static_acc, window_acc = [], []
+    for scene in gain_scenes:
+        segs, events = scene["segments"], scene["events"]
+        static = attribute_segments(segs, scene["static_sources"])
+        windowed = attribute_segments_windowed(segs, scene["static_sources"])
+        static_acc.append(_gain_accuracy(static, events))
+        window_acc.append(_gain_accuracy(windowed, events))
+
+    static_mean = float(np.mean(static_acc))
+    window_mean = float(np.mean(window_acc))
+    assert window_mean >= 0.9
+    assert abs(window_mean - static_mean) <= 0.06, (
+        "window and static correction should roughly tie on a static imbalance"
+    )
+
+
+def test_windowed_confidence_is_emitted_and_calibrated(gain_scenes) -> None:
+    """A confidence is produced for every attributed segment, and it is better
+    calibrated (lower ECE) than the raw-margin confidence of stateless closest-mic
+    -- raw margin is overconfident exactly on the frames the imbalance corrupts."""
+    stateless_ece, window_ece = [], []
+    for scene in gain_scenes:
+        segs, events = scene["segments"], scene["events"]
+        stateless = attribute_segments_windowed(
+            segs, scene["static_sources"], gain_normalize=False
+        )
+        windowed = attribute_segments_windowed(segs, scene["static_sources"])
+
+        assert all(s.confidence is not None for s in windowed)
+        assert all(0.0 < (s.confidence or 0.0) <= 1.0 for s in windowed)
+
+        stateless_ece.append(_ece(stateless, events))
+        window_ece.append(_ece(windowed, events))
+
+    # Strict per scene and in the mean: no seed is permitted to tie, so a
+    # regression cannot hide inside an average.
+    for stateless_e, window_e in zip(stateless_ece, window_ece):
+        assert window_e < stateless_e, (
+            "normalized confidence must be strictly better calibrated per seed"
+        )
+    assert float(np.mean(window_ece)) < float(np.mean(stateless_ece)), (
+        "normalized confidence must be strictly better calibrated than raw margin"
+    )
+
+
+def test_single_candidate_confidence_is_degenerate(tmp_path) -> None:
+    """One candidate always yields confidence ~1.0, even when it barely clears
+    the floor. The gate/floor is what rejects a weak claim; the confidence is
+    simply undefined between candidates. Locked so the degeneracy cannot drift."""
+    audio = np.zeros(SYNTH_SR, dtype=np.float32)
+    audio[: SYNTH_SR // 2] = 0.1
+    path = tmp_path / "only.wav"
+    sf.write(str(path), audio, SYNTH_SR)
+    sources = [Source(id="only", path=str(path), label="Alice")]
+    segments = [Segment(0.1, 0.4, "hi", "only", speaker="Alice")]
+
+    got = attribute_segments_windowed(segments, sources)
+
+    assert got[0].speaker == "Alice"
+    assert got[0].confidence == pytest.approx(1.0)
+
+
+def test_attribution_uses_no_pitch_cue() -> None:
+    """The attribution path carries no pitch/F0 cue.
+
+    Synthetic ground truth showed a fixed, well-calibrated F0 cue still loses
+    accuracy, so the mechanism is energy-only. Guard it structurally: no
+    pitch/F0 estimator is reachable from the attribution module."""
+    import cr_engine.attribute as attribute_module
+
+    names = list(vars(attribute_module))
+    assert not any("pitch" in name.lower() for name in names)
+    assert not any(name.lower().startswith("f0") for name in names)
+    referenced = set(attribute_segments_windowed.__code__.co_names)
+    assert not any(
+        "pitch" in name.lower() or name.lower() in {"f0", "f0_hz"}
+        for name in referenced
+    )

@@ -135,6 +135,14 @@ def _build_parser() -> argparse.ArgumentParser:
             help="manifest source id to use as the mixed/room reference for "
             "energy attribution",
         )
+        p.add_argument(
+            "--window-s",
+            dest="window_s",
+            type=float,
+            default=None,
+            help="seconds of causal history for a rolling per-source level "
+            "(tracks drifting gain); omit for the static whole-recording level",
+        )
 
     def _common_args(p: argparse.ArgumentParser) -> None:
         p.add_argument(
@@ -237,6 +245,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="manifest source id to use as the mixed/room reference",
     )
+    attr.add_argument(
+        "--window-s",
+        dest="window_s",
+        type=float,
+        default=None,
+        help="seconds of causal history for a rolling per-source level "
+        "(tracks drifting gain); omit for the static whole-recording level",
+    )
 
     # glossary (decoder initial prompt; edit while a pass runs in the background)
     glo = sub.add_parser(
@@ -335,7 +351,11 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if command == "attribute":
-        stages.attribute(args.directory, mixed_source=args.mixed_source)
+        stages.attribute(
+            args.directory,
+            mixed_source=args.mixed_source,
+            window_s=args.window_s,
+        )
         return 0
 
     if command == "glossary":
@@ -369,6 +389,7 @@ def _main(args: argparse.Namespace) -> int:
             reference=args.reference,
             attribute_energy=args.attribute_energy,
             mixed_source=args.mixed_source,
+            window_s=args.window_s,
         )
         return 0
 
@@ -390,6 +411,7 @@ def _main(args: argparse.Namespace) -> int:
             reference=args.reference,
             attribute_energy=args.attribute_energy,
             mixed_source=args.mixed_source,
+            window_s=args.window_s,
         )
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0

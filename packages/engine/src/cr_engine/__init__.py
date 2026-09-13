@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from cr_engine.align import align_sources, cross_correlate, estimate_offset
-from cr_engine.attribute import attribute_segments
+from cr_engine.attribute import attribute_segments, attribute_segments_windowed
 from cr_engine.audio import (
     ASR_SAMPLE_RATE,
     AudioDecodeError,
@@ -35,6 +35,7 @@ __all__ = [
     "SYNTH_SR",
     "align_sources",
     "attribute_segments",
+    "attribute_segments_windowed",
     "channel_count",
     "clean_segments",
     "collapse_repetitions",

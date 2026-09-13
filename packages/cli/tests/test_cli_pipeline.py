@@ -152,6 +152,48 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
             assert seg.speaker == truth[token]
 
 
+def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) -> None:
+    """`attribute --window-s` uses the rolling per-source level and persists the
+    calibrated confidence (not just the corrected speaker), so reconcile sees it."""
+    import soundfile as sf
+
+    from cr_core import Segment
+    from cr_engine import SYNTH_SR, make_crosstalk_scene
+
+    from cr_cli import workspace as ws
+
+    devices, events = make_crosstalk_scene(
+        duration_s=20.0, n_speakers=2, bleed_db=-9.0, seed=5, non_overlapping=True
+    )
+    gains = [10.0 ** (6.0 / 20.0), 10.0 ** (-6.0 / 20.0)]
+    wd = tmp_path / "gain"
+    wd.mkdir()
+    for i, device in enumerate(devices):
+        sf.write(
+            str(wd / f"lav{i}.wav"), (device * gains[i]).astype("float32"), SYNTH_SR
+        )
+
+    sources = stages.ingest(str(wd))
+    labels = {s.id: s.label for s in sources}
+    per_source: dict[str, list[Segment]] = {s.id: [] for s in sources}
+    for i, e in enumerate(events):
+        wrong = f"lav{1 - e['speaker']}"  # the bleed-dominated channel
+        per_source[wrong].append(
+            Segment(e["start"], e["end"], f"w{i}", wrong, labels[wrong])
+        )
+    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+
+    stages.attribute(str(wd), window_s=15.0)
+
+    per_source, _ = ws.load_segments(wd)
+    fixed = [s for sid in per_source for s in per_source[sid]]
+    assert sorted(s.speaker for s in fixed) == sorted(
+        labels[f"lav{e['speaker']}"] for e in events
+    )
+    assert all(s.confidence is not None for s in fixed)
+    assert all(0.0 < s.confidence <= 1.0 for s in fixed)
+
+
 def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     """B1 regression: the mixed/room source lives in the manifest, so the CLI must
     keep it out of the candidate set -- it is a witness, never a speaker.
@@ -282,7 +324,7 @@ def test_run_attribute_energy_selects_energy_path(tmp_path, monkeypatch) -> None
     wd = _workspace(tmp_path)
     calls = {"attribute": 0, "diarize": 0}
 
-    def spy_attribute(directory, mixed_source=None):
+    def spy_attribute(directory, mixed_source=None, window_s=None):
         calls["attribute"] += 1
         return {}
 

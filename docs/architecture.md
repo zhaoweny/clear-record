@@ -311,7 +311,12 @@ docs/vox/voice-of-owner.md         owner voice
   attribution when channels are already split.
 - `attribute` → cross-talk-aware per-segment attribution by **relative,
   gain-normalized source energy** (`cr_engine.attribute`), with an optional
-  mixed/room reference as a presence gate (never a speaker itself). `run
+  mixed/room reference as a presence gate (never a speaker itself). Each source is
+  normalized against its **own** level; `--window-s` switches from one static
+  whole-recording level to a **causal rolling window** (≈15 s default) that tracks
+  **drifting** gain and writes a calibrated per-segment confidence, while a
+  constant imbalance is handled by the single static correction. **No pitch/F0
+  cue** (a well-calibrated F0 cue still lost accuracy on synthetic truth). `run
   --attribute-energy` opts in without changing the default `diarize` path, and
   the corrected speaker is preserved by `reconcile`. See `docs/test-corpus.md`.
 - `reconcile` → `cr_engine.reconcile`; shift by alignment, collapse overlaps,

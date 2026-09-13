@@ -91,7 +91,17 @@ so the fence is scoped to that regime. A room mic far below the per-mic level ca
 leave a covered speaker uncorrected, in which case attribution conservatively keeps
 the incoming speaker. The badness is synthesized with exact ground truth by
 `cr_engine.synth.make_crosstalk_scene` (`non_overlapping=True` for the calibrated
-regime).
+regime). `[FACT]` A synthetic ground-truth study found **per-source level
+normalization** does the work, not pitch: stateless closest-mic collapses to ~0.5
+accuracy once the hot device's bleed wins, while normalizing each source against
+its own level stays 0.94–0.995. A **constant** gain imbalance is handled by a
+single static correction; the `--window-s` rolling window (≈15 s) only earns its
+keep when the gain **drifts** (a mid-tape step: 0.51 → 0.94–0.986). The path emits
+a calibrated confidence and uses **no pitch/F0 cue** (a fixed, well-calibrated F0
+cue still lost accuracy). **Honest limit:** the evidence is synthetic
+additive/delay-free cross-talk; intrinsic speaker-level imbalance (not a mic gain)
+is a regime per-source normalization cannot win, and real-tape validation still
+needs independent labels.
 `[OPEN]` Whether a room reference can *name* a speaker, rather than gate/fall
 back, remains undetermined; here it is a witness, never a speaker candidate.
 

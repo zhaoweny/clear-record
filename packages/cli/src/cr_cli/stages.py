@@ -21,8 +21,7 @@ from cr_engine import (
     DEFAULT_OVERLAP_S,
     SYNTH_SR,
     align_sources,
-    attribute_segments,
-    attribute_segments_windowed,
+    attribute_by_source,
     channel_count,
     diarize as diarize_segments,
     make_scene,
@@ -329,35 +328,28 @@ def attribute(
     # The room is a witness, never a speaker: keep it out of the candidate set.
     candidates = [s for s in sources if mixed is None or s.id != mixed.id]
 
-    order = [sid for sid, segs in per_source.items() if segs]
-    flat = [seg for sid in order for seg in per_source[sid]]
+    flat = [seg for segs in per_source.values() for seg in segs]
     if not flat:
         print("[attribute] no segments to attribute")
         return per_source
 
-    if window_s is not None:
-        attributed = attribute_segments_windowed(
-            flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
-        )
-    else:
-        attributed = attribute_segments(flat, candidates, offsets=offsets, mixed=mixed)
+    # Attribution owns the grouping: the result is keyed by each segment's own
+    # `source`, so no positional reassembly over dict order is needed.
+    attributed = attribute_by_source(
+        flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
+    )
     changed = 0
-    pos = 0
-    for sid in order:
-        updated = []
-        for seg in per_source[sid]:
-            seg = attributed[pos]
-            pos += 1
-            updated.append(seg)
+    for sid, segs in per_source.items():
+        updated = attributed.get(sid, [])
+        for before, after in zip(segs, updated):
+            if before.speaker != after.speaker:
+                changed += 1
         per_source[sid] = updated
-    for before, after in zip(flat, attributed):
-        if before.speaker != after.speaker:
-            changed += 1
     # The windowed path also writes a confidence, so persist even if no label
     # changed (otherwise the new confidence would be lost to reconcile).
     if changed or window_s is not None:
         w.write_segments(per_source, meta)
-    speakers = {s.speaker for s in attributed}
+    speakers = {seg.speaker for segs in attributed.values() for seg in segs}
     suffix = f" (room reference: {mixed_source})" if mixed_source else ""
     if window_s is not None:
         suffix += f" (rolling window: {window_s:g}s)"

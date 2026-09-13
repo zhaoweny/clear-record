@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from cr_engine.align import align_sources, cross_correlate, estimate_offset
-from cr_engine.attribute import attribute_segments, attribute_segments_windowed
+from cr_engine.attribute import (
+    attribute_by_source,
+    attribute_segments,
+    attribute_segments_windowed,
+)
 from cr_engine.audio import (
     ASR_SAMPLE_RATE,
     AudioDecodeError,
@@ -34,6 +38,7 @@ __all__ = [
     "DEFAULT_OVERLAP_S",
     "SYNTH_SR",
     "align_sources",
+    "attribute_by_source",
     "attribute_segments",
     "attribute_segments_windowed",
     "channel_count",

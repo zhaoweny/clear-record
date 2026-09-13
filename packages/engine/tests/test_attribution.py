@@ -9,6 +9,7 @@ import soundfile as sf
 from cr_core import Segment, Source
 from cr_engine import (
     SYNTH_SR,
+    attribute_by_source,
     attribute_segments,
     attribute_segments_windowed,
     make_crosstalk_scene,
@@ -101,6 +102,45 @@ def test_clean_per_channel_attribution_is_unchanged(tmp_path) -> None:
     got = attribute_segments(segments, sources)
     assert [s.speaker for s in got] == [s.speaker for s in segments]
     assert all(a.text == b.text and a.start == b.start for a, b in zip(got, segments))
+
+
+def test_attribution_groups_by_source_identity(tmp_path) -> None:
+    """Attribution owns the grouping and keys it on ``Segment.source``, so a
+    flattened or reordered input yields the same attribution -- no positional
+    reassembly that silently trusts dict iteration order."""
+    devices, events = make_crosstalk_scene(
+        duration_s=20.0, n_speakers=2, bleed_db=-6.0, seed=3, non_overlapping=True
+    )
+    sources = _write_devices(tmp_path, devices, "grp")
+
+    # One segment per event, deliberately sourced from the bleed channel.
+    segments = [
+        Segment(
+            start=e["start"],
+            end=e["end"],
+            text=f"w{i}",
+            source=f"grp{1 - e['speaker']}",
+            speaker=f"Speaker {1 - e['speaker']}",
+        )
+        for i, e in enumerate(events)
+    ]
+
+    grouped = attribute_by_source(segments, sources)
+    reordered = attribute_by_source(list(reversed(segments)), sources)
+
+    def speakers(by_source: dict[str, list[Segment]]) -> dict[str, list[str]]:
+        return {sid: sorted(s.speaker for s in segs) for sid, segs in by_source.items()}
+
+    # Keyed by each segment's own source, not by input position...
+    assert set(grouped) == {"grp0", "grp1"}
+    assert sum(len(segs) for segs in grouped.values()) == len(segments)
+    # ...so a flattened/reordered input attributes identically.
+    assert speakers(grouped) == speakers(reordered)
+
+    truth = {f"w{i}": f"Speaker {e['speaker']}" for i, e in enumerate(events)}
+    assert all(
+        seg.speaker == truth[seg.text] for segs in grouped.values() for seg in segs
+    )
 
 
 @pytest.mark.parametrize("bleed_db", [-6.0, -9.0, -12.0])

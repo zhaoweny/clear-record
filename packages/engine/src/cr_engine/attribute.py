@@ -60,7 +60,11 @@ import numpy as np
 from cr_core import Segment, Source
 from cr_engine.audio import ASR_SAMPLE_RATE, read_audio
 
-__all__ = ["attribute_segments", "attribute_segments_windowed"]
+__all__ = [
+    "attribute_by_source",
+    "attribute_segments",
+    "attribute_segments_windowed",
+]
 
 # Window/level energy ratio below which a source is treated as silent in the
 # segment window. A source speaking normally sits near 1.0; bleed and silence sit
@@ -414,3 +418,34 @@ def attribute_segments_windowed(
             )
         )
     return out
+
+
+def attribute_by_source(
+    segments: Sequence[Segment],
+    sources: Sequence[Source],
+    *,
+    offsets: Mapping[str, float] | None = None,
+    mixed: Source | None = None,
+    window_s: float | None = None,
+) -> dict[str, list[Segment]]:
+    """Attribute ``segments`` and group the result by ``Segment.source``.
+
+    Attribution owns the grouping: the input is one flat list in any order, and
+    the output is keyed by each segment's own ``source`` field, so regrouping
+    never depends on the order the caller flattened its per-source segments in.
+    Every input segment already carries that identity; this function is the
+    reason the caller does not have to reconstruct the mapping positionally.
+
+    ``window_s is None`` uses the static :func:`attribute_segments`; a value
+    selects the rolling-window :func:`attribute_segments_windowed`.
+    """
+    if window_s is not None:
+        attributed = attribute_segments_windowed(
+            segments, sources, offsets=offsets, mixed=mixed, window_s=window_s
+        )
+    else:
+        attributed = attribute_segments(segments, sources, offsets=offsets, mixed=mixed)
+    grouped: dict[str, list[Segment]] = {}
+    for seg in attributed:
+        grouped.setdefault(seg.source, []).append(seg)
+    return grouped

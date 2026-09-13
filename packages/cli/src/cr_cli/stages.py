@@ -14,21 +14,12 @@ import os
 import random
 import shutil
 import subprocess
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
 import soundfile as sf
 
-from cr_core import (
-    RecordDocument,
-    Segment,
-    Source,
-    load_json,
-    segment_from_dict,
-    to_dict,
-    write_json,
-)
+from cr_core import RecordDocument, Segment, Source, write_json
 from cr_engine import (
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
@@ -54,7 +45,7 @@ from cr_providers import (
 )
 
 from cr_cli import eval as _eval
-from cr_cli import workspace as ws
+from cr_cli.workspace import ChunkCache, Workspace, chunk_cache_key, discover_audio
 
 
 # --------------------------------------------------------------------------- #
@@ -83,11 +74,12 @@ def ingest(
       source — preserves per-speaker isolation ("closest mic wins").
     - ``"mix"``: always downmix to mono.
     """
-    d = Path(directory)
-    files = [Path(a) for a in audio_files] if audio_files else ws.discover_audio(d)
+    w = Workspace.at(directory)
+    d = w.root
+    files = [Path(a) for a in audio_files] if audio_files else discover_audio(d)
     if not files:
         raise SystemExit(f"[ingest] no audio files found in {d}")
-    audio_dir = d / "audio"
+    audio_dir = w.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     sources: list[Source] = []
@@ -118,13 +110,13 @@ def ingest(
             sources.append(
                 Source(id=base, path=str(norm), label=p.stem, clock_domain="wall")
             )
-    ws.write_manifest(d, sources)
-    _print_sources(sources, d)
+    w.write_manifest(sources)
+    _print_sources(sources, w)
     return sources
 
 
-def _print_sources(sources: list[Source], d: Path) -> None:
-    print(f"[ingest] {len(sources)} source(s) -> {ws.manifest_path(d)}")
+def _print_sources(sources: list[Source], w: Workspace) -> None:
+    print(f"[ingest] {len(sources)} source(s) -> {w.manifest_path}")
     for s in sources:
         print(f"  {s.id:24s} {s.path}")
 
@@ -133,10 +125,10 @@ def _print_sources(sources: list[Source], d: Path) -> None:
 # align
 # --------------------------------------------------------------------------- #
 def align(directory: str, reference: str | None = None):
-    d = Path(directory)
-    sources, _ = ws.load_manifest(d)
+    w = Workspace.at(directory)
+    sources, _ = w.load_manifest()
     alignment = align_sources(sources, reference_id=reference)
-    ws.write_manifest(d, sources, alignment)
+    w.write_manifest(sources, alignment)
     print(
         f"[align] reference={alignment.reference} method={alignment.method} "
         f"conf={alignment.confidence} unresolved={len(alignment.unresolved)}"
@@ -165,33 +157,21 @@ def _duration(path: str | Path) -> float:
             return 0.0
 
 
-def _load_glossary(directory: Path, explicit: str | None) -> tuple[str, str]:
+def _load_glossary(w: Workspace, explicit: str | None) -> tuple[str, str]:
     """Return ``(prompt, source)``. The glossary is one term/phrase per line;
     ``#`` comments and blanks are ignored. Capped to stay a sane prompt."""
-    path = Path(explicit) if explicit else ws.glossary_path(directory)
+    path = Path(explicit) if explicit else w.glossary_path
     if not path.exists():
         return "", ""
-    terms = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            terms.append(line)
-    prompt = ", ".join(terms)[:2000]
-    return prompt, str(path)
-
-
-_log_lock = threading.Lock()
-
-
-def _log_line(directory: Path, message: str) -> None:
-    """Print and append to the workspace's durable transcription log."""
-    with _log_lock:
-        print(message)
-        try:
-            with (directory / "transcribe.log").open("a", encoding="utf-8") as fh:
-                fh.write(message + "\n")
-        except OSError:
-            pass
+    if explicit:
+        terms = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    else:
+        terms = w.glossary_terms()
+    return ", ".join(terms)[:2000], str(path)
 
 
 def _merge_chunk_segments(chunks: list[list[Segment]]) -> list[Segment]:
@@ -455,7 +435,7 @@ class _ChunkTask:
     audio_path: str
     start_s: float
     end_s: float
-    cache: Path
+    cache: ChunkCache
     n_chunks: int
 
 
@@ -496,8 +476,8 @@ def transcribe(
     in-process model state are always serialized). Cached chunks are loaded
     instead of recomputed, so resume is unchanged.
     """
-    d = Path(directory)
-    sources, _ = ws.load_manifest(d)
+    w = Workspace.at(directory)
+    sources, _ = w.load_manifest()
     backend = get_backend(backend_id)
     if not backend.available():
         hint = (
@@ -516,7 +496,7 @@ def transcribe(
         # ABI/build mismatch that would otherwise fall back to CPU silently.
         probe = probe_ggml_plugin_load(backend)
         if probe.loaded is True:
-            _log_line(d, f"[transcribe] plugin load probe OK: {probe.detail}")
+            w.log(f"[transcribe] plugin load probe OK: {probe.detail}")
         elif probe.loaded is False:
             raise SystemExit(
                 f"[transcribe] backend '{backend_id}' ggml plugin did not load: "
@@ -525,16 +505,16 @@ def transcribe(
                 f"fall back to CPU."
             )
         else:
-            _log_line(d, f"[transcribe] plugin load probe inconclusive: {probe.detail}")
+            w.log(f"[transcribe] plugin load probe inconclusive: {probe.detail}")
 
     chosen_model = model or backend.info.default_model
     # Resolve/download the model once, single-threaded, before the chunk pool:
     # ``apple`` is parallelizable, so workers must never race the first-use
     # download the provider would otherwise trigger per chunk.
     backend.prepare(model, model_dir)
-    prompt, prompt_src = _load_glossary(d, glossary)
+    prompt, prompt_src = _load_glossary(w, glossary)
     if prompt:
-        _log_line(d, f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
+        w.log(f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
 
     # Plan every source first (cheap I/O), then run the uncached chunks through
     # one bounded pool so the GPU stays fed across source boundaries too.
@@ -543,44 +523,33 @@ def transcribe(
     for src in sources:
         duration = _duration(src.path)
         chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
-        cache = ws.chunks_dir(d) / src.id
-        cache.mkdir(parents=True, exist_ok=True)
-        run_meta = {
-            "backend": backend_id,
-            "model": chosen_model,
-            "language": language or "auto",
-            "glossary": prompt,
-            "chunk_seconds": chunk_seconds,
-            "overlap_seconds": overlap_seconds,
-            "n_chunks": len(chunks),
-        }
-        meta_file = cache / "_meta.json"
+        cache = w.chunk_cache(src.id).ensure()
+        run_meta = chunk_cache_key(
+            backend=backend_id,
+            model=chosen_model,
+            language=language,
+            glossary=prompt,
+            chunk_seconds=chunk_seconds,
+            overlap_seconds=overlap_seconds,
+            n_chunks=len(chunks),
+        )
 
-        reuse = resume and meta_file.exists() and _read_json_safe(meta_file) == run_meta
+        reuse = resume and cache.matches(run_meta)
         if not reuse:
             # Drop chunk results, transient WAVs and any half-written cache file
             # from a previous interrupted pass: a stale body must never be read.
-            for stale in (
-                list(cache.glob("*.json"))
-                + list(cache.glob("*.wav"))
-                + list(cache.glob("*.tmp"))
-            ):
-                stale.unlink(missing_ok=True)
-            write_json(meta_file, run_meta)
+            cache.invalidate()
+            cache.write_meta(run_meta)
 
-        _log_line(
-            d,
+        w.log(
             f"[transcribe] {src.id}: {len(chunks)} chunk(s), {duration:.1f}s, "
-            f"{backend.info.description} ({chosen_model})",
+            f"{backend.info.description} ({chosen_model})"
         )
         segs: list[list[Segment] | None] = [None] * len(chunks)
         for i, (start_s, end_s) in enumerate(chunks):
-            seg_file = cache / f"{i:04d}.json"
-            if reuse and seg_file.exists():
-                segs[i] = [segment_from_dict(x) for x in load_json(seg_file)]
-                _log_line(
-                    d, f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached"
-                )
+            if reuse and cache.has_segments(i):
+                segs[i] = cache.read_segments(i)
+                w.log(f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached")
             else:
                 pending.append(
                     _ChunkTask(src.id, i, src.path, start_s, end_s, cache, len(chunks))
@@ -592,10 +561,9 @@ def transcribe(
         backend.info.parallelizable, len(pending), jobs, model=chosen_model
     )
     if pending:
-        _log_line(
-            d,
+        w.log(
             f"[transcribe] {len(pending)} pending chunk(s), jobs={workers} "
-            f"({chosen_model})",
+            f"({chosen_model})"
         )
 
     # One explicit, pool-scoped runner: the backend launches every child
@@ -603,7 +571,7 @@ def transcribe(
     runner = CancellableProcessRunner()
 
     def _run_chunk(task: _ChunkTask) -> tuple[str, int, list[Segment]]:
-        chunk_wav = task.cache / f"{task.index:04d}.wav"
+        chunk_wav = task.cache.audio_path(task.index)
         write_chunk(task.audio_path, chunk_wav, task.start_s, task.end_s)
         try:
             res = backend.transcribe(
@@ -625,11 +593,10 @@ def transcribe(
             )
             for s in res.segments
         ]
-        _write_chunk_cache(task.cache / f"{task.index:04d}.json", shifted)
-        _log_line(
-            d,
+        task.cache.write_segments(task.index, shifted)
+        w.log(
             f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
-            f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)",
+            f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)"
         )
         return task.source_id, task.index, shifted
 
@@ -656,28 +623,9 @@ def transcribe(
             "language": None,
             "chunks": len(plan.chunks),
         }
-    ws.write_segments(d, per_source, meta)
+    w.write_segments(per_source, meta)
     _print_transcription(per_source, meta)
     return per_source
-
-
-def _read_json_safe(path: Path):
-    try:
-        return load_json(path)
-    except Exception:
-        return None
-
-
-def _write_chunk_cache(path: Path, segments: list[Segment]) -> None:
-    """Publish a chunk's cached segments atomically.
-
-    A cancellation can strike while a worker is mid-write; writing to a sibling
-    ``.tmp`` and renaming means resume only ever sees a complete JSON body, or
-    no file at all — never a truncated one.
-    """
-    tmp = path.with_name(path.name + ".tmp")
-    write_json(tmp, [to_dict(s) for s in segments])
-    os.replace(tmp, path)
 
 
 def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> None:
@@ -703,9 +651,9 @@ def diarize(directory: str, speakers: int | None = None):
     labels collapse to one and are left as the source label). For a single mixed
     stream it is how you get `Speaker 1/2/…` in the record.
     """
-    d = Path(directory)
-    sources, _ = ws.load_manifest(d)
-    per_source, meta = ws.load_segments(d)
+    w = Workspace.at(directory)
+    sources, _ = w.load_manifest()
+    per_source, meta = w.load_segments()
     src_by_id = {s.id: s for s in sources}
     applied = False
     for sid, segs in per_source.items():
@@ -715,7 +663,7 @@ def diarize(directory: str, speakers: int | None = None):
         try:
             audio, sr = read_audio(src.path, 16000)
         except Exception as exc:  # decode failure is non-fatal
-            _log_line(d, f"[diarize] {sid}: skipped ({exc})")
+            w.log(f"[diarize] {sid}: skipped ({exc})")
             continue
         labels = diarize_segments(
             audio, sr, [(s.start, s.end) for s in segs], n_speakers=speakers
@@ -727,11 +675,9 @@ def diarize(directory: str, speakers: int | None = None):
                 for i, s in enumerate(segs)
             ]
             applied = True
-        _log_line(
-            d, f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)"
-        )
+        w.log(f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)")
     if applied:
-        ws.write_segments(d, per_source, meta)
+        w.write_segments(per_source, meta)
     return per_source
 
 
@@ -755,9 +701,9 @@ def attribute(
     a calibrated per-segment confidence. Without it, the static whole-recording
     correction is unchanged.
     """
-    d = Path(directory)
-    sources, alignment = ws.load_manifest(d)
-    per_source, meta = ws.load_segments(d)
+    w = Workspace.at(directory)
+    sources, alignment = w.load_manifest()
+    per_source, meta = w.load_segments()
     mixed = None
     if mixed_source:
         mixed = next((s for s in sources if s.id == mixed_source), None)
@@ -794,7 +740,7 @@ def attribute(
     # The windowed path also writes a confidence, so persist even if no label
     # changed (otherwise the new confidence would be lost to reconcile).
     if changed or window_s is not None:
-        ws.write_segments(d, per_source, meta)
+        w.write_segments(per_source, meta)
     speakers = {s.speaker for s in attributed}
     suffix = f" (room reference: {mixed_source})" if mixed_source else ""
     if window_s is not None:
@@ -817,22 +763,11 @@ def glossary(directory: str, add: list[str] | None = None) -> Path:
     background, then re-run `transcribe`: the chunk cache is keyed on the
     glossary, so the finished terms are applied.
     """
-    d = Path(directory)
-    path = ws.glossary_path(d)
+    w = Workspace.at(directory)
+    path = w.glossary_path
     if add:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            for term in add:
-                term = term.strip()
-                if term:
-                    fh.write(term + "\n")
-    terms: list[str] = []
-    if path.exists():
-        terms = [
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
+        w.append_glossary(add)
+    terms = w.glossary_terms()
     print(f"[glossary] {path} ({len(terms)} term(s))")
     for term in terms:
         print(f"  {term}")
@@ -843,9 +778,9 @@ def glossary(directory: str, add: list[str] | None = None) -> Path:
 # reconcile
 # --------------------------------------------------------------------------- #
 def reconcile(directory: str, prefer: str | None = None):
-    d = Path(directory)
-    sources, alignment = ws.load_manifest(d)
-    per_source, meta = ws.load_segments(d)
+    w = Workspace.at(directory)
+    sources, alignment = w.load_manifest()
+    per_source, meta = w.load_segments()
     segments = reconcile_segments(per_source, alignment, sources)
 
     record = RecordDocument(
@@ -859,11 +794,11 @@ def reconcile(directory: str, prefer: str | None = None):
             "prefer": prefer,
         },
     )
-    ws.write_record(d, record)
+    w.write_record(record)
     speakers = {s.speaker for s in segments}
     print(
         f"[reconcile] {len(segments)} segment(s), {len(speakers)} attributed speaker(s)"
-        f" -> {ws.record_path(d)}"
+        f" -> {w.record_path}"
     )
     _print_transcript_preview(segments)
     return record
@@ -886,27 +821,26 @@ def _fmt_ts(seconds: float) -> str:
 # export
 # --------------------------------------------------------------------------- #
 def export(directory: str, formats: list[str] | None = None) -> dict[str, Path]:
-    d = Path(directory)
-    record = ws.load_record(d)
-    out = ws.export_dir(d)
-    out.mkdir(parents=True, exist_ok=True)
+    w = Workspace.at(directory)
+    record = w.load_record()
+    w.export_dir.mkdir(parents=True, exist_ok=True)
     wanted = set(formats or ["md", "srt", "vtt", "json"])
     written: dict[str, Path] = {}
 
     if "md" in wanted:
-        p = out / "record.md"
+        p = w.export_file("record.md")
         p.write_text(_render_markdown(record), encoding="utf-8")
         written["md"] = p
     if "srt" in wanted:
-        p = out / "record.srt"
+        p = w.export_file("record.srt")
         p.write_text(_render_srt(record), encoding="utf-8")
         written["srt"] = p
     if "vtt" in wanted:
-        p = out / "record.vtt"
+        p = w.export_file("record.vtt")
         p.write_text(_render_vtt(record), encoding="utf-8")
         written["vtt"] = p
     if "json" in wanted:
-        p = out / "record.json"
+        p = w.export_file("record.json")
         write_json(p, record)
         written["json"] = p
 
@@ -997,7 +931,7 @@ def run(
         jobs=jobs,
         check_plugin=check_plugin,
     )
-    sources, _ = ws.load_manifest(Path(directory))
+    sources, _ = Workspace.at(directory).load_manifest()
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to
     # spectral diarization; when off, the default `diarize` path is unchanged.
     if attribute_energy and sources:
@@ -1015,9 +949,9 @@ def run(
 
 
 def calibrate_report(directory: str, reference: str | None = None) -> dict:
-    d = Path(directory)
-    record = ws.load_record(d)
-    per_source, meta = ws.load_segments(d)
+    w = Workspace.at(directory)
+    record = w.load_record()
+    per_source, meta = w.load_segments()
     meta_sources = meta.get("sources", {})
 
     def source_duration(src: Source) -> float:
@@ -1053,7 +987,7 @@ def calibrate_report(directory: str, reference: str | None = None) -> dict:
         report["wer"] = err["wer"]
         report["similarity"] = err["similarity"]
 
-    out = ws.export_dir(d) / "calibration.json"
+    out = w.export_file("calibration.json")
     write_json(out, report)
     print("\n[calibrate] report:")
     for k, v in report.items():
@@ -1080,10 +1014,11 @@ def synth(
     and keep the clean aligned ground truth to score recovery against — the
     reliable way to calibrate `align`/`reconcile`.
     """
-    d = Path(directory)
+    w = Workspace.at(directory)
+    d = w.root
     rng = random.Random(seed)
     scene, events = make_scene(duration_s, speakers, seed=seed)
-    audio_dir = d / "audio"
+    audio_dir = w.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     sources: list[Source] = []
@@ -1112,18 +1047,18 @@ def synth(
             {"id": dev_id, "true_offset_s": round(true_offset, 4), **deg}
         )
 
-    ws.write_manifest(d, sources)
+    w.write_manifest(sources)
     gt = {
         "scene_duration_s": round(duration_s, 4),
         "devices": devices_meta,
         "events": events,
     }
-    write_json(d / "ground_truth.json", gt)
+    w.write_ground_truth(gt)
 
     print(f"[synth] {len(sources)} device(s), {len(events)} speaker event(s) -> {d}")
     for m in devices_meta:
         print(f"  {m['id']:10s} true_offset={m['true_offset_s']:+.4f}s")
-    print(f"  ground truth -> {d / 'ground_truth.json'}")
+    print(f"  ground truth -> {w.ground_truth_path}")
     return gt
 
 

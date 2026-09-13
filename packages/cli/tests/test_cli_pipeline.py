@@ -64,10 +64,10 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
             )
         ],
     }
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
 
-    ws.write_segments(
-        tmp_path / "rec", per_source, {"backend": "none", "model": "none"}
+    Workspace.at(tmp_path / "rec").write_segments(
+        per_source, {"backend": "none", "model": "none"}
     )
 
     record = stages.reconcile(wd)
@@ -112,7 +112,7 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
 
     from cr_core import Segment
     from cr_engine import SYNTH_SR, make_crosstalk_scene
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=16.0, n_speakers=2, bleed_db=-6.0, seed=7, non_overlapping=True
@@ -138,10 +138,10 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
                 speaker=labels[wrong],
             )
         )
-    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
 
     stages.attribute(str(wd))
-    per_source, _ = ws.load_segments(wd)
+    per_source, _ = Workspace.at(wd).load_segments()
     fixed = [s for sid in per_source for s in per_source[sid]]
     assert sorted(s.speaker for s in fixed) == sorted(truth.values())
 
@@ -161,7 +161,7 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
     from cr_core import Segment
     from cr_engine import SYNTH_SR, make_crosstalk_scene
 
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=20.0, n_speakers=2, bleed_db=-9.0, seed=5, non_overlapping=True
@@ -182,11 +182,11 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
         per_source[wrong].append(
             Segment(e["start"], e["end"], f"w{i}", wrong, labels[wrong])
         )
-    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
 
     stages.attribute(str(wd), window_s=15.0)
 
-    per_source, _ = ws.load_segments(wd)
+    per_source, _ = Workspace.at(wd).load_segments()
     fixed = [s for sid in per_source for s in per_source[sid]]
     assert sorted(s.speaker for s in fixed) == sorted(
         labels[f"lav{e['speaker']}"] for e in events
@@ -208,7 +208,7 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     from cr_core import Segment
     from cr_engine import SYNTH_SR, make_speaker_stems, mix_crosstalk
 
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
 
     stems, events = make_speaker_stems(
         duration_s=16.0, n_speakers=3, seed=7, non_overlapping=True
@@ -235,10 +235,10 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
         per_source[wrong].append(
             Segment(e["start"], e["end"], f"w{i}", wrong, labels[wrong])
         )
-    ws.write_segments(wd, per_source, {"backend": "none", "model": "none"})
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
 
     stages.attribute(str(wd), mixed_source="room")
-    per_source, _ = ws.load_segments(wd)
+    per_source, _ = Workspace.at(wd).load_segments()
     emitted = [s for sid in per_source for s in per_source[sid]]
 
     assert labels["room"] not in {s.speaker for s in emitted}
@@ -280,9 +280,8 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
     """`align` names the sources it could not place instead of silently
     recording a fake zero offset."""
     import dataclasses
-    from pathlib import Path
 
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
 
     wd = _workspace(tmp_path)
     sources = stages.ingest(wd)
@@ -290,7 +289,7 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
         dataclasses.replace(s, path=str(tmp_path / "missing.wav")) if s.id == "b" else s
         for s in sources
     ]
-    ws.write_manifest(Path(wd), broken)
+    Workspace.at(wd).write_manifest(broken)
 
     alignment = stages.align(wd)
     assert "b" in alignment.unresolved
@@ -663,7 +662,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
 
     import pytest
 
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
     from cr_core import Segment, TranscriptionResult
     from cr_engine import plan_chunks
     from cr_providers import BackendInfo
@@ -763,17 +762,17 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
 
     # Cache stays consistent and resumable: meta intact, every body complete,
     # no half-written temp files.
-    cache_dir = ws.chunks_dir(wd) / "a"
-    meta = json.loads((cache_dir / "_meta.json").read_text(encoding="utf-8"))
+    cache = Workspace.at(wd).chunk_cache("a")
+    meta = json.loads(cache.meta_path.read_text(encoding="utf-8"))
     assert meta["n_chunks"] == n_chunks
     cached: list[int] = []
-    for body in cache_dir.glob("*.json"):
+    for body in cache.directory.glob("*.json"):
         data = json.loads(body.read_text(encoding="utf-8"))
         if body.name != "_meta.json":
             assert isinstance(data, list)
             cached.append(int(body.stem))
     assert set(cached) <= set(range(n_chunks))
-    assert not list(cache_dir.glob("*.tmp"))
+    assert not list(cache.directory.glob("*.tmp"))
 
     # Resuming completes the plan, recomputing only the uncached chunks.
     class FastFake(BlockingFake):
@@ -803,7 +802,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
     monkeypatch.setattr(stages, "get_backend", lambda _id: fast)
     stages.transcribe(str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=2)
     assert FastFake.calls == n_chunks - len(cached)
-    assert len(list(cache_dir.glob("[0-9]*.json"))) == n_chunks
+    assert len(list(cache.directory.glob("[0-9]*.json"))) == n_chunks
 
 
 def test_transcribe_check_plugin_gates_on_the_load_probe(tmp_path, monkeypatch) -> None:
@@ -867,9 +866,8 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     """Two pools in one process each get their own runner, so cancellation stays
     scoped; both complete with independent caches."""
     import threading
-    from pathlib import Path
 
-    from cr_cli import workspace as ws
+    from cr_cli.workspace import Workspace
     from cr_core import Segment, TranscriptionResult
     from cr_providers import BackendInfo
 
@@ -943,5 +941,5 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     assert len(runners) == 2
     assert runners[0] is not runners[1], "each pool needs its own runner"
     for wd in (wd1, wd2):
-        per_source, _ = ws.load_segments(Path(wd))
+        per_source, _ = Workspace.at(wd).load_segments()
         assert per_source

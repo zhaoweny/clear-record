@@ -1,6 +1,6 @@
 # Notice: origin, authorship and AI-agent use
 
-This project began as **the author's own original idea** and was implemented
+This project began as **the author's personal concept** and was implemented
 primarily by **AI coding agents** under the author's direction.
 
 - **Origin.** The concept — turning several recordings of one event into a single

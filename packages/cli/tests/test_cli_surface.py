@@ -7,6 +7,7 @@ import argparse
 import pytest
 
 from cr_core import pipeline_spec
+from cr_cli import stages
 from cr_cli.cli import _build_parser
 
 
@@ -25,6 +26,25 @@ def test_subcommands_match_pipeline() -> None:
         a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
     )
     assert set(subparsers_action.choices) == expected
+
+
+def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
+    """The spec covers all three consumers: itself, the CLI subcommands, and the
+    `run` dispatch table. Order is asserted for the CLI (choices preserve
+    insertion order); `run`'s execution order is pinned in test_cli_pipeline."""
+    spec = pipeline_spec()
+    parser = _build_parser()
+    subparsers_action = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
+
+    # CLI: the pipeline subcommands appear in the spec's order.
+    declared = set(spec.cli_commands())
+    ordered = [name for name in subparsers_action.choices if name in declared]
+    assert ordered == list(spec.cli_commands())
+
+    # run: the dispatch table covers exactly the spec's stages.
+    assert set(stages._STAGE_RUNNERS) == set(spec.steps)
 
 
 def test_backend_choices_come_from_the_catalog() -> None:

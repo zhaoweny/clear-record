@@ -7,6 +7,11 @@ The public workflow, carried over from the original concept, is:
 The core only *declares* the shape and each step's contract. Executing a step
 against real audio and a real ASR backend is the job of a provider (see
 ``cr_providers``) wired in by the CLI.
+
+This declaration is the **single source of stage truth**: the CLI builds one
+subcommand per stage from it and the full-pipeline ``run`` iterates it, so the
+order and the stage names live here once. Adding a stage is one edit above, plus
+its implementation.
 """
 
 from __future__ import annotations
@@ -30,23 +35,47 @@ class Step(str, Enum):
 
 
 @dataclass(frozen=True)
+class PipelineStage:
+    """One declared stage: its identity and the CLI metadata it carries."""
+
+    step: Step
+    help: str
+
+
+@dataclass(frozen=True)
 class PipelineSpec:
-    """Describes the pipeline stages and the CLI subcommands they map to."""
+    """The single declaration of the pipeline: stage order and CLI metadata.
+
+    The CLI builds one subcommand per :attr:`stages` entry, in order, and the
+    full-pipeline ``run`` iterates the same sequence; neither repeats the order.
+    """
 
     name: str
-    steps: Sequence[Step]
+    stages: Sequence[PipelineStage]
     description: str
 
+    @property
+    def steps(self) -> tuple[Step, ...]:
+        """The ordered stage identities."""
+        return tuple(stage.step for stage in self.stages)
+
     def cli_commands(self) -> tuple[str, ...]:
-        return tuple(step.value for step in self.steps)
+        """The ordered subcommand names, one per stage."""
+        return tuple(stage.step.value for stage in self.stages)
+
+    def run_help(self) -> str:
+        """Help text for the `run` subcommand, derived from the stage order."""
+        return "full pipeline: " + " -> ".join(self.cli_commands())
 
 
-DEFAULT_STEPS: Final[tuple[Step, ...]] = (
-    Step.INGEST,
-    Step.ALIGN,
-    Step.TRANSCRIBE,
-    Step.RECONCILE,
-    Step.EXPORT,
+_STAGES: Final[tuple[PipelineStage, ...]] = (
+    PipelineStage(Step.INGEST, "discover/declare recording sources"),
+    PipelineStage(Step.ALIGN, "estimate source time offsets onto a common clock"),
+    PipelineStage(Step.TRANSCRIBE, "run a chosen ASR backend over each source"),
+    PipelineStage(
+        Step.RECONCILE, "merge segments into an attributed, aligned timeline"
+    ),
+    PipelineStage(Step.EXPORT, "write Markdown/SRT/VTT/JSON artifacts"),
 )
 
 _DESCRIPTION: Final[str] = (
@@ -58,6 +87,4 @@ _DESCRIPTION: Final[str] = (
 
 def pipeline_spec() -> PipelineSpec:
     """The canonical pipeline description used by the CLI and docs."""
-    return PipelineSpec(
-        name="clear-record", steps=DEFAULT_STEPS, description=_DESCRIPTION
-    )
+    return PipelineSpec(name="clear-record", stages=_STAGES, description=_DESCRIPTION)

@@ -22,11 +22,12 @@ from cr_core.model import (
     to_dict,
     write_json,
 )
-from cr_core.pipeline import PipelineSpec, Step, pipeline_spec
+from cr_core.pipeline import PipelineSpec, PipelineStage, Step, pipeline_spec
 
 __all__ = [
     "Alignment",
     "PipelineSpec",
+    "PipelineStage",
     "RecordDocument",
     "Segment",
     "Source",

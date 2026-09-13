@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import random
+from collections.abc import Callable
 from pathlib import Path
 
 import soundfile as sf
 
-from cr_core import RecordDocument, Segment, Source, write_json
+from cr_core import RecordDocument, Segment, Source, Step, pipeline_spec, write_json
 from cr_engine import (
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
@@ -509,58 +510,108 @@ def _render_vtt(record: RecordDocument) -> str:
 # --------------------------------------------------------------------------- #
 # run / calibrate
 # --------------------------------------------------------------------------- #
-def run(
-    directory: str,
-    backend: str = "apple",
-    model: str | None = None,
-    language: str | None = None,
-    model_dir: str | None = None,
-    audio_files: list[str] | None = None,
-    split: str = "auto",
-    glossary: str | None = None,
-    chunk_seconds: float = DEFAULT_CHUNK_S,
-    overlap_seconds: float = DEFAULT_OVERLAP_S,
-    resume: bool = True,
-    do_diarize: bool | None = None,
-    speakers: int | None = None,
-    reference: str | None = None,
-    formats: list[str] | None = None,
-    attribute_energy: bool = False,
-    mixed_source: str | None = None,
-    window_s: float | None = None,
-    jobs: int = 0,
-    check_plugin: bool = False,
-):
-    ingest(directory, audio_files, split=split)
-    align(directory, reference=reference)
+@dataclasses.dataclass(frozen=True)
+class PipelineOptions:
+    """The full-pipeline run configuration, threaded to every stage as one value.
+
+    Replaces the 17-keyword interface ``run`` used to take; the CLI fills it once
+    from the parsed arguments. Field defaults match the old keyword defaults, so
+    ``PipelineOptions()`` is the old bare ``run(directory)``.
+    """
+
+    backend: str = "apple"
+    model: str | None = None
+    language: str | None = None
+    model_dir: str | None = None
+    audio_files: tuple[str, ...] | None = None
+    split: str = "auto"
+    glossary: str | None = None
+    chunk_seconds: float = DEFAULT_CHUNK_S
+    overlap_seconds: float = DEFAULT_OVERLAP_S
+    resume: bool = True
+    do_diarize: bool | None = None
+    speakers: int | None = None
+    reference: str | None = None
+    formats: tuple[str, ...] | None = None
+    attribute_energy: bool = False
+    mixed_source: str | None = None
+    window_s: float | None = None
+    jobs: int = 0
+    check_plugin: bool = False
+
+
+def _run_ingest(directory: str, options: PipelineOptions) -> None:
+    ingest(
+        directory,
+        list(options.audio_files) if options.audio_files else None,
+        split=options.split,
+    )
+
+
+def _run_align(directory: str, options: PipelineOptions) -> None:
+    align(directory, reference=options.reference)
+
+
+def _run_transcribe(directory: str, options: PipelineOptions) -> None:
     transcribe(
         directory,
-        backend,
-        model=model,
-        language=language,
-        model_dir=model_dir,
-        glossary=glossary,
-        chunk_seconds=chunk_seconds,
-        overlap_seconds=overlap_seconds,
-        resume=resume,
-        jobs=jobs,
-        check_plugin=check_plugin,
+        options.backend,
+        model=options.model,
+        language=options.language,
+        model_dir=options.model_dir,
+        glossary=options.glossary,
+        chunk_seconds=options.chunk_seconds,
+        overlap_seconds=options.overlap_seconds,
+        resume=options.resume,
+        jobs=options.jobs,
+        check_plugin=options.check_plugin,
     )
     sources, _ = Workspace.at(directory).load_manifest()
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to
     # spectral diarization; when off, the default `diarize` path is unchanged.
-    if attribute_energy and sources:
-        attribute(directory, mixed_source=mixed_source, window_s=window_s)
+    if options.attribute_energy and sources:
+        attribute(
+            directory, mixed_source=options.mixed_source, window_s=options.window_s
+        )
     else:
         # Per-channel capture already attributes per source, and a single voice
         # must not be split on weak evidence, so diarization is opt-in:
         # `--diarize` forces it; a known `--speakers N` turns it on.
+        do_diarize = options.do_diarize
         if do_diarize is None:
-            do_diarize = speakers is not None
+            do_diarize = options.speakers is not None
         if do_diarize and sources:
-            diarize(directory, speakers=speakers)
-    reconcile(directory, prefer=reference)
-    export(directory, formats)
+            diarize(directory, speakers=options.speakers)
+
+
+def _run_reconcile(directory: str, options: PipelineOptions) -> None:
+    reconcile(directory, prefer=options.reference)
+
+
+def _run_export(directory: str, options: PipelineOptions) -> None:
+    export(directory, list(options.formats) if options.formats else None)
+
+
+# One runner per declared stage; the drift test checks the keys against the spec.
+_STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions], None]] = {
+    Step.INGEST: _run_ingest,
+    Step.ALIGN: _run_align,
+    Step.TRANSCRIBE: _run_transcribe,
+    Step.RECONCILE: _run_reconcile,
+    Step.EXPORT: _run_export,
+}
+
+
+def run(directory: str, options: PipelineOptions | None = None) -> None:
+    """Run every stage the spec declares, in the spec's order.
+
+    The order is not restated here: it is read from
+    :func:`cr_core.pipeline_spec`, the same spec the CLI builds its subcommands
+    from, and each stage's wiring lives in :data:`_STAGE_RUNNERS`.
+    """
+    options = options or PipelineOptions()
+    for stage in pipeline_spec().stages:
+        _STAGE_RUNNERS[stage.step](directory, options)
 
 
 def calibrate_report(directory: str, reference: str | None = None) -> dict:
@@ -678,6 +729,7 @@ def synth(
 
 
 __all__ = [
+    "PipelineOptions",
     "align",
     "attribute",
     "calibrate_report",

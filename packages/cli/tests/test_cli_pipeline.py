@@ -314,7 +314,7 @@ def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(stages, "reconcile", lambda *a, **k: None)
     monkeypatch.setattr(stages, "export", lambda *a, **k: None)
 
-    stages.run(wd, backend="fake", reference="b")
+    stages.run(wd, stages.PipelineOptions(backend="fake", reference="b"))
     assert seen["reference"] == "b"
 
 
@@ -337,11 +337,43 @@ def test_run_attribute_energy_selects_energy_path(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(stages, "attribute", spy_attribute)
     monkeypatch.setattr(stages, "diarize", spy_diarize)
 
-    stages.run(wd, backend="fake", attribute_energy=True, mixed_source="b")
+    stages.run(
+        wd,
+        stages.PipelineOptions(backend="fake", attribute_energy=True, mixed_source="b"),
+    )
     assert calls == {"attribute": 1, "diarize": 0}
 
-    stages.run(wd, backend="fake", do_diarize=True)
+    stages.run(wd, stages.PipelineOptions(backend="fake", do_diarize=True))
     assert calls == {"attribute": 1, "diarize": 1}
+
+
+def test_run_executes_stages_in_spec_order(tmp_path, monkeypatch) -> None:
+    """`run` reads its order from the spec rather than restating it, so the CLI
+    subcommands and the full pipeline cannot drift apart."""
+    from cr_core import pipeline_spec
+
+    wd = _workspace(tmp_path)
+    order: list[str] = []
+
+    def record(name: str, impl):
+        def wrapped(directory, *args, **kwargs):
+            order.append(name)
+            return impl(directory, *args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(stages, "ingest", record("ingest", stages.ingest))
+    monkeypatch.setattr(stages, "align", record("align", stages.align))
+    monkeypatch.setattr(
+        stages, "transcribe", lambda *a, **k: order.append("transcribe")
+    )
+    monkeypatch.setattr(stages, "reconcile", lambda *a, **k: order.append("reconcile"))
+    monkeypatch.setattr(stages, "export", lambda *a, **k: order.append("export"))
+    monkeypatch.setattr(stages, "diarize", lambda *a, **k: None)
+
+    stages.run(wd, stages.PipelineOptions(backend="fake"))
+
+    assert order == list(pipeline_spec().cli_commands())
 
 
 def test_transcribe_chunks_resume_and_glossary_invalidation(

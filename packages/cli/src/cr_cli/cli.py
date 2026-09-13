@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from typing import Sequence
 
+from cr_core import Step, pipeline_spec
 from cr_providers import BACKENDS, available_backend_ids, resolve_models_dir
 from cr_engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
@@ -25,12 +26,6 @@ def _build_parser() -> argparse.ArgumentParser:
         description="clear-record: from many recordings to one clear record.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    def add_pipeline_command(name: str, help_: str, args_fn) -> None:
-        p = sub.add_parser(name, help=help_)
-        args_fn(p)
-        _common_args(p)
-        return p
 
     def _paths(p: argparse.ArgumentParser) -> None:
         p.add_argument("directory", help="workspace directory (recordings live here)")
@@ -181,36 +176,27 @@ def _build_parser() -> argparse.ArgumentParser:
         )
         p.set_defaults(split="auto")
 
-    # pipeline stages
-    add_pipeline_command(
-        "ingest",
-        "discover/declare recording sources",
-        lambda p: (_paths(p), _channel_args(p)),
-    )
-    add_pipeline_command(
-        "align", "estimate source time offsets onto a common clock", _directory
-    )
-    add_pipeline_command(
-        "transcribe",
-        "run a chosen ASR backend over each source",
-        _backend(directory_first=True),
-    )
-    add_pipeline_command(
-        "reconcile",
-        "merge segments into an attributed, aligned timeline",
-        _directory,
-    )
-    add_pipeline_command("export", "write Markdown/SRT/VTT/JSON artifacts", _directory)
-    add_pipeline_command(
-        "run",
-        "full pipeline: ingest -> align -> transcribe -> reconcile -> export",
-        lambda p: (
-            _backend(directory_first=True)(p),
-            _channel_args(p),
-            _diarize_args(p),
-            _attribute_args(p),
-        ),
-    )
+    # One CLI arg-builder per declared stage. The stage order, names and help
+    # text come from the spec; only the flags (what a stage accepts) are local.
+    stage_args = {
+        Step.INGEST: lambda p: (_paths(p), _channel_args(p)),
+        Step.ALIGN: _directory,
+        Step.TRANSCRIBE: _backend(directory_first=True),
+        Step.RECONCILE: _directory,
+        Step.EXPORT: _directory,
+    }
+    for stage in pipeline_spec().stages:
+        p = sub.add_parser(stage.step.value, help=stage.help)
+        stage_args[stage.step](p)
+        _common_args(p)
+
+    # pipeline run: every stage above, in spec order
+    run_parser = sub.add_parser("run", help=pipeline_spec().run_help())
+    _backend(directory_first=True)(run_parser)
+    _channel_args(run_parser)
+    _diarize_args(run_parser)
+    _attribute_args(run_parser)
+    _common_args(run_parser)
 
     # calibration convenience
     cal = sub.add_parser(
@@ -301,6 +287,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _pipeline_options(args: argparse.Namespace) -> stages.PipelineOptions:
+    """Fill the one run-options value from the parsed CLI arguments."""
+    return stages.PipelineOptions(
+        backend=args.backend,
+        model=args.model,
+        language=args.language,
+        model_dir=args.models_dir,
+        split=args.split,
+        glossary=args.glossary,
+        chunk_seconds=args.chunk_seconds,
+        overlap_seconds=args.overlap_seconds,
+        resume=args.resume,
+        do_diarize=args.diarize,
+        speakers=args.speakers,
+        reference=args.reference,
+        attribute_energy=args.attribute_energy,
+        mixed_source=args.mixed_source,
+        window_s=args.window_s,
+        jobs=args.jobs,
+        check_plugin=args.check_plugin,
+    )
+
+
 def _main(args: argparse.Namespace) -> int:
     command = args.command
 
@@ -373,50 +382,11 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if command == "run":
-        stages.run(
-            args.directory,
-            backend=args.backend,
-            model=args.model,
-            language=args.language,
-            model_dir=args.models_dir,
-            audio_files=None,
-            split=args.split,
-            glossary=args.glossary,
-            chunk_seconds=args.chunk_seconds,
-            overlap_seconds=args.overlap_seconds,
-            resume=args.resume,
-            jobs=args.jobs,
-            check_plugin=args.check_plugin,
-            do_diarize=args.diarize,
-            speakers=args.speakers,
-            reference=args.reference,
-            attribute_energy=args.attribute_energy,
-            mixed_source=args.mixed_source,
-            window_s=args.window_s,
-        )
+        stages.run(args.directory, _pipeline_options(args))
         return 0
 
     if command == "calibrate":
-        stages.run(
-            args.directory,
-            backend=args.backend,
-            model=args.model,
-            language=args.language,
-            model_dir=args.models_dir,
-            split=args.split,
-            glossary=args.glossary,
-            chunk_seconds=args.chunk_seconds,
-            overlap_seconds=args.overlap_seconds,
-            resume=args.resume,
-            jobs=args.jobs,
-            check_plugin=args.check_plugin,
-            do_diarize=args.diarize,
-            speakers=args.speakers,
-            reference=args.reference,
-            attribute_energy=args.attribute_energy,
-            mixed_source=args.mixed_source,
-            window_s=args.window_s,
-        )
+        stages.run(args.directory, _pipeline_options(args))
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0
 

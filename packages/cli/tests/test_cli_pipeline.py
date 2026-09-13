@@ -250,7 +250,7 @@ def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""
     from cr_core import Segment
-    from cr_cli.stages import _merge_chunk_segments
+    from cr_cli.transcription import merge_chunk_segments
 
     def seg(start: float, end: float, text: str) -> Segment:
         return Segment(start=start, end=end, text=text, source="src")
@@ -264,7 +264,7 @@ def test_merge_chunk_segments_dedupes_by_coverage() -> None:
         seg(13.0, 15.0, "delta"),
     ]
 
-    out = _merge_chunk_segments([first, second])
+    out = merge_chunk_segments([first, second])
     assert [(s.start, s.end, s.text) for s in out] == [
         (0.0, 5.0, "alpha"),
         (5.0, 10.0, "beta"),
@@ -425,13 +425,79 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     assert Fake.calls > first
 
 
-def test_resolve_jobs_is_adaptive() -> None:
-    from cr_cli.stages import _resolve_jobs
+def test_transcription_module_is_a_single_seam(tmp_path) -> None:
+    """The resumable transcriber is callable through one function — plan ->
+    cache -> pool -> merge — driven by a `Workspace` and plain data types, with
+    no private helper in sight."""
+    from cr_core import Segment, Source, TranscriptionResult
+    from cr_providers import BackendInfo
 
-    assert _resolve_jobs(False, 10, 4) == 1  # in-process -> serialized
-    assert _resolve_jobs(True, 1, 4) == 1  # no work to parallelize
-    assert _resolve_jobs(True, 10, 2) == 2  # explicit request wins
-    assert 1 <= _resolve_jobs(True, 10, 0) <= 4  # bounded adaptive default
+    from cr_cli.transcription import TranscriptionOptions, transcribe
+    from cr_cli.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sr = 16000
+    t = np.arange(8 * sr, dtype=np.float64) / sr
+    wav = wd / "a.wav"
+    sf.write(str(wav), (0.2 * np.sin(2 * np.pi * 300.0 * t)).astype(np.float32), sr)
+
+    class Fake:
+        calls = 0
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+            parallelizable=True,
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(self, audio_path, **kwargs):
+            type(self).calls += 1
+            data, file_sr = sf.read(audio_path)
+            dur = len(data) / file_sr
+            return TranscriptionResult(
+                source="fake",
+                segments=(Segment(0.0, round(dur, 3), "chunk", "fake"),),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=dur,
+            )
+
+    backend = Fake()
+    source = Source(id="a", path=str(wav))
+    options = TranscriptionOptions(chunk_seconds=3.0, overlap_seconds=1.0, jobs=2)
+    result = transcribe([source], backend, options, workspace=Workspace.at(wd))
+
+    assert result.per_source["a"]
+    assert result.source_meta["a"]["chunks"] > 1
+    assert result.jobs == 2
+    assert result.model == "fake"
+    first = Fake.calls
+
+    # Resume through the same seam: cached chunks mean no new backend calls.
+    again = transcribe(
+        [source],
+        backend,
+        TranscriptionOptions(chunk_seconds=3.0, overlap_seconds=1.0, jobs=2),
+        workspace=Workspace.at(wd),
+    )
+    assert again.per_source["a"]
+    assert Fake.calls == first
+
+
+def test_resolve_jobs_is_adaptive() -> None:
+    from cr_cli.transcription import resolve_jobs
+
+    assert resolve_jobs(False, 10, 4) == 1  # in-process -> serialized
+    assert resolve_jobs(True, 1, 4) == 1  # no work to parallelize
+    assert resolve_jobs(True, 10, 2) == 2  # explicit request wins
+    assert 1 <= resolve_jobs(True, 10, 0) <= 4  # bounded adaptive default
 
 
 def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> None:
@@ -608,38 +674,38 @@ def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> N
     explicit `--jobs` / `CR_JOBS` still wins."""
     import os
 
-    from cr_cli.stages import (
-        _auto_jobs,
-        _detect_vram_gb,
-        _model_vram_gb,
-        _resolve_jobs,
+    from cr_cli.transcription import (
+        auto_jobs,
+        detect_vram_gb,
+        model_vram_gb,
+        resolve_jobs,
     )
 
     monkeypatch.setattr(os, "cpu_count", lambda: 16)
 
     # A large model cannot fan out on a small (8 GB) GPU; a medium one gets a
     # few; the 4-way fan-out cap still applies on a big (24 GB) GPU.
-    assert _auto_jobs(10, "large-v3", 8.0) == 1
-    assert _auto_jobs(10, "medium", 8.0) == 3
-    assert _auto_jobs(10, "large-v3", 24.0) == 4
-    assert _auto_jobs(10, "small", 24.0) == 4
+    assert auto_jobs(10, "large-v3", 8.0) == 1
+    assert auto_jobs(10, "medium", 8.0) == 3
+    assert auto_jobs(10, "large-v3", 24.0) == 4
+    assert auto_jobs(10, "small", 24.0) == 4
     # Unknown / missing models are assumed large, which can only lower the cap.
-    assert _auto_jobs(10, None, 8.0) == 1
+    assert auto_jobs(10, None, 8.0) == 1
 
     # Name parsing covers filenames, paths and quantisation suffixes.
-    assert _model_vram_gb("ggml-large-v3.bin") == 3.7
-    assert _model_vram_gb("/models/ggml-large-v3-q5_0.bin") == 3.7
-    assert _model_vram_gb("medium") == 2.1
-    assert _model_vram_gb("mystery") == 3.7
+    assert model_vram_gb("ggml-large-v3.bin") == 3.7
+    assert model_vram_gb("/models/ggml-large-v3-q5_0.bin") == 3.7
+    assert model_vram_gb("medium") == 2.1
+    assert model_vram_gb("mystery") == 3.7
 
     # CR_VRAM_GB overrides the (hardware-dependent) probe for the auto path...
     monkeypatch.setenv("CR_VRAM_GB", "24")
-    assert _detect_vram_gb() == 24.0
-    assert _resolve_jobs(True, 10, 0, model="large-v3") == 4
+    assert detect_vram_gb() == 24.0
+    assert resolve_jobs(True, 10, 0, model="large-v3") == 4
     # ...but explicit --jobs and CR_JOBS override the advisory cap.
-    assert _resolve_jobs(True, 10, 6, model="large-v3", vram_gb=8.0) == 6
+    assert resolve_jobs(True, 10, 6, model="large-v3", vram_gb=8.0) == 6
     monkeypatch.setenv("CR_JOBS", "5")
-    assert _resolve_jobs(True, 10, 0, model="large-v3", vram_gb=8.0) == 5
+    assert resolve_jobs(True, 10, 0, model="large-v3", vram_gb=8.0) == 5
 
 
 def test_transcribe_interrupt_cancels_queue_and_kills_children(

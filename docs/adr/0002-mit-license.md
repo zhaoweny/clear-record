@@ -18,7 +18,8 @@ Date: 2026-09-09
 - [DECISION] License this repo's own code under **MIT** (SPDX `MIT`). The full
   text lives in `LICENSE` at the repo root.
 - Every package declares `license = "MIT"` in its `pyproject.toml` (root
-  `clear-record` virtual project + members `cr-core`, `cr-providers`, `cr-cli`).
+  `clear-record-workspace` virtual project + members `cr-core`, `cr-engine`,
+  `cr-providers`, `cr-cli`, `clear-record`).
 - No per-file SPDX headers are needed while every file in the tree is
   project-default MIT. If upstream content is ever vendored, that content keeps
   its own license and per-file SPDX markers.

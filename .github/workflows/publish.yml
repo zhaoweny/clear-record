@@ -1,7 +1,7 @@
 name: publish
 
-# Publish the four workspace dists (cr-core, cr-engine, cr-providers, cr-cli) to
-# PyPI. Prep-only notes for maintainers:
+# Publish the five workspace dists (cr-core, cr-engine, cr-providers, cr-cli,
+# clear-record) to PyPI. Prep-only notes for maintainers:
 #
 #   (a) OIDC trusted publishing — no API tokens and no repository secrets. The
 #       publish job requests a short-lived OIDC token from GitHub via

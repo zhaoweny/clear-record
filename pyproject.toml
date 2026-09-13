@@ -1,17 +1,23 @@
-# clear-record — uv workspace root.
+# clear-record-workspace — uv workspace root.
 #
 # Workspace members under packages/:
-#   packages/core      -> dist "cr-core",      import "cr_core"      (backend-agnostic application core)
-#   packages/providers -> dist "cr-providers", import "cr_providers" (per-vendor ASR backend adapters)
-#   packages/cli       -> dist "cr-cli",       import "cr_cli"       (the `clear-record` command)
+#   packages/core         -> dist "cr-core",      import "cr_core"      (backend-agnostic application core)
+#   packages/engine       -> dist "cr-engine",    import "cr_engine"    (audio I/O, alignment, reconcile)
+#   packages/providers    -> dist "cr-providers", import "cr_providers" (per-vendor ASR backend adapters)
+#   packages/cli          -> dist "cr-cli",       import "cr_cli"       (the `clear-record` CLI implementation)
+#   packages/clear-record -> dist "clear-record", import "clear_record" (facade / public command; forwards to cr-cli)
 #
-# See docs/adr/0004-uv-workspace-layout.md for the decision record.
+# See docs/adr/0004-uv-workspace-layout.md,
+# docs/adr/0009-packaging-and-distribution.md and
+# docs/adr/0010-build-backend-uv-build.md.
 #
 # The root is a virtual project (never built/published); only the workspace
-# members are real packages.
+# members are real packages. Its name must differ from every member, so it is
+# `clear-record-workspace` — the published `clear-record` name belongs to the
+# facade dist in packages/clear-record/.
 
 [project]
-name = "clear-record"
+name = "clear-record-workspace"
 version = "0.1.0"
 description = "Local-first open-source multitrack transcription and record-reconstruction: from many recordings to one clear record (workspace root)."
 readme = "README.md"
@@ -20,8 +26,8 @@ requires-python = ">=3.12"
 dependencies = []
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
 
 [tool.uv]
 package = false

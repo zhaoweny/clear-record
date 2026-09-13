@@ -15,7 +15,7 @@ for the license text shipped by each component.
 
 | Component | License |
 | --- | --- |
-| Code — `cr-core`, `cr-engine`, `cr-providers`, `cr-cli` (this repo) | MIT |
+| Code — `cr-core`, `cr-engine`, `cr-providers`, `cr-cli`, `clear-record` (this repo) | MIT |
 | Documentation and authored content/assets (none currently committed) | CC BY 4.0 |
 
 ## Python dependencies
@@ -25,7 +25,7 @@ taken from each package's metadata (`License` / `License-Expression`) in the
 resolved environment. They are installed from PyPI via `uv`, not vendored into
 this repository.
 
-> Build tooling: the workspace members declare `hatchling` in their
+> Build tooling: the workspace members declare `uv_build` in their
 > `[build-system]` tables. It is used only to build/install the distributions and
 > is not part of the locked runtime/dev set below.
 

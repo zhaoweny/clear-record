@@ -51,3 +51,26 @@ this repository. See `docs/architecture.md` §7.
   reads as 'clear-record' instead of 'clearrecord'"*. This supersedes the
   `clearrecord` spelling in "Project framing" above; it concerns the command
   only — the distribution name (`cr-cli`) is unaffected (ADR-0009).
+
+## Distribution naming (2026-09-13)
+
+- Owner directive: *"let's do a clear-record shim package so uvx can go fish
+  `clear-record` and run it as `clear-record`."* The public install name is
+  therefore **`clear-record`** — a facade dist over the `cr-cli`
+  implementation package, so `uvx clear-record` resolves and runs the command
+  with no warning. `cr-cli` keeps its name as the implementation the facade
+  calls into; it declares no console script of its own, so the facade is the
+  sole owner of the `clear-record` command (ADR-0009).
+
+## Build toolchain (2026-09-13)
+
+- Owner directive: *"use `uv_build` to replace `hatchling`, so we are uv
+  front-to-back, end to end."* Every workspace member and the virtual root
+  declare `uv_build` in `[build-system]` (ADR-0010).
+- Owner resolution of the shim shape: *"a 'import main' from cr_cli style shim —
+  simple and easy … cr_cli's entry point can stay behind the scenes."* The
+  `clear-record` dist is therefore a small **facade module**
+  (`clear_record.main` → `cr_cli.cli.main`), not a metadata-only dist:
+  `uv_build` requires every dist to ship a module. This supersedes the earlier
+  metadata-only framing of the facade; the Distribution-naming directive above
+  is unchanged (ADR-0009, ADR-0010).

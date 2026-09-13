@@ -278,9 +278,10 @@ Layout:
 packages/core      → cr-core      backend-agnostic domain model — NO vendor/ML code
 packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
 packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
-packages/cli       → cr-cli       the `clear-record` command; stages live in cr_cli.stages
+packages/cli       → cr-cli       the CLI implementation (`cr-cli`); stages live in cr_cli.stages
+packages/clear-record → clear-record  the CLI's public install name; a facade over cr-cli
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0009
+docs/adr/                          decision records 0001–0010
 docs/vox/voice-of-owner.md         owner voice
 ```
 

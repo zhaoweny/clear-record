@@ -1,4 +1,4 @@
-"""cr-cli: the `clear-record` command-line entry point."""
+"""cr-cli: the CLI implementation for the `clear-record` command."""
 
 from __future__ import annotations
 

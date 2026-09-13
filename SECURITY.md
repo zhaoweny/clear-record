@@ -42,7 +42,7 @@ may also change or document behaviour without a deprecation period.
 
 **In scope** — this repository's own code and packaging:
 
-- the `clear-record` CLI (`cr-cli`);
+- the `clear-record` CLI command (implemented by the `cr-cli` dist);
 - the `cr-core`, `cr-engine` and `cr-providers` libraries;
 - the build, test and CI configuration in this repository;
 - unexpected behaviour triggered by processing untrusted local input (for

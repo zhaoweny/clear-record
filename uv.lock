@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "clear-record",
+    "clear-record-workspace",
     "cr-cli",
     "cr-core",
     "cr-engine",
@@ -98,6 +99,18 @@ wheels = [
 
 [[package]]
 name = "clear-record"
+version = "0.1.0"
+source = { editable = "packages/clear-record" }
+dependencies = [
+    { name = "cr-cli" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "cr-cli", editable = "packages/cli" }]
+provides-extras = ["apple", "nvidia", "amd", "all"]
+
+[[package]]
+name = "clear-record-workspace"
 version = "0.1.0"
 source = { virtual = "." }
 

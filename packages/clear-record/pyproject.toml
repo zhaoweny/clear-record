@@ -1,0 +1,26 @@
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "clear-record"
+version = "0.1.0"
+description = "Public install name for the `clear-record` CLI (a facade over cr-cli)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["cr-cli==0.1.0"]
+
+# Backend extras are no-op markers, mirroring cr-providers and the workspace
+# root (every path uses the system `whisper-cli` + a ggml plugin). See ADR-0005.
+[project.optional-dependencies]
+apple = []
+nvidia = []
+amd = []
+all = []
+
+[project.scripts]
+clear-record = "clear_record:main"
+
+[tool.uv.sources]
+cr-cli = { workspace = true }

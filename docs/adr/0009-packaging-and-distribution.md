@@ -1,18 +1,21 @@
-# ADR-0009 — Packaging and distribution: four dists, exact pins, OpenID Connect (OIDC) publishing
+# ADR-0009 — Packaging and distribution: five dists, exact pins, OpenID Connect (OIDC) publishing
 
 Status: active
 Date: 2026-09-13
 
 ## Context
 
-- [FACT] ADR-0004 fixes the uv workspace: four members under `packages/`, each
+- [FACT] ADR-0004 fixes the uv workspace: five members under `packages/`, each
   a `src/` layout with a dist name (`cr-core`, `cr-engine`, `cr-providers`,
-  `cr-cli`), and left a review hook: "Revisit on the first real
-  packaging/distribution push."
+  `cr-cli`, `clear-record` — the last is a facade, see the Decision), and left a
+  review hook: "Revisit on the first real packaging/distribution push."
 - [FACT] ADR-0007 left the same review hook for the deployment directories.
 - [FACT] ADR-0004 also records that the root project is a **virtual project**
-  (`package = false`), never built or published; only the four members are real
+  (`package = false`), never built or published; only the five members are real
   packages.
+- [FACT] Every member builds with `uv_build`, and the virtual root declares the
+  same backend (ADR-0010); the backend choice does not change the five-dist set
+  or the facade shape decided here.
 - [FACT] Before this decision the built wheels and sdists declared their
   intra-project dependencies **unversioned** (`Requires-Dist: cr-core`, no
   specifier). That is wrong for a coordinated multi-package release: `pip`/`uv`
@@ -27,23 +30,42 @@ Date: 2026-09-13
 - [VOICE: owner] 2026-09-13: "the cli reads as 'clear-record' instead of
   'clearrecord'". The owner directs that the CLI **command** be spelled
   `clear-record`; this concerns the command only, not the distribution name.
+- [VOICE: owner] 2026-09-13: "let's do a clear-record shim package so uvx can
+  go fish `clear-record` and run it as `clear-record`." The owner directs that a
+  **`clear-record` facade dist** exist so `uvx clear-record` resolves and runs
+  the command cleanly; see the Decision below. (Recorded verbatim in
+  [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).)
 - [REQ] The hard rule from `AGENTS.md`/ADR-0004 stands: `cr-core` must stay
   **vendor-free** — no CUDA, ROCm, Metal/CoreML, torch/tensorflow or specific
   ASR library.
 
 ## Decision
 
-- [DECISION] Publish all four workspace members to PyPI. The three **library
+- [DECISION] Publish all five workspace members to PyPI. The three **library
   dists keep their current names** — `cr-core`, `cr-engine`, `cr-providers` —
-  released in lockstep. The **CLI dist** publishes as `cr-cli` unless the open
-  name question below resolves otherwise; once published the user install is
-  `uv tool install cr-cli` (equivalently `pipx install cr-cli`).
-- [DECISION] The **console-script command** the CLI dist installs is
-  **`clear-record`** (owner direction, 2026-09-13 — see Context). This changes
-  the command spelling only; the distribution name is the open question below.
+  released in lockstep. The **CLI implementation package** is `cr-cli`; the
+  **public install name** is `clear-record`, a **facade** that ships a small
+  `clear_record` module (re-exporting `cr_cli.cli.main`) and depends on
+  `cr-cli==X.Y.Z`. Once published the user install is
+  `uv tool install clear-record` (equivalently `pipx install clear-record`), and
+  `uvx clear-record` runs it without installing.
+- [DECISION] The **console-script command** is **`clear-record`**, and exactly
+  one dist owns it: the **`clear-record` facade** declares
+  `clear-record = "clear_record:main"`. The `cr-cli` implementation package
+  **declares no console script** (owner direction, 2026-09-13 — see Context).
+  The facade re-exports `cr_cli.cli.main`, so the command resolves to
+  the implementation; there is no duplicate owner.
+- [DECISION] The `clear-record` dist ships a **facade module**
+  (`clear_record/__init__.py`, `from cr_cli.cli import main`); every dist must
+  carry an import package, and `uv_build` refuses to build a dist without one.
+  The facade exists so resolvers and `uvx` see a distribution whose *own*
+  metadata provides the `clear-record` command, which avoids the
+  dependency-provided-command warning (in the form of: *An executable named
+  `clear-record` is not provided by package `clear-record` but is available via
+  the dependency `cr-cli`*).
 - [DECISION] Intra-project dependencies are **exact-pinned** (`==`) per release:
   the built metadata for each member names its sibling at the exact released
-  version (e.g. `cr-engine==0.1.0` → `Requires-Dist: cr-core==0.1.0`). The four
+  version (e.g. `cr-engine==0.1.0` → `Requires-Dist: cr-core==0.1.0`). The five
   `version =` fields move together; `uv.lock` is regenerated on a bump. This
   prevents a partial or mixed-version install.
 - [DECISION] Publishing uses **OIDC trusted publishing** (GitHub Actions →
@@ -57,13 +79,21 @@ Date: 2026-09-13
   `cr-core` declares **no third-party dependencies**. Vendor stacks stay
   optional extras on `cr-providers` (ADR-0005) and are never pulled by a default
   install.
+- [DECISION] Owner directive (2026-09-13 — see Context) settles the former
+  `[OPEN]` CLI-distribution-name question: the public install name is
+  **`clear-record`**, a **facade** over the `cr-cli` implementation package.
+  `cr-cli` keeps its name and holds the implementation (`cr_cli`); it declares
+  no console script, so `uvx cr-cli` provides no command by design. The facade
+  owns the `clear-record` entry point and depends on `cr-cli==X.Y.Z`, so
+  `uvx clear-record` resolves and runs with no warning. Publish `cr-cli` before
+  (or with) `clear-record`, since the facade depends on it.
 
 ## Rationale
 
-- **Four dists, one release train.** The members are separately importable
-  (ADR-0004), so they stay separate distributions; exact pins turn "one release"
-  into something the resolver enforces rather than something maintainers
-  remember.
+- **Five dists, one release train.** The members are separately importable
+  (ADR-0004) — the `clear-record` facade too — so they stay separate
+  distributions; exact pins turn "one release" into something the resolver
+  enforces rather than something maintainers remember.
 - **Trusted publishing over tokens.** A short-lived, workflow-scoped OIDC token
   removes long-lived PyPI secrets from the repo and CI, and the `pypi`
   environment gives a human approval gate in front of every upload.
@@ -79,20 +109,19 @@ Date: 2026-09-13
   into one dependency graph.
 - **PyPI API tokens in repository secrets** — long-lived credentials to rotate
   and leak; OIDC avoids them.
+- **Publish only `cr-cli` and rely on it for the command** — `cr-cli` declares
+  no console script, so `uvx cr-cli` cannot run anything and the public
+  `clear-record` install name would not resolve at all; a `clear-record` facade
+  that declares the entry point itself is what makes `uvx clear-record` run
+  (owner direction, 2026-09-13).
 
 ## Consequences / review hook
 
 - **Version lockstep is now a maintenance obligation.** Every release must bump
-  all four `version =` fields, the sibling `==` pins, and `uv.lock` together;
+  all five `version =` fields, the sibling `==` pins, and `uv.lock` together;
   [`docs/releasing.md`](../releasing.md) is the checklist.
 - **A PyPI version can never be reused or overwritten.** A bad release is fixed
   by publishing a new patch version (optionally yanking the bad one), never by
   re-uploading.
-- [OPEN] Which **distribution name** should `cr-cli` publish under: the current
-  `cr-cli`, or a friendlier `clear-record` (matching the project and the
-  `clear-record` command)? This is about the **dist name only**; the command is
-  settled as `clear-record` above. It is **not decided** — settle it before the
-  first upload, while all candidate names are still unclaimed. The other three
-  dist names are decided above.
 - Resolves the review hooks in ADR-0004 and ADR-0007. The concrete dev/user
   deployment layout remains ADR-0007's subject.

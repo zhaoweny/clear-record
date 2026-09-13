@@ -31,12 +31,12 @@ jobs:
         uses: extractions/setup-just@v4
       - name: Run the verify gate
         run: just verify
-      - name: Build all workspace wheels + sdists
+      - name: Build the dist (wheel + sdist)
         run: just build
       - name: Read the version for the artifact name
         id: version
-        run: echo "version=$(uv run --frozen scripts/bump-version.py --show)" >> "$GITHUB_OUTPUT"
-      - name: Upload the built dists
+        run: echo "version=$(uv version --frozen --package clear-record --short)" >> "$GITHUB_OUTPUT"
+      - name: Upload the built dist
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ steps.version.outputs.version }}

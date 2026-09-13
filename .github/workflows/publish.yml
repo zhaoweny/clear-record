@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   build:
-    name: build dists
+    name: build the dist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -52,15 +52,15 @@ jobs:
         uses: extractions/setup-just@v4
       - name: Run the verify gate
         run: just verify
-      - name: Build all workspace wheels + sdists
+      - name: Build the dist (wheel + sdist)
         run: just build
-      - name: Smoke-install the built facade in a clean venv
+      - name: Smoke-install the built dist in a clean venv
         run: |
-          version="$(uv run --frozen scripts/bump-version.py --show)"
+          version="$(uv version --frozen --package clear-record --short)"
           uv venv .smoke-venv
           uv pip install --python .smoke-venv --find-links dist "clear-record==${version}"
           .smoke-venv/bin/clear-record --help
-      - name: Upload dists
+      - name: Upload the dist
         uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -76,22 +76,30 @@ jobs:
       id-token: write # trusted publishing
     steps:
       - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
       - name: Guard — refuse a dev version
         run: |
-          if ! out="$(python3 scripts/bump-version.py --check-publishable 2>&1)"; then
-            echo "::error::${out}"; exit 1
-          fi
-          echo "OK: manifest version ${out} is a release candidate or stable release"
+          version="$(uv version --frozen --package clear-record --short)"
+          case "$version" in
+            *.dev*)
+              echo "::error::manifest version '${version}' is a dev version; dev builds are CI artifacts, so publish an X.Y.ZrcN release candidate or a stable X.Y.Z release"
+              exit 1
+              ;;
+          esac
+          echo "OK: manifest version ${version} is a release candidate or stable release"
       - name: Guard — the checked-out ref must be the matching release tag
         run: |
-          version="$(python3 scripts/bump-version.py --show)"
+          version="$(uv version --frozen --package clear-record --short)"
           ref="${GITHUB_REF_NAME}"
           if [ "v${version}" != "${ref}" ]; then
             echo "::error::ref '${ref}' does not match manifest version 'v${version}'; refusing to publish"
             exit 1
           fi
           echo "OK: tag ${ref} matches manifest version ${version}"
-      - name: Download dists
+      - name: Download the dist
         uses: actions/download-artifact@v4
         with:
           name: dist

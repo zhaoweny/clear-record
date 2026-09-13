@@ -146,3 +146,20 @@ for the record; this Update supersedes them for the published set.
   now overbuilt for one dist. `scripts/bump-version.py` and the publish
   workflows are left **working as-is** in this slice; reshaping them for a single
   publisher is a follow-up slice.
+
+## Update (2026-09-13) — the single-publisher simplification landed
+
+The follow-up slice named in the previous Update landed on 2026-09-13.
+
+- [DESIGN] With one published dist, `scripts/bump-version.py` and the lockstep
+  check it ran over the root and the single member (two version literals) are
+  **deleted**.
+- [DESIGN] The bump is native `uv version` behind the `just version` / `bump-dev`
+  / `bump-rc` / `set-version` recipes.
+- [FACT] The publish workflows still read a version, now the single member's with
+  `uv version --frozen --package clear-record --short`; only the deleted
+  script-backed read is gone. The workflows keep a small inline `.devN` guard.
+
+See [ADR-0011](0011-versioning-and-release-train.md)'s Update "the bump is
+native `uv version`; the lockstep script is gone" and
+[`docs/releasing.md`](../releasing.md).

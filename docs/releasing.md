@@ -17,9 +17,11 @@ the train and versioning are
 `clear-record` is the **sole owner** of the `clear-record` console script
 (`clear_record.cli:main`), so `uvx clear-record` resolves and runs it without the
 dependency-provided-command warning. The four former `cr-*` members are now
-internal `clear_record` subpackages (ADR-0012); the release machinery that used
-to coordinate them is being simplified in a follow-up slice, so the workflow
-files still build the workspace and smoke-install the command.
+internal `clear_record` subpackages (ADR-0012). The release machinery that used
+to coordinate the five `cr-*` dists was simplified to one dist for the single
+publisher on 2026-09-13 (ADR-0011's Update "the bump is native `uv version`; the
+lockstep script is gone"): the version bump is native `uv version`, and the
+workflow files build the one dist and smoke-install the command.
 
 ## Three publishing tiers
 
@@ -103,18 +105,26 @@ the `testpypi` environment.
 > (ADR-0012), and its four layers are internal subpackages. Claim one pending
 > publisher per index.
 
-## Versioning: one dev series on `main`
+## Versioning: one dev snapshot on `main`
 
 The root and the single member carry one **static** version (ADR-0011) —
-`uv_build` forbids `dynamic = ["version"]`, so a script owns the bump.
-`scripts/bump-version.py` (wrapped by `just`) replaces the exact old literal in
-both manifests at once:
+`uv_build` forbids `dynamic = ["version"]`, so the version literal must live in
+the manifests. The member `packages/clear-record/pyproject.toml` is the
+**published** dist and the version the tooling reads; the virtual root
+(`clear-record-workspace`) is never built or published, so its `version` is
+vestigial. To avoid a stale root literal, each `just` recipe bumps the member and
+then the root with a second native `uv version` call, keeping the two literals
+in step (the packaging test asserts it).
+
+The bump is native `uv version`; the old bump script is gone (ADR-0011's Update
+"the bump is native `uv version`; the lockstep script is gone"). The recipes are
+thin, branching-free `uv version` recipes:
 
 ```sh
-just version                 # print the current version (aborts if the two disagree)
-just bump-dev                # 0.1.1.dev0 -> 0.1.1.dev1 (a new dev series)
-just bump-rc                 # 0.1.1.dev0 or 0.1.1 -> 0.1.1rc1; 0.1.1rcN -> 0.1.1rc{N+1}
-just set-version 0.1.1       # drop the suffix (stable release)
+just version                 # print the member version (uv version --short)
+just bump-dev                # X.Y.Z.devN -> X.Y.Z.dev(N+1) (a new dev snapshot)
+just bump-rc                 # X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc{N+1}
+just set-version 0.1.1       # force an explicit version (stable release)
 ```
 
 After any bump, regenerate and commit the lockfile — `just verify` runs
@@ -124,14 +134,28 @@ After any bump, regenerate and commit the lockfile — `just verify` runs
 uv lock
 ```
 
+The recipes pass `--frozen` so the bump does not re-lock mid-edit; the explicit
+`uv lock` above is the deliberate relock. **`uv version --bump` refuses a bump
+that would not increase the version** and rejects a lowered version, so
+`bump-dev` / `bump-rc` only apply while the member carries a version they can
+advance:
+
+- `just bump-dev` needs a `X.Y.Z.devN` version (it advances `devN`);
+- `just bump-rc` cuts an `rc` from `X.Y.Z.devN` or advances `X.Y.ZrcN`, but it
+  **cannot** cut one from a stable `X.Y.Z` (uv refuses it: the bump would not
+  increase the version);
+- `just set-version X.Y.Z` is the explicit-value form, so it forces the write —
+  use it to drop the suffix onto a stable release, or to start the next dev
+  series after one (`just set-version X.Y.(Z+1).dev0`).
+
 The version shapes the manifests carry are `X.Y.Z` (**stable**) and `X.Y.ZrcN`
 (**release candidate**) — both go to PyPI, the candidate after its TestPyPI
 rehearsal. `X.Y.Z.devN` is the **in-development marker** `main` carries and is
-never published; `a`/`b` are accepted by the validator but unused, and `--rc`
-advances an `a`/`b` to `rc1`. To move off the dev marker, cut an `rc` with `just
-bump-rc`, or go straight to stable with `just set-version X.Y.Z`. **No local
-versions** (`+g<sha>`): PyPI rejects them, so even a dev version stops at
-`.devN`.
+never published. (`a`/`b` pre-releases are valid PEP 440 shapes that
+`uv version --bump alpha|beta` can produce, but the train does not use them.)
+To move off the dev marker, cut an `rc` with `just bump-rc`, or go straight to
+stable with `just set-version X.Y.Z`. **No local versions** (`+g<sha>`): PyPI
+rejects them, so even a dev version stops at `.devN`.
 
 ## Release rehearsal loop (TestPyPI)
 
@@ -308,9 +332,9 @@ needed.
 
 `workflow_dispatch` remains on `publish.yml` only as an **emergency hatch** (the
 TestPyPI rehearsal is a separate, intentional manual workflow). The publish job
-refuses to run unless the manifest is publishable (a stable `X.Y.Z` or a
-candidate `X.Y.ZrcN`, but never a dev version) and the checked-out ref is a tag
-whose `v<manifest version>` matches the manifests, so neither a dev build nor a
+refuses to run unless the published member's version is publishable (a stable
+`X.Y.Z` or a candidate `X.Y.ZrcN`, but never a dev version) and the checked-out
+ref is a tag whose `v<version>` matches it, so neither a dev build nor a
 dispatch from an arbitrary `main` commit can publish a mismatched artifact.
 
 ## Version immutability

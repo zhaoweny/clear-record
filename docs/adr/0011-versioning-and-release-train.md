@@ -144,7 +144,8 @@ in [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).
   pre-release, and `vX.Y.Z` publishes the stable release. PyPI is **publishable
   as an `rc`, never as a dev version**; dev builds publish to neither index.
   (Owner acceptance above, not an unqualified directive.)
-- [DESIGN] The mechanics of the decisions above: `scripts/bump-version.py`
+- [DESIGN, superseded 2026-09-13 — see the simplification Update below] The
+  mechanics of the decisions above: `scripts/bump-version.py`
   accepts `X.Y.Z[{a|b|rc}N][.devN]` and gains `--rc` (`X.Y.Z` → `X.Y.Zrc1`;
   `X.Y.ZrcN` → `X.Y.Zrc{N+1}`; an accepted-but-unused `a`/`b` advances to
   `rc1`), wrapped as `just bump-rc`; `publish.yml` excludes only dev tags
@@ -167,3 +168,41 @@ with `--pre`, an explicit pin, or when no stable version satisfies the range.
 
 See [`docs/releasing.md`](../releasing.md) and
 [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).
+
+## Update (2026-09-13) — the bump is native `uv version`; the lockstep script is gone
+
+With one published dist (ADR-0012), the six-manifest lockstep machinery built to
+coordinate five `cr-*` dists is overbuilt and was removed. The Decision,
+Rationale and Consequences text above, and the machinery text in the earlier
+Updates, are kept for the record; this section supersedes them.
+
+- [DESIGN] `scripts/bump-version.py` is **deleted**. Each `just` recipe is a
+  thin, branching-free `uv version` recipe: `version` →
+  `uv version --frozen --package clear-record --short`; `bump-dev` / `bump-rc` →
+  `uv version --frozen --package clear-record --bump <dev|rc>`; `set-version V`
+  → `uv version --frozen --package clear-record V`.
+- [DESIGN] The member `packages/clear-record/pyproject.toml` owns the
+  **published** version. The virtual root `clear-record-workspace` is never built
+  or published, so its `version` is vestigial; each recipe nevertheless carries a
+  **second** `uv version --frozen` call carrying the same `--bump <dev|rc>` or
+  explicit value, to keep the root literal in step, and `test_packaging.py` keeps
+  asserting the two agree. (The alternative — making the member the sole source
+  and dropping the root-equality assertion — was considered; keeping them in step
+  avoids a silently stale root literal and keeps the existing assertion
+  meaningful.)
+- [DESIGN] `--frozen` leaves `uv.lock` untouched; a bump is followed by an
+  explicit `uv lock`, exactly as before, and `just verify` (`uv sync --locked`)
+  remains the stale-lock guard rail.
+- [FACT] uv's own bump semantics differ from the deleted script's (verified
+  2026-09-13 against uv 0.12.7): `--bump rc` from `0.1.1.dev0` yields
+  `0.1.1rc1` and from `0.1.1rcN` yields `0.1.1rc{N+1}`; `--bump dev` advances
+  `X.Y.Z.devN` to `X.Y.Z.dev(N+1)`. But `--bump rc` / `--bump dev` from a stable
+  `X.Y.Z` **error** — the bump would not increase the version — and `--bump`
+  rejects a lowered version; `set-version X.Y.Z` (an explicit value) forces the
+  write, so a stable release still drops the suffix that way.
+  [`docs/releasing.md`](../releasing.md) was corrected to match.
+- [DESIGN] The publish workflows read the version with
+  `uv version --frozen --package clear-record --short`; the dev-version refusal
+  is now a small inline `case "$version" in *.dev*)` guard in both `publish.yml`
+  and `publish-testpypi.yml`, and the `v<version>` ↔ tag guard is kept. The
+  `"v[0-9]*"` / `"!v[0-9]*.dev*"` tag filters are unchanged.

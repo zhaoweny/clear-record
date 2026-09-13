@@ -40,9 +40,10 @@ package = false
 [tool.uv.workspace]
 members = ["packages/*"]
 
-# The root's aggregate extras reference the single member, so pin that
-# dependency to the in-workspace version. (The member itself has no
-# `tool.uv.sources` — it depends only on numpy/soundfile from PyPI.)
+# The root's aggregate extras reference the single member. The workspace source
+# below (`clear-record = { workspace = true }`) supplies it, so the extras need
+# no version pin. (The member itself has no `tool.uv.sources` — it depends only
+# on numpy/soundfile from PyPI.)
 [tool.uv.sources]
 clear-record = { workspace = true }
 
@@ -61,10 +62,10 @@ dev = [
 # path uses the system `whisper-cli` + a ggml GPU plugin, so the backend extras
 # are no-op markers (see packages/clear-record/pyproject.toml).
 [project.optional-dependencies]
-apple = ["clear-record[apple]==0.1.1.dev0"]
-nvidia = ["clear-record[nvidia]==0.1.1.dev0"]
-amd = ["clear-record[amd]==0.1.1.dev0"]
-all = ["clear-record[all]==0.1.1.dev0"]
+apple = ["clear-record[apple]"]
+nvidia = ["clear-record[nvidia]"]
+amd = ["clear-record[amd]"]
+all = ["clear-record[all]"]
 
 [tool.ruff]
 target-version = "py312"

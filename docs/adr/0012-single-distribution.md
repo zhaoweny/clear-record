@@ -60,11 +60,11 @@ Date: 2026-09-13
   a reparenting. The root's aggregate extras now reference
   `clear-record[apple|nvidia|amd|all]`, and `[tool.pytest.ini_options]`
   `testpaths` points at the one `packages/clear-record/tests/`.
-- [DESIGN] `scripts/bump-version.py` and the publish workflows are unchanged in
-  this slice: the script discovers the root plus `packages/*/pyproject.toml`, so
-  it now owns **two** version literals; the workflows keep running `just verify`
-  / `just build` and smoke-installing the command. Simplifying the release
-  machinery for one publisher is a follow-up slice.
+- [DESIGN] The release machinery was simplified for one publisher on 2026-09-13
+  (ADR-0011's Update "the bump is native `uv version`; the lockstep script is
+  gone"): `scripts/bump-version.py` is deleted and the bump is native `uv version`
+  behind the `just` recipes. The workflows keep running `just verify` /
+  `just build` and smoke-installing the command.
 
 ## Rationale
 
@@ -93,8 +93,9 @@ Date: 2026-09-13
   the DAG fails `test_layering.py`; extending the DAG is a deliberate change
   here and in ADR-0004, not a quiet widening.
 - **The facade is gone.** ADR-0009's facade/pin machinery is superseded for the
-  published set. The root/member version lockstep **stays** (the two `version =`
-  literals still move together); what is removed in the follow-up slice is the
-  cross-dist `==` pin machinery.
+  published set. The **root/member version lockstep stays** (the two `version =`
+  literals still move together, now via a second `uv version` call), and the
+  cross-dist `==` pin machinery is gone (ADR-0011's Update "the bump is native
+  `uv version`; the lockstep script is gone").
 - Revisit if a future member (GUI, MCP server) is added — it becomes a second
   workspace member/dist, not a new subpackage of `clear_record`.

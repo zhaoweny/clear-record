@@ -17,14 +17,14 @@ import sys
 import tomllib
 from pathlib import Path
 
-import pytest
-
 # This file lives at packages/clear-record/tests/, so parents[3] is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MEMBER_PYPROJECTS = sorted(REPO_ROOT.glob("packages/*/pyproject.toml"))
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
-# The virtual root plus the single member: both still move together, because
-# scripts/bump-version.py reads every manifest and refuses a drift (ADR-0011).
+# The virtual root plus the single member: the root's version is vestigial (it
+# is never built or published), so it is kept in step with the member by a
+# second `uv version` call in each `just` recipe. A drift here is a bump bug
+# (ADR-0011's 2026-09-13 simplification update).
 ALL_PYPROJECTS = [ROOT_PYPROJECT, *MEMBER_PYPROJECTS]
 PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
 
@@ -33,9 +33,6 @@ PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
 # marker, which is a CI artifact and never published (no local versions; PyPI
 # rejects them — ADR-0011).
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+((?:a|b|rc)\d+)?(?:\.dev\d+)?$")
-
-# The version script owns every manifest literal (ADR-0011).
-BUMP_SCRIPT = REPO_ROOT / "scripts" / "bump-version.py"
 
 # A PEP 508 dependency string starts with the distribution name; split it off.
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
@@ -59,9 +56,10 @@ def _all_dependencies(project: dict) -> list[str]:
 def test_all_manifests_share_one_pep440_version() -> None:
     """The virtual root and the single member declare one PEP 440 version.
 
-    The root is published nowhere but still carries the version, and the
-    release-train bump must move both literals together (ADR-0011), so a drift
-    here is a release-train bug."""
+    The root is published nowhere but still carries the version, and each
+    `just` bump recipe runs `uv version` twice so both literals move together
+    (ADR-0011's 2026-09-13 simplification update), so a drift here is a bump
+    bug."""
     by_path = {
         p.relative_to(REPO_ROOT): _load(p)["project"]["version"] for p in ALL_PYPROJECTS
     }
@@ -190,22 +188,3 @@ def test_publishable_manifests_carry_pypi_metadata() -> None:
             if c not in trove_classifiers
         )
     assert not problems, "incomplete PyPI metadata:\n" + "\n".join(problems)
-
-
-@pytest.mark.parametrize("bad", ["banana", "0.1.1+g1"])
-def test_bump_version_rejects_an_invalid_target_without_mutating(bad: str) -> None:
-    """`bump-version.py` refuses anything outside the version shapes it carries.
-
-    The script validates the requested version before it rewrites a manifest, so
-    a rejected argument must exit non-zero and leave every manifest
-    byte-identical (ADR-0011). Exercised through a real subprocess."""
-    before = {path: path.read_bytes() for path in ALL_PYPROJECTS}
-    result = subprocess.run(
-        [sys.executable, str(BUMP_SCRIPT), bad],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0, f"{bad!r} should be refused: {result.stdout}"
-    assert result.stderr.startswith("error:"), result.stderr
-    after = {path: path.read_bytes() for path in ALL_PYPROJECTS}
-    assert after == before, f"a rejected version mutated a manifest: {bad!r}"

@@ -244,8 +244,7 @@ clearrecord transcribe <dir> --backend apple --model medium   # picks up glossar
 ```
 
 > **Privacy:** recordings and derived artifacts are environment-local data.
-> They are gitignored and never enter the repository. The clean-room boundary
-> in `docs/architecture.md` §6 and ADR-0006 make this explicit.
+> They are gitignored and never enter the repository ([ADR-0006](docs/adr/0006-private-data-boundary.md)).
 
 ## Development
 

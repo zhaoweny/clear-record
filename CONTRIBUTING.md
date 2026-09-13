@@ -37,16 +37,12 @@ just format         # ruff format (in place)
 just format-check   # ruff format --check
 ```
 
-## Hard rules
+## Guidelines
 
-These standing rules from [`AGENTS.md`](AGENTS.md) are non-negotiable (the
-no-branching-scripts rule is the fourth, and has its own section below):
-
-- **Never import work/company artifacts or private recordings.** This is a
-  clean-room OSS repo. Do not add company source code, prompts/specs, partner
-  names, recordings, datasets, internal docs or credentials. Never commit user
-  recordings, derived transcripts or downloaded model weights — they are
-  environment-local data (ADR-0006).
+- **Please avoid work/company material.** Keep the repository free of company
+  source code, prompts/specs, partner names, internal docs or credentials, and
+  don't commit private recordings. Recordings, derived transcripts and model
+  weights are environment-local data — gitignored, never committed (ADR-0006).
 - **Keep the core vendor-free.** `cr-core` must never import CUDA, ROCm,
   Metal/Core ML, torch/tensorflow or a specific ASR library; `cr-engine` may use
   numpy/soundfile but no vendor/ASR code. Vendor stacks live in `cr-providers`,

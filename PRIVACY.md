@@ -78,6 +78,29 @@ is outside this project's control — see each project's own documentation.
 - No cloud or third-party transcription service.
 - No uploading of recordings, transcripts, or model weights.
 
+## A neutral tool — your responsibility
+
+Automatic speech recognition is **inherently privacy-sensitive**: it turns
+people's voices into searchable text, and the people in a recording may not have
+chosen to be recorded or transcribed.
+
+`clear-record` is a **neutral, general-purpose tool**. It has no built-in purpose
+and does not restrict what you point it at. **You may use it for your own
+purposes** — and you are **solely responsible** for doing so lawfully and
+ethically, including:
+
+- having whatever **consent** your situation requires before recording or
+  transcribing other people;
+- complying with the laws that apply to you (wiretapping/consent, data
+  protection, and any workplace or confidentiality rules);
+- deciding what to keep, share, or delete.
+
+The project and its authors take **no position on, and no responsibility for, how
+the software is used or for any consequences of that use.** This section is a
+plain-language statement for the privacy-sensitive case, not legal advice; the
+[MIT license](LICENSE) already disclaims warranties and liability to the extent
+the law allows.
+
 ## Reporting a privacy concern
 
 Open a GitHub issue on the repository:

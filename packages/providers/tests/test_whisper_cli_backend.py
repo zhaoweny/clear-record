@@ -9,6 +9,7 @@ machine-dependent and is covered by the hot-test.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -332,10 +333,37 @@ def test_find_whisper_cli_rejects_generic_whisper(monkeypatch) -> None:
     assert backends._find_whisper_cli() is None
 
 
-def test_ggml_backend_dirs_include_debian_multiarch() -> None:
-    """Debian/Ubuntu multiarch layouts must not be false negatives."""
-    assert "/usr/lib/x86_64-linux-gnu/ggml" in _GGML_BACKEND_DIRS
-    assert "/usr/lib/aarch64-linux-gnu/ggml" in _GGML_BACKEND_DIRS
+def test_ggml_backend_dirs_cover_real_distro_layouts() -> None:
+    """Pin the verified plugin locations so a real non-Arch install is not a
+    false negative (see the comment on ``_GGML_BACKEND_DIRS``)."""
+    for path in (
+        "/usr/lib/ggml",  # Arch ggml-*
+        "/usr/lib/x86_64-linux-gnu/ggml",  # Ubuntu 25.10 / Debian
+        "/usr/lib/x86_64-linux-gnu/ggml/backends0",  # Ubuntu 26.04, ggml >= 0.9
+        "/usr/lib64",  # Fedora whisper-cpp (direct)
+        "/usr/lib",  # upstream `cmake --install` prefix=/usr (direct)
+        "/nix/store/*whisper-cpp*/lib",  # Nix
+    ):
+        assert path in _GGML_BACKEND_DIRS
+    assert "/usr/lib/aarch64-linux-gnu/ggml/backends0" in _GGML_BACKEND_DIRS
+
+
+def test_ggml_backend_dirs_override_is_prepended(monkeypatch) -> None:
+    """``CR_GGML_BACKEND_DIRS`` wins: it is searched before the built-in list."""
+    monkeypatch.setenv("CR_GGML_BACKEND_DIRS", f"/opt/one{os.pathsep}/opt/two")
+    dirs = backends._ggml_backend_dirs()
+    assert dirs[:2] == ("/opt/one", "/opt/two")
+    assert dirs[2:] == _GGML_BACKEND_DIRS
+
+
+def test_find_ggml_gpu_backend_finds_backends0_layout(tmp_path, monkeypatch) -> None:
+    """A plugin under Debian/Ubuntu's ``ggml/backends0/`` must be found."""
+    d = tmp_path / "ggml" / "backends0"
+    d.mkdir(parents=True)
+    plugin = d / "libggml-vulkan.so"
+    plugin.write_bytes(b"stub")
+    monkeypatch.setenv("CR_GGML_BACKEND_DIRS", str(d))
+    assert backends._find_ggml_gpu_backend(("vulkan",)) == str(plugin)
 
 
 # --------------------------------------------------------------------------- #

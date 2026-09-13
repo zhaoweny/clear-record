@@ -97,12 +97,40 @@ _WHISPER_CLI_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 # plugins under `libexec` (not `lib`), reachable via the stable `opt/` symlink
 # or the versioned Cellar. Missing a layout here is a false negative (the probe
 # rejects a machine that can actually run the backend), so list them all.
+#
+# The non-Arch layouts are pinned to the distro package contents rather than
+# guessed; a miss here silently rejects a machine that can run the backend:
+# - Arch `ggml-*`: /usr/lib/ggml/libggml-cuda.so
+# - Ubuntu 25.10 `libggml-vulkan` (ggml ~0.0):
+#     /usr/lib/x86_64-linux-gnu/ggml/libggml-vulkan.so
+# - Ubuntu 26.04 `libggml0-backend-vulkan` (ggml >= 0.9) nests the plugin one
+#   level deeper: /usr/lib/x86_64-linux-gnu/ggml/backends0/libggml-vulkan.so
+# - Fedora `whisper-cpp` bundles ggml and drops it straight in lib64:
+#     /usr/lib64/libggml-hip.so
+# - Upstream `cmake --install` with the default prefix puts the plugins directly
+#   in /usr/lib (ggml-org/whisper.cpp#3772).
+# - Nixpkgs `whisper-cpp` sets GGML_BACKEND_DIR=$out/lib, so the plugins live in
+#   the (hash-named) package output's lib/; some builds put them in bin/
+#   (NixOS/nixpkgs#3420). The store hash varies, so those two entries glob.
 _GGML_BACKEND_DIRS = (
     "/usr/lib/ggml",
     "/usr/lib64/ggml",
     "/usr/local/lib/ggml",
+    # Debian/Ubuntu multiarch: the plugin may sit directly in the tuple, under
+    # `ggml/`, or (ggml >= 0.9) under `ggml/backends0/`.
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
     "/usr/lib/x86_64-linux-gnu/ggml",
     "/usr/lib/aarch64-linux-gnu/ggml",
+    "/usr/lib/x86_64-linux-gnu/ggml/backends0",
+    "/usr/lib/aarch64-linux-gnu/ggml/backends0",
+    # Direct lib/lib64 installs (upstream prefix=/usr; Fedora's bundled ggml).
+    "/usr/lib",
+    "/usr/lib64",
+    # Nix (hash-named store path, so glob it): package lib/, or bin/ on builds
+    # that install the backends next to the CLI.
+    "/nix/store/*whisper-cpp*/lib",
+    "/nix/store/*whisper-cpp*/bin",
     # macOS / Homebrew (Apple Silicon prefix, then Intel prefix).
     "/opt/homebrew/lib",
     "/opt/homebrew/libexec",

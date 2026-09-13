@@ -49,6 +49,20 @@ format:
 test:
     uv run --all-packages pytest
 
-# Build all workspace wheels + sdists into dist/ (never committed).
+# Build all workspace wheels + sdists into dist/ (never committed). `--no-sources`
+# proves the published graph resolves without `tool.uv.sources` (the workspace pins).
 build:
-    uv build --all-packages
+    uv build --all-packages --no-sources
+
+# Show the current workspace version. `--frozen` keeps the version tools from
+# re-locking mid-edit (the lockfile follows in a separate, explicit `uv lock`).
+version:
+    uv run --frozen scripts/bump-version.py --show
+
+# Bump the dev segment (snapshot): 0.1.1.dev0 -> 0.1.1.dev1. Follow with `uv lock`.
+bump-dev:
+    uv run --frozen scripts/bump-version.py --dev
+
+# Set an explicit version (release: drop the dev suffix, e.g. `just set-version 0.1.1`).
+set-version VERSION:
+    uv run --frozen scripts/bump-version.py {{VERSION}}

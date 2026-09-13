@@ -45,6 +45,7 @@ __pycache__/
 .Python
 .venv/
 venv/
+.smoke-venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

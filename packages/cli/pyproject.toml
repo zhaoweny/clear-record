@@ -4,16 +4,22 @@ build-backend = "uv_build"
 
 [project]
 name = "cr-cli"
-version = "0.1.0"
+version = "0.1.1.dev0"
 description = "CLI implementation (`cr_cli`) for clear-record; the `clear-record` command itself is provided by the `clear-record` facade package."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "cr-core==0.1.0",
-    "cr-engine==0.1.0",
-    "cr-providers==0.1.0",
+    "cr-core==0.1.1.dev0",
+    "cr-engine==0.1.1.dev0",
+    "cr-providers==0.1.1.dev0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zhaoweny/clear-record"
+Repository = "https://github.com/zhaoweny/clear-record"
+Issues = "https://github.com/zhaoweny/clear-record/issues"
 
 # This member is a uv workspace member and depends on sibling members; pin the
 # dependencies to the in-workspace versions.

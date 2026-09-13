@@ -74,3 +74,18 @@ this repository. See `docs/architecture.md` §7.
   `uv_build` requires every dist to ship a module. This supersedes the earlier
   metadata-only framing of the facade; the Distribution-naming directive above
   is unchanged (ADR-0009, ADR-0010).
+
+## Versioning and release train (2026-09-13)
+
+- Owner directive, verbatim: *"we need a work-in-progress or `-dev` build tag.
+  v0.1.0 is tagged, and we would tag this as v0.1.1; let's consider we would do
+  `releases/v0.1.x` release train and current main = that release train"*.
+- The three specifics below are owner-selected decisions; the option wording is
+  agent-authored:
+  1. [DECISION] **`main` carries `0.1.1.dev0`**, bumped for each snapshot — the
+     published version is a dev series, not a hand-edited release number.
+  2. [DECISION] **WIP/dev builds publish to TestPyPI**, so pre-releases exercise
+     the real index path without claiming PyPI versions.
+  3. [DECISION] **The release train is lazy**: `main` *is* `releases/v0.1.x`
+     today; the branch is cut only when 0.2 development starts.
+  See [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md).

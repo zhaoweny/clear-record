@@ -18,7 +18,7 @@
 
 [project]
 name = "clear-record-workspace"
-version = "0.1.0"
+version = "0.1.1.dev0"
 description = "Local-first open-source multitrack transcription and record-reconstruction: from many recordings to one clear record (workspace root)."
 readme = "README.md"
 license = "MIT"
@@ -56,10 +56,10 @@ dev = [
 # path uses the system `whisper-cli` + a ggml GPU plugin, so the backend extras
 # are no-op markers (see cr-providers/pyproject.toml).
 [project.optional-dependencies]
-apple = ["cr-providers[apple]==0.1.0"]
-nvidia = ["cr-providers[nvidia]==0.1.0"]
-amd = ["cr-providers[amd]==0.1.0"]
-all = ["cr-providers[all]==0.1.0"]
+apple = ["cr-providers[apple]==0.1.1.dev0"]
+nvidia = ["cr-providers[nvidia]==0.1.1.dev0"]
+amd = ["cr-providers[amd]==0.1.1.dev0"]
+all = ["cr-providers[all]==0.1.1.dev0"]
 
 [tool.ruff]
 target-version = "py312"

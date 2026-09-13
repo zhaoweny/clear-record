@@ -1,0 +1,68 @@
+name: publish-dev
+
+# Publish pre-release snapshots (`X.Y.Z.devN`) to TestPyPI.
+#
+#   * A snapshot tag is `vX.Y.Z.devN` (e.g. `v0.1.1.dev0`); pushing it builds
+#     and publishes all five members to TestPyPI. Release tags (`vX.Y.Z`) route
+#     to `publish.yml` (PyPI) and are deliberately excluded here.
+#   * TestPyPI needs its OWN one-time pending publisher, separate from the PyPI
+#     one in `publish.yml`: same owner/repo, workflow `publish-dev.yml`,
+#     environment `testpypi`. See docs/releasing.md.
+#   * No API tokens and no repository secrets: publishing uses OIDC trusted
+#     publishing (`id-token: write`, the `testpypi` environment gate).
+#   * `workflow_dispatch` manually re-runs a snapshot — routine here, not an
+#     emergency hatch (that term is reserved for the PyPI publish in
+#     `publish.yml`).
+on:
+  push:
+    tags: ["v[0-9]*.dev*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build dists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+      - name: Run the verify gate
+        run: just verify
+      - name: Build all workspace wheels + sdists
+        run: just build
+      - name: Smoke-install the built facade in a clean venv
+        run: |
+          version="$(uv run --frozen scripts/bump-version.py --show)"
+          uv venv .smoke-venv
+          uv pip install --python .smoke-venv --find-links dist "clear-record==${version}"
+          .smoke-venv/bin/clear-record --help
+      - name: Upload dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - name: Download dists
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish snapshots to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

@@ -281,7 +281,7 @@ packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / am
 packages/cli       → cr-cli       the CLI implementation (`cr-cli`); stages live in cr_cli.stages
 packages/clear-record → clear-record  the CLI's public install name; a facade over cr-cli
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0010
+docs/adr/                          decision records 0001–0011
 docs/vox/voice-of-owner.md         owner voice
 ```
 

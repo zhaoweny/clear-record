@@ -99,7 +99,7 @@ wheels = [
 
 [[package]]
 name = "clear-record"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { editable = "packages/clear-record" }
 dependencies = [
     { name = "cr-cli" },
@@ -111,7 +111,7 @@ provides-extras = ["apple", "nvidia", "amd", "all"]
 
 [[package]]
 name = "clear-record-workspace"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { virtual = "." }
 
 [package.optional-dependencies]
@@ -160,7 +160,7 @@ wheels = [
 
 [[package]]
 name = "cr-cli"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "cr-core" },
@@ -177,12 +177,12 @@ requires-dist = [
 
 [[package]]
 name = "cr-core"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { editable = "packages/core" }
 
 [[package]]
 name = "cr-engine"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { editable = "packages/engine" }
 dependencies = [
     { name = "cr-core" },
@@ -199,7 +199,7 @@ requires-dist = [
 
 [[package]]
 name = "cr-providers"
-version = "0.1.0"
+version = "0.1.1.dev0"
 source = { editable = "packages/providers" }
 dependencies = [
     { name = "cr-core" },

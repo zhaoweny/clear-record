@@ -15,14 +15,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLI_PYPROJECT = REPO_ROOT / "packages" / "cli" / "pyproject.toml"
 ALIAS_PYPROJECT = REPO_ROOT / "packages" / "clear-record" / "pyproject.toml"
-MEMBER_PYPROJECTS = [
-    REPO_ROOT / "packages" / "core" / "pyproject.toml",
-    REPO_ROOT / "packages" / "engine" / "pyproject.toml",
-    REPO_ROOT / "packages" / "providers" / "pyproject.toml",
-    CLI_PYPROJECT,
-    ALIAS_PYPROJECT,
-]
+# Discovered by glob, so a new workspace member needs no edit here (ADR-0011).
+MEMBER_PYPROJECTS = sorted(REPO_ROOT.glob("packages/*/pyproject.toml"))
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
+# The virtual root plus every member: all move together (ADR-0011).
+ALL_PYPROJECTS = [ROOT_PYPROJECT, *MEMBER_PYPROJECTS]
+PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
+
+# The publishable shapes: X.Y.Z or X.Y.Z.devN (no local versions; PyPI rejects
+# them — ADR-0011).
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(\.dev\d+)?$")
 
 # A PEP 508 dependency string starts with the distribution name; split it off.
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
@@ -40,9 +42,19 @@ def _all_dependencies(project: dict) -> list[str]:
     return deps
 
 
-def test_member_versions_are_equal() -> None:
-    versions = {_load(p)["project"]["version"] for p in MEMBER_PYPROJECTS}
-    assert len(versions) == 1, f"member versions diverge: {sorted(versions)}"
+def test_all_manifests_share_one_pep440_version() -> None:
+    """The virtual root and every member declare one PEP 440 version.
+
+    The root is published nowhere but still carries the version, and the
+    release-train bump must move all the literals together (ADR-0011), so a
+    drift here is a release-train bug."""
+    by_path = {
+        p.relative_to(REPO_ROOT): _load(p)["project"]["version"] for p in ALL_PYPROJECTS
+    }
+    unique = set(by_path.values())
+    assert len(unique) == 1, f"manifests diverge: {by_path}"
+    version = unique.pop()
+    assert _VERSION_RE.match(version), f"not X.Y.Z[.devN]: {version!r}"
 
 
 def test_intra_project_dependencies_are_exact_pinned() -> None:
@@ -98,3 +110,25 @@ def test_alias_facade_forwards_to_the_implementation() -> None:
     from cr_cli import cli
 
     assert clear_record.main is cli.main
+
+
+def test_every_package_ships_the_root_license() -> None:
+    """Each publishable package bundles a byte-identical copy of the root MIT
+    `LICENSE` (ADR-0002).
+
+    MIT requires the notice to accompany copies, and `license-files =
+    ["LICENSE"]` only ships a file that exists — so a missing or drifted copy
+    silently drops the license from a wheel/sdist."""
+    root_license = (REPO_ROOT / "LICENSE").read_bytes()
+    missing = [
+        str(p.relative_to(REPO_ROOT))
+        for p in PACKAGE_DIRS
+        if not (p / "LICENSE").exists()
+    ]
+    assert not missing, f"packages missing a LICENSE: {missing}"
+    drifted = [
+        str((p / "LICENSE").relative_to(REPO_ROOT))
+        for p in PACKAGE_DIRS
+        if (p / "LICENSE").read_bytes() != root_license
+    ]
+    assert not drifted, f"LICENSE copies differ from the root LICENSE: {drifted}"

@@ -2,8 +2,9 @@
 
 The **CLI implementation package** for clear-record: the `cr_cli` module tree
 (`cli.py`, `stages.py`) that does the lifting. The public `clear-record`
-command is provided by the [`clear-record`](../clear-record/README.md) facade
-package, which re-exports `cr_cli.cli.main`.
+command is provided by the
+[`clear-record`](https://github.com/zhaoweny/clear-record/tree/main/packages/clear-record)
+facade package, which re-exports `cr_cli.cli.main`.
 
 `cr-cli` declares **no console script of its own**, so `uvx cr-cli` provides no
 command (that is intended); the public install name is `clear-record`:

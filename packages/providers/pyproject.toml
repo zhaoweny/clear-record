@@ -4,14 +4,20 @@ build-backend = "uv_build"
 
 [project]
 name = "cr-providers"
-version = "0.1.0"
+version = "0.1.1.dev0"
 description = "Per-vendor ASR backend adapters for clear-record, behind a single interface (Apple Metal, NVIDIA CUDA/Vulkan, AMD ROCm/Vulkan)."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "cr-core==0.1.0",
+    "cr-core==0.1.1.dev0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zhaoweny/clear-record"
+Repository = "https://github.com/zhaoweny/clear-record"
+Issues = "https://github.com/zhaoweny/clear-record/issues"
 
 # This member is a uv workspace member and depends on a sibling member; pin the
 # dependency to the in-workspace version.

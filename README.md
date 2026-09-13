@@ -306,7 +306,7 @@ packages/providers    → cr-providers  per-vendor ASR adapters (apple / nvidia 
 packages/cli          → cr-cli        the CLI implementation package (`cr_cli`), which provides no command
 packages/clear-record → clear-record  the public install name; a facade that forwards to cr-cli
 docs/architecture.md                  (spec + provenance, the primary doc)
-docs/adr/                             (decision records 0001–0010)
+docs/adr/                             (decision records 0001–0011)
 ```
 
 ## License

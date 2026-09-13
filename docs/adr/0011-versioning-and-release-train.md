@@ -1,6 +1,6 @@
-# ADR-0011 — Versioning and the release train: `X.Y.Z.devN` on `main`, snapshots to TestPyPI
+# ADR-0011 — Versioning and the release train
 
-Status: active
+Status: active (amended by the 2026-09-13 Update below)
 Date: 2026-09-13
 
 ## Context
@@ -39,9 +39,10 @@ Date: 2026-09-13
   `0.1.1.dev0`; `.devN` → `.devN+1`) and an explicit `X.Y.Z[.devN]`. `just`
   wraps it as `version`, `bump-dev` and `set-version VERSION`.
 - [DECISION] **Snapshots** are tagged `vX.Y.Z.devN`; the tag triggers
-  `.github/workflows/publish-dev.yml`, which publishes all five members to
-  **TestPyPI** via OIDC (the `testpypi` environment). TestPyPI needs its **own**
-  pending publisher, separate from the PyPI one.
+  `.github/workflows/publish-dev.yml` (deleted 2026-09-13 — see the Update
+  below), which published all five members to **TestPyPI** via OIDC (the
+  `testpypi` environment). TestPyPI needs its **own** pending publisher,
+  separate from the PyPI one.
 - [DECISION] **A release** is "drop the dev suffix": `just set-version X.Y.Z`,
   commit, tag `vX.Y.Z`. That tag triggers `.github/workflows/publish.yml`, which
   publishes to **PyPI**. Dev tags are excluded from the PyPI filter
@@ -92,3 +93,42 @@ Date: 2026-09-13
   the lockstep check with no list edit.
 - Revisit when 0.2 development starts (cut `releases/v0.1.x`) or if the
   publishable-version shape ever needs more than `X.Y.Z[.devN]`.
+
+## Update (2026-09-13) — dev builds are CI artifacts; TestPyPI is a manual rehearsal
+
+Owner (2026-09-13, verbatim): *"dev builds are not going to test.pypi.org, dev
+builds (if any) can become a artifact of automated pipeline"*. This
+**supersedes** the snapshot-to-TestPyPI decision in the Decision section and the
+"TestPyPI first. Snapshots are pre-releases…" bullet in the Rationale section;
+that text is kept for the record. The bullets below are agent-authored framing,
+not owner quotes: bullet 1 records the owner's decision, bullets 2–4 are
+`[DESIGN]` choices for implementing it.
+
+- [DECISION] **Dev builds never publish anywhere.** Every `push`/`pull_request`
+  build is uploaded as a CI workflow artifact by `verify.yml` (named with the
+  manifest version); no `v*.dev*` version reaches TestPyPI or PyPI.
+- [DESIGN] The automatic `v*.dev*` → TestPyPI snapshot workflow
+  (`publish-dev.yml`) is **deleted**. TestPyPI is now a **manual release
+  rehearsal** only: `publish-testpypi.yml`, `on: workflow_dispatch`, dispatched
+  by hand on the **exact commit** that will become the release tag. Because
+  TestPyPI is a separate index, rehearsing `X.Y.Z` there does not consume
+  `X.Y.Z` on PyPI.
+- [DESIGN] TestPyPI keeps its **own** pending publishers, separate from
+  PyPI's: workflow `publish-testpypi.yml`, environment `testpypi`.
+- [DESIGN] **PyPI stays release-tag only.** `vX.Y.Z` triggers `publish.yml`
+  with the unchanged filters (`"v[0-9]*"` + `"!v[0-9]*.dev*"`) and the
+  tag↔manifest guard. The `vX.Y.Z.devN` form is no longer a publishing trigger
+  anywhere; `main` may still carry `X.Y.Z.devN` as the work-in-progress version.
+
+The three tiers are therefore:
+
+| Tier | Trigger | Where it goes |
+| --- | --- | --- |
+| Dev build | push / PR | **CI workflow artifact only** — never published |
+| Release rehearsal | **manual** dispatch, on the exact release commit | **TestPyPI** |
+| Release | `vX.Y.Z` tag | **PyPI** |
+
+The static version literal, `scripts/bump-version.py`, the lockstep manifests
+and the exact `==` pins are unchanged — only the publishing policy changed. See
+[`docs/releasing.md`](../releasing.md) and
+[`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md).

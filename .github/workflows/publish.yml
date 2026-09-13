@@ -1,9 +1,13 @@
 name: publish
 
 # Publish the five workspace dists (cr-core, cr-engine, cr-providers, cr-cli,
-# clear-record) to PyPI on a release tag (`vX.Y.Z`). Dev/pre-release tags
-# (`vX.Y.Z.devN`) route to `publish-dev.yml` (TestPyPI) and must never reach
-# PyPI; the tag filter below excludes them.
+# clear-record) to PyPI on a release tag (`vX.Y.Z`). PyPI is release-tag only:
+# dev/pre-release tags (`vX.Y.Z.devN`) never publish anywhere — dev builds are
+# CI workflow artifacts from `verify.yml` — and the tag filter below excludes
+# them.
+#
+# The release commit is qualified first by a manual TestPyPI rehearsal
+# (`publish-testpypi.yml`); see docs/releasing.md.
 #
 # Prep-only notes for maintainers:
 #

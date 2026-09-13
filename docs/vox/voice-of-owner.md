@@ -89,3 +89,21 @@ this repository. See `docs/architecture.md` §7.
   3. [DECISION] **The release train is lazy**: `main` *is* `releases/v0.1.x`
      today; the branch is cut only when 0.2 development starts.
   See [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md).
+
+## Dev builds and TestPyPI (2026-09-13)
+
+- Owner directive, verbatim: *"dev builds are not going to test.pypi.org, dev
+  builds (if any) can become a artifact of automated pipeline"*. This reverses
+  decision 2 in "Versioning and release train" above: dev builds are **CI
+  workflow artifacts**, never published.
+- The two rehearsal specifics below are agent-authored framing of the owner
+  directive; they are **not** owner quotes:
+  1. [DESIGN] The TestPyPI rehearsal (`publish-testpypi.yml`, manual
+     `workflow_dispatch` only) qualifies the **exact commit** that becomes the
+     release tag.
+  2. [DESIGN] TestPyPI is a separate index, so rehearsing `X.Y.Z` there does
+     **not** consume `X.Y.Z` on PyPI.
+- The automatic `v*.dev*` → TestPyPI snapshot workflow was deleted. PyPI stays
+  release-tag-only (`vX.Y.Z` → `publish.yml`). See
+  [`docs/adr/0011-versioning-and-release-train.md`](../adr/0011-versioning-and-release-train.md)
+  (`## Update (2026-09-13)`) and [`docs/releasing.md`](../releasing.md).

@@ -1,0 +1,79 @@
+name: publish-testpypi
+
+# Manual release rehearsal to TestPyPI — no automatic trigger.
+#
+#   * There is no push/tag trigger. Dispatch this workflow by hand on the exact
+#     commit that will become the release tag; it publishes the five members at
+#     whatever version the manifests carry. The runbook sets that version to the
+#     release version (`X.Y.Z`, dropping the `.devN` marker) before dispatching,
+#     so the rehearsal qualifies the release commit; a dev version is refused
+#     (see the guard below). `publish.yml` then runs on the real tag.
+#   * TestPyPI is a SEPARATE index with its OWN one-time pending publishers
+#     (distinct from the PyPI ones in `publish.yml`): same owner/repo, workflow
+#     `publish-testpypi.yml`, environment `testpypi`. Publishing `X.Y.Z` here
+#     does not consume `X.Y.Z` on PyPI, so the same version can still be
+#     released for real.
+#   * Dev builds never publish anywhere: they are CI workflow artifacts from
+#     `verify.yml` on every push/PR. See docs/releasing.md.
+#   * No API tokens and no repository secrets: publishing uses OIDC trusted
+#     publishing (`id-token: write`). The `testpypi` environment is where the
+#     human approval gate belongs — require a reviewer there.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build dists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Guard — refuse a dev version
+        run: |
+          version="$(python3 scripts/bump-version.py --show)"
+          if printf '%s' "${version}" | grep -Eq '\.dev[0-9]+$'; then
+            echo "::error::manifest version '${version}' is a dev version; run 'just set-version X.Y.Z' and relock before rehearsing"
+            exit 1
+          fi
+          echo "OK: manifest version ${version} is a release version"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+      - name: Run the verify gate
+        run: just verify
+      - name: Build all workspace wheels + sdists
+        run: just build
+      - name: Smoke-install the built facade in a clean venv
+        run: |
+          version="$(uv run --frozen scripts/bump-version.py --show)"
+          uv venv .smoke-venv
+          uv pip install --python .smoke-venv --find-links dist "clear-record==${version}"
+          .smoke-venv/bin/clear-record --help
+      - name: Upload dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - name: Download dists
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish rehearsal to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

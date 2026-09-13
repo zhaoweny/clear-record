@@ -59,7 +59,7 @@ build:
 version:
     uv run --frozen scripts/bump-version.py --show
 
-# Bump the dev segment (snapshot): 0.1.1.dev0 -> 0.1.1.dev1. Follow with `uv lock`.
+# Bump the dev segment (new dev series): 0.1.1.dev0 -> 0.1.1.dev1. Follow with `uv lock`.
 bump-dev:
     uv run --frozen scripts/bump-version.py --dev
 

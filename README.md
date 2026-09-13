@@ -84,7 +84,7 @@ available on this machine. See
   passthrough (no `/dev/nvidia*` nodes there).
 - Models: a size like `--model small` resolves to `models/ggml-small.bin` and is
   **downloaded automatically on first use** (from
-  `huggingface.co/ggerganov/whisper.cpp`, into `--model-dir` / `CR_MODELS_DIR` /
+  `huggingface.co/ggerganov/whisper.cpp`, into `--models-dir` / `CR_MODELS_DIR` /
   `./models`); a path works too, and `hf download ggerganov/whisper.cpp
   ggml-small.bin --local-dir models` is the offline/manual route. On a
   restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
@@ -285,10 +285,11 @@ docs/adr/                           (decision records 0001–0007)
 ## License
 
 [MIT](LICENSE) — covers this repo's own code only. The
-[license boundary](docs/adr/0003-license-boundary.md) governs how copyleft /
-vendor dependencies are consumed (permissive stacks preferred and isolated
-behind provider interfaces; copyleft only over external process/network
-boundaries, never linked or vendored into the MIT core).
+[license boundary](docs/adr/0003-license-boundary.md) governs third-party
+dependencies: permissive stacks are preferred; **GPL/AGPL** is consumed only over
+external process or network boundaries, never linked or vendored into the MIT
+core; **LGPL** is used through its supported library interfaces, under its own
+obligations.
 
 ## Docs
 
@@ -298,4 +299,9 @@ boundaries, never linked or vendored into the MIT core).
 - [docs/test-corpus.md](docs/test-corpus.md) — the owner's public reference
   anchors & the synthesize-the-badness strategy.
 - [docs/adr/](docs/adr/) — architecture decision records.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and contribute.
+- [`SECURITY.md`](SECURITY.md) · [`PRIVACY.md`](PRIVACY.md) ·
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — reporting and community policies.
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — dependency licenses and
+  the license boundary.
 - `AGENTS.md`, `docs/agents/` — agent workflow/geometry docs.

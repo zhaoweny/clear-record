@@ -39,7 +39,8 @@ just format-check   # ruff format --check
 
 ## Hard rules
 
-Three rules from [`AGENTS.md`](AGENTS.md) are non-negotiable:
+These standing rules from [`AGENTS.md`](AGENTS.md) are non-negotiable (the
+no-branching-scripts rule is the fourth, and has its own section below):
 
 - **Never import work/company artifacts or private recordings.** This is a
   clean-room OSS repo. Do not add company source code, prompts/specs, partner
@@ -81,7 +82,25 @@ AI agents contribute heavily to this project. That is fine — what matters is
 the result: commits that are coherent and reviewable, with tests that prove the
 behaviour. Reviewers judge the diff, not who or what typed it.
 
+## Community & policies
+
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — the Contributor Covenant v2.1 and
+  how to report unacceptable behaviour.
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability **privately**, and
+  what is in scope.
+- [`PRIVACY.md`](PRIVACY.md) — the local-first data story: no telemetry, no cloud
+  processing, and the single first-use model download.
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — dependency licenses and
+  the [ADR-0003](docs/adr/0003-license-boundary.md) copyleft boundary.
+
+When you open an issue or a pull request, the templates under
+[`.github/`](.github/) ask for the details a reviewer needs (platform, backend,
+and the status of `just verify`). **Never attach private audio, transcripts, or
+model weights** — use synthetic material (`clearrecord synth`) for a
+reproduction.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-repository's [MIT license](LICENSE).
+repository's [MIT license](LICENSE). The MIT license covers this repository's own
+code only; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

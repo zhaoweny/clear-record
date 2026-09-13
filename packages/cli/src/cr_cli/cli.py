@@ -11,20 +11,12 @@ See docs/architecture.md §6 and ADR-0006.
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 from typing import Sequence
 
-from cr_providers import BACKENDS, available_backend_ids
+from cr_providers import BACKENDS, available_backend_ids, resolve_models_dir
 from cr_engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 from cr_cli import stages
-
-_ENV_MODELS_DIR = "CR_MODELS_DIR"
-
-
-def _default_models_dir() -> str:
-    return os.environ.get(_ENV_MODELS_DIR, str(Path.cwd() / "models"))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     def _backend_args(p: argparse.ArgumentParser) -> None:
         default_backend = next(iter(BACKENDS))
+        models_dir = resolve_models_dir()
         p.add_argument(
             "--backend",
             "-b",
@@ -65,8 +58,8 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--language", "-l", help="language hint for ASR (default auto)")
         p.add_argument(
             "--models-dir",
-            default=_default_models_dir(),
-            help=f"model download dir (default {_default_models_dir()})",
+            default=models_dir,
+            help=f"model download dir (default {models_dir})",
         )
         p.add_argument(
             "--glossary",

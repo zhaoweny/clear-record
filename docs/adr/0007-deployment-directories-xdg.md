@@ -101,3 +101,13 @@ Date: 2026-09-11
   workspace wherever the `directory` argument points.
 - Revisit at the first real packaging/distribution push (mirrors ADR-0004's
   review hook).
+
+## Update (2026-09-13) — the models-directory resolver exists
+
+- [DESIGN] `cr_providers.paths.resolve_models_dir` is now the single resolver
+  for the models directory: an explicit CLI flag (`--models-dir`) →
+  `CR_MODELS_DIR` → `<cwd>/models`. The CLI's `--models-dir` default and the
+  provider's first-use ggml download both call it, replacing the duplicated
+  precedence that lived in `cr_cli.cli._default_models_dir` and
+  `cr_providers.backends._resolve_ggml_model`. The config file / XDG defaults
+  above land in this one module rather than a third copy.

@@ -43,6 +43,7 @@ from collections.abc import Callable
 from cr_core import Segment, TranscriptionResult
 
 from cr_providers.base import Backend, BackendBase, BackendInfo
+from cr_providers.paths import resolve_models_dir
 from cr_providers.process import ProcessRunner, SubprocessRunner
 
 
@@ -496,22 +497,19 @@ def _ggml_model_url(name: str) -> str:
 def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
     """Resolve a model name/size (e.g. ``small``) to a local ``ggml-*.bin`` path.
 
-    Accepts an explicit existing path, or a name resolved against ``model_dir``
-    (then ``CR_MODELS_DIR``, then ``<cwd>/models``). When the model is absent it
-    is downloaded from Hugging Face on first use, streamed to a unique
-    ``<name>.<pid>.<n>.part`` and atomically renamed on success so an
-    interrupted download is never mistaken for a model. On a network failure the
-    temp file is removed and the original clear pre-fetch error (with the
-    ``hf download`` hint) is raised.
+    Accepts an explicit existing path, or a name resolved against the single
+    models-directory resolver (``model_dir`` -> ``CR_MODELS_DIR`` ->
+    ``<cwd>/models``; see :func:`cr_providers.paths.resolve_models_dir`). When
+    the model is absent it is downloaded from Hugging Face on first use,
+    streamed to a unique ``<name>.<pid>.<n>.part`` and atomically renamed on
+    success so an interrupted download is never mistaken for a model. On a
+    network failure the temp file is removed and the original clear pre-fetch
+    error (with the ``hf download`` hint) is raised.
     """
     expanded = os.path.expanduser(model)
     if os.path.isfile(expanded):
         return expanded
-    base = (
-        model_dir
-        or os.environ.get("CR_MODELS_DIR")
-        or os.path.join(os.getcwd(), "models")
-    )
+    base = resolve_models_dir(model_dir)
     name = os.path.basename(model)
     if not name.startswith("ggml-"):
         name = f"ggml-{name}"

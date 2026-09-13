@@ -22,6 +22,7 @@ from cr_providers.base import (
     BackendInfo,
     DEFAULT_MODEL,
 )
+from cr_providers.paths import resolve_models_dir
 from cr_providers.process import (
     CancellableProcessRunner,
     ProcessCancelled,
@@ -44,4 +45,5 @@ __all__ = [
     "available_backend_ids",
     "get_backend",
     "probe_ggml_plugin_load",
+    "resolve_models_dir",
 ]

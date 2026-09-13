@@ -1,18 +1,22 @@
 # Third-Party Notices
 
-`clear-record` is distributed under the [MIT License](LICENSE). That license
-covers **this repository's own code only**; it does not relicense any third-party
+`clear-record`'s **code** is distributed under the [MIT License](LICENSE), and
+its **documentation and authored content/assets** under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+([ADR-0008](docs/adr/0008-content-and-asset-licensing.md)). Those licences cover
+**this repository's own material only**; they do not relicense any third-party
 component listed below. The licensing boundary — including how copyleft is
 consumed — is [ADR-0003](docs/adr/0003-license-boundary.md).
 
 This file is informational. It is not legal advice, and it is not a substitute
 for the license text shipped by each component.
 
-## This repository's own code
+## This repository's own material
 
 | Component | License |
 | --- | --- |
-| `cr-core`, `cr-engine`, `cr-providers`, `cr-cli` (this repo) | MIT |
+| Code — `cr-core`, `cr-engine`, `cr-providers`, `cr-cli` (this repo) | MIT |
+| Documentation and authored content/assets (none currently committed) | CC BY 4.0 |
 
 ## Python dependencies
 

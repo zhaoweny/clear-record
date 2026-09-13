@@ -280,7 +280,7 @@ packages/engine    → cr-engine    audio I/O (16 kHz normalize), cross-correlat
 packages/providers → cr-providers per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
 packages/cli       → cr-cli       the `clearrecord` command; stages live in cr_cli.stages
 docs/architecture.md               this document
-docs/adr/                          decision records 0001–0007
+docs/adr/                          decision records 0001–0008
 docs/vox/voice-of-owner.md         owner voice
 ```
 

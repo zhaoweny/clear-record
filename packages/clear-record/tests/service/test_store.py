@@ -138,3 +138,75 @@ def test_agent_terms_are_marked_as_such(tmp_path) -> None:
     term = reg.add_term("ops", "Falcon", added_by="agent")
     assert term.added_by == "agent"
     assert term.status == "candidate"
+
+
+def test_meeting_lifecycle_and_tape_set(tmp_path) -> None:
+    reg = _registry(tmp_path)
+    reg.create_project("Ops")
+    meeting = reg.create_meeting("ops", "Kickoff", recorded_at="2026-09-14")
+    assert meeting.slug == "kickoff"
+    assert meeting.status == "new"
+    assert reg.list_meetings("ops") == [meeting]
+
+    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff-2"
+    assert reg.get_meeting("ops", "kickoff") == meeting
+    assert reg.get_meeting("ops", "nope") is None
+
+    selected = reg.set_recording_set(meeting.id, ["/a.wav", "/b.wav"])
+    assert selected.paths == ("/a.wav", "/b.wav")
+    assert reg.latest_recording_set(meeting.id) == selected
+
+    # A newer selection supersedes the old one.
+    newer = reg.set_recording_set(meeting.id, ["/c.wav"])
+    assert reg.latest_recording_set(meeting.id) == newer
+
+    with pytest.raises(ValueError):
+        reg.set_recording_set(meeting.id, [])
+
+
+def test_run_and_artifact_rows(tmp_path) -> None:
+    reg = _registry(tmp_path)
+    reg.create_project("Ops")
+    meeting = reg.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+
+    run = reg.create_run(meeting.id, backend="apple", model="small")
+    assert run.status == "queued"
+    assert reg.get_run(run.id) == run
+    assert [r.id for r in reg.list_runs(meeting.id)] == [run.id]
+
+    updated = reg.update_run(run.id, status="running", started_at="now")
+    assert updated.status == "running"
+    with pytest.raises(ValueError):
+        reg.update_run(run.id, status="bogus")
+
+    artifact = reg.add_artifact(
+        meeting.id, run_id=run.id, kind="record", path="/ws/record.json", sha256="ab"
+    )
+    assert artifact.kind == "record"
+    assert artifact.produced_by == "pipeline"
+    assert reg.list_artifacts(meeting.id) == [artifact]
+
+    assert reg.set_meeting_status(meeting.id, "recorded").status == "recorded"
+    with pytest.raises(ValueError):
+        reg.set_meeting_status(meeting.id, "bogus")
+
+
+def test_v1_registry_upgrades_forward(tmp_path) -> None:
+    """An existing v1 database gains the v2 tables on open (forward-only)."""
+    import sqlite3
+
+    from clear_record.service.store import _SCHEMA_V1
+
+    db = tmp_path / "registry.sqlite3"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(_SCHEMA_V1)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+    conn.execute(
+        "INSERT INTO project (slug, name, notes, created_at) VALUES ('ops', 'Ops', '', 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+    reg = Registry(db)
+    assert [p.slug for p in reg.list_projects()] == ["ops"]
+    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"

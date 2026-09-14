@@ -24,8 +24,8 @@ Rules:
 - ``engine`` may import ``core`` (and third-party audio libraries).
 - ``providers`` may import ``core``.
 - ``cli`` may import any internal layer (``core``, ``engine``, ``providers``).
-- ``service`` may import ``core`` (and will import ``cli`` once runs land); it
-  owns the app registry and must not reach the web layer.
+- ``service`` may import ``core`` and ``cli`` (it drives the CLI's stage wiring
+  in-process); it owns the app registry and must not reach the web layer.
 - ``web`` may import ``core`` and ``service``; it is the outermost layer.
 - ``core``/``engine``/``providers`` never import ``cli``, ``service`` or
   ``web``; the CLI reaches ``web`` only through an entry point, never an import
@@ -57,7 +57,7 @@ ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
     "engine": frozenset({"core"}),
     "providers": frozenset({"core"}),
     "cli": frozenset({"core", "engine", "providers"}),
-    "service": frozenset({"core"}),
+    "service": frozenset({"core", "cli"}),
     "web": frozenset({"core", "service"}),
 }
 
@@ -69,12 +69,19 @@ BLOCKED_THIRD_PARTY = ("numpy", "soundfile", "torch", "tensorflow", "onnxruntime
 
 # (layer under test, internal layers it must not reach, block third-party?) —
 # each runs in its own subprocess so a failure names the offending layer.
+#
+# A case may only poison layers the layer does **not** need transitively: the
+# upper layers legitimately pull the lower ones in (``web → service → cli →
+# engine → core``), so poisoning ``engine`` while importing ``web`` would break a
+# legal chain. The static pass above is the real edge check; this pass catches a
+# *dynamic* import of a layer the layer must never reach.
 ISOLATION_CASES = (
     ("core", ("engine", "providers", "cli", "service", "web"), True),
     ("engine", ("providers", "cli", "service", "web"), False),
     ("providers", ("cli", "service", "web"), False),
-    ("service", ("engine", "providers", "cli", "web"), False),
-    ("web", ("engine", "providers", "cli"), False),
+    ("cli", ("service", "web"), False),
+    ("service", ("web",), False),
+    ("web", (), False),
 )
 
 

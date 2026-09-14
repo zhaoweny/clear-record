@@ -6,6 +6,19 @@
     {% if run.total %}<span class="run-count">{{ run.index }} / {{ run.total }}</span>{% endif %}
     {% if run.eta_s is not none %}<span class="run-eta">{{ tr("ETA") }} {{ run.eta_s | round(0) | int }}s</span>{% endif %}
   </div>
+  {# The resolved profile and decoder knobs the run actually executes with
+     (post-precedence), so a finished run is explainable at a glance. #}
+  <div class="run-options">
+    {% if run.profile %}<span class="badge">{{ run.profile }}</span>{% endif %}
+    {% if run.knobs %}
+    <span class="knobs-label">{{ tr("resolved knobs") }}</span>
+    {% for name, value in run.knobs.items() %}<span class="knob">{{ name }}={{ value }}</span>{% endfor %}
+    {% endif %}
+  </div>
+  {# The CLI's own `--auto` / `--backend auto` explanation, reused verbatim. #}
+  {% for explanation in run.explanations %}
+  <div class="muted run-message">{{ explanation }}</div>
+  {% endfor %}
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
   {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}

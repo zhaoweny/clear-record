@@ -52,6 +52,11 @@
         <option value="{{ profile }}"{% if profile == profile_default %} selected{% endif %}>{{ profile }}</option>
         {% endfor %}
       </select>
+      {# Opt-in: never checked by default, so a run is unchanged unless asked. #}
+      <label class="row auto-toggle"
+             title="{{ tr("inspect this machine and the tape, choose a profile and model, and explain the choice") }}">
+        <input type="checkbox" name="auto" value="1"> {{ tr("auto") }}
+      </label>
       <button class="primary" type="submit">{{ tr("Run") }}</button>
     </form>
     <div id="profile-options-{{ row.meeting.id }}" class="profile-options">

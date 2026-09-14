@@ -15,8 +15,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.core import PROFILE_CUSTOM, PROFILES, Progress
-from clear_record.service import Registry, RunManager
+from clear_record.service import AutoProbe, Registry, RunManager
 from clear_record.web.app import create_app
+
+
+def _auto_probe() -> AutoProbe:
+    """A fixed machine/tape so the console's ``--auto`` tests never touch hardware."""
+    return AutoProbe(
+        available_backends=("apple",),
+        vram_gb=8.0,
+        cpu_count=16,
+        models_on_disk=frozenset({"small", "medium"}),
+        duration_s=600.0,
+        channels=1,
+        language=None,
+    )
 
 
 @pytest.fixture()
@@ -516,6 +529,90 @@ def test_run_api_accepts_a_profile(console, tmp_path) -> None:
 
     assert console.seen[-1].profile == "fast"
     assert console.seen[-1].best_of == 1
+
+
+def test_run_form_offers_the_opt_in_auto_and_backend_auto(console, tmp_path) -> None:
+    """`--auto` is a choice in the form, never the silent default; and the
+    backend's own `auto` sentinel is offered beside the concrete ids."""
+    _make_meeting(console, tmp_path)
+    detail = console.client.get("/ui/projects/ops").text
+
+    assert 'name="auto"' in detail
+    assert 'name="auto" value="1" checked' not in detail  # opt-in, not default
+    assert '<option value="auto"' in detail
+
+
+def test_ui_run_auto_records_and_shows_the_cli_explanation(
+    console, tmp_path, monkeypatch
+) -> None:
+    """Checking `auto` resolves the run and surfaces the CLI's own explanation."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    monkeypatch.setattr(
+        "clear_record.service.auto.probe_auto", lambda *a, **k: _auto_probe()
+    )
+
+    options = _start_ui_run(console, meeting["id"], backend="apple", auto="1")
+
+    assert options.profile == "accurate"  # short tape on a roomy machine
+    assert options.model == "medium"
+    run = console.registry.list_runs(meeting["id"])[0]
+    assert run.options["profile"] == "accurate"
+    assert run.options["decoder_knobs"] == {"beam_size": 8}
+    assert "--auto: chose" in run.options["auto"]["explanation"]
+    # Visible in the run fragment (and again on a reload, from the registry).
+    assert "--auto: chose" in console.client.get(f"/ui/runs/{run.id}").text
+
+
+def test_ui_run_backend_auto_is_orthogonal_to_the_profile(
+    console, tmp_path, monkeypatch
+) -> None:
+    """`--backend auto` picks the backend; the chosen profile is untouched."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    monkeypatch.setattr(
+        "clear_record.service.auto.available_backend_ids", lambda: ("amd",)
+    )
+
+    options = _start_ui_run(console, meeting["id"], backend="auto", profile="fast")
+
+    assert options.backend == "amd"
+    assert options.profile == "fast"
+    assert options.best_of == 1
+    run = console.registry.list_runs(meeting["id"])[0]
+    assert run.options["backend_auto"]["backend"] == "amd"
+    assert "--backend auto: chose 'amd'" in run.options["backend_auto"]["explanation"]
+    assert run.options["profile"] == "fast"
+
+
+def test_run_api_accepts_auto(console, tmp_path, monkeypatch) -> None:
+    """The JSON surface offers the same opt-in as the form."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    monkeypatch.setattr(
+        "clear_record.service.auto.probe_auto", lambda *a, **k: _auto_probe()
+    )
+
+    started = console.client.post(
+        f"/api/meetings/{meeting['id']}/runs",
+        json={"backend": "apple", "auto": True},
+    )
+    assert started.status_code == 202
+    console.gate.set()
+    console.manager.wait(started.json()["run"]["id"], timeout=10)
+
+    assert console.seen[-1].profile == "accurate"
+    assert console.seen[-1].model == "medium"
+    assert started.json()["run"]["options"]["profile"] == "accurate"
 
 
 # --- JSON API: archives --------------------------------------------------- #

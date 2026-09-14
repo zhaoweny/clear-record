@@ -46,8 +46,11 @@ from clear_record.core import (
 from clear_record.core import i18n
 from clear_record.core.i18n import install_if_unset, tr, trn
 from clear_record.service import (
+    BACKEND_AUTO,
     BUNDLE_FILENAME,
     TERM_STATUSES,
+    ModelNotOnDisk,
+    NoBackendAvailable,
     PipelineOptions,
     Registry,
     RunManager,
@@ -55,6 +58,7 @@ from clear_record.service import (
     archive_meeting,
     collect_bundle,
     managed,
+    resolve_run,
     verify_archive,
 )
 from clear_record.web import guard
@@ -168,10 +172,12 @@ def resolve_web_locale(
     return i18n.resolve_locale(environ=environ)
 
 
-#: The ASR backend ids the run form offers, in catalog order. A literal, not an
-#: import of ``clear_record.providers``: the web layer may import only
-#: ``core``/``service`` (layering guard), so it does not probe availability here.
-BACKEND_CHOICES = ("apple", "nvidia", "amd")
+#: The ASR backend ids the run form offers, in catalog order, with the
+#: capability-driven ``auto`` sentinel last (never the default). A literal, not
+#: an import of ``clear_record.providers``: the web layer may import only
+#: ``core``/``service`` (layering guard), so it does not probe availability here
+#: — ``service.auto`` resolves ``auto`` at submit time.
+BACKEND_CHOICES = ("apple", "nvidia", "amd", BACKEND_AUTO)
 
 #: The picker's choices, derived from the shared ``core`` table (never restated),
 #: with ``custom`` — "no preset" — last. A profile added to ``PROFILES`` shows up
@@ -257,6 +263,10 @@ class RunCreate(BaseModel):
     resume: bool = True
     jobs: int = 0
     profile: str = PROFILE_CUSTOM
+    #: Opt-in: resolve the profile/model (and per-speaker attribution) from the
+    #: machine and the tape, and record the CLI's explanation with the run.
+    #: Never the default — a run is unchanged unless the caller asks.
+    auto: bool = False
 
 
 class ArchiveCreate(BaseModel):
@@ -299,7 +309,31 @@ def _upload_status(exc: managed.UploadRejected) -> int:
     return 400
 
 
-def _run_context(state: RunState | None, *, meeting_id: int, fallback=None) -> dict:
+def _auto_view(meta: dict | None) -> dict:
+    """The run-explanation keys for the run fragment.
+
+    ``profile`` / ``knobs`` are the **resolved** values the run meta recorded;
+    ``explanations`` is the CLI's own wording, reused verbatim, for whichever of
+    ``--backend auto`` / ``--auto`` ran (backend first, the CLI's order). Every
+    key is empty when the meta predates this (or the run has none), so a run
+    without auto renders unchanged.
+    """
+    meta = meta or {}
+    explanations = [
+        section["explanation"]
+        for key in ("backend_auto", "auto")
+        if (section := meta.get(key)) and section.get("explanation")
+    ]
+    return {
+        "profile": meta.get("profile"),
+        "knobs": meta.get("decoder_knobs") or {},
+        "explanations": explanations,
+    }
+
+
+def _run_context(
+    state: RunState | None, *, meeting_id: int, fallback=None, meta: dict | None = None
+) -> dict:
     """The template context for one run fragment (live state, else the last row)."""
     if state is not None:
         context = state.summary()
@@ -307,8 +341,9 @@ def _run_context(state: RunState | None, *, meeting_id: int, fallback=None) -> d
         context["meeting_id"] = state.meeting_id
         context["message"] = last.message if last else ""
         context["polling"] = state.status in ("queued", "running")
+        context.update(_auto_view(meta))
         return context
-    return {
+    context = {
         "run_id": fallback.id,
         "meeting_id": meeting_id,
         "status": fallback.status,
@@ -320,6 +355,8 @@ def _run_context(state: RunState | None, *, meeting_id: int, fallback=None) -> d
         "error": fallback.error,
         "polling": False,
     }
+    context.update(_auto_view(meta if meta is not None else fallback.options))
+    return context
 
 
 def create_app(
@@ -423,9 +460,14 @@ def create_app(
             latest = registry.list_runs(meeting.id)
             state = runs.state(latest[0].id) if latest else None
             if state is not None:
-                run = _run_context(state, meeting_id=meeting.id)
+                run = _run_context(state, meeting_id=meeting.id, meta=latest[0].options)
             elif latest:
-                run = _run_context(None, meeting_id=meeting.id, fallback=latest[0])
+                run = _run_context(
+                    None,
+                    meeting_id=meeting.id,
+                    fallback=latest[0],
+                    meta=latest[0].options,
+                )
             else:
                 run = None
             rows.append(
@@ -454,10 +496,17 @@ def create_app(
         return rows
 
     def render_run(request: Request, state: RunState) -> HTMLResponse:
+        row = registry.get_run(state.run_id)
         return TEMPLATES.TemplateResponse(
             request,
             "_run.html",
-            {"run": _run_context(state, meeting_id=state.meeting_id)},
+            {
+                "run": _run_context(
+                    state,
+                    meeting_id=state.meeting_id,
+                    meta=row.options if row else None,
+                )
+            },
         )
 
     def render_run_error(
@@ -478,6 +527,7 @@ def create_app(
                     "message": "",
                     "error": message,
                     "polling": False,
+                    **_auto_view(None),
                 }
             },
         )
@@ -891,21 +941,37 @@ def create_app(
         model: str = Form(""),
         language: str = Form(""),
         profile: str = Form(PROFILE_CUSTOM),
+        auto: bool = Form(False),
     ) -> HTMLResponse:
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         try:
-            options = resolve_options(
+            # The picker's ``custom`` is the console's "no preset" state (it has
+            # no separate unset), so it is passed as an unset profile — exactly
+            # what lets the opt-in ``--auto`` choose one.
+            resolved = resolve_run(
                 PipelineOptions(
                     backend=backend, model=model or None, language=language or None
                 ),
-                profile=profile,
+                profile=None if profile == PROFILE_CUSTOM else profile,
+                auto=auto,
+                directory=meeting.workspace_path,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ModelNotOnDisk as exc:
+            return render_run_error(
+                request,
+                meeting_id,
+                tr(
+                    "the recommended model {model!r} is not on disk, and --auto "
+                    "never downloads one; pre-fetch it or pass an explicit model",
+                    model=exc.model,
+                ),
+            )
+        except (NoBackendAvailable, ValueError) as exc:
+            return render_run_error(request, meeting_id, tr(str(exc)))
         try:
-            run = runs.start(meeting, options)
+            run = runs.start(meeting, resolved.options, auto=resolved.meta)
         except ValueError as exc:
             # A conflict while a run is live: re-render the live fragment so its
             # polling is not torn down by an error response (htmx skips 4xx swaps).
@@ -1192,11 +1258,20 @@ def create_app(
             jobs=body.jobs,
         )
         try:
-            options = resolve_options(options, profile=body.profile)
+            resolved = resolve_run(
+                options,
+                profile=None if body.profile == PROFILE_CUSTOM else body.profile,
+                auto=body.auto,
+                directory=meeting.workspace_path,
+            )
+        except ModelNotOnDisk as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NoBackendAvailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            run = runs.start(meeting, options)
+            run = runs.start(meeting, resolved.options, auto=resolved.meta)
         except ValueError as exc:
             # No workspace or no tape set: a bad request, not a conflict.
             raise HTTPException(status_code=400, detail=str(exc)) from exc

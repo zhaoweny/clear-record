@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from clear_record.cli.workspace import Workspace
-from clear_record.core import Progress
+from clear_record.core import Progress, resolve_options
 from clear_record.service import (
     PipelineOptions,
     Registry,
@@ -65,9 +65,40 @@ def test_run_defaults_to_the_project_glossary_snapshot(tmp_path) -> None:
     assert seen["text"] == "Falcon\n"  # candidate excluded
     snapshot = project_snapshot(registry, "ops")
     assert run.options == {
+        "profile": "custom",
+        "decoder_knobs": {},
         "glossary": str(Workspace.at(meeting.workspace_path).glossary_path),
         "glossary_sha256": snapshot.sha256,
     }
+    assert registry.get_run(run.id).options == run.options
+
+
+def test_start_records_the_resolved_profile_knobs_and_auto_meta(tmp_path) -> None:
+    """The run meta explains a finished run: resolved values, and what auto chose.
+
+    ``profile`` and ``decoder_knobs`` are the **post-precedence** values (the
+    profile's ``beam_size`` is recorded, not the requested preset alone), and the
+    ``auto`` section carries the CLI's explanation verbatim.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    options = resolve_options(PipelineOptions(), profile="accurate")
+    explanation = "--auto: chose profile 'accurate' (a short tape)"
+    run = manager.start(
+        meeting,
+        options,
+        auto={"auto": {"explanation": explanation, "chose": ["profile"]}},
+    )
+    manager.wait(run.id, timeout=10)
+
+    assert run.options["profile"] == "accurate"
+    assert run.options["decoder_knobs"] == {"beam_size": 8}
+    assert run.options["auto"]["explanation"] == explanation
+    assert run.options["auto"]["chose"] == ["profile"]
     assert registry.get_run(run.id).options == run.options
 
 
@@ -156,6 +187,8 @@ def test_a_hand_written_glossary_survives_when_there_are_no_confirmed_terms(
     assert workspace.glossary_path.read_text(encoding="utf-8") == "UserTerm\n"
     assert seen["options"].glossary is None
     assert run.options == {
+        "profile": "custom",
+        "decoder_knobs": {},
         "glossary": str(workspace.glossary_path),
         "glossary_sha256": snapshot_from_text("UserTerm\n").sha256,
     }
@@ -185,6 +218,8 @@ def test_confirmed_terms_write_and_win_over_a_hand_written_glossary(tmp_path) ->
     assert workspace.glossary_path.read_text(encoding="utf-8") == "Falcon\n"
     assert seen["options"].glossary == str(workspace.glossary_path)
     assert run.options == {
+        "profile": "custom",
+        "decoder_knobs": {},
         "glossary": str(workspace.glossary_path),
         "glossary_sha256": project_snapshot(registry, "ops").sha256,
     }

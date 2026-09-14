@@ -244,7 +244,11 @@ class RunManager:
 
     # --- enqueuing ---------------------------------------------------------- #
     def start(
-        self, meeting: Meeting, options: PipelineOptions | None = None
+        self,
+        meeting: Meeting,
+        options: PipelineOptions | None = None,
+        *,
+        auto: dict | None = None,
     ) -> PipelineRun:
         """Enqueue a run at the back of the node's FIFO and return its row.
 
@@ -253,6 +257,12 @@ class RunManager:
         read from the registry, so the same tape set is never enqueued twice
         concurrently — but a *different* meeting now waits honestly instead of
         fighting for the one GPU.
+
+        ``auto`` is the meta the opt-in ``--auto`` / ``--backend auto``
+        resolvers produced (see :func:`clear_record.service.auto.resolve_run`):
+        the explanations and which fields were chosen automatically. It is
+        merged into the run meta, which always records the **resolved** profile
+        and decoder knobs, so a finished run is explainable after the fact.
         """
         if not meeting.workspace_path:
             self._refuse(meeting, "meeting has no workspace path")
@@ -274,7 +284,7 @@ class RunManager:
             backend=options.backend,
             model=options.model,
             language=options.language,
-            options=run_meta,
+            options=self._run_meta(options, run_meta, auto),
             run_options=dataclasses.asdict(options),
         )
         with self._lock:
@@ -303,6 +313,29 @@ class RunManager:
         except OSError:
             return meta
         meta["glossary_sha256"] = snapshot_from_text(text).sha256
+        return meta
+
+    @staticmethod
+    def _run_meta(
+        options: PipelineOptions, glossary_meta: dict, auto: dict | None
+    ) -> dict:
+        """The run meta recorded at start: the **resolved** profile and knobs,
+        the glossary identity, and — when the opt-in resolvers ran — how they
+        chose.
+
+        Every value here is post-precedence: the same resolution the run
+        executes with, never the requested values. ``decoder_knobs`` keeps only
+        the knobs that are actually set, so an unset knob cannot masquerade as a
+        choice. ``auto`` carries the CLI's own explanation and the fields it
+        supplied (see :func:`clear_record.service.auto.resolve_run`).
+        """
+        meta: dict = {
+            "profile": options.profile,
+            "decoder_knobs": options.decoder_knobs(),
+        }
+        if auto:
+            meta.update(auto)
+        meta.update(glossary_meta)
         return meta
 
     def _resolve_glossary(

@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-15 07:02+0800\n"
+"POT-Creation-Date: 2026-09-15 07:08+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -232,43 +232,50 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:530
+#: packages/clear-record/src/clear_record/web/app.py:580
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:532
+#: packages/clear-record/src/clear_record/web/app.py:582
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/app.py:534
+#: packages/clear-record/src/clear_record/web/app.py:584
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/app.py:536
+#: packages/clear-record/src/clear_record/web/app.py:586
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/app.py:537
+#: packages/clear-record/src/clear_record/web/app.py:587
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:561
+#: packages/clear-record/src/clear_record/web/app.py:611
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/app.py:785
+#: packages/clear-record/src/clear_record/web/app.py:835
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:790
+#: packages/clear-record/src/clear_record/web/app.py:840
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:822
-#: packages/clear-record/src/clear_record/web/app.py:841
+#: packages/clear-record/src/clear_record/web/app.py:872
+#: packages/clear-record/src/clear_record/web/app.py:891
 msgid "Delete refused"
 msgstr "删除被拒绝"
+
+#: packages/clear-record/src/clear_record/web/app.py:966
+#, python-brace-format
+msgid ""
+"the recommended model {model!r} is not on disk, and --auto never "
+"downloads one; pre-fetch it or pass an explicit model"
+msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型；请预先获取，或显式指定模型"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
@@ -316,7 +323,7 @@ msgid "Path"
 msgstr "路径"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:109
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:114
 msgid "Status"
 msgstr "状态"
 
@@ -372,107 +379,118 @@ msgstr "语言（可选）"
 msgid "transcription profile"
 msgstr "转写预设"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:55
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:57
+msgid ""
+"inspect this machine and the tape, choose a profile and model, and "
+"explain the choice"
+msgstr "检查本机与录音，自动选择预设和模型，并说明理由"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:58
+msgid "auto"
+msgstr "自动"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:60
 msgid "Run"
 msgstr "运行"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:63
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:68
 msgid "No run yet."
 msgstr "尚未运行。"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:69
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:74
 msgid "Archive root (optional)"
 msgstr "归档根目录（可选）"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:70
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:75
 msgid "Archive"
 msgstr "归档"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:75
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:80
 msgid "No meetings yet."
 msgstr "暂无会议。"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:80
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:85
 msgid "Add a meeting"
 msgstr "添加会议"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:87
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:92
 msgid "Meeting title"
 msgstr "会议标题"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:88
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:93
 msgid "Workspace path"
 msgstr "工作区路径"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:90
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:95
 msgid ""
 "Leave the path empty to let clear-record manage the workspace; a path "
 "uses a folder you choose."
 msgstr "路径留空即由 clear-record 管理工作区；填写路径则使用你选择的文件夹。"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:91
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:96
 msgid "Add meeting"
 msgstr "添加会议"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:95
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:100
 msgid "Glossary"
 msgstr "术语表"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:97
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:102
 msgid "Filter"
 msgstr "筛选"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:99
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:104
 msgid "all"
 msgstr "全部"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:109
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:155
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:114
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:160
 msgid "Term"
 msgstr "术语"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:109
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:114
 msgid "Aliases"
 msgstr "别名"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:109
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:159
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:114
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:164
 msgid "Definition"
 msgstr "释义"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:127
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:132
 msgid "Term status"
 msgstr "术语状态"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:134
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:139
 msgid "delete"
 msgstr "删除"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:135
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:140
 msgid "Delete term"
 msgstr "删除术语"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:144
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:149
 msgid "No glossary terms yet."
 msgstr "暂无术语。"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:148
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:153
 msgid "Add a term"
 msgstr "添加术语"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:156
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:161
 msgid "Reading / pronunciation"
 msgstr "读音 / 发音"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:158
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:163
 msgid "Aliases (comma separated)"
 msgstr "别名（以逗号分隔）"
 
-#: packages/clear-record/src/clear_record/web/templates/_detail.html:160
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:165
 msgid "Add term"
 msgstr "添加术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:7
+#: packages/clear-record/src/clear_record/web/templates/_run.html:14
 msgid "resolved knobs"
 msgstr "已解析参数"
 
@@ -496,7 +514,7 @@ msgstr "暂无项目。"
 msgid "ETA"
 msgstr "预计剩余"
 
-#: packages/clear-record/src/clear_record/web/templates/_run.html:9
+#: packages/clear-record/src/clear_record/web/templates/_run.html:22
 msgid "Transcription progress"
 msgstr "转写进度"
 

@@ -146,6 +146,7 @@ def test_meeting_lifecycle_and_tape_set(tmp_path) -> None:
     meeting = reg.create_meeting("ops", "Kickoff", recorded_at="2026-09-14")
     assert meeting.slug == "kickoff"
     assert meeting.status == "new"
+    assert meeting.notes == ""
     assert reg.list_meetings("ops") == [meeting]
 
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff-2"
@@ -162,6 +163,25 @@ def test_meeting_lifecycle_and_tape_set(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         reg.set_recording_set(meeting.id, [])
+
+
+def test_update_meeting_notes_and_title(tmp_path) -> None:
+    """The story has a durable home: meeting notes (and title) are writable."""
+    reg = _registry(tmp_path)
+    reg.create_project("Ops")
+    meeting = reg.create_meeting("ops", "Kickoff")
+
+    updated = reg.update_meeting(meeting.id, notes="tell the story here")
+    assert updated.notes == "tell the story here"
+    assert reg.get_meeting("ops", "kickoff").notes == "tell the story here"
+
+    assert reg.update_meeting(meeting.id, notes="").notes == ""
+    assert reg.update_meeting(meeting.id, title="Kickoff v2").title == "Kickoff v2"
+
+    with pytest.raises(ValueError):
+        reg.update_meeting(meeting.id, title="   ")
+    with pytest.raises(KeyError):
+        reg.update_meeting(999, notes="nope")
 
 
 def test_run_and_artifact_rows(tmp_path) -> None:
@@ -210,3 +230,37 @@ def test_v1_registry_upgrades_forward(tmp_path) -> None:
     reg = Registry(db)
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+
+
+def test_v3_registry_gains_meeting_notes(tmp_path) -> None:
+    """An existing v3 database gains the v4 ``meeting.notes`` column on open."""
+    import sqlite3
+
+    from clear_record.service.store import (
+        SCHEMA_VERSION,
+        _SCHEMA_V1,
+        _SCHEMA_V2,
+        _SCHEMA_V3,
+    )
+
+    db = tmp_path / "registry.sqlite3"
+    conn = sqlite3.connect(str(db))
+    for ddl in (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3):
+        conn.executescript(ddl)
+    conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+    conn.execute(
+        "INSERT INTO project (slug, name, notes, created_at)"
+        " VALUES ('ops', 'Ops', '', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO meeting (project_id, slug, title, status, created_at)"
+        " VALUES (1, 'kickoff', 'Kickoff', 'new', 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+    reg = Registry(db)
+    assert SCHEMA_VERSION == 4
+    meeting = reg.get_meeting("ops", "kickoff")
+    assert meeting is not None and meeting.notes == ""
+    assert reg.update_meeting(meeting.id, notes="story").notes == "story"

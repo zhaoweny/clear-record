@@ -41,7 +41,7 @@ from clear_record.service.models import (
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -146,12 +146,20 @@ CREATE TABLE IF NOT EXISTS archive (
 CREATE INDEX IF NOT EXISTS archive_meeting ON archive (meeting_id);
 """
 
+# v4 — the story: meetings gain a free-text ``notes`` column so the user's
+# narrative (and an agent's draft) has a durable home beside the glossary
+# (ticket 21's tuning loop). Project notes already exist from v1.
+_SCHEMA_V4 = """
+ALTER TABLE meeting ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _SCHEMA_V1),
     (2, _SCHEMA_V2),
     (3, _SCHEMA_V3),
+    (4, _SCHEMA_V4),
 )
 
 
@@ -545,6 +553,36 @@ class Registry:
                 raise KeyError(meeting_id)
             return self._meeting_row(conn, meeting_id)
 
+    def update_meeting(
+        self,
+        meeting_id: int,
+        *,
+        title: str | None = None,
+        notes: str | None = None,
+    ) -> Meeting:
+        """Update a meeting's title and/or notes (the user/agent's story).
+
+        ``None`` leaves a field untouched; an empty string clears notes. The
+        workspace and status change through their own operations.
+        """
+        fields: dict[str, object] = {}
+        if title is not None:
+            if not title.strip():
+                raise ValueError("meeting title must not be blank")
+            fields["title"] = title.strip()
+        if notes is not None:
+            fields["notes"] = notes
+        with self._connect() as conn:
+            if fields:
+                assignments = ", ".join(f"{key} = ?" for key in fields)
+                cur = conn.execute(
+                    f"UPDATE meeting SET {assignments} WHERE id = ?",
+                    (*fields.values(), meeting_id),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(meeting_id)
+            return self._meeting_row(conn, meeting_id)
+
     # --- recording sets ---------------------------------------------------- #
     def set_recording_set(
         self, meeting_id: int, paths: list[str] | tuple[str, ...]
@@ -797,6 +835,7 @@ class Registry:
             title=row["title"],
             recorded_at=row["recorded_at"],
             workspace_path=row["workspace_path"],
+            notes=row["notes"],
             status=row["status"],
             created_at=row["created_at"],
         )

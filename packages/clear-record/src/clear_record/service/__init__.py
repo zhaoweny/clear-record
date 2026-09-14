@@ -40,6 +40,7 @@ from clear_record.service.runs import (
     collect_artifacts,
 )
 from clear_record.service.store import SCHEMA_VERSION, Registry
+from clear_record.service.transcript import TranscriptSlice, read_transcript
 
 __all__ = [
     "APP",
@@ -60,9 +61,11 @@ __all__ = [
     "SCHEMA_VERSION",
     "TERM_AUTHORS",
     "TERM_STATUSES",
+    "TranscriptSlice",
     "archive_meeting",
     "collect_artifacts",
     "config_path",
+    "read_transcript",
     "registry_path",
     "resolve_data_dir",
     "verify_archive",

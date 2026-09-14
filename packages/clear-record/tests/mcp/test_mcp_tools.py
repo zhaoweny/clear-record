@@ -21,7 +21,7 @@ from pathlib import Path
 from mcp import Client
 from mcp.server import MCPServer
 
-from clear_record.core import Progress
+from clear_record.core import Progress, RecordDocument, Segment, write_json
 from clear_record.mcp.server import TOOL_NAMES, build_server
 from clear_record.service import Registry, RunManager
 
@@ -245,3 +245,203 @@ def test_unknown_run_ids_are_actionable(tmp_path: Path) -> None:
     server = build_server(_registry(tmp_path))
     assert "unknown run id 99" in _error_text(server, "run_status", {"run_id": 99})
     assert "run id 99" in _error_text(server, "run_events", {"run_id": 99})
+
+
+def test_update_project_and_meeting_notes(tmp_path: Path) -> None:
+    """The story persists: project notes and meeting notes are agent-writable."""
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", notes="old")
+    meeting = registry.create_meeting("ops", "Kickoff")
+    assert meeting.notes == ""
+    server = build_server(registry)
+
+    project = _payload(
+        server, "update_project", {"slug": "ops", "notes": "the project story"}
+    )
+    assert project["notes"] == "the project story"
+    assert _payload(server, "get_project", {"slug": "ops"})["notes"] == (
+        "the project story"
+    )
+
+    updated = _payload(
+        server,
+        "update_meeting",
+        {"project": "ops", "meeting": "kickoff", "notes": "the meeting story"},
+    )
+    assert updated["notes"] == "the meeting story"
+    assert (
+        _payload(server, "get_meeting", {"project": "ops", "meeting": "kickoff"})[
+            "notes"
+        ]
+        == "the meeting story"
+    )
+
+    assert "unknown project 'nope'" in _error_text(
+        server, "update_project", {"slug": "nope", "notes": "x"}
+    )
+    assert "unknown meeting 'missing'" in _error_text(
+        server,
+        "update_meeting",
+        {"project": "ops", "meeting": "missing", "notes": "x"},
+    )
+
+
+def test_read_transcript_as_text_with_a_slice(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    write_json(
+        workspace / "record.json",
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=tuple(
+                Segment(
+                    start=float(i), end=float(i) + 0.5, text=f"line {i}", source="a"
+                )
+                for i in range(4)
+            ),
+        ),
+    )
+    server = build_server(registry)
+
+    page = _payload(
+        server, "read_transcript", {"project": "ops", "meeting": "kickoff", "limit": 2}
+    )
+    assert page["source"] == "record"
+    assert page["total"] == 4
+    assert (page["offset"], page["returned"], page["next"]) == (0, 2, 2)
+    assert page["text"].splitlines() == [
+        "00:00:00.000 [a] line 0",
+        "00:00:01.000 [a] line 1",
+    ]
+
+    following = _payload(
+        server,
+        "read_transcript",
+        {"project": "ops", "meeting": "kickoff", "offset": page["next"]},
+    )
+    assert (following["offset"], following["next"]) == (2, None)
+    assert following["text"].splitlines() == [
+        "00:00:02.000 [a] line 2",
+        "00:00:03.000 [a] line 3",
+    ]
+
+
+def test_read_transcript_without_a_run_is_actionable(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    server = build_server(registry)
+    assert "no transcript" in _error_text(
+        server, "read_transcript", {"project": "ops", "meeting": "kickoff"}
+    )
+
+
+def test_start_run_carries_explicit_options(tmp_path: Path) -> None:
+    """A re-run can set intent: profile, backend, model and language."""
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.set_recording_set(meeting.id, [str(tape)])
+
+    seen = []
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen.append(options)
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    server = build_server(registry, manager)
+
+    run = _payload(
+        server,
+        "start_run",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "profile": "balanced",
+            "backend": "whisper",
+            "model": "small",
+            "language": "zh",
+            "glossary": "/tmp/tuned-glossary.txt",
+        },
+    )
+    manager.wait(run["id"], timeout=10)
+
+    options = seen[0]
+    assert options.backend == "whisper"
+    assert options.model == "small"
+    assert options.language == "zh"
+    assert options.profile == "balanced"
+    assert options.beam_size == 5  # the profile's preset
+    assert options.glossary == "/tmp/tuned-glossary.txt"
+
+
+def test_start_run_rejects_unknown_profile(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
+    message = _error_text(
+        server,
+        "start_run",
+        {"project": "ops", "meeting": "kickoff", "profile": "turbo"},
+    )
+    assert "unknown profile 'turbo'" in message
+
+
+def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
+    """The tuning loop is cheap to repeat: the cache key follows the intent.
+
+    The transcription chunk cache is keyed on backend/model/language/glossary
+    (``clear_record.cli.workspace.chunk_cache_key``). Two runs with the same
+    options produce the same key — a re-run is served from cache, no needless
+    re-decode — while a glossary edit changes the key and re-decodes.
+    """
+    from clear_record.cli.workspace import chunk_cache_key
+
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.set_recording_set(meeting.id, [str(tape)])
+
+    seen = []
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen.append(options)
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    server = build_server(registry, manager)
+
+    def start(glossary: str) -> None:
+        run = _payload(
+            server,
+            "start_run",
+            {"project": "ops", "meeting": "kickoff", "glossary": glossary},
+        )
+        manager.wait(run["id"], timeout=10)
+
+    def cache_key(options) -> dict:
+        return chunk_cache_key(
+            backend=options.backend,
+            model=options.model,
+            language=options.language,
+            glossary=options.glossary or "",
+            chunk_seconds=options.chunk_seconds,
+            overlap_seconds=options.overlap_seconds,
+            n_chunks=3,
+            decoders=options.decoder_knobs(),
+        )
+
+    start("/tmp/glossary-v1.txt")
+    start("/tmp/glossary-v2.txt")  # the glossary was tuned
+    start("/tmp/glossary-v2.txt")  # a deliberate repeat
+
+    assert cache_key(seen[0]) != cache_key(seen[1])
+    assert cache_key(seen[1]) == cache_key(seen[2])

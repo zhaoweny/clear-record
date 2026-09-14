@@ -61,7 +61,7 @@ RUN_STATUSES = ("queued", "running", "done", "failed", "stopped")
 
 @dataclasses.dataclass(frozen=True)
 class Meeting:
-    """One recording session inside a project: its tapes and its record."""
+    """One recording session inside a project: its tapes, its record and notes."""
 
     id: int
     project_id: int
@@ -70,6 +70,7 @@ class Meeting:
     title: str
     recorded_at: str | None
     workspace_path: str | None
+    notes: str
     status: str
     created_at: str
 

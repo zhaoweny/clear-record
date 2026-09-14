@@ -32,6 +32,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from clear_record.core import PipelineOptions, resolve_options
 from clear_record.service import (
     TERM_STATUSES,
     GlossaryTerm,
@@ -40,16 +41,20 @@ from clear_record.service import (
     Registry,
     RunManager,
     RunState,
+    read_transcript as _read_transcript,
 )
 
 SERVER_NAME = "clear-record"
 
 INSTRUCTIONS = (
     "clear-record is a local-first transcription console. Use these tools to read "
-    "and edit a project's glossary, manage its meetings and tape sets, start and "
-    "watch pipeline runs, and list the artifacts a run produced. Recordings and "
-    "model weights are local files; this server is a thin adapter over the same "
-    "service the web console uses."
+    "and edit a project's glossary, manage its meetings and tape sets, keep the "
+    "story in project and meeting notes, start and watch pipeline runs (with "
+    "explicit profile/backend/model/language), read the transcript text and list "
+    "the artifacts a run produced. Recordings and model weights are local files; "
+    "this server is a thin adapter over the same service the web console uses. "
+    "For the glossary ↔ transcript tuning loop the agent orchestrates: read the "
+    "transcript, refine the terms, then re-run with intent."
 )
 
 
@@ -108,6 +113,24 @@ class ServiceTools:
             **_as_dict(project),
             "term_count": len(self.registry.list_terms(slug)),
         }
+
+    def update_project(
+        self,
+        slug: str,
+        name: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Update a project's name and/or notes.
+
+        ``notes`` is the agent-writable home for the story the user tells about
+        the project; omit a field to leave it unchanged.
+        """
+        self._project(slug)
+        try:
+            updated = self.registry.update_project(slug, name=name, notes=notes)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return _as_dict(updated)
 
     # --- glossary ---------------------------------------------------------- #
     def list_glossary_terms(
@@ -226,6 +249,25 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         return _as_dict(created)
 
+    def update_meeting(
+        self,
+        project: str,
+        meeting: str,
+        title: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Update a meeting's title and/or notes (the meeting-level story).
+
+        ``notes`` is where the user's narrative about this meeting lives; omit a
+        field to leave it unchanged, pass an empty string to clear notes.
+        """
+        found = self._meeting(project, meeting)
+        try:
+            updated = self.registry.update_meeting(found.id, title=title, notes=notes)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return _as_dict(updated)
+
     def set_meeting_tapes(
         self, project: str, meeting: str, paths: list[str]
     ) -> dict[str, Any]:
@@ -242,16 +284,43 @@ class ServiceTools:
         }
 
     # --- pipeline runs ----------------------------------------------------- #
-    def start_run(self, project: str, meeting: str) -> dict[str, Any]:
-        """Start the pipeline for a meeting's latest tape set.
+    def start_run(
+        self,
+        project: str,
+        meeting: str,
+        profile: str | None = None,
+        backend: str | None = None,
+        model: str | None = None,
+        language: str | None = None,
+        glossary: str | None = None,
+    ) -> dict[str, Any]:
+        """Start the pipeline for a meeting's latest tape set, with intent.
 
         The run executes in the background; read it with ``run_status`` and
-        ``run_events``. Refused (with a reason) when the meeting has no workspace,
-        no tape set, or a run already in flight.
+        ``run_events``. Any of ``profile``, ``backend``, ``model``, ``language``
+        and ``glossary`` (a glossary file path) may be set to re-run
+        deliberately — e.g. after tuning the glossary; they are resolved by
+        ``clear_record.core.options.resolve_options`` (explicit value →
+        ``CR_*`` environment → profile → built-in default). Refused (with a
+        reason) when the meeting has no workspace, no tape set, or a run
+        already in flight.
         """
         found = self._meeting(project, meeting)
+        explicit: dict[str, Any] = {}
+        if backend is not None:
+            explicit["backend"] = backend
+        if model is not None:
+            explicit["model"] = model
+        if language is not None:
+            explicit["language"] = language
+        if glossary is not None:
+            explicit["glossary"] = glossary
         try:
-            run = self.manager.start(found)
+            options = resolve_options(PipelineOptions(**explicit), profile=profile)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        try:
+            run = self.manager.start(found, options)
         except ValueError as exc:
             raise ToolError(
                 f"cannot start a run for {project}/{meeting}: {exc}"
@@ -303,24 +372,48 @@ class ServiceTools:
             _as_dict(artifact) for artifact in self.registry.list_artifacts(found.id)
         ]
 
+    def read_transcript(
+        self,
+        project: str,
+        meeting: str,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Read a meeting's transcript as text, optionally sliced for long tapes.
+
+        Returns one ``HH:MM:SS.mmm [speaker] text`` line per segment, the total
+        segment count, and a ``next`` cursor (pass it back as ``offset``) — so an
+        agent can page a multi-hour tape without reading it whole. Prefers the
+        reconciled ``record``; falls back to the raw ``transcript`` segments.
+        """
+        found = self._meeting(project, meeting)
+        try:
+            page = _read_transcript(found, offset=offset, limit=limit)
+        except (FileNotFoundError, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+        return _as_dict(page)
+
 
 #: The tool methods, in the order they are registered. Kept explicit so the
 #: surface is reviewable in one place and a rename cannot silently change a name.
 TOOL_NAMES: tuple[str, ...] = (
     "list_projects",
     "get_project",
+    "update_project",
     "list_glossary_terms",
     "add_glossary_term",
     "update_glossary_term",
     "list_meetings",
     "get_meeting",
     "create_meeting",
+    "update_meeting",
     "set_meeting_tapes",
     "start_run",
     "list_runs",
     "run_status",
     "run_events",
     "list_artifacts",
+    "read_transcript",
 )
 
 

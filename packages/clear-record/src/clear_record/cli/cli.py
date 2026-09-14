@@ -4,15 +4,31 @@ One subcommand per pipeline stage (plus `run`/`calibrate` conveniences). The
 subcommand surface is derived from the pipeline spec so the CLI and domain cannot
 drift; the heavy per-stage logic lives in :mod:`clear_record.cli.stages`.
 
+The parser is **Click** (ADR-0022). The two properties the port must keep are:
+
+- the subcommand surface is **derived from** :func:`pipeline_spec` — the built-in
+  stage commands are added in a loop over ``pipeline_spec().stages``, exactly as
+  the ``run`` dispatch is, so the CLI and the domain still read one declaration;
+- the pipeline stages' **default stdout is byte-identical** — only the parser
+  changed, never what a stage prints.
+
+Each ``CR_*`` environment variable a CLI option mirrors is declared **on that
+option** (``envvar=``), so the name is discoverable in ``--help`` and the
+ADR-0007 precedence (flag > env > config > default) lives in one mechanism. The
+``CR_*`` reads that live outside the CLI (``providers``, ``service``, ``web``,
+``core.diagnostics``) are deliberately left where they are.
+
 Recordings and model weights are environment-local data — never commit them.
 See docs/architecture.md §6 and ADR-0006.
 """
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
-from typing import Sequence
+from types import SimpleNamespace
+from typing import Any, Sequence
+
+import click
 
 from clear_record.core import (
     DEFAULT_CHUNK_S,
@@ -41,10 +57,19 @@ from clear_record.cli import stages
 #: dependency arrow acyclic and a plain CLI run cheap.
 COMMAND_ENTRY_POINT_GROUP = "clear_record.commands"
 
+#: The command name stays the owner's spelling (ADR-0009, ADR-0022).
+_PROG = "clear-record"
+_DESCRIPTION = "clear-record: from many recordings to one clear record."
+
 _VERBOSE_HELP = (
     "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
     "log is written to the app state directory, never to stdout"
 )
+
+#: The ASR set offered by ``--backend``: the provider catalog plus the
+#: capability-driven ``auto`` sentinel. Read from the catalog so a new backend is
+#: offered with no CLI edit.
+_DEFAULT_BACKEND = next(iter(BACKENDS))
 
 
 def _external_commands():
@@ -57,365 +82,395 @@ def _external_commands():
     return sorted(entry_points(group=COMMAND_ENTRY_POINT_GROUP), key=lambda ep: ep.name)
 
 
-def _register_external_subcommands(sub) -> None:
-    """Let each installed provider add its subcommand to the parser."""
+def _register_external_subcommands(group: click.Group) -> None:
+    """Let each installed provider contribute its Click command to the group."""
     for entry_point in _external_commands():
-        entry_point.load()(sub)
+        entry_point.load()(group)
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="clear-record",
-        description="clear-record: from many recordings to one clear record.",
+# --------------------------------------------------------------------------- #
+# verbosity: `-v` before *or* after the subcommand
+# --------------------------------------------------------------------------- #
+def _verbose_flag(ctx: click.Context, param: click.Parameter, value: Any) -> Any:
+    """Eager callback for the per-subcommand ``-v``: raise detail when present.
+
+    Absence is handled once by :meth:`_Group.invoke`, which clears the level for
+    the group-level flag, so a repeated programmatic call cannot leak ``debug``.
+    """
+    if value:
+        set_level("debug")
+    return value
+
+
+def _ensure_verbose(command: click.Command) -> None:
+    """Append ``-v``/``--verbose`` to a command that does not already have it.
+
+    ``-v`` is accepted on every subcommand as well as on the group, so
+    ``clear-record -v run …`` and ``clear-record run … -v`` both raise detail;
+    the option is ``expose_value=False`` because the callback sets the level and
+    the command body has no use for the flag.
+    """
+    if any(param.name == "verbose" for param in command.params):
+        return
+    command.params.append(
+        click.Option(
+            ("-v", "--verbose"),
+            is_flag=True,
+            is_eager=True,
+            expose_value=False,
+            callback=_verbose_flag,
+            help=_VERBOSE_HELP,
+        )
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help=_VERBOSE_HELP)
-    sub = parser.add_subparsers(dest="command", required=True)
 
-    def _paths(p: argparse.ArgumentParser) -> None:
-        p.add_argument("directory", help="workspace directory (recordings live here)")
-        p.add_argument(
-            "inputs",
-            nargs="*",
-            help="explicit audio file(s); default: scan the directory",
-        )
 
-    def _decoder_args(p: argparse.ArgumentParser) -> None:
-        """The whisper-cli decoder knobs. All default to unset (no flag added)."""
-        p.add_argument(
-            "--beam-size",
-            type=int,
-            default=None,
-            help="beam search width; larger = slower and (usually) more accurate",
-        )
-        p.add_argument(
-            "--best-of",
-            type=int,
-            default=None,
-            help="candidates tried in greedy decoding; larger = slower",
-        )
-        p.add_argument(
-            "--temperature",
-            type=float,
-            default=None,
-            help="decoding temperature (0.0 = deterministic)",
-        )
-        p.add_argument(
-            "--entropy-thold",
-            type=float,
-            default=None,
-            help="entropy threshold; decoding stops when it falls below it",
-        )
-        p.add_argument(
-            "--no-speech-thold",
-            type=float,
-            default=None,
-            help="probability below which a window counts as silence/skip",
-        )
-        p.add_argument(
-            "--max-context",
-            type=int,
-            default=None,
-            help="max tokens of previous text used as decoder context (-1 = default)",
-        )
-        p.add_argument(
-            "--threads",
-            type=int,
-            default=None,
-            help="CPU threads for the decoder (matters on CPU-only paths)",
-        )
+class _Group(click.Group):
+    """A group that owns the CLI-wide verbosity contract.
 
-    def _backend_args(p: argparse.ArgumentParser) -> None:
-        default_backend = next(iter(BACKENDS))
-        models_dir = resolve_models_dir()
-        p.add_argument(
-            "--backend",
-            "-b",
-            default=default_backend,
-            choices=(*BACKENDS, auto.BACKEND_AUTO),
-            help=f"ASR backend (default {default_backend}); "
-            f"{auto.BACKEND_AUTO!r} picks the best available backend "
-            "(native first, whisper-cli fallback)",
-        )
-        p.add_argument(
-            "--auto",
-            dest="auto",
-            action="store_true",
-            help="recommended default: inspect the machine and the tape, choose "
-            "a profile and model, and explain the choice (never downloads a "
-            "model; explicit flags still win)",
-        )
-        p.add_argument(
-            "--model",
-            "-m",
-            help="model checkpoint name/size, e.g. tiny/base/small/medium",
-        )
-        p.add_argument("--language", "-l", help="language hint for ASR (default auto)")
-        p.add_argument(
-            "--models-dir",
-            default=models_dir,
-            help=f"model download dir (default {models_dir})",
-        )
-        p.add_argument(
-            "--glossary",
-            help="glossary file (one term/line) used as the ASR initial prompt; "
-            "defaults to <directory>/glossary.txt if present",
-        )
-        # These default to None (unset), not to the concrete built-in value, so
-        # resolve_options can tell an explicit `--chunk-seconds 600` from "not
-        # given" and keep the explicit flag on top of any profile/env layer.
-        p.add_argument(
-            "--chunk-seconds",
-            type=float,
-            default=None,
-            help=f"chunk length for long tape transcription (default {DEFAULT_CHUNK_S:.0f}s)",
-        )
-        p.add_argument(
-            "--overlap-seconds",
-            type=float,
-            default=None,
-            help=f"overlap between chunks (default {DEFAULT_OVERLAP_S:.0f}s)",
-        )
-        p.add_argument(
-            "--no-resume",
-            dest="resume",
-            action="store_false",
-            help="ignore cached chunks and re-transcribe from scratch",
-        )
-        p.set_defaults(resume=True)
-        p.add_argument(
-            "--jobs",
-            "-j",
-            type=int,
-            default=None,
-            help="parallel transcription workers (0 = auto; process-isolated "
-            "backends only, e.g. the AMD/NVIDIA whisper-cli)",
-        )
-        p.add_argument(
-            "--check-plugin",
-            action="store_true",
-            help="one-shot whisper-cli load probe to confirm the ggml GPU plugin "
-            "actually loads before transcribing (opt-in; the default probe only "
-            "checks that the plugin file is present)",
-        )
-        p.add_argument(
-            "--profile",
-            choices=tuple(PROFILES),
-            default=None,
-            help="a preset trading decoder effort at a fixed model; any explicit "
-            "flag overrides it (default custom = set nothing). None (unset) "
-            "lets --auto choose the profile",
-        )
-        _decoder_args(p)
+    ``invoke`` runs after the group's own options are parsed but before the
+    subcommand's are, so it normalises the level from the group flag and any
+    subcommand ``-v`` still gets the last word. ``add_command`` gives every
+    command — built-in or contributed through an entry point — the same ``-v``.
+    """
 
-    def _diarize_args(p: argparse.ArgumentParser) -> None:
-        g = p.add_mutually_exclusive_group()
-        g.add_argument(
-            "--diarize",
-            dest="diarize",
-            action="store_true",
-            help="force multi-speaker diarization",
-        )
-        g.add_argument(
-            "--no-diarize",
-            dest="diarize",
-            action="store_false",
-            help="disable diarization",
-        )
-        p.set_defaults(diarize=None)
-        p.add_argument(
-            "--speakers",
-            type=int,
-            default=None,
-            help="known number of speakers (default: estimate from the audio)",
-        )
+    def invoke(self, ctx: click.Context) -> Any:
+        set_level("debug" if ctx.params.get("verbose") else None)
+        return super().invoke(ctx)
 
-    def _attribute_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--attribute-energy",
-            action="store_true",
-            help="attribute speakers by relative source energy (close-mic "
-            "cross-talk) instead of spectral diarization",
-        )
-        p.add_argument(
-            "--mixed-source",
-            default=None,
-            help="manifest source id to use as the mixed/room reference for "
-            "energy attribution",
-        )
-        p.add_argument(
-            "--window-s",
-            dest="window_s",
-            type=float,
-            default=None,
-            help="seconds of causal history for a rolling per-source level "
-            "(tracks drifting gain); omit for the static whole-recording level",
-        )
+    def add_command(self, cmd: click.Command, name: str | None = None) -> None:
+        _ensure_verbose(cmd)
+        super().add_command(cmd, name=name)
 
-    def _common_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--reference",
-            dest="reference",
-            help="reference source id for alignment (default: first)",
-        )
 
-    def _directory(p: argparse.ArgumentParser) -> None:
-        p.add_argument("directory", help="workspace directory (recordings live here)")
+# --------------------------------------------------------------------------- #
+# option vocabulary
+# --------------------------------------------------------------------------- #
+def _with_options(*decorators):
+    """Compose Click option/argument decorators, preserving their order."""
 
-    def _backend(directory_first: bool):
-        def fn(p: argparse.ArgumentParser) -> None:
-            if directory_first:
-                _directory(p)
-            _backend_args(p)
-
+    def apply(fn):
+        for decorator in reversed(decorators):
+            fn = decorator(fn)
         return fn
 
-    def _channel_args(p: argparse.ArgumentParser) -> None:
-        g = p.add_mutually_exclusive_group()
-        g.add_argument(
-            "--split-channels",
-            dest="split",
-            action="store_const",
-            const="split",
-            help="split every channel of a multichannel file into its own source",
+    return apply
+
+
+def _split_value(split_channels: bool, mix_down: bool) -> str:
+    """Map the `--split-channels`/`--mix-down` flags to the stage's value.
+
+    Neither flag is the `auto` default. Both together is a usage error, not a
+    silent last-wins: contradictory flags must fail loudly.
+    """
+    if split_channels and mix_down:
+        raise click.UsageError(
+            "--split-channels and --mix-down are mutually exclusive; pass one or neither."
         )
-        g.add_argument(
-            "--mix-down",
-            dest="split",
-            action="store_const",
-            const="mix",
-            help="always downmix multichannel audio to mono",
+    if split_channels:
+        return "split"
+    if mix_down:
+        return "mix"
+    return "auto"
+
+
+def _do_diarize(diarize: bool, no_diarize: bool) -> bool | None:
+    """Map `--diarize`/`--no-diarize` to the tri-state (``None`` = choose)."""
+    if diarize and no_diarize:
+        raise click.UsageError(
+            "--diarize and --no-diarize are mutually exclusive; pass one or neither."
         )
-        p.set_defaults(split="auto")
+    if diarize:
+        return True
+    if no_diarize:
+        return False
+    return None
 
-    # One CLI arg-builder per declared stage. The stage order, names and help
-    # text come from the spec; only the flags (what a stage accepts) are local.
-    stage_args = {
-        Step.INGEST: lambda p: (_paths(p), _channel_args(p)),
-        Step.ALIGN: _directory,
-        Step.TRANSCRIBE: _backend(directory_first=True),
-        Step.RECONCILE: _directory,
-        Step.EXPORT: _directory,
-    }
-    for stage in pipeline_spec().stages:
-        p = sub.add_parser(stage.step.value, help=stage.help)
-        stage_args[stage.step](p)
-        _common_args(p)
 
-    # pipeline run: every stage above, in spec order
-    run_parser = sub.add_parser("run", help=pipeline_spec().run_help())
-    _backend(directory_first=True)(run_parser)
-    _channel_args(run_parser)
-    _diarize_args(run_parser)
-    _attribute_args(run_parser)
-    _common_args(run_parser)
-
-    # calibration convenience
-    cal = sub.add_parser(
-        "calibrate",
-        help="run the pipeline and report transcript quality against a reference if given",
+_DIRECTORY = _with_options(click.argument("directory"))
+_PATHS = _with_options(
+    click.argument("directory"),
+    click.argument("inputs", nargs=-1),
+)
+_REFERENCE = _with_options(
+    click.option(
+        "--reference",
+        default=None,
+        help="reference source id for alignment (default: first)",
     )
-    cal.add_argument("directory", help="workspace directory")
-    _backend_args(cal)
-    _channel_args(cal)
-    _diarize_args(cal)
-    _attribute_args(cal)
-    _common_args(cal)
-    cal.add_argument(
-        "--reference-transcript",
-        help="a reference transcript text file to compare (WER/similarity)",
-    )
-
-    # diarization (multi-speaker attribution for a single mixed stream)
-    dia = sub.add_parser(
-        "diarize", help="assign speaker labels to already-transcribed segments"
-    )
-    dia.add_argument("directory", help="workspace directory")
-    _diarize_args(dia)
-
-    # cross-talk-aware attribution (close mics hear more than one speaker)
-    attr = sub.add_parser(
-        "attribute",
-        help="re-attribute speakers by relative source energy (close-mic cross-talk)",
-    )
-    attr.add_argument("directory", help="workspace directory")
-    attr.add_argument(
+)
+# Two separate flags (not a `--x/--y` pair) so the callback can reject both
+# being given: a Click pair would silently take the last one.
+_CHANNEL = _with_options(
+    click.option(
+        "--split-channels",
+        "split_channels",
+        is_flag=True,
+        help="split every channel of a multichannel file into its own source",
+    ),
+    click.option(
+        "--mix-down",
+        "mix_down",
+        is_flag=True,
+        help="always downmix multichannel audio to mono",
+    ),
+)
+_DIARIZE = _with_options(
+    click.option(
+        "--diarize",
+        "diarize",
+        is_flag=True,
+        help="force multi-speaker diarization",
+    ),
+    click.option(
+        "--no-diarize",
+        "no_diarize",
+        is_flag=True,
+        help="disable diarization",
+    ),
+    click.option(
+        "--speakers",
+        type=int,
+        default=None,
+        help="known number of speakers (default: estimate from the audio)",
+    ),
+)
+_ATTRIBUTE = _with_options(
+    click.option(
+        "--attribute-energy",
+        is_flag=True,
+        help="attribute speakers by relative source energy (close-mic cross-talk) "
+        "instead of spectral diarization",
+    ),
+    click.option(
+        "--mixed-source",
+        default=None,
+        help="manifest source id to use as the mixed/room reference for energy "
+        "attribution",
+    ),
+    click.option(
+        "--window-s",
+        type=float,
+        default=None,
+        help="seconds of causal history for a rolling per-source level (tracks "
+        "drifting gain); omit for the static whole-recording level",
+    ),
+)
+# The standalone `attribute` command exposes only the two knobs it acts on.
+_ATTRIBUTE_ONLY = _with_options(
+    click.option(
         "--mixed-source",
         default=None,
         help="manifest source id to use as the mixed/room reference",
-    )
-    attr.add_argument(
+    ),
+    click.option(
         "--window-s",
-        dest="window_s",
         type=float,
         default=None,
-        help="seconds of causal history for a rolling per-source level "
-        "(tracks drifting gain); omit for the static whole-recording level",
+        help="seconds of causal history for a rolling per-source level (tracks "
+        "drifting gain); omit for the static whole-recording level",
+    ),
+)
+_ADD = _with_options(
+    click.option(
+        "--add",
+        multiple=True,
+        help="term(s)/phrase(s) to append; repeat the flag, e.g. --add A --add B",
     )
-
-    # glossary (decoder initial prompt; edit while a pass runs in the background)
-    glo = sub.add_parser(
-        "glossary",
-        help="show or append to the workspace glossary (ASR initial prompt)",
-    )
-    glo.add_argument("directory", help="workspace directory")
-    glo.add_argument(
-        "--add", nargs="*", default=None, help="term(s)/phrase(s) to append"
-    )
-
-    # synthesis (owner strategy: build the badness, keep the ground truth)
-    syn = sub.add_parser(
-        "synth",
-        help="generate a clean scene + degraded per-device recordings with exact ground truth",
-    )
-    syn.add_argument("directory", help="output workspace directory")
-    syn.add_argument(
+)
+_SYNTH = _with_options(
+    click.option(
         "--devices", type=int, default=4, help="number of recording devices (default 4)"
-    )
-    syn.add_argument(
+    ),
+    click.option(
         "--duration",
         type=float,
         default=20.0,
         help="scene duration in seconds (default 20)",
-    )
-    syn.add_argument(
+    ),
+    click.option(
         "--speakers",
         type=int,
         default=4,
         help="number of speakers in the scene (default 4)",
-    )
-    syn.add_argument("--seed", type=int, default=0, help="random seed")
-
-    # backends
-    b = sub.add_parser(
-        "backends", help="list which ASR backends are currently available"
-    )
-    b.add_argument(
+    ),
+    click.option("--seed", type=int, default=0, help="random seed"),
+)
+_BACKEND_ALL = _with_options(
+    click.option(
         "--all",
-        action="store_true",
+        "all_backends",
+        is_flag=True,
         help="list all known backends, not only available ones",
     )
+)
+_REFERENCE_TRANSCRIPT = _with_options(
+    click.option(
+        "--reference-transcript",
+        "reference_transcript",
+        default=None,
+        help="a reference transcript text file to compare (WER/similarity)",
+    )
+)
 
-    # Optional surfaces (e.g. the bundled `web` console) add their subcommands
-    # through an entry point instead of being imported here (ADR-0013).
-    _register_external_subcommands(sub)
+#: The backend/decoder subset shared by `transcribe`, `run` and `calibrate`. Each
+#: option mirrors its ``CR_*`` variable; ``--profile`` stays ``None`` when unset
+#: (a real sentinel, like the other resolver-managed knobs), so `--auto` can tell
+#: "choose for me" from an explicit `--profile custom`.
+_BACKEND = _with_options(
+    click.option(
+        "--backend",
+        "-b",
+        type=click.Choice((*BACKENDS, auto.BACKEND_AUTO)),
+        default=_DEFAULT_BACKEND,
+        help=f"ASR backend (default {_DEFAULT_BACKEND}); "
+        f"{auto.BACKEND_AUTO!r} picks the best available backend "
+        "(native first, whisper-cli fallback)",
+    ),
+    click.option(
+        "--auto",
+        is_flag=True,
+        help="recommended default: inspect the machine and the tape, choose "
+        "a profile and model, and explain the choice (never downloads a "
+        "model; explicit flags still win)",
+    ),
+    click.option(
+        "--model",
+        "-m",
+        default=None,
+        help="model checkpoint name/size, e.g. tiny/base/small/medium",
+    ),
+    click.option(
+        "--language", "-l", default=None, help="language hint for ASR (default auto)"
+    ),
+    click.option(
+        "--models-dir",
+        default=resolve_models_dir,
+        envvar="CR_MODELS_DIR",
+        show_envvar=True,
+        help="model download dir (default: CR_MODELS_DIR, else <cwd>/models)",
+    ),
+    click.option(
+        "--glossary",
+        default=None,
+        help="glossary file (one term/line) used as the ASR initial prompt; "
+        "defaults to <directory>/glossary.txt if present",
+    ),
+    # These default to None (unset), not to the concrete built-in value, so
+    # resolve_options can tell an explicit `--chunk-seconds 600` from "not
+    # given" and keep the explicit flag on top of any profile/env layer.
+    click.option(
+        "--chunk-seconds",
+        type=float,
+        default=None,
+        envvar="CR_CHUNK_SECONDS",
+        show_envvar=True,
+        help=f"chunk length for long tape transcription (default {DEFAULT_CHUNK_S:.0f}s)",
+    ),
+    click.option(
+        "--overlap-seconds",
+        type=float,
+        default=None,
+        envvar="CR_OVERLAP_SECONDS",
+        show_envvar=True,
+        help=f"overlap between chunks (default {DEFAULT_OVERLAP_S:.0f}s)",
+    ),
+    click.option(
+        "--no-resume",
+        "resume",
+        is_flag=True,
+        flag_value=False,
+        default=True,
+        help="ignore cached chunks and re-transcribe from scratch",
+    ),
+    click.option(
+        "--jobs",
+        "-j",
+        type=int,
+        default=None,
+        envvar="CR_JOBS",
+        show_envvar=True,
+        help="parallel transcription workers (0 = auto; process-isolated "
+        "backends only, e.g. the AMD/NVIDIA whisper-cli)",
+    ),
+    click.option(
+        "--check-plugin",
+        is_flag=True,
+        help="one-shot whisper-cli load probe to confirm the ggml GPU plugin "
+        "actually loads before transcribing (opt-in; the default probe only "
+        "checks that the plugin file is present)",
+    ),
+    click.option(
+        "--profile",
+        type=click.Choice(tuple(PROFILES)),
+        default=None,
+        help="a preset trading decoder effort at a fixed model; any explicit "
+        "flag overrides it (default custom = set nothing). None (unset) "
+        "lets --auto choose the profile",
+    ),
+    # The decoder knobs. All default to unset (None) and declare their CR_* var.
+    click.option(
+        "--beam-size",
+        type=int,
+        default=None,
+        envvar="CR_BEAM_SIZE",
+        show_envvar=True,
+        help="beam search width; larger = slower and (usually) more accurate",
+    ),
+    click.option(
+        "--best-of",
+        type=int,
+        default=None,
+        envvar="CR_BEST_OF",
+        show_envvar=True,
+        help="candidates tried in greedy decoding; larger = slower",
+    ),
+    click.option(
+        "--temperature",
+        type=float,
+        default=None,
+        envvar="CR_TEMPERATURE",
+        show_envvar=True,
+        help="decoding temperature (0.0 = deterministic)",
+    ),
+    click.option(
+        "--entropy-thold",
+        type=float,
+        default=None,
+        envvar="CR_ENTROPY_THOLD",
+        show_envvar=True,
+        help="entropy threshold; decoding stops when it falls below it",
+    ),
+    click.option(
+        "--no-speech-thold",
+        type=float,
+        default=None,
+        envvar="CR_NO_SPEECH_THOLD",
+        show_envvar=True,
+        help="probability below which a window counts as silence/skip",
+    ),
+    click.option(
+        "--max-context",
+        type=int,
+        default=None,
+        envvar="CR_MAX_CONTEXT",
+        show_envvar=True,
+        help="max tokens of previous text used as decoder context (-1 = default)",
+    ),
+    click.option(
+        "--threads",
+        type=int,
+        default=None,
+        envvar="CR_THREADS",
+        show_envvar=True,
+        help="CPU threads for the decoder (matters on CPU-only paths)",
+    ),
+)
 
-    # `-v` is accepted before *and* after the subcommand, so both
-    # `clear-record -v run …` and `clear-record run … -v` raise detail. The
-    # per-subcommand action uses SUPPRESS so that, when it is absent, it does
-    # not overwrite a `-v` given before the subcommand with its own default.
-    for subparser in sub.choices.values():
-        subparser.add_argument(
-            "-v",
-            "--verbose",
-            action="store_true",
-            default=argparse.SUPPRESS,
-            help=_VERBOSE_HELP,
-        )
 
-    return parser
-
-
-def _backend_option_kwargs(args: argparse.Namespace) -> dict:
+# --------------------------------------------------------------------------- #
+# option resolution (shared by the backend-bearing commands)
+# --------------------------------------------------------------------------- #
+def _backend_option_kwargs(args: Any) -> dict:
     """The backend/decoder subset shared by `transcribe`, `run` and `calibrate`."""
     return {
         "backend": args.backend,
@@ -442,7 +497,7 @@ def _backend_option_kwargs(args: argparse.Namespace) -> dict:
     }
 
 
-def _apply_auto(args: argparse.Namespace, options: PipelineOptions) -> PipelineOptions:
+def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
     """Resolve ``--backend auto`` and ``--auto`` on top of the explicit options.
 
     ``--backend auto`` is a capability choice, separate from the profile: it is
@@ -498,7 +553,7 @@ def _apply_auto(args: argparse.Namespace, options: PipelineOptions) -> PipelineO
     return resolve_options(options, profile=profile)
 
 
-def _pipeline_options(args: argparse.Namespace) -> PipelineOptions:
+def _pipeline_options(args: Any) -> PipelineOptions:
     """Fill the one run-options value from the parsed CLI arguments and resolve it.
 
     The environment and the profile fill any knob the user left at its default;
@@ -507,8 +562,14 @@ def _pipeline_options(args: argparse.Namespace) -> PipelineOptions:
     """
     kwargs = _backend_option_kwargs(args)
     kwargs.update(
-        split=getattr(args, "split", "auto"),
-        do_diarize=getattr(args, "diarize", None),
+        split=_split_value(
+            getattr(args, "split_channels", False),
+            getattr(args, "mix_down", False),
+        ),
+        do_diarize=_do_diarize(
+            getattr(args, "diarize", False),
+            getattr(args, "no_diarize", False),
+        ),
         speakers=getattr(args, "speakers", None),
         reference=getattr(args, "reference", None),
         attribute_energy=getattr(args, "attribute_energy", False),
@@ -518,111 +579,255 @@ def _pipeline_options(args: argparse.Namespace) -> PipelineOptions:
     return _apply_auto(args, PipelineOptions(**kwargs))
 
 
-def _main(args: argparse.Namespace) -> int:
-    command = args.command
+def _options(kwargs: dict) -> PipelineOptions:
+    """Resolve the run options from one command's Click parameters."""
+    return _pipeline_options(SimpleNamespace(**kwargs))
 
-    if command == "backends":
-        for bid, status in backend_availability().items():
-            if not args.all and not status.available:
-                continue
-            state = "available" if status.available else "unavailable"
-            reason = f" — {status.reason}" if status.reason else ""
-            print(f"{bid:12s} {state}{reason}")
-        return 0
 
-    if command == "synth":
-        stages.synth(
-            args.directory,
-            devices=args.devices,
-            duration_s=args.duration,
-            speakers=args.speakers,
-            seed=args.seed,
-        )
-        return 0
+# --------------------------------------------------------------------------- #
+# command bodies
+# --------------------------------------------------------------------------- #
+def _cmd_backends(**kwargs: Any) -> int:
+    for bid, status in backend_availability().items():
+        if not kwargs["all_backends"] and not status.available:
+            continue
+        state = "available" if status.available else "unavailable"
+        reason = f" — {status.reason}" if status.reason else ""
+        print(f"{bid:12s} {state}{reason}")
+    return 0
 
-    if command == "ingest":
-        stages.ingest(args.directory, audio_files=args.inputs or None, split=args.split)
-        return 0
 
-    if command == "align":
-        stages.align(args.directory, reference=args.reference)
-        return 0
+def _cmd_synth(**kwargs: Any) -> int:
+    stages.synth(
+        kwargs["directory"],
+        devices=kwargs["devices"],
+        duration_s=kwargs["duration"],
+        speakers=kwargs["speakers"],
+        seed=kwargs["seed"],
+    )
+    return 0
 
-    if command == "transcribe":
-        options = _pipeline_options(args)
-        stages.transcribe(
-            args.directory,
-            options.backend,
-            model=options.model,
-            language=options.language,
-            model_dir=options.model_dir,
-            glossary=options.glossary,
-            chunk_seconds=options.chunk_seconds,
-            overlap_seconds=options.overlap_seconds,
-            resume=options.resume,
-            jobs=options.jobs,
-            check_plugin=options.check_plugin,
-            beam_size=options.beam_size,
-            best_of=options.best_of,
-            temperature=options.temperature,
-            entropy_thold=options.entropy_thold,
-            no_speech_thold=options.no_speech_thold,
-            max_context=options.max_context,
-            threads=options.threads,
-        )
-        return 0
 
-    if command == "diarize":
-        stages.diarize(args.directory, speakers=args.speakers)
-        return 0
+def _cmd_ingest(**kwargs: Any) -> int:
+    stages.ingest(
+        kwargs["directory"],
+        audio_files=list(kwargs["inputs"]) or None,
+        split=_split_value(kwargs["split_channels"], kwargs["mix_down"]),
+    )
+    return 0
 
-    if command == "attribute":
-        stages.attribute(
-            args.directory,
-            mixed_source=args.mixed_source,
-            window_s=args.window_s,
-        )
-        return 0
 
-    if command == "glossary":
-        stages.glossary(args.directory, add=args.add)
-        return 0
+def _cmd_align(**kwargs: Any) -> int:
+    stages.align(kwargs["directory"], reference=kwargs["reference"])
+    return 0
 
-    if command == "reconcile":
-        stages.reconcile(args.directory, prefer=args.reference)
-        return 0
 
-    if command == "export":
-        stages.export(args.directory)
-        return 0
+def _cmd_transcribe(**kwargs: Any) -> int:
+    options = _options(kwargs)
+    stages.transcribe(
+        kwargs["directory"],
+        options.backend,
+        model=options.model,
+        language=options.language,
+        model_dir=options.model_dir,
+        glossary=options.glossary,
+        chunk_seconds=options.chunk_seconds,
+        overlap_seconds=options.overlap_seconds,
+        resume=options.resume,
+        jobs=options.jobs,
+        check_plugin=options.check_plugin,
+        beam_size=options.beam_size,
+        best_of=options.best_of,
+        temperature=options.temperature,
+        entropy_thold=options.entropy_thold,
+        no_speech_thold=options.no_speech_thold,
+        max_context=options.max_context,
+        threads=options.threads,
+    )
+    return 0
 
-    if command == "run":
-        stages.run(args.directory, _pipeline_options(args))
-        return 0
 
-    if command == "calibrate":
-        stages.run(args.directory, _pipeline_options(args))
-        stages.calibrate_report(args.directory, reference=args.reference_transcript)
-        return 0
+def _cmd_diarize(**kwargs: Any) -> int:
+    # The flags are unused by the stage, but contradictory flags must still fail.
+    _do_diarize(kwargs["diarize"], kwargs["no_diarize"])
+    stages.diarize(kwargs["directory"], speakers=kwargs["speakers"])
+    return 0
 
-    # An externally registered subcommand (e.g. `web`) carries its own handler.
-    handler = getattr(args, "handler", None)
-    if handler is not None:
-        return handler(args)
 
-    return 2
+def _cmd_attribute(**kwargs: Any) -> int:
+    stages.attribute(
+        kwargs["directory"],
+        mixed_source=kwargs["mixed_source"],
+        window_s=kwargs["window_s"],
+    )
+    return 0
+
+
+def _cmd_glossary(**kwargs: Any) -> int:
+    stages.glossary(kwargs["directory"], add=list(kwargs["add"]) or None)
+    return 0
+
+
+def _cmd_reconcile(**kwargs: Any) -> int:
+    stages.reconcile(kwargs["directory"], prefer=kwargs["reference"])
+    return 0
+
+
+def _cmd_export(**kwargs: Any) -> int:
+    stages.export(kwargs["directory"])
+    return 0
+
+
+def _cmd_run(**kwargs: Any) -> int:
+    stages.run(kwargs["directory"], _options(kwargs))
+    return 0
+
+
+def _cmd_calibrate(**kwargs: Any) -> int:
+    stages.run(kwargs["directory"], _options(kwargs))
+    stages.calibrate_report(
+        kwargs["directory"], reference=kwargs["reference_transcript"]
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# group assembly
+# --------------------------------------------------------------------------- #
+# One command body per declared stage. The stage order, names and help text come
+# from the spec; only the flags (what a stage accepts) are local. Every stage
+# also carries `--reference`, exactly as the argparse surface did.
+_STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
+    Step.INGEST: (_cmd_ingest, (_PATHS, _CHANNEL, _REFERENCE)),
+    Step.ALIGN: (_cmd_align, (_DIRECTORY, _REFERENCE)),
+    Step.TRANSCRIBE: (_cmd_transcribe, (_DIRECTORY, _BACKEND, _REFERENCE)),
+    Step.RECONCILE: (_cmd_reconcile, (_DIRECTORY, _REFERENCE)),
+    Step.EXPORT: (_cmd_export, (_DIRECTORY, _REFERENCE)),
+}
+
+#: The conveniences that are not stage-derived, with the argparse-era help text.
+_CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
+    (
+        "run",
+        _cmd_run,
+        pipeline_spec().run_help(),
+        (_DIRECTORY, _BACKEND, _CHANNEL, _DIARIZE, _ATTRIBUTE, _REFERENCE),
+    ),
+    (
+        "calibrate",
+        _cmd_calibrate,
+        "run the pipeline and report transcript quality against a reference if given",
+        (
+            _DIRECTORY,
+            _BACKEND,
+            _CHANNEL,
+            _DIARIZE,
+            _ATTRIBUTE,
+            _REFERENCE,
+            _REFERENCE_TRANSCRIPT,
+        ),
+    ),
+    (
+        "diarize",
+        _cmd_diarize,
+        "assign speaker labels to already-transcribed segments",
+        (_DIRECTORY, _DIARIZE),
+    ),
+    (
+        "attribute",
+        _cmd_attribute,
+        "re-attribute speakers by relative source energy (close-mic cross-talk)",
+        (_DIRECTORY, _ATTRIBUTE_ONLY),
+    ),
+    (
+        "glossary",
+        _cmd_glossary,
+        "show or append to the workspace glossary (ASR initial prompt)",
+        (_DIRECTORY, _ADD),
+    ),
+    (
+        "synth",
+        _cmd_synth,
+        "generate a clean scene + degraded per-device recordings with exact ground truth",
+        (_DIRECTORY, _SYNTH),
+    ),
+    (
+        "backends",
+        _cmd_backends,
+        "list which ASR backends are currently available",
+        (_BACKEND_ALL,),
+    ),
+)
+
+
+def _make_command(
+    name: str, callback: Any, help_text: str, option_sets: Sequence
+) -> click.Command:
+    """Build a fresh Click command so repeated group builds cannot mutate each other."""
+
+    def fn(**kwargs: Any) -> Any:
+        return callback(**kwargs)
+
+    fn.__name__ = f"_{name}"
+    for option_set in reversed(tuple(option_sets)):
+        fn = option_set(fn)
+    return click.command(name=name, help=help_text)(fn)
+
+
+def _builtin_commands() -> list[tuple[str, Any, str, tuple]]:
+    """The built-in command table: every stage first, in spec order, then extras."""
+    commands: list[tuple[str, Any, str, tuple]] = []
+    for stage in pipeline_spec().stages:
+        callback, option_sets = _STAGE_COMMANDS[stage.step]
+        commands.append((stage.step.value, callback, stage.help, option_sets))
+    commands.extend(_CONVENIENCE_COMMANDS)
+    return commands
+
+
+def _build_group() -> click.Group:
+    """Build the ``clear-record`` Click group.
+
+    A fresh group per call, like the old ``_build_parser``: entry-point providers
+    are re-discovered each time, so tests can substitute the provider list, and a
+    plain CLI run still never imports an optional surface at module import.
+    """
+    group = _Group(
+        name=_PROG,
+        help=_DESCRIPTION,
+        params=[
+            click.Option(
+                ("-v", "--verbose"), is_flag=True, default=False, help=_VERBOSE_HELP
+            )
+        ],
+    )
+    for name, callback, help_text, option_sets in _builtin_commands():
+        group.add_command(_make_command(name, callback, help_text, option_sets))
+
+    # Optional surfaces (e.g. the bundled `web` console) add their subcommands
+    # through an entry point instead of being imported here (ADR-0013).
+    _register_external_subcommands(group)
+    return group
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    # `--verbose` is the flag form of the documented `CR_LOG_LEVEL=debug`. The
-    # sink lives in `core`, which the CLI may import, so the level is set
-    # directly (no environment side effect). Clearing it when the flag is absent
-    # keeps repeated programmatic `main()` calls honest. At the default level
-    # nothing is added, so existing stdout is unchanged.
-    set_level("debug" if getattr(args, "verbose", False) else None)
-    return _main(args)
+    """Run the CLI and return the process exit code.
+
+    ``standalone_mode=False`` keeps ``main`` a plain function that *returns* an
+    int (the console script and programmatic callers both rely on that); usage
+    errors are converted here into Click's stderr message and exit code, exactly
+    as ``argparse`` used to. ``set_level`` is owned by the group so repeated
+    programmatic ``main()`` calls stay honest.
+    """
+    group = _build_group()
+    try:
+        rv = group.main(args=argv, prog_name=_PROG, standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except click.Abort:
+        click.echo("Aborted!", err=True)
+        return 1
+    return 0 if rv is None else int(rv)
 
 
 if __name__ == "__main__":  # pragma: no cover - console-script path

@@ -33,6 +33,9 @@ import platform as _platform
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
+
+import click
 
 from clear_record.service import paths
 
@@ -477,49 +480,52 @@ _DRY_RUN_NOTE = (
 )
 
 
-def register(subparsers) -> None:
+def register(group: click.Group) -> None:
     """Add the ``diagnose`` subcommand (called by the CLI entry-point discovery).
 
-    Registered through ``clear_record.commands`` (ADR-0013), so the CLI never
-    imports this module directly and the base CLI stays surface-free.
+    ``group`` is the CLI's Click group (ADR-0022). Registered through
+    ``clear_record.commands`` (ADR-0013), so the CLI never imports this module
+    directly and the base CLI stays surface-free.
     """
-    parser = subparsers.add_parser(
-        "diagnose",
+
+    @group.command(
+        name="diagnose",
         help="write a redacted feedback bundle you can attach to a bug report",
     )
-    parser.add_argument(
+    @click.option(
         "--list",
-        dest="dry_run",
-        action="store_true",
+        "dry_run",
+        is_flag=True,
         help="print the bundle to stdout and write nothing (dry run)",
     )
-    parser.add_argument(
+    @click.option(
         "--include-private",
-        action="store_true",
+        is_flag=True,
         help="opt in to private detail (real paths, workspace log, transcript, "
         "glossary); prints exactly what it adds",
     )
-    parser.add_argument(
-        "--run-id", type=int, default=None, help="a specific run to report"
-    )
-    parser.add_argument(
+    @click.option("--run-id", type=int, default=None, help="a specific run to report")
+    @click.option(
         "--meeting-id",
         type=int,
         default=None,
         help="a meeting whose last run to report",
     )
-    parser.add_argument(
+    @click.option(
         "--output",
         "-o",
         default=None,
         help=f"output file (default ./{BUNDLE_FILENAME})",
     )
-    parser.add_argument(
+    @click.option(
         "--data-dir",
         default=None,
+        envvar="CR_DATA_DIR",
+        show_envvar=True,
         help="override the app data directory (default: CR_DATA_DIR / XDG)",
     )
-    parser.set_defaults(handler=run_diagnose)
+    def _diagnose(**kwargs) -> int:
+        return run_diagnose(SimpleNamespace(**kwargs))
 
 
 def run_diagnose(args) -> int:

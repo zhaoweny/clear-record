@@ -9,18 +9,23 @@ actionable message, not an import traceback.
 from __future__ import annotations
 
 from importlib.metadata import entry_points
+from types import SimpleNamespace
 
 import pytest
 
 from clear_record.cli import cli
 
 
+def _parse(command: str, argv: list[str]) -> SimpleNamespace:
+    cmd = cli._build_group().commands[command]
+    with cmd.make_context(command, list(argv)) as ctx:
+        return SimpleNamespace(**ctx.params)
+
+
 def test_mcp_subcommand_is_registered() -> None:
-    parser = cli._build_parser()
-    args = parser.parse_args(["mcp", "--data-dir", "/tmp/cr"])
-    assert args.command == "mcp"
+    assert "mcp" in cli._build_group().commands
+    args = _parse("mcp", ["--data-dir", "/tmp/cr"])
     assert args.data_dir == "/tmp/cr"
-    assert callable(args.handler)
 
 
 def test_missing_mcp_extra_gives_an_actionable_hint(monkeypatch) -> None:

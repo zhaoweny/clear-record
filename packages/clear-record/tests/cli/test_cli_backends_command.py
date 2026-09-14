@@ -3,11 +3,15 @@
 The catalog has no system backend registered yet, so these tests inject a fake
 one to pin the seam the Apple/Windows backends will plug into: ``--all`` names
 an unavailable backend's reason, and the default listing hides unavailable ones.
+
+The port to Click (ADR-0022) drives the command through ``CliRunner``; the
+``BACKENDS`` injection is unchanged because the command reads the same catalog
+object the module re-exports.
 """
 
 from __future__ import annotations
 
-import argparse
+from click.testing import CliRunner
 
 from clear_record.cli import cli
 from clear_record.providers import Availability, BackendBase, BackendInfo
@@ -33,20 +37,23 @@ class _FakeSystemBackend(BackendBase):
         raise AssertionError
 
 
-def test_backends_all_reports_the_unavailable_reason(monkeypatch, capsys) -> None:
+def test_backends_all_reports_the_unavailable_reason(monkeypatch) -> None:
     monkeypatch.setitem(cli.BACKENDS, "apple-speech", _FakeSystemBackend())
 
-    assert cli._main(argparse.Namespace(command="backends", all=True)) == 0
+    result = CliRunner().invoke(cli._build_group(), ["backends", "--all"])
 
-    out = capsys.readouterr().out
-    line = next(line for line in out.splitlines() if line.startswith("apple-speech"))
+    assert result.exit_code == 0
+    line = next(
+        line for line in result.output.splitlines() if line.startswith("apple-speech")
+    )
     assert "unavailable" in line
     assert "macOS 26+" in line
 
 
-def test_backends_hides_unavailable_without_all(monkeypatch, capsys) -> None:
+def test_backends_hides_unavailable_without_all(monkeypatch) -> None:
     monkeypatch.setitem(cli.BACKENDS, "apple-speech", _FakeSystemBackend())
 
-    cli._main(argparse.Namespace(command="backends", all=False))
+    result = CliRunner().invoke(cli._build_group(), ["backends"])
 
-    assert "apple-speech" not in capsys.readouterr().out
+    assert result.exit_code == 0
+    assert "apple-speech" not in result.output

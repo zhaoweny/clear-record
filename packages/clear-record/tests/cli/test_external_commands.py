@@ -1,15 +1,19 @@
-"""The `clear-record gui`/`web` registration seam and the `web` extra hint.
+"""The `clear-record web` registration seam and the `web` extra hint.
 
 The CLI discovers optional subcommands from the ``clear_record.commands``
 entry-point group, so it never imports the web module (ADR-0013). The discovery
 helper takes no arguments, so tests substitute the entry-point list directly.
+Since ADR-0022 each provider contributes a Click command to the CLI's group.
 """
 
 from __future__ import annotations
 
 from importlib.metadata import entry_points
+from types import SimpleNamespace
 
+import click
 import pytest
+from click.testing import CliRunner
 
 from clear_record.cli import cli
 
@@ -24,27 +28,35 @@ class _FakeEntryPoint:
         return self._register
 
 
+def _parse(command: str, argv: list[str]) -> SimpleNamespace:
+    cmd = cli._build_group().commands[command]
+    with cmd.make_context(command, list(argv)) as ctx:
+        return SimpleNamespace(**ctx.params)
+
+
 def test_external_subcommand_is_registered_and_dispatched(monkeypatch) -> None:
     seen: dict = {}
 
-    def register(sub) -> None:
-        parser = sub.add_parser("hello", help="say hello")
-        parser.add_argument("--name", default="world")
-        parser.set_defaults(handler=lambda args: seen.update(name=args.name) or 0)
+    def register(group: click.Group) -> None:
+        @group.command(name="hello", help="say hello")
+        @click.option("--name", default="world")
+        def hello(name: str) -> int:
+            seen["name"] = name
+            return 0
 
     monkeypatch.setattr(cli, "_external_commands", lambda: [_FakeEntryPoint(register)])
-    parser = cli._build_parser()
+    group = cli._build_group()
 
-    args = parser.parse_args(["hello", "--name", "zhaow"])
-    assert args.command == "hello"
-    assert cli._main(args) == 0
+    result = CliRunner().invoke(group, ["hello", "--name", "zhaow"])
+    assert result.exit_code == 0
     assert seen == {"name": "zhaow"}
 
 
 def test_no_external_commands_leaves_the_surface_unchanged(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_external_commands", lambda: [])
-    parser = cli._build_parser()
-    assert parser.parse_args(["backends", "--all"]).command == "backends"
+    group = cli._build_group()
+    assert "backends" in group.commands
+    assert CliRunner().invoke(group, ["backends", "--all"]).exit_code == 0
 
 
 def test_web_entry_point_is_declared_in_the_installed_dist() -> None:
@@ -55,11 +67,9 @@ def test_web_entry_point_is_declared_in_the_installed_dist() -> None:
 
 
 def test_web_subcommand_is_registered_from_the_entry_point() -> None:
-    parser = cli._build_parser()
-    args = parser.parse_args(["web", "--no-browser", "--port", "9999"])
-    assert args.command == "web"
+    assert "web" in cli._build_group().commands
+    args = _parse("web", ["--no-browser", "--port", "9999"])
     assert args.port == 9999
-    assert callable(args.handler)
 
 
 def test_missing_web_extra_gives_an_actionable_hint(monkeypatch) -> None:

@@ -11,9 +11,9 @@ group (ADR-0013) so ``clear_record.cli`` never statically imports this module.
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
-from typing import Any
+
+import click
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -36,42 +36,49 @@ def _require_web_stack() -> None:
         raise SystemExit(_MISSING_EXTRA_HINT.format(missing=", ".join(missing)))
 
 
-def register(subparsers: Any) -> None:
+def register(group: click.Group) -> None:
     """Add the ``web`` subcommand (called by the CLI's entry-point discovery).
 
-    Registered unconditionally: the subcommand is visible in ``--help`` even
-    without the extra, and running it explains how to install the extra.
+    ``group`` is the CLI's Click group (ADR-0022). Registered unconditionally:
+    the subcommand is visible in ``--help`` even without the extra, and running
+    it explains how to install the extra.
     """
-    parser = subparsers.add_parser(
-        "web",
+
+    @group.command(
+        name="web",
         help="start the local web console (projects, glossary) in a browser",
     )
-    parser.add_argument(
+    @click.option(
         "--host", default=DEFAULT_HOST, help="bind address (default localhost)"
     )
-    parser.add_argument(
-        "--port", type=int, default=DEFAULT_PORT, help="port (default 8765)"
-    )
-    parser.add_argument(
-        "--no-browser", action="store_true", help="do not open a browser window"
-    )
-    parser.add_argument(
+    @click.option("--port", type=int, default=DEFAULT_PORT, help="port (default 8765)")
+    @click.option("--no-browser", is_flag=True, help="do not open a browser window")
+    @click.option(
         "--data-dir",
         default=None,
+        envvar="CR_DATA_DIR",
+        show_envvar=True,
         help="override the app data directory (default: CR_DATA_DIR / XDG)",
     )
-    parser.set_defaults(handler=_run)
+    def _web(host: str, port: int, no_browser: bool, data_dir: str | None) -> int:
+        return _run(host=host, port=port, no_browser=no_browser, data_dir=data_dir)
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(
+    *,
+    host: str,
+    port: int,
+    no_browser: bool,
+    data_dir: str | None,
+) -> int:
     _require_web_stack()
     from clear_record.web.app import serve
 
     return serve(
-        host=args.host,
-        port=args.port,
-        open_browser=not args.no_browser,
-        data_dir=args.data_dir,
+        host=host,
+        port=port,
+        open_browser=not no_browser,
+        data_dir=data_dir,
     )
 
 

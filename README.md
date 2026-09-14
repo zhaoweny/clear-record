@@ -295,7 +295,7 @@ workflow is: **start a first pass in the background, build the glossary while it
 runs, then re-run** — the chunks are re-decoded with the finished terms.
 
 ```sh
-clear-record glossary <dir> --add "李工" "Project Falcon" "ZX-2000"
+clear-record glossary <dir> --add "李工" --add "Project Falcon" --add "ZX-2000"
 clear-record transcribe <dir> --backend apple --model medium   # picks up glossary.txt
 ```
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from importlib.metadata import entry_points
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,17 +36,16 @@ def test_diagnose_entry_point_is_declared_in_the_dist() -> None:
 
 
 def test_diagnose_subcommand_is_registered_from_the_entry_point() -> None:
-    parser = cli._build_parser()
-    args = parser.parse_args(["diagnose", "--list", "--include-private"])
-    assert args.command == "diagnose"
+    assert "diagnose" in cli._build_group().commands
+    command = cli._build_group().commands["diagnose"]
+    with command.make_context("diagnose", ["--list", "--include-private"]) as ctx:
+        args = SimpleNamespace(**ctx.params)
     assert args.dry_run is True
     assert args.include_private is True
-    assert callable(args.handler)
 
 
 def test_verbose_raises_the_level_in_either_position(monkeypatch) -> None:
     monkeypatch.setenv("CR_LOG_LEVEL", "error")
-    monkeypatch.setattr(cli, "_main", lambda args: 0)
 
     assert cli.main(["backends", "-v"]) == 0  # after the subcommand
     assert core_diagnostics.effective_level() == "debug"
@@ -57,14 +57,14 @@ def test_verbose_raises_the_level_in_either_position(monkeypatch) -> None:
 
 def test_verbose_does_not_export_the_environment(monkeypatch) -> None:
     monkeypatch.delenv("CR_LOG_LEVEL", raising=False)
-    monkeypatch.setattr(cli, "_main", lambda args: 0)
     cli.main(["backends", "-v"])
     assert "CR_LOG_LEVEL" not in os.environ
 
 
 def test_default_level_adds_nothing_to_stdout(monkeypatch, capsys) -> None:
     monkeypatch.delenv("CR_LOG_LEVEL", raising=False)
-    monkeypatch.setattr(cli, "_main", lambda args: 0)
+    # A command that prints nothing, so any stdout would be a log line.
+    monkeypatch.setattr(cli, "backend_availability", lambda: {})
     assert cli.main(["backends"]) == 0
     assert capsys.readouterr().out == ""
     assert core_diagnostics.effective_level() == "info"

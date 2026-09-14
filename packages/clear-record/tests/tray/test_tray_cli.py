@@ -6,17 +6,23 @@ logic it wraps is covered in `test_service.py`.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from clear_record.cli import cli
 
 
+def _parse(command: str, argv: list[str]) -> SimpleNamespace:
+    cmd = cli._build_group().commands[command]
+    with cmd.make_context(command, list(argv)) as ctx:
+        return SimpleNamespace(**ctx.params)
+
+
 def test_tray_subcommand_is_registered() -> None:
-    parser = cli._build_parser()
-    args = parser.parse_args(["tray", "--no-browser", "--port", "9001"])
-    assert args.command == "tray"
+    assert "tray" in cli._build_group().commands
+    args = _parse("tray", ["--no-browser", "--port", "9001"])
     assert args.port == 9001
-    assert callable(args.handler)
 
 
 def test_missing_tray_extra_gives_an_actionable_hint(monkeypatch) -> None:

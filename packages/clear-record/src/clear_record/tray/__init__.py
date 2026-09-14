@@ -14,9 +14,9 @@ Python 3.10 and this project requires >=3.12.
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
-from typing import Any
+
+import click
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -44,37 +44,43 @@ def _require_tray_stack() -> None:
         raise SystemExit(_MISSING_TRAY_HINT)
 
 
-def register(subparsers: Any) -> None:
+def register(group: click.Group) -> None:
     """Add the ``tray`` subcommand (called by the CLI's entry-point discovery)."""
-    parser = subparsers.add_parser(
-        "tray", help="run the console in the background with a system-tray icon"
+
+    @group.command(
+        name="tray", help="run the console in the background with a system-tray icon"
     )
-    parser.add_argument(
+    @click.option(
         "--host", default=DEFAULT_HOST, help="bind address (default localhost)"
     )
-    parser.add_argument(
-        "--port", type=int, default=DEFAULT_PORT, help="port (default 8765)"
-    )
-    parser.add_argument(
-        "--no-browser", action="store_true", help="do not open a browser on start"
-    )
-    parser.add_argument(
+    @click.option("--port", type=int, default=DEFAULT_PORT, help="port (default 8765)")
+    @click.option("--no-browser", is_flag=True, help="do not open a browser on start")
+    @click.option(
         "--data-dir",
         default=None,
+        envvar="CR_DATA_DIR",
+        show_envvar=True,
         help="override the app data directory (default: CR_DATA_DIR / XDG)",
     )
-    parser.set_defaults(handler=_run)
+    def _tray(host: str, port: int, no_browser: bool, data_dir: str | None) -> int:
+        return _run(host=host, port=port, no_browser=no_browser, data_dir=data_dir)
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(
+    *,
+    host: str,
+    port: int,
+    no_browser: bool,
+    data_dir: str | None,
+) -> int:
     _require_tray_stack()
     from clear_record.tray.app import main as tray_main
 
     return tray_main(
-        host=args.host,
-        port=args.port,
-        data_dir=args.data_dir,
-        open_browser=not args.no_browser,
+        host=host,
+        port=port,
+        data_dir=data_dir,
+        open_browser=not no_browser,
     )
 
 

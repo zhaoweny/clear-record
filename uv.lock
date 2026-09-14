@@ -160,6 +160,7 @@ name = "clear-record"
 version = "0.2.0.dev0"
 source = { editable = "packages/clear-record" }
 dependencies = [
+    { name = "click" },
     { name = "numpy" },
     { name = "soundfile" },
 ]
@@ -180,6 +181,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1" },
     { name = "mcp", marker = "extra == 'agents'", specifier = ">=2" },

@@ -47,8 +47,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # Third-party runtime dependencies of the single dist. ADR-0013 kept this
 # audio-only set: the web console's stack (fastapi/uvicorn) lives in the `web`
 # extra, not the base install, so `clear-record` stays cheap for CLI-only users
-# while the web *code* still ships in this one wheel.
-RUNTIME_DEPS = {"numpy", "soundfile"}
+# while the web *code* still ships in this one wheel. `click` joined the base
+# set with the CLI port (ADR-0022): it is pure Python, zero transitive deps.
+RUNTIME_DEPS = {"click", "numpy", "soundfile"}
 
 # The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
 # They must not leak into the base dependencies: a CLI-only install stays

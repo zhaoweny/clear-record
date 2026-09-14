@@ -10,6 +10,7 @@ the default (no-flag) path is proved to run neither probe.
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 
 import pytest
 import soundfile as sf
@@ -23,7 +24,7 @@ from clear_record.cli.auto import (
     resolve_auto,
     resolve_backend,
 )
-from clear_record.cli.cli import _build_parser, _pipeline_options
+from clear_record.cli.cli import _build_group, _pipeline_options
 from clear_record.core import PipelineOptions
 
 
@@ -198,7 +199,10 @@ def test_tape_probe_reads_duration_and_channels(tmp_path) -> None:
 
 # --- CLI wiring ------------------------------------------------------------- #
 def _args(argv: list[str]):
-    return _build_parser().parse_args(argv)
+    command, *rest = argv
+    cmd = _build_group().commands[command]
+    with cmd.make_context(command, list(rest)) as ctx:
+        return SimpleNamespace(**ctx.params)
 
 
 def test_no_auto_flags_runs_no_probe_and_is_unchanged(monkeypatch) -> None:

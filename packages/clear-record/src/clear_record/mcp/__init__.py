@@ -18,9 +18,9 @@ credential: the user's agent brings its own. The harness stays outside
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
-from typing import Any
+
+import click
 
 #: Everything the MCP server needs at run time. `clear_record.mcp` itself is
 #: always importable (it ships in the one wheel); this is the optional `agents`
@@ -42,29 +42,33 @@ def _require_mcp_stack() -> None:
         raise SystemExit(_MISSING_EXTRA_HINT.format(missing=", ".join(missing)))
 
 
-def register(subparsers: Any) -> None:
+def register(group: click.Group) -> None:
     """Add the ``mcp`` subcommand (called by the CLI's entry-point discovery).
 
-    Registered unconditionally: the subcommand is visible in ``--help`` even
-    without the extra, and running it explains how to install the extra.
+    ``group`` is the CLI's Click group (ADR-0022). Registered unconditionally:
+    the subcommand is visible in ``--help`` even without the extra, and running
+    it explains how to install the extra.
     """
-    parser = subparsers.add_parser(
-        "mcp",
-        help="run the MCP server over the service (for your own AI agent)",
+
+    @group.command(
+        name="mcp", help="run the MCP server over the service (for your own AI agent)"
     )
-    parser.add_argument(
+    @click.option(
         "--data-dir",
         default=None,
+        envvar="CR_DATA_DIR",
+        show_envvar=True,
         help="override the app data directory (default: CR_DATA_DIR / XDG)",
     )
-    parser.set_defaults(handler=_run)
+    def _mcp(data_dir: str | None) -> int:
+        return _run(data_dir=data_dir)
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(*, data_dir: str | None) -> int:
     _require_mcp_stack()
     from clear_record.mcp.server import main as mcp_main
 
-    return mcp_main(data_dir=args.data_dir)
+    return mcp_main(data_dir=data_dir)
 
 
 __all__ = ["register"]

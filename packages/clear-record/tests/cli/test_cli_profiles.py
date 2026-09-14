@@ -1,19 +1,19 @@
 """The CLI profile/decoder surface and its precedence.
 
-The parser carries the flags; :func:`clear_record.cli.cli._pipeline_options`
+The parser carries the flags (Click, ADR-0022); :func:`clear_record.cli.cli._pipeline_options`
 resolves them against the environment and the profile. Keeping the last step
 here (rather than only in ``core``) proves the wiring, not just the pure merge.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
+from types import SimpleNamespace
 
 import pytest
 
 from clear_record.core import PROFILES, PipelineOptions
-from clear_record.cli.cli import _build_parser, _pipeline_options
+from clear_record.cli.cli import _build_group, _pipeline_options
 
 DECODER_FLAGS = {
     "beam_size": "--beam-size",
@@ -34,21 +34,22 @@ def _clear_cr_env(monkeypatch):
             monkeypatch.delenv(key, raising=False)
 
 
-def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
-    action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+def _parse(command: str, argv: list[str]) -> SimpleNamespace:
+    """Parse one subcommand's arguments (Click `make_context`), without invoking."""
+    cmd = _build_group().commands[command]
+    with cmd.make_context(command, list(argv)) as ctx:
+        return SimpleNamespace(**ctx.params)
+
+
+def _param(command: str, name: str):
+    return next(
+        param for param in _build_group().commands[command].params if param.name == name
     )
-    return action.choices[name]
-
-
-def _action(parser: argparse.ArgumentParser, dest: str) -> argparse.Action:
-    return next(a for a in parser._actions if a.dest == dest)
 
 
 def test_profile_and_decoder_flags_default_to_unset_on_every_backend_command() -> None:
-    parser = _build_parser()
     for command in ("transcribe", "run", "calibrate"):
-        ns = parser.parse_args([command, "dir"])
+        ns = _parse(command, ["dir"])
         # `None` is "unset": it lets `--auto` choose the profile, and still
         # resolves to `custom` (set nothing) when no auto mode is asked for.
         assert ns.profile is None
@@ -59,16 +60,14 @@ def test_profile_and_decoder_flags_default_to_unset_on_every_backend_command() -
 
 
 def test_profile_choices_come_from_the_table() -> None:
-    parser = _build_parser()
-    action = _action(_subparser(parser, "run"), "profile")
-    assert tuple(action.choices) == tuple(PROFILES)
+    choices = _param("run", "profile").type.choices
+    assert tuple(choices) == tuple(PROFILES)
 
 
 def test_decoder_flags_parse_on_run() -> None:
-    parser = _build_parser()
-    ns = parser.parse_args(
+    ns = _parse(
+        "run",
         [
-            "run",
             "dir",
             "--profile",
             "balanced",
@@ -86,7 +85,7 @@ def test_decoder_flags_parse_on_run() -> None:
             "64",
             "--threads",
             "8",
-        ]
+        ],
     )
     assert ns.profile == "balanced"
     assert ns.beam_size == 4
@@ -99,32 +98,28 @@ def test_decoder_flags_parse_on_run() -> None:
 
 
 def test_pipeline_options_applies_the_profile() -> None:
-    parser = _build_parser()
-    opts = _pipeline_options(parser.parse_args(["run", "dir", "--profile", "accurate"]))
+    opts = _pipeline_options(_parse("run", ["dir", "--profile", "accurate"]))
     assert isinstance(opts, PipelineOptions)
     assert opts.profile == "accurate"
     assert opts.beam_size == 8
 
 
 def test_pipeline_options_flag_beats_profile() -> None:
-    parser = _build_parser()
     opts = _pipeline_options(
-        parser.parse_args(["run", "dir", "--profile", "accurate", "--beam-size", "2"])
+        _parse("run", ["dir", "--profile", "accurate", "--beam-size", "2"])
     )
     assert opts.beam_size == 2
 
 
 def test_pipeline_options_env_beats_profile(monkeypatch) -> None:
     monkeypatch.setenv("CR_BEAM_SIZE", "3")
-    parser = _build_parser()
-    opts = _pipeline_options(parser.parse_args(["run", "dir", "--profile", "accurate"]))
+    opts = _pipeline_options(_parse("run", ["dir", "--profile", "accurate"]))
     assert opts.beam_size == 3
 
 
 def test_pipeline_options_flag_beats_env(monkeypatch) -> None:
     monkeypatch.setenv("CR_BEAM_SIZE", "3")
-    parser = _build_parser()
-    opts = _pipeline_options(parser.parse_args(["run", "dir", "--beam-size", "2"]))
+    opts = _pipeline_options(_parse("run", ["dir", "--beam-size", "2"]))
     assert opts.beam_size == 2
 
 
@@ -132,32 +127,25 @@ def test_pipeline_options_explicit_jobs_zero_beats_profile_and_env(monkeypatch) 
     """The regression Fix 1 guards: `--jobs 0` (auto) is explicit, so neither a
     profile nor `CR_JOBS` may replace the user's own flag."""
     monkeypatch.setenv("CR_JOBS", "5")
-    parser = _build_parser()
 
-    opts = _pipeline_options(
-        parser.parse_args(["run", "dir", "--profile", "fast", "--jobs", "0"])
-    )
+    opts = _pipeline_options(_parse("run", ["dir", "--profile", "fast", "--jobs", "0"]))
     assert opts.jobs == 0
 
     # The same for an explicit chunk value equal to the built-in default.
     monkeypatch.setenv("CR_CHUNK_SECONDS", "300")
-    opts = _pipeline_options(
-        parser.parse_args(["run", "dir", "--chunk-seconds", "600"])
-    )
+    opts = _pipeline_options(_parse("run", ["dir", "--chunk-seconds", "600"]))
     assert opts.chunk_seconds == 600.0
 
 
 def test_pipeline_options_unset_jobs_still_means_auto(monkeypatch) -> None:
     monkeypatch.delenv("CR_JOBS", raising=False)
-    parser = _build_parser()
-    opts = _pipeline_options(parser.parse_args(["run", "dir"]))
+    opts = _pipeline_options(_parse("run", ["dir"]))
     assert opts.jobs == 0
     assert opts.chunk_seconds == 600.0
 
 
 def test_pipeline_options_without_profile_is_unchanged() -> None:
-    parser = _build_parser()
-    opts = _pipeline_options(parser.parse_args(["run", "dir"]))
+    opts = _pipeline_options(_parse("run", ["dir"]))
     assert opts == PipelineOptions(
         # The CLI resolves the models dir, so it is an explicit field; everything
         # else must equal the built-in default.

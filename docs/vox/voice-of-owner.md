@@ -404,3 +404,15 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   tuning UI. The shipped surface is not yet sufficient (no transcript read, no
   project/meeting notes write, `start_run` cannot set options); ticket 21 closes
   those three. The glossary-keyed chunk cache already makes re-runs re-decode.
+- [VOICE: owner, 2026-09-14, late] Final clarifications, verbatim: *"user bring
+  their LLM for agentic useage - for anything LLM like, the agent based glossary
+  management, the agent based transcription correction, the agent summary of
+  transcript into minutes; onboarding of agent mode - we ask user to point or
+  download a pi-agent as our default choice; the tuning of transcript: I think it
+  would happen naturally since we'd expose the necessary tools"*.
+- [DECISION] **pi-agent is the default agent to point at or download** — named as
+  the default in onboarding, never bundled, and never a dependency (any
+  MCP-capable harness works). **The user brings their LLM**, and all three
+  LLM-shaped jobs (glossary management, correction, minutes) are **agent work**.
+  **The tuning loop is emergent**: expose the tools and it happens in
+  conversation.

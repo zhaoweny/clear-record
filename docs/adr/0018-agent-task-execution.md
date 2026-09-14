@@ -150,3 +150,26 @@ mcp service and let the agent to do the heavy lifting"*.
   21 closes exactly those three gaps.
 - [OPEN] Whether a re-run should be **scoped** (one source, or a time range) to
   keep the loop cheap on multi-hour tapes, or always whole-meeting.
+
+## Update (2026-09-14, late) — pi-agent is the default agent to *point at or download*
+
+Owner clarification, verbatim: *"user bring their LLM for agentic useage - for
+anything LLM like, the agent based glossary management, the agent based
+transcription correction, the agent summary of transcript into minutes;
+onboarding of agent mode - we ask user to point or download a pi-agent as our
+default choice; the tuning of transcript: I think it would happen naturally since
+we'd expose the necessary tools"*.
+
+- [DECISION] **pi-agent is the default named agent**, **not bundled** but *asked
+  for*: onboarding offers to **point at an existing pi-agent** or **download
+  one**. This preserves the no-bundled-runtime decision while giving the guided
+  setup (ticket 20) an opinionated default instead of a blank "configure an
+  endpoint".
+- [DECISION] **The user brings their LLM.** Every LLM-shaped job is **agent-driven**
+  — glossary management, transcription correction, and transcript → minutes — not
+  a built-in feature we implement ourselves.
+- [DECISION] **The tuning loop is emergent, not built.** We expose the tools
+  (ticket 21) and the iteration happens in conversation; no bespoke tuning UI and
+  no orchestration in the adapter.
+- [FACT] **Reversibility holds:** pi-agent is a *choice the setup offers*, not a
+  dependency — any MCP-capable harness works equally.

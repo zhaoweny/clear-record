@@ -1,15 +1,15 @@
 <h2>{{ project.name }}</h2>
 <div class="muted">{{ project.notes or "No notes." }} &middot; slug <code>{{ project.slug }}</code></div>
-{% if error %}<div class="run-error">{{ error }}</div>{% endif %}
+{% if error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
 
 <h3>Meetings</h3>
 {% if meetings %}
   {% for row in meetings %}
   <div class="meeting">
-    <div class="row">
+    <div class="row meeting-head">
       <strong>{{ row.meeting.title }}</strong>
       <span class="badge">{{ row.meeting.status }}</span>
-      <span class="muted">{{ row.meeting.workspace_path or "no workspace" }}</span>
+      <span class="muted meeting-path">{{ row.meeting.workspace_path or "no workspace" }}</span>
     </div>
     <form class="stack"
           hx-post="/ui/meetings/{{ row.meeting.id }}/tapes"
@@ -19,7 +19,7 @@
                 placeholder="One tape path per line">{{ row.tapes }}</textarea>
       <button type="submit">Save tapes</button>
     </form>
-    <form class="row"
+    <form class="row run-form"
           hx-post="/ui/meetings/{{ row.meeting.id }}/runs"
           hx-target="#run-{{ row.meeting.id }}"
           hx-swap="outerHTML">
@@ -49,7 +49,7 @@
     {% if row.run %}
       {% set run = row.run %}{% include "_run.html" %}
     {% else %}
-      <div id="run-{{ row.meeting.id }}"><span class="muted">No run yet.</span></div>
+      <div id="run-{{ row.meeting.id }}" class="run run-idle"><span class="muted">No run yet.</span></div>
     {% endif %}
     <form class="row"
           hx-post="/ui/meetings/{{ row.meeting.id }}/archives"
@@ -92,7 +92,7 @@
   </div>
 
   {% if terms %}
-  <table>
+  <table class="table-glossary">
     <thead>
       <tr><th>Term</th><th>Aliases</th><th>Definition</th><th>Status</th><th></th></tr>
     </thead>
@@ -106,19 +106,22 @@
         <td>{{ term.aliases or "" }}</td>
         <td>{{ term.definition or "" }}</td>
         <td>
-          <span class="badge">{{ term.status }}</span>
-          <div class="muted" style="font-size:12px">{{ term.added_by }}</div>
+          <span class="badge status-{{ term.status }}">{{ term.status }}</span>
+          <div class="muted term-by">{{ term.added_by }}</div>
         </td>
         <td>
           <form hx-post="/ui/glossary/{{ term.id }}/status" hx-target="#detail"
-                hx-swap="innerHTML" style="display:inline">
-            <select name="status" onchange="this.form.requestSubmit()">
+                hx-swap="innerHTML">
+            <select class="select-sm" name="status" aria-label="Term status"
+                    onchange="this.form.requestSubmit()">
               {% for status in statuses %}
               <option value="{{ status }}" {% if status == term.status %}selected{% endif %}>{{ status }}</option>
               {% endfor %}
             </select>
           </form>
-          <button class="icon" title="delete" hx-delete="/ui/glossary/{{ term.id }}"
+          <button class="btn btn-icon btn-sm btn-danger-ghost" title="delete"
+                  aria-label="Delete term"
+                  hx-delete="/ui/glossary/{{ term.id }}"
                   hx-target="#detail" hx-swap="innerHTML">&#10005;</button>
         </td>
       </tr>

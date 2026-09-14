@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
 {% block body %}
-<aside>
-  <strong>Projects</strong>
+<aside class="sidebar">
+  <h2 class="sidebar-title">Projects</h2>
   <div id="projects" hx-get="/ui/projects" hx-trigger="load" hx-swap="innerHTML"></div>
 
   <form class="stack"
@@ -15,7 +15,7 @@
   </form>
 </aside>
 
-<section id="detail">
+<section id="detail" class="content">
   <div class="empty">Select or create a project.</div>
 </section>
 {% endblock %}

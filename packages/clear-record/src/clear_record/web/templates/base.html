@@ -9,12 +9,17 @@
   <script src="/static/alpine.min.js" defer></script>
 </head>
 <body>
-  <header>
+  <header class="app-header">
+    {# A record dot, inline: no icon font, no request. #}
+    <svg class="brand" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+      <circle cx="12" cy="12" r="4" fill="currentColor"/>
+    </svg>
     <h1>clear-record</h1><span class="tag">project console</span>
-    <span class="tag" id="status">{% block status %}ready{% endblock %}</span>
-    <a class="tag" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
+    <span class="badge" id="status">{% block status %}ready{% endblock %}</span>
+    <a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
        title="Download a redacted diagnostics bundle (not telemetry)">Diagnostics</a>
-    <button class="icon"
+    <button class="btn btn-ghost btn-danger-ghost"
             hx-post="/api/shutdown" hx-swap="none"
             onclick="this.disabled=true;this.textContent='stopping…'">Quit</button>
   </header>

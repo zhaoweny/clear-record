@@ -2,18 +2,22 @@
    Rendered by /ui/profile-options on change (and initially for `custom`), so the
    preview always comes from core.resolve_options — the console cannot restate
    the precedence the run itself uses. #}
-<div class="row">
+<div class="knobs-head">
   <span class="badge">{{ profile_options.profile }}</span>
+  <span class="knobs-label">resolved knobs</span>
+</div>
+<div class="knobs-values">
   {% if profile_options.knobs %}
   {% for name, value in profile_options.knobs.items() %}
-  <span class="muted">{{ name }}={{ value }}</span>
+  {# `name=value` stays one text node: the run preview is quoted by tests. #}
+  <span class="knob">{{ name }}={{ value }}</span>
   {% endfor %}
   {% else %}
   <span class="muted">no preset &mdash; every knob stays as you set it.</span>
   {% endif %}
 </div>
-<div class="muted" style="font-size:13px">
+<p class="muted knobs-note">
   A profile tunes the decoder knobs only; your model and backend stay as chosen.
   Switching profile re-transcribes: the chunk cache is keyed on the decoder
   knobs, the model and the glossary, so a different profile decodes again.
-</div>
+</p>

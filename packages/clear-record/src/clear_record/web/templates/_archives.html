@@ -1,6 +1,6 @@
 <h3>Archives</h3>
 {% if archives %}
-<table>
+<table class="table-archives">
   <thead>
     <tr><th>Created</th><th>Meeting</th><th>Path</th><th>Status</th><th></th></tr>
   </thead>
@@ -13,11 +13,12 @@
       {# Verification is lazy: the row fetches its own status, so the project
          render never re-hashes a multi-GB archive. #}
       <td id="archive-status-{{ row.archive.id }}"
+          class="archive-status"
           hx-get="/ui/archives/{{ row.archive.id }}/verify"
           hx-trigger="load"
-          hx-swap="innerHTML"><span class="muted">checking&hellip;</span></td>
+          hx-swap="innerHTML"><span class="status status-checking"><span class="muted">checking&hellip;</span></span></td>
       <td>
-        <button class="icon"
+        <button class="btn btn-sm btn-ghost"
                 hx-post="/ui/archives/{{ row.archive.id }}/verify"
                 hx-target="#archive-status-{{ row.archive.id }}"
                 hx-swap="innerHTML">Verify</button>

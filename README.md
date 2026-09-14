@@ -61,10 +61,13 @@ uvx clear-record --help              # run without installing
 uv tool install clear-record         # or: pipx install clear-record
 ```
 
-Its four internal layers (`core`, `engine`, `providers`, `cli`) are `clear_record`
-subpackages, not separate distributions — see ADR-0012. Transcription needs the
-system `whisper-cli` + a ggml plugin (see Backends below); `clear-record backends`
-reports what the machine can run.
+Its internal layers (`core`, `engine`, `providers`, `cli`, then the console's
+`service`, `web`, `tray` and `mcp`) are `clear_record` subpackages, not separate
+distributions — see ADR-0012. The console layers are optional extras: `web`
+(FastAPI + htmx/Alpine), `tray` (PySide6) and `agents` (the MCP SDK), so a
+CLI-only install stays audio-only (ADR-0013/0016/0017). Transcription uses a
+native OS path where one exists and the system `whisper-cli` + a ggml plugin as
+the fallback (ADR-0005); `clear-record backends` reports what the machine can run.
 
 For development, work from a source checkout:
 

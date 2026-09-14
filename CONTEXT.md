@@ -50,13 +50,17 @@ without evidence. The owner's authoritative words live in
 
 ## Current status
 
-**Runnable v0.1 pipeline.** The repo now does real work end-to-end:
+**v0.2 development trunk** (`0.2.0.dev0`; `releases/v0.1.x` is the 0.1
+maintenance line — ADR-0011's 2026-09-14 Update). The repo does real work
+end-to-end:
 
 - uv workspace publishing a single **`clear-record`** dist whose internal layers
   are `clear_record.core` (domain) · `clear_record.engine` (audio/align/reconcile) ·
   `clear_record.providers` (ASR adapters) · `clear_record.cli` (the CLI and the
-  `clear-record` command) — one install name, layers hidden behind it (ADR-0012),
-  MIT license, provenance labeling, and a green `just verify` gate.
+  `clear-record` command), plus the console's `service` (registry, meetings,
+  runs, archive), `web` (FastAPI + htmx/Alpine), `tray` (PySide6 supervisor) and
+  `mcp` (the agent boundary) — one install name, layers hidden behind it
+  (ADR-0012), MIT license, provenance labeling, and a green `just verify` gate.
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
   files per channel**; `align` estimates source offsets via windowed
   cross-correlation; `transcribe` runs a real local ASR backend (Apple/macOS

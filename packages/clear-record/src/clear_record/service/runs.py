@@ -28,6 +28,11 @@ from clear_record.service.store import Registry
 #: What the manager calls to run a pipeline: the CLI's stage wiring by default.
 PipelineCallable = Callable[[str, "stages.PipelineOptions", EventSink | None], None]
 
+#: The pipeline run configuration, owned publicly by the service: it is what
+#: ``RunManager.start`` accepts and defaults, so callers (web, MCP, scripts) set
+#: options without importing the CLI's stage module themselves.
+PipelineOptions = stages.PipelineOptions
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
@@ -235,4 +240,10 @@ class RunManager:
         return self.require_state(run_id)
 
 
-__all__ = ["PipelineCallable", "RunManager", "RunState", "collect_artifacts"]
+__all__ = [
+    "PipelineCallable",
+    "PipelineOptions",
+    "RunManager",
+    "RunState",
+    "collect_artifacts",
+]

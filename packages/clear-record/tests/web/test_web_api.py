@@ -7,10 +7,15 @@ test client — no network, no browser.
 
 from __future__ import annotations
 
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.service import Registry
+from clear_record.core import Progress
+from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
 
 
@@ -18,6 +23,42 @@ from clear_record.web.app import create_app
 def client(tmp_path) -> TestClient:
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
     return TestClient(app)
+
+
+@pytest.fixture()
+def console(tmp_path) -> SimpleNamespace:
+    """A test client over a registry with an injected, gated fake pipeline."""
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    gate = threading.Event()
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        progress = Progress("transcribe", 2, on_event)
+        progress.start("transcribing")
+        progress.advance(source="a", message="chunk 1")
+        gate.wait(10)
+        progress.advance(source="b", message="chunk 2")
+        export = Path(directory) / "export"
+        export.mkdir(parents=True, exist_ok=True)
+        (export / "record.md").write_text("# record\n", encoding="utf-8")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    return SimpleNamespace(
+        client=TestClient(create_app(registry, runs=manager)),
+        registry=registry,
+        manager=manager,
+        gate=gate,
+    )
+
+
+def _make_meeting(console, tmp_path, title: str = "Kickoff") -> dict:
+    client = console.client
+    client.post("/api/projects", json={"name": "Ops"})
+    res = client.post(
+        "/api/projects/ops/meetings",
+        json={"title": title, "workspace_path": str(tmp_path)},
+    )
+    assert res.status_code == 201
+    return res.json()
 
 
 def _make_project(client, name: str = "Weekly Ops") -> dict:
@@ -169,3 +210,183 @@ def test_unknown_term_is_404(client) -> None:
 def test_shutdown_is_refused_without_a_managed_server(client) -> None:
     """The Quit button only works under the real server (not a test client)."""
     assert client.post("/api/shutdown").status_code == 409
+
+
+# --- JSON API: meetings, tapes and runs ----------------------------------- #
+def test_meeting_api_create_list_and_get(console, tmp_path) -> None:
+    client = console.client
+    client.post("/api/projects", json={"name": "Ops"})
+
+    created = client.post(
+        "/api/projects/ops/meetings",
+        json={"title": "Kickoff", "workspace_path": str(tmp_path)},
+    )
+    assert created.status_code == 201
+    meeting = created.json()
+    assert meeting["project_slug"] == "ops"
+    assert meeting["slug"] == "kickoff"
+    assert meeting["status"] == "new"
+
+    listed = client.get("/api/projects/ops/meetings").json()
+    assert [m["id"] for m in listed] == [meeting["id"]]
+    assert listed[0]["project_slug"] == "ops"
+
+    fetched = client.get(f"/api/meetings/{meeting['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["title"] == "Kickoff"
+
+    assert client.get("/api/projects/nope/meetings").status_code == 404
+    assert client.get("/api/meetings/999").status_code == 404
+
+
+def test_tapes_api_roundtrip(console, tmp_path) -> None:
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+
+    res = client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav"), str(tmp_path / "b.wav")]},
+    )
+    assert res.status_code == 201
+    assert res.json()["paths"] == [str(tmp_path / "a.wav"), str(tmp_path / "b.wav")]
+
+    assert (
+        client.put("/api/meetings/999/tapes", json={"paths": ["x.wav"]}).status_code
+        == 404
+    )
+    assert (
+        client.put(
+            f"/api/meetings/{meeting['id']}/tapes", json={"paths": []}
+        ).status_code
+        == 400
+    )
+
+
+def test_run_api_lifecycle(console, tmp_path) -> None:
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+    tape = str(tmp_path / "a.wav")
+    client.put(f"/api/meetings/{meeting['id']}/tapes", json={"paths": [tape]})
+
+    started = client.post(
+        f"/api/meetings/{meeting['id']}/runs", json={"backend": "apple"}
+    )
+    assert started.status_code == 202
+    run_id = started.json()["run"]["id"]
+    assert started.json()["state"]["status"] in {"queued", "running"}
+
+    console.gate.set()
+    state = console.manager.wait(run_id, timeout=10)
+    assert state.status == "done"
+
+    fetched = client.get(f"/api/runs/{run_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["run"]["status"] == "done"
+    assert fetched.json()["state"]["status"] == "done"
+    assert fetched.json()["state"]["stage"] == "transcribe"
+
+    events = client.get(f"/api/runs/{run_id}/events?after=0").json()
+    assert events["next"] == 3
+    assert [event["index"] for event in events["events"]] == [0, 1, 2]
+    assert events["events"][0]["message"] == "transcribing"
+
+    tail = client.get(f"/api/runs/{run_id}/events?after={events['next']}").json()
+    assert tail == {"events": [], "next": 3}
+
+
+def test_a_second_run_is_409(console, tmp_path) -> None:
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+    client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    first = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    assert first.status_code == 202
+
+    conflict = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    assert conflict.status_code == 409
+
+    console.gate.set()
+    console.manager.wait(first.json()["run"]["id"], timeout=10)
+
+
+def test_a_run_without_tapes_or_workspace_is_400(console, tmp_path) -> None:
+    client = console.client
+    # A workspace but no tape set.
+    meeting = _make_meeting(console, tmp_path)
+    assert (
+        client.post(f"/api/meetings/{meeting['id']}/runs", json={}).status_code == 400
+    )
+
+    # A tape set but no workspace (created through the store, not the API).
+    console.registry.create_project("Ops")
+    no_workspace = console.registry.create_meeting("ops", "No workspace")
+    console.registry.set_recording_set(no_workspace.id, [str(tmp_path / "x.wav")])
+    res = client.post(f"/api/meetings/{no_workspace.id}/runs", json={})
+    assert res.status_code == 400
+
+
+def test_unknown_run_endpoints_are_404(console) -> None:
+    client = console.client
+    assert client.get("/api/runs/999").status_code == 404
+    assert client.get("/api/runs/999/events").status_code == 404
+
+
+# --- HTML surface: meetings and the live run fragment --------------------- #
+def test_ui_create_meeting_and_save_tapes(console, tmp_path) -> None:
+    client = console.client
+    client.post("/ui/projects", data={"name": "Ops"})
+
+    created = client.post(
+        "/ui/projects/ops/meetings",
+        data={"title": "Kickoff", "workspace_path": str(tmp_path)},
+    )
+    assert created.status_code == 200
+    assert "Kickoff" in created.text
+    assert "No run yet." in created.text
+
+    meeting_id = console.registry.list_meetings("ops")[0].id
+    assert f'hx-post="/ui/meetings/{meeting_id}/runs"' in created.text
+
+    saved = client.post(
+        f"/ui/meetings/{meeting_id}/tapes",
+        data={"paths": f"{tmp_path}/a.wav\n{tmp_path}/b.wav"},
+    )
+    assert saved.status_code == 200
+    assert f"{tmp_path}/a.wav" in saved.text
+    assert f"{tmp_path}/b.wav" in saved.text
+
+
+def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+    client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    started = client.post(
+        f"/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
+    )
+    assert started.status_code == 200
+    run_id = console.registry.list_runs(meeting["id"])[0].id
+    assert "<progress" in started.text
+    assert 'hx-trigger="every 1s"' in started.text
+    assert f'hx-get="/ui/runs/{run_id}"' in started.text
+
+    # The project detail renders the same live fragment while the run is active.
+    detail = client.get("/ui/projects/ops")
+    assert f'hx-get="/ui/runs/{run_id}"' in detail.text
+
+    console.gate.set()
+    state = console.manager.wait(run_id, timeout=10)
+    assert state.status == "done"
+
+    done = client.get(f"/ui/runs/{run_id}")
+    assert done.status_code == 200
+    assert "done" in done.text
+    assert "<progress" in done.text
+    assert 'hx-trigger="every 1s"' not in done.text
+
+    assert client.get("/ui/runs/999").status_code == 404

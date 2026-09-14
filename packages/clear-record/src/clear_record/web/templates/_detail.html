@@ -1,6 +1,60 @@
 <h2>{{ project.name }}</h2>
 <div class="muted">{{ project.notes or "No notes." }} &middot; slug <code>{{ project.slug }}</code></div>
 
+<h3>Meetings</h3>
+{% if meetings %}
+  {% for row in meetings %}
+  <div class="meeting">
+    <div class="row">
+      <strong>{{ row.meeting.title }}</strong>
+      <span class="badge">{{ row.meeting.status }}</span>
+      <span class="muted">{{ row.meeting.workspace_path or "no workspace" }}</span>
+    </div>
+    <form class="stack"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/tapes"
+          hx-target="#detail"
+          hx-swap="innerHTML">
+      <textarea name="paths" rows="3"
+                placeholder="One tape path per line">{{ row.tapes }}</textarea>
+      <button type="submit">Save tapes</button>
+    </form>
+    <form class="row"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/runs"
+          hx-target="#run-{{ row.meeting.id }}"
+          hx-swap="outerHTML">
+      <select name="backend">
+        {% for backend in backends %}
+        <option value="{{ backend }}">{{ backend }}</option>
+        {% endfor %}
+      </select>
+      <input name="model" placeholder="model (optional)">
+      <input name="language" placeholder="language (optional)">
+      <button class="primary" type="submit">Run</button>
+    </form>
+    {% if row.run %}
+      {% set run = row.run %}{% include "_run.html" %}
+    {% else %}
+      <div id="run-{{ row.meeting.id }}"><span class="muted">No run yet.</span></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">No meetings yet.</div>
+{% endif %}
+
+<h3>Add a meeting</h3>
+<form class="stack"
+      hx-post="/ui/projects/{{ project.slug }}/meetings"
+      hx-target="#detail"
+      hx-swap="innerHTML"
+      hx-on::after-request="if (event.detail.successful) this.reset()">
+  <div class="row">
+    <input name="title" placeholder="Meeting title" required>
+    <input name="workspace_path" placeholder="Workspace path" required>
+  </div>
+  <button class="primary" type="submit">Add meeting</button>
+</form>
+
 <div x-data="{ filter: 'all' }">
   <h3>Glossary</h3>
   <div class="filters">

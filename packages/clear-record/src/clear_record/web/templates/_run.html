@@ -1,0 +1,12 @@
+<div id="run-{{ run.meeting_id }}" class="run"
+     {% if run.polling %}hx-get="/ui/runs/{{ run.run_id }}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+  <div class="row">
+    <span class="badge">{{ run.status }}</span>
+    {% if run.stage %}<span class="muted">{{ run.stage }}</span>{% endif %}
+    {% if run.total %}<span class="muted">{{ run.index }} / {{ run.total }}</span>{% endif %}
+    {% if run.eta_s is not none %}<span class="muted">ETA {{ run.eta_s | round(0) | int }}s</span>{% endif %}
+  </div>
+  <progress value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
+  {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
+  {% if run.error %}<div class="run-error">{{ run.error }}</div>{% endif %}
+</div>

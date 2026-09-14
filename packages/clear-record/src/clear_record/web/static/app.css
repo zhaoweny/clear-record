@@ -31,3 +31,8 @@ form.stack { display: grid; gap: 8px; margin-top: 10px; max-width: 560px; }
 .badge { font-size: 12px; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--line); }
 .filters { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
 .htmx-request { opacity: .6; }
+.meeting { border: 1px solid var(--line); border-radius: 9px; padding: 12px; margin-top: 10px; }
+.run { margin-top: 10px; display: grid; gap: 6px; }
+.run progress { width: 100%; height: 10px; }
+.run-message { font-size: 13px; }
+.run-error { color: #c0392b; font-size: 13px; }

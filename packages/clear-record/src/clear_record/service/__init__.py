@@ -33,7 +33,12 @@ from clear_record.service.paths import (
     registry_path,
     resolve_data_dir,
 )
-from clear_record.service.runs import RunManager, RunState, collect_artifacts
+from clear_record.service.runs import (
+    PipelineOptions,
+    RunManager,
+    RunState,
+    collect_artifacts,
+)
 from clear_record.service.store import SCHEMA_VERSION, Registry
 
 __all__ = [
@@ -43,6 +48,7 @@ __all__ = [
     "GlossaryTerm",
     "MEETING_STATUSES",
     "Meeting",
+    "PipelineOptions",
     "PipelineRun",
     "Project",
     "REGISTRY_FILENAME",

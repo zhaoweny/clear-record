@@ -62,7 +62,10 @@ _COMMON_CONSOLE_OPTIONS = (
         default=None,
         envvar="CR_DATA_DIR",
         show_envvar=True,
-        help=tr("override the app data directory (default: CR_DATA_DIR / XDG)"),
+        help=tr(
+            "override the app data directory "
+            "(default: CR_DATA_DIR / the platform data directory)"
+        ),
     ),
     click.option(
         "--tailscale",

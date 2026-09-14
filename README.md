@@ -298,6 +298,24 @@ your own directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
 > glossary table. Running tapes with progress, archiving, and the agent tasks
 > (glossary collection, transcript check, minutes) are the next slices.
 
+### Desktop app (macOS · Windows)
+
+For a non-developer machine there is no Python install: `just app` freezes the
+console into a double-clickable app with **PyInstaller** (see
+[packaging/pyinstaller/README.md](packaging/pyinstaller/README.md) and
+[ADR-0014](docs/adr/0014-desktop-app-distribution.md)).
+
+| Artifact | What it is |
+|---|---|
+| `clear-record-web` / `clear-record.app` | double-click to open the console in a browser |
+| `clear-record` | the full console CLI |
+
+The `build-app` CI workflow produces macOS and Windows artifacts. The builds are
+**unsigned**, so first launch needs a right-click → Open (macOS) or More info →
+Run anyway (Windows); signing is a documented future step. No model weights or
+keys are bundled — the app drives the machine's own `whisper-cli` and downloads a
+ggml model on first use, exactly like the CLI.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) (workspace tooling) and
@@ -332,7 +350,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0013)
+docs/adr/                     (decision records 0001–0014)
 ```
 
 ## License

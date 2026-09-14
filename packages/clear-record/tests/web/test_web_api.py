@@ -108,3 +108,8 @@ def test_unknown_term_is_404(client) -> None:
         == 404
     )
     assert client.delete("/api/glossary/999").status_code == 404
+
+
+def test_shutdown_is_refused_without_a_managed_server(client) -> None:
+    """The Quit button only works under the real server (not a test client)."""
+    assert client.post("/api/shutdown").status_code == 409

@@ -59,6 +59,13 @@ dev = [
     "httpx>=0.27",
 ]
 
+# The desktop-app build toolchain (PyInstaller), kept out of `dev` so the
+# verify environment stays lean. Run it with `just app`. See
+# docs/adr/0014-desktop-app-distribution.md.
+app = [
+    "pyinstaller>=6.0",
+]
+
 # Convenience extras that mirror the single dist's backend extras, so a single
 # `--extra <backend>` switch stays valid in both `uv sync` and `uv run`. These
 # mirror ADR-0005.

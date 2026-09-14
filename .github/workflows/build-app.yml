@@ -1,0 +1,62 @@
+name: build-app
+
+# Builds the double-clickable desktop app (PyInstaller) for macOS and Windows and
+# keeps the results as workflow artifacts. Never published to an index — this
+# lane is for handing an average person a file they can run (ADR-0014).
+#
+# PyInstaller does NOT cross-compile, so each OS builds its own artifact on its
+# own runner. Builds are unsigned: see packaging/pyinstaller/README.md for the
+# Gatekeeper / SmartScreen first-run notes.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: clear-record-macos
+          - os: windows-latest
+            artifact: clear-record-windows
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+      - name: Build the app
+        run: just app
+
+      - name: Smoke test — the frozen app still exposes `web` (macOS)
+        if: runner.os == 'macOS'
+        run: ./dist/clear-record/clear-record --help | grep -q " web "
+      - name: Smoke test — the frozen app still exposes `web` (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./dist/clear-record/clear-record.exe --help | Select-String -Quiet "web"
+
+      - name: Package the app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/clear-record.app clear-record-macos.zip
+      - name: Package the onedir app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/clear-record/* -DestinationPath clear-record-windows.zip
+
+      - name: Upload the app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: clear-record-*.zip
+          if-no-files-found: error

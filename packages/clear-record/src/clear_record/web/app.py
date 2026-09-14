@@ -174,6 +174,23 @@ def create_app(registry: Registry) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
 
+    @app.post("/api/shutdown", status_code=202)
+    def shutdown() -> dict:
+        """Ask the managed server to stop (the desktop app's Quit button).
+
+        The console runs as a local server; a windowed desktop build has no
+        terminal to Ctrl-C, so the UI needs an explicit way to stop it. When the
+        app is served by something other than this module's ``serve()`` (e.g. a
+        test client), there is nothing to stop.
+        """
+        server = getattr(app.state, "server", None)
+        if server is None:
+            raise HTTPException(
+                status_code=409, detail="not running under the managed server"
+            )
+        server.should_exit = True
+        return {"status": "stopping"}
+
     return app
 
 
@@ -188,10 +205,15 @@ def serve(
     import uvicorn
 
     app = create_app(Registry.open(data_dir=data_dir))
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+    # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
+    # build has no terminal to interrupt.
+    app.state.server = server
     if open_browser:
         url = f"http://{host}:{port}/"
         threading.Timer(0.8, webbrowser.open, args=(url,)).start()
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    server.run()
     return 0
 
 

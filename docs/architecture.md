@@ -281,7 +281,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
   src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0013
+docs/adr/                     decision records 0001–0014
 docs/vox/voice-of-owner.md    owner voice
 ```
 

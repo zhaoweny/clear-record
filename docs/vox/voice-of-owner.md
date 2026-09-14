@@ -228,3 +228,16 @@ this repository. See `docs/architecture.md` §7.
   (no bundled provider key), and the harness never entering the core. The
   clear-record agent seam follows that shape (MCP server + a command-template
   runner), also recorded in ADR-0013.
+
+### Desktop app build (2026-09-14)
+
+- Owner directive, verbatim: *"In the end build a pyinstaller spec, which means
+  we could offer Mac and windows build with minimal friction to average
+  person"*.
+- [DECISION] A **PyInstaller spec** plus a `just app` recipe freeze the console
+  into a double-clickable desktop app (`clear-record-web` / `clear-record.app`)
+  and the full CLI (`clear-record`), built per-OS and kept as **CI workflow
+  artifacts** — never published to an index. Builds are unsigned; the Gatekeeper
+  / SmartScreen first-run workarounds are documented, and signing/notarization
+  is an explicit future step. No model weights or keys are bundled. See
+  [ADR-0014](../adr/0014-desktop-app-distribution.md).

@@ -50,6 +50,7 @@ INDEX_HTML = """<!doctype html>
 <header>
   <h1>clear-record</h1><span class="tag">project console</span>
   <span class="tag" id="status" style="margin-left:auto"></span>
+  <button id="quit" title="Stop the local console">Quit</button>
 </header>
 <main>
   <aside>
@@ -155,6 +156,12 @@ $("#new-project").addEventListener("submit", async (e) => {
     e.target.reset();
     await select(p.slug);
   } catch (err) { $("#status").textContent = err.message; }
+});
+
+$("#quit").addEventListener("click", async () => {
+  try { await api("/api/shutdown", { method: "POST" }); } catch (e) { /* already gone */ }
+  document.body.innerHTML =
+    '<p style="padding:24px;font:15px system-ui">Console stopped. You can close this tab.</p>';
 });
 
 loadProjects().then(() => {

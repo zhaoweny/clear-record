@@ -164,3 +164,66 @@ Date: 2026-09-15
   - **Language/locale coverage** differs from whisper's: a `--language` the
     backend cannot serve must fail with an actionable error, not silently
     auto-detect.
+
+## Update (2026-09-15) — the Apple adapter lands; the bridge is a Swift helper
+
+This closes ticket 02 (`apple-speech`) and the Apple half of the carried-forward
+`[OPEN]`s. Ticket 03 (`windows-ai`) stays deferred.
+
+### Bridging: a Swift helper, because the API is Swift-only
+
+- [FACT] The macOS 26 `Speech` framework's Objective-C headers expose **only**
+  the legacy `SFSpeechRecognizer` classes. `SpeechAnalyzer`,
+  `SpeechTranscriber`, `AssetInventory` and `AnalysisContext` are declared in the
+  framework's `.swiftinterface` with **no `@objc` bridging** (only the shared
+  `@objc deinit`; `AssetInstallationRequest` is the lone `NSObject`). A `pyobjc`
+  projection therefore cannot reach them.
+- [DECISION] **The Apple bridge is a small Swift helper invoked as a subprocess**
+  — the `pyobjc` option in the seam above is **infeasible**, not merely
+  dispreferred. `providers/apple_speech_helper.swift` ships in the wheel and is
+  compiled once (`xcrun --find swiftc`, `-parse-as-library`) into the platform
+  cache directory; `CR_APPLE_SPEECH_HELPER` points at a prebuilt helper instead
+  (e.g. a frozen app bundle). A subprocess is the project's familiar shape
+  (`whisper-cli`), and it keeps the vendor code in `providers`.
+- [DECISION] **No Python dependency is added.** The `apple-speech` extra stays a
+  **no-op marker** (like `apple`/`nvidia`/`amd`): no `pyobjc`-family wheel — which
+  does not build on Linux/Windows — enters the graph, so those installs are
+  untouched. The toolchain, not a package, is the optional prerequisite.
+
+### Capabilities, provisioning and the carried-forward opens
+
+- [DECISION] The adapter declares `runtime="system"`, `chunked=False`,
+  `parallelizable=False` (one in-process analyzer session) and
+  `decoder_knobs=()`; the whisper-cli plugin probe reports not-applicable.
+- [DECISION] `available()` is a **cheap** probe: platform, macOS major version,
+  then the helper's `SpeechTranscriber.isAvailable` (cached per process). It never
+  downloads an asset. The helper is compiled once and cached the first time a
+  probe needs it — a one-time local cost, not an asset download; the "cheap"
+  rule exists to keep `available()` off the network and off a multi-GB model.
+  A missing OS version or a missing Swift toolchain reports
+  `unavailable` **with the fix** (`xcode-select --install`) — never an
+  `ImportError` traceback.
+- [DECISION] `prepare()` performs the `AssetInventory`
+  install/reserve. The seam's `prepare(model, model_dir)` has **no language
+  argument**, so it provisions the **current system locale**; an explicit
+  `--language` outside it is provisioned on first `transcribe()`. The backend is
+  serialized, so there is no install race, and once provisioned transcription is
+  offline.
+- [DECISION] **Glossary: supported**, biasing via
+  `AnalysisContext.contextualStrings[.general]` (Apple documents it as a bias, not
+  a constraint) — closing that `[OPEN]` for Apple.
+- [DECISION] **Confidence: populated where Apple provides it**, read from the
+  `transcriptionConfidence` attributed-string attribute and averaged over a
+  segment's runs; `None` otherwise. It is never invented.
+- [DECISION] **Language: gated**, resolved through
+  `SpeechTranscriber.supportedLocale(equivalentTo:)`; a hint it cannot serve
+  fails with an actionable error rather than silently auto-detecting.
+- [DESIGN] Committed timings use the finalized `Result.range` (falling back to
+  the per-run `audioTimeRange` attributes when the overall range is unusable);
+  volatile results drive progress only. Whether the volatile range **replaces**
+  the chunk-level bar is still open, but the per-source cache chunk already
+  serves as the coarse progress/resume unit.
+- [FACT] Hot-verified on macOS 26.6 / Apple Silicon: the real adapter transcribes
+  a synthesized clip into timed, source-attributed segments with per-segment
+  confidence (the `test_hot_real_transcription` test, opt-in via
+  `CR_APPLE_SPEECH_HOT=1`).

@@ -86,11 +86,14 @@ i18n = [
 #
 # `apple`, `nvidia` and `amd` all intentionally resolve no Python deps: every
 # path uses the system `whisper-cli` + a ggml GPU plugin, so the backend extras
-# are no-op markers (see packages/clear-record/pyproject.toml).
+# are no-op markers (see packages/clear-record/pyproject.toml). `apple-speech`
+# (macOS 26+ `SpeechTranscriber`) is a marker too: its bridge is a Swift helper,
+# not a Python package (ADR-0019).
 [project.optional-dependencies]
 apple = ["clear-record[apple]"]
 nvidia = ["clear-record[nvidia]"]
 amd = ["clear-record[amd]"]
+apple-speech = ["clear-record[apple-speech]"]
 all = ["clear-record[all]"]
 web = ["clear-record[web]"]
 tray = ["clear-record[tray]"]

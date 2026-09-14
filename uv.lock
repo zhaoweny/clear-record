@@ -202,7 +202,7 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.12" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.30" },
 ]
-provides-extras = ["apple", "nvidia", "amd", "all", "web", "tray", "agents"]
+provides-extras = ["apple", "nvidia", "amd", "apple-speech", "all", "web", "tray", "agents"]
 
 [[package]]
 name = "clear-record-workspace"
@@ -220,6 +220,9 @@ amd = [
     { name = "clear-record" },
 ]
 apple = [
+    { name = "clear-record" },
+]
+apple-speech = [
     { name = "clear-record" },
 ]
 nvidia = [
@@ -257,11 +260,12 @@ requires-dist = [
     { name = "clear-record", extras = ["all"], marker = "extra == 'all'", editable = "packages/clear-record" },
     { name = "clear-record", extras = ["amd"], marker = "extra == 'amd'", editable = "packages/clear-record" },
     { name = "clear-record", extras = ["apple"], marker = "extra == 'apple'", editable = "packages/clear-record" },
+    { name = "clear-record", extras = ["apple-speech"], marker = "extra == 'apple-speech'", editable = "packages/clear-record" },
     { name = "clear-record", extras = ["nvidia"], marker = "extra == 'nvidia'", editable = "packages/clear-record" },
     { name = "clear-record", extras = ["tray"], marker = "extra == 'tray'", editable = "packages/clear-record" },
     { name = "clear-record", extras = ["web"], marker = "extra == 'web'", editable = "packages/clear-record" },
 ]
-provides-extras = ["apple", "nvidia", "amd", "all", "web", "tray", "agents"]
+provides-extras = ["apple", "nvidia", "amd", "apple-speech", "all", "web", "tray", "agents"]
 
 [package.metadata.requires-dev]
 app = [{ name = "pyinstaller", specifier = ">=6.0" }]

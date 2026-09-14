@@ -8,6 +8,13 @@ as unavailable rather than failing the whole pipeline.
 
 from __future__ import annotations
 
+from clear_record.providers.apple_speech import (
+    AppleSpeechBackend,
+    AppleSpeechError,
+    AppleSpeechHelper,
+    AppleSpeechUnavailable,
+    SpeechProbe,
+)
 from clear_record.providers.backends import (
     BACKENDS,
     PluginLoadProbe,
@@ -39,6 +46,10 @@ from clear_record.providers.process import (
 __all__ = [
     "APPLE_SPEECH_BACKEND_ID",
     "BACKENDS",
+    "AppleSpeechBackend",
+    "AppleSpeechError",
+    "AppleSpeechHelper",
+    "AppleSpeechUnavailable",
     "Availability",
     "Backend",
     "BackendBase",
@@ -51,6 +62,7 @@ __all__ = [
     "ProcessRunner",
     "RUNTIME_SYSTEM",
     "RUNTIME_WHISPER_CLI",
+    "SpeechProbe",
     "SubprocessRunner",
     "WINDOWS_AI_BACKEND_ID",
     "available_backend_ids",

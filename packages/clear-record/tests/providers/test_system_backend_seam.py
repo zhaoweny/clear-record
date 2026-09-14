@@ -63,10 +63,16 @@ class _FakeSystemBackend(BackendBase):
 def test_native_ids_are_documented_and_do_not_collide() -> None:
     assert APPLE_SPEECH_BACKEND_ID == "apple-speech"
     assert WINDOWS_AI_BACKEND_ID == "windows-ai"
-    # The shipped ids are all whisper-cli; the native family is distinct so a
-    # native backend can register without ambiguity (ADR-0019).
-    assert {APPLE_SPEECH_BACKEND_ID, WINDOWS_AI_BACKEND_ID}.isdisjoint(BACKENDS)
-    assert tuple(BACKENDS) == ("apple", "nvidia", "amd")
+    # The shipped ids are all whisper-cli; the native family keeps distinct ids
+    # so a native backend registers without ambiguity (ADR-0019). Apple's adapter
+    # has landed (ticket 02); Windows is still deferred (ticket 03), so its id is
+    # documented but not yet a catalog entry.
+    assert APPLE_SPEECH_BACKEND_ID in BACKENDS
+    assert WINDOWS_AI_BACKEND_ID not in BACKENDS
+    assert APPLE_SPEECH_BACKEND_ID not in ("apple", "nvidia", "amd")
+    # The native backend is appended after the shipped trio so the positional
+    # default (``next(iter(BACKENDS))``) stays a backend that can run anywhere.
+    assert tuple(BACKENDS) == ("apple", "nvidia", "amd", APPLE_SPEECH_BACKEND_ID)
 
 
 # --------------------------------------------------------------------------- #

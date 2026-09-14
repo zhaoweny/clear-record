@@ -42,7 +42,14 @@ from collections.abc import Callable
 
 from clear_record.core import DECODER_KNOB_FIELDS, Segment, TranscriptionResult
 
-from clear_record.providers.base import Availability, Backend, BackendBase, BackendInfo
+from clear_record.providers.apple_speech import AppleSpeechBackend
+from clear_record.providers.base import (
+    APPLE_SPEECH_BACKEND_ID,
+    Availability,
+    Backend,
+    BackendBase,
+    BackendInfo,
+)
 from clear_record.providers.paths import resolve_models_dir
 from clear_record.providers.process import ProcessRunner, SubprocessRunner
 
@@ -864,10 +871,17 @@ class NvidiaBackend(_WhisperCliBackend):
 
 
 # The advertised catalog in stable order (backends may be unavailable at runtime).
+# ``apple-speech`` is appended after the shipped trio so ``next(iter(BACKENDS))``
+# (the CLI's default ``--backend``) stays the portable ``apple`` adapter: on a
+# non-Mac the native backend is unavailable, and a positional default must not be
+# one that cannot run. Native-first applies to ``--backend auto`` via
+# ``cli.auto.BACKEND_PREFERENCE``, which is the separate capability knob (ADR-0005
+# 2026-09-14 Update, ADR-0019).
 BACKENDS: dict[str, Backend] = {
     "apple": AppleBackend(),
     "nvidia": NvidiaBackend(),
     "amd": AmdBackend(),
+    APPLE_SPEECH_BACKEND_ID: AppleSpeechBackend(),
 }
 
 

@@ -59,6 +59,12 @@ Issues = "https://github.com/zhaoweny/clear-record/issues"
 # a ggml plugin); they exist so `--extra <backend>` stays a valid switch. See
 # ADR-0005.
 #
+# `apple-speech` is the macOS 26+ native backend. It is also a no-op marker: the
+# bridge is a Swift helper compiled from source shipped in this wheel, so no
+# Python dependency (and no `pyobjc` wheel that would fail to build off macOS) is
+# introduced. `clear-record backends` reports it unavailable with a reason when
+# the OS version or the Swift toolchain is missing. See ADR-0019.
+#
 # `web` carries the web console's stack (FastAPI + uvicorn). It is deliberately
 # NOT a base dependency: the web/service *code* ships inside this one wheel (so
 # there is no second dist to publish — ADR-0013), but a plain CLI install does
@@ -69,6 +75,7 @@ Issues = "https://github.com/zhaoweny/clear-record/issues"
 apple = []
 nvidia = []
 amd = []
+apple-speech = []
 all = []
 web = [
     "fastapi>=0.115",

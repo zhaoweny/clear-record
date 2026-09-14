@@ -42,8 +42,9 @@ class Availability:
     ``available()`` stays the cheap boolean probe; this carries the same verdict
     with the *why* attached, so ``clear-record backends`` can say a backend is
     missing an OS version, a capability, or a provisioned asset rather than only
-    that it is unavailable. ``reason`` is a short human-readable phrase and is
-    empty when the backend is available.
+    that it is unavailable. ``reason`` is a short human-readable phrase: the
+    failing check when unavailable, or a summary of how it is available (the
+    shipped adapters both do this).
     """
 
     available: bool

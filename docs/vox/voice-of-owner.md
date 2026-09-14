@@ -311,3 +311,19 @@ this repository. See `docs/architecture.md` §7.
 - [FACT] It **unblocks two recorded `[OPEN]`s**: ADR-0017's "MCP `start_run`
   cannot set backend/model/language" gap, and the web console's inability to set
   run options — both want the run-options type owned outside `cli`.
+
+## Backend hardware research: Intel, DGX Spark, mobile/edge (2026-09-14)
+
+- Owner request, verbatim: *"feature request: research intel transcript story so
+  we have all major pc vendor as the backend; then we research dgx-spark (which
+  is a nvidia powerhouse) story, as well as mobile chip story like apple,
+  qualcomm and mediatek, rockchip"*.
+- [REQ] Recorded as a **research** request — not a decision and not an
+  implementation. Tracker `.scratch/hardware-backends/` (spec + tickets 01–03);
+  findings land as dated notes in `docs/research/`, matching the owner's
+  convention (maa-whirlwind keeps `docs/research/`).
+- [FACT] The research feeds two existing docs rather than creating a decision:
+  **ADR-0005** (whether the "one interface, three families" story becomes four,
+  and whether a non-`whisper-cli` runtime such as OpenVINO is admitted) and
+  **architecture §5/§8** (the hardware-lab table and the "NVIDIA not hot-tested"
+  gap).

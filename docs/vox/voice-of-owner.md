@@ -298,3 +298,16 @@ this repository. See `docs/architecture.md` §7.
 - [FACT] This **changes an ADR-0005 property**: today every backend drives the
   system `whisper-cli` + a ggml plugin. A system-native backend does not, so the
   work needs a fresh ADR (tracked as ticket 01) rather than a silent extension.
+
+## Transcription profiles and auto mode (feature request, 2026-09-14)
+
+- Owner request, verbatim: *"feature request: provide sufficent knobs to build a
+  'recommended default / auto mode' and profiles like 'fast, balanced, accurate,
+  custom'"*.
+- [REQ] Recorded as a feature request, not a decision. Scoped in
+  `.scratch/transcription-profiles/` (spec + tickets 01–04): one shared
+  run-options + profile table, the missing decoder knobs, an explainable `--auto`
+  resolver, and the profile surface on CLI/MCP/web.
+- [FACT] It **unblocks two recorded `[OPEN]`s**: ADR-0017's "MCP `start_run`
+  cannot set backend/model/language" gap, and the web console's inability to set
+  run options — both want the run-options type owned outside `cli`.

@@ -409,7 +409,35 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   CLI is argparse but the **`CR_*` environment surface has grown to 21 variables**
   with precedence re-implemented in several modules — so the recommended order is
   to unify the env layer first and treat the Click port as a later, deliberate
-  prefactor.
+  prefactor. (Owner then chose **"Adopt Click now"**; the port landed as `f5be80e`
+  and is pushed — see [ADR-0022](../adr/0022-adopt-click.md).)
+- [VOICE: owner, 2026-09-15] Tailscale simplification and UI iteration, verbatim:
+  *"can we do a tiny bit of tailscale integration to make it simpler? I'd like to
+  for example, `clear-record web --tailscale` to setup the tailscale serve; and
+  use something like a parent-child process to handle the environment variable
+  setting. on top of that, the web interface should have some design iteration."*
+  - [DECISION] `--tailscale` ships; **no child process** — the resolved tailnet
+    name is passed straight into `create_app(trusted_hosts=...)`, the explicit
+    seam that already existed, so the env var stops being load-bearing (agent
+    recommendation, accepted; `.scratch/tailscale/`).
+  - [DECISION] Owner follow-up on **ports**: *"it could take same port or different
+    port as the server on 127.0.0.1 - I think default to same port, and user may
+    choose different ports."*
+  - [REQ] Owner named the design reference: **shadcn-htmx**
+    (<https://shadcn-htmx.productdevbook.com/>) — shadcn-style components for the
+    server, MIT, shipping htmx v4 **+ Tailwind v4** flavours including **Jinja2**
+    and raw HTML. Offered "patterns in plain CSS" versus "Tailwind via a
+    precompiled artifact", the owner went further, verbatim: *"let's do a proper
+    front-end spin; and I guess we could have someone to handle the rebuild of a
+    source release, while we ship compiled result by default. this also opens the
+    path to some more complicated SPA and web apps"*.
+  - [DECISION] **ADR-0023**: a real front-end source tree with a committed
+    lockfile and a bundler; compiled assets **committed** and shipped in the wheel
+    (so users need no Node); `just` owns build + a **freshness guard**; Tailwind v4
+    with shadcn-htmx as the component reference; **no CDN and no browser-side
+    compilation**. This **supersedes ADR-0016's "no build step"** while preserving
+    its reason — the offline, no-runtime-toolchain guarantee — by shipping compiled
+    output.
 
 ## Agent task execution: no bundled harness (2026-09-14)
 

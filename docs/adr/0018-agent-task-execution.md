@@ -92,3 +92,30 @@ Date: 2026-09-14
   streaming for long transcripts.
 - **Revisit** if a task appears that genuinely needs multi-step tool use — then a
   bundled harness is an evidence-backed fourth implementation, not a rewrite.
+
+## Update (2026-09-14) — onboarding and iteration: guide first, bundle as escalation
+
+Owner refinement, verbatim: *"I mean, the user might want to iterate on it, so at
+that point we might bundle 1 simple harness or have a guided setup so we ease the
+onboard process"*.
+
+- [REQ] This separates **two different needs**, and only one of them is about the
+  harness: **onboarding** (reach a working agent experience at all) and
+  **iteration** (refine prompts and outputs over repeated runs).
+- [DESIGN] **Iteration is largely already covered** by the task design: every run
+  records the runner kind, model and **prompt/context hash**, and output lands as
+  a draft with accept/reject — so a user can edit a prompt or the glossary,
+  re-run, and compare drafts. The residual gap is *acting on feedback within a
+  loop*, which is a harness capability.
+- [OPEN] **Onboarding is the unresolved half.** Ease it either by (a) bundling
+  **one** simple harness, or (b) a **guided setup**. Preferred order: **guide
+  first** — a guided setup adds no runtime to the wheel or the desktop bundle and
+  is reversible, whereas bundling stays the escalation path this ADR's seam
+  already permits as a fourth implementation.
+- [DESIGN] A guided setup is **wizard-shaped**: detect a local endpoint (an Ollama
+  daemon, say), offer to pull a small model, verify with a test call, and — for
+  the MCP rung — detect a client and write its config. The repo already has a
+  `wizard` skill for the human-only provisioning steps.
+- [OPEN] A **trigger, not a date**, for bundling: bundle one simple harness when a
+  guided setup demonstrably fails to get users to a working experience, or when a
+  task appears that needs the loop. Until then no runtime ships.

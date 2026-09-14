@@ -386,3 +386,12 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   pi-agent because *its* tasks really are agentic.
 - [REQ] BYOK is enforced: the credential is read from the environment, never
   stored in config/registry, never bundled; a local endpoint needs no key.
+- [VOICE: owner, 2026-09-14] Refinement on onboarding, verbatim: *"I mean, the
+  user might want to iterate on it, so at that point we might bundle 1 simple
+  harness or have a guided setup so we ease the onboard process"*.
+- [DECISION] Split the concern: **iteration** is already covered (prompt/context
+  hash + draft accept/reject lets a user re-run and compare); **onboarding** is
+  the open half. Preferred order is **guide first** — a guided setup (ticket 20)
+  adds no runtime and is reversible; bundling **one** simple harness remains the
+  **escalation path**, with a trigger rather than a date. Recorded in
+  [ADR-0018](../adr/0018-agent-task-execution.md)'s 2026-09-14 Update.

@@ -147,6 +147,13 @@ class _FakeTailscale:
 def fake_tailscale(monkeypatch: pytest.MonkeyPatch):
     """Install fakes for ``subprocess.run``/``Popen``; returns the installer."""
 
+    # Binary discovery is host-dependent (this machine's `tailscale` is a
+    # symlink into the app bundle), so pin it to the bare name here: these tests
+    # assert the subcommands and ports, not discovery. Resolution itself is
+    # covered in ``test_web_tailscale_binary.py``.
+    monkeypatch.setattr(tailscale.shutil, "which", lambda _name: None)
+    monkeypatch.delenv(tailscale.TAILSCALE_BIN_ENV, raising=False)
+
     def install(
         *,
         status=None,

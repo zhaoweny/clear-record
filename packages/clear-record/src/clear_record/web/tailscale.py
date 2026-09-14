@@ -29,21 +29,37 @@ theirs and is left untouched: the console still starts and trusts the tailnet
 name, and says so. (tailscaled independently refuses a second listener on a
 busy port, so this snapshot is a courtesy on top of that safety net.)
 
-Standard library only (``subprocess`` + ``json`` + ``atexit``); nothing here
-imports FastAPI, so the light ``clear_record.web`` package can call it from the
-CLI. Every failure raises :class:`TailscaleError` carrying an operator-facing
-fix, never a traceback.
+The binary itself is located in one place, :func:`resolve_tailscale_bin`:
+``CR_TAILSCALE`` wins over ``PATH`` (mirroring ``CR_WHISPER_CLI`` for the system
+``whisper-cli``), and the located path is resolved through symlinks before it
+reaches ``subprocess``. That resolution is load-bearing on macOS, where the App
+Store install puts the CLI inside ``Tailscale.app`` and commonly symlinks
+``~/.local/bin/tailscale`` at it: the app-bundle binary aborts when invoked
+through the symlink, and works by its real path.
+
+Standard library only (``subprocess`` + ``json`` + ``os`` + ``shutil`` +
+``atexit``); nothing here imports FastAPI, so the light ``clear_record.web``
+package can call it from the CLI. Every failure raises
+:class:`TailscaleError` carrying an operator-facing fix, never a traceback.
 """
 
 from __future__ import annotations
 
 import atexit
 import json
+import os
+import shutil
 import subprocess
+from pathlib import Path
 from urllib.parse import urlsplit
 
 #: The Tailscale CLI; module-level so tests can point at a fake.
 TAILSCALE_BIN = "tailscale"
+
+#: Explicit binary override, mirroring ``CR_WHISPER_CLI`` for the system
+#: ``whisper-cli``: a path here wins over ``PATH`` discovery. The documented
+#: escape hatch for a non-standard install — the macOS app bundle above all.
+TAILSCALE_BIN_ENV = "CR_TAILSCALE"
 
 #: Serve proxies **only** to loopback, so the target is fixed regardless of the
 #: console's own ``--host`` (which stays localhost by default, ADR-0021).
@@ -64,7 +80,8 @@ SERVE_STOP_GRACE_S = 2.0
 
 _INSTALL_HINT = (
     "install Tailscale, or make sure the `tailscale` command is on PATH "
-    "(https://tailscale.com/download)"
+    "(https://tailscale.com/download); a non-standard install can be named "
+    "explicitly with CR_TAILSCALE"
 )
 
 _NOT_RUNNING_HINT = (
@@ -75,6 +92,23 @@ _NOT_RUNNING_HINT = (
 _HTTPS_HINT = (
     "make sure HTTPS certificates are enabled for your tailnet "
     "(Tailscale admin console > DNS) and that you are logged in"
+)
+
+#: Markers that the CLI died before it could answer — a fatal runtime trap
+#: (Swift ``fatalError``) or a crash — rather than a refusal that names its
+#: reason. The macOS app-bundle ``bundleIdentifier`` abort lands here.
+_ABORT_MARKERS = (
+    "fatal error",
+    "fatal:",
+    "bundleidentifier",
+    "unexpected fault address",
+    "panic:",
+    "traceback (most recent call last)",
+    "segmentation fault",
+    "illegal instruction",
+    "abort trap",
+    "sigabrt",
+    "sigill",
 )
 
 
@@ -96,22 +130,58 @@ def normalize_name(value: str | None) -> str:
     return text.lower().rstrip(".")
 
 
-def _invoke(args: list[str], *, tailscale_bin: str = TAILSCALE_BIN):
-    """Run a one-shot Tailscale CLI command, mapping a missing binary to a fix."""
+def _resolve_path(path: str) -> str:
+    """Follow ``path`` through symlinks to its real location, or leave it be."""
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return path
+
+
+def resolve_tailscale_bin() -> str:
+    """The ``tailscale`` executable to invoke, with symlinks resolved in one place.
+
+    Discovery order:
+
+    1. ``CR_TAILSCALE`` — an explicit path wins over ``PATH``, the same escape
+       hatch ``CR_WHISPER_CLI`` gives the system ``whisper-cli``.
+    2. The first ``tailscale`` on ``PATH``.
+    3. The bare name ``tailscale``, so a truly missing binary is still reported
+       as the install hint rather than a resolution error.
+
+    The located path is **resolved through symlinks** before it reaches
+    ``subprocess``. On macOS the App Store install keeps the CLI inside
+    ``Tailscale.app`` and commonly symlinks ``~/.local/bin/tailscale`` at it; the
+    app-bundle binary **aborts** when ``argv[0]`` is that symlink because it
+    cannot identify its own bundle (``BundleIdentifiers.swift``), while the same
+    binary invoked by its real path works. Passing the resolved real path is what
+    makes the default discovery work for those installs.
+    """
+    chosen = os.environ.get(TAILSCALE_BIN_ENV) or shutil.which(TAILSCALE_BIN)
+    if not chosen:
+        return TAILSCALE_BIN
+    return _resolve_path(chosen)
+
+
+def _invoke(args: list[str], *, tailscale_bin: str | None = None):
+    """Run a one-shot Tailscale CLI command, mapping a missing binary to a fix.
+
+    ``tailscale_bin`` is threaded by the callers that already resolved it (see
+    :func:`resolve_tailscale_bin`); when omitted the binary is resolved here.
+    """
+    binary = tailscale_bin or resolve_tailscale_bin()
     try:
         return subprocess.run(
-            [tailscale_bin, *args],
+            [binary, *args],
             capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError as exc:
-        raise TailscaleError(
-            f"could not run `{tailscale_bin}`: {_INSTALL_HINT}"
-        ) from exc
+        raise TailscaleError(f"could not run `{binary}`: {_INSTALL_HINT}") from exc
     except OSError as exc:
         raise TailscaleError(
-            f"could not run `{tailscale_bin}` ({exc}): {_INSTALL_HINT}"
+            f"could not run `{binary}` ({exc}): {_INSTALL_HINT}"
         ) from exc
 
 
@@ -165,7 +235,55 @@ def _close_pipes(process) -> None:
             pass
 
 
-def resolve_dns_name(*, tailscale_bin: str = TAILSCALE_BIN) -> str:
+def _looks_like_abort(proc) -> bool:
+    """Whether the CLI **died** before answering, rather than refusing.
+
+    A signal death (the negative return code ``subprocess`` reports for a trap
+    or crash) or a fatal/crash signature in the output is an abort. A non-zero
+    exit that printed **nothing at all** is one too: a refusal normally carries
+    its reason on stderr, so silence is a crash. Anything else is Tailscale
+    speaking for itself (e.g. the daemon-down message), which is a refusal.
+    """
+    if proc.returncode is not None and proc.returncode < 0:
+        return True
+    output = "\n".join((proc.stderr or "", proc.stdout or ""))
+    if any(marker in output.lower() for marker in _ABORT_MARKERS):
+        return True
+    return not output.strip()
+
+
+def _status_error(proc, tailscale_bin: str) -> TailscaleError:
+    """The actionable error for a ``status --json`` that produced no status.
+
+    An **abort** is named as an abort, never as a login problem — the original
+    mis-diagnosis. The macOS App-Store case is called out with its two fixes.
+    A **refusal** (Tailscale's own non-fatal message) keeps its words and the
+    start-it fix, which is not claimed as a state we observed but as the next
+    thing to try.
+    """
+    detail = _detail(proc)
+    if _looks_like_abort(proc):
+        return TailscaleError(
+            "`tailscale status --json` died before it could report a status "
+            "(a crash/abort).\n"
+            f"    `{tailscale_bin} status --json` said: {detail}\n"
+            "    On macOS this is what the App Store app bundle does when its "
+            "CLI is invoked through a symlink — e.g. ~/.local/bin/tailscale -> "
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale: the "
+            "app-bundle binary cannot identify its own bundle and aborts.\n"
+            "    Fix: run the binary by its real path, or point the console at "
+            "it with CR_TAILSCALE=/Applications/Tailscale.app/Contents/MacOS/"
+            "Tailscale."
+        )
+    return TailscaleError(
+        "could not read Tailscale status.\n"
+        f"    `{tailscale_bin} status --json` said: {detail}\n"
+        f"    Fix: {_NOT_RUNNING_HINT}, or set CR_TAILSCALE if the CLI is "
+        "installed outside PATH."
+    )
+
+
+def resolve_dns_name(*, tailscale_bin: str | None = None) -> str:
     """This machine's tailnet DNS name, from ``tailscale status --json``.
 
     Prefers ``Self.DNSName`` (normalising its trailing dot); falls back to
@@ -173,13 +291,10 @@ def resolve_dns_name(*, tailscale_bin: str = TAILSCALE_BIN) -> str:
     absent. Raises :class:`TailscaleError` when Tailscale is down, unauthenticated
     or reports nothing usable.
     """
-    proc = _invoke(["status", "--json"], tailscale_bin=tailscale_bin)
+    binary = tailscale_bin or resolve_tailscale_bin()
+    proc = _invoke(["status", "--json"], tailscale_bin=binary)
     if proc.returncode != 0:
-        raise TailscaleError(
-            "could not read Tailscale status — is Tailscale logged in and "
-            f"running?\n    `tailscale status --json` said: {_detail(proc)}\n"
-            f"    Fix: {_NOT_RUNNING_HINT}."
-        )
+        raise _status_error(proc, binary)
     try:
         status = json.loads(proc.stdout)
     except (json.JSONDecodeError, ValueError) as exc:
@@ -231,15 +346,16 @@ def serve_target(target_port: int) -> str:
 
 
 def serve_command(
-    *, serve_port: int, target_port: int, tailscale_bin: str = TAILSCALE_BIN
+    *, serve_port: int, target_port: int, tailscale_bin: str | None = None
 ) -> list[str]:
     """The **foreground** ``tailscale serve`` argv that publishes the console.
 
     ``--https=<serve_port>`` is the port the tailnet sees; the target is always
     ``http://127.0.0.1:<console-port>``, because Serve proxies only to loopback.
     """
+    binary = tailscale_bin or resolve_tailscale_bin()
     return [
-        tailscale_bin,
+        binary,
         "serve",
         SERVE_HTTPS_FLAG.format(port=serve_port),
         serve_target(target_port),
@@ -268,7 +384,7 @@ def served_ports(config: object) -> frozenset[int]:
     return frozenset(ports)
 
 
-def read_served_ports(*, tailscale_bin: str = TAILSCALE_BIN) -> frozenset[int]:
+def read_served_ports(*, tailscale_bin: str | None = None) -> frozenset[int]:
     """Snapshot Serve's current ports, from ``tailscale serve status --json``.
 
     Returns an empty set when the config cannot be read (daemon down, an older
@@ -276,7 +392,8 @@ def read_served_ports(*, tailscale_bin: str = TAILSCALE_BIN) -> frozenset[int]:
     and tailscaled itself refuses a second listener on a busy port, so a failed
     read must not block the console from starting.
     """
-    proc = _invoke(["serve", "status", "--json"], tailscale_bin=tailscale_bin)
+    binary = tailscale_bin or resolve_tailscale_bin()
+    proc = _invoke(["serve", "status", "--json"], tailscale_bin=binary)
     if proc.returncode != 0:
         return frozenset()
     try:
@@ -373,7 +490,7 @@ class ServeSession:
 
 
 def start_serve(
-    *, serve_port: int, target_port: int, tailscale_bin: str = TAILSCALE_BIN
+    *, serve_port: int, target_port: int, tailscale_bin: str | None = None
 ) -> ServeSession:
     """Start foreground Serve for the console, or reuse a rule already on the port.
 
@@ -383,10 +500,11 @@ def start_serve(
     refused and raises :class:`TailscaleError`. The caller turns that into a
     warning — the flag is a convenience, and the console must still start.
     """
-    if serve_port in read_served_ports(tailscale_bin=tailscale_bin):
+    binary = tailscale_bin or resolve_tailscale_bin()
+    if serve_port in read_served_ports(tailscale_bin=binary):
         return ServeSession(serve_port=serve_port, target_port=target_port, reused=True)
     args = serve_command(
-        serve_port=serve_port, target_port=target_port, tailscale_bin=tailscale_bin
+        serve_port=serve_port, target_port=target_port, tailscale_bin=binary
     )
     process = _spawn(args)
     try:
@@ -418,12 +536,14 @@ __all__ = [
     "SERVE_HTTPS_FLAG",
     "SERVE_TARGET",
     "TAILSCALE_BIN",
+    "TAILSCALE_BIN_ENV",
     "ServeSession",
     "TailscaleError",
     "console_url",
     "normalize_name",
     "read_served_ports",
     "resolve_dns_name",
+    "resolve_tailscale_bin",
     "serve_command",
     "serve_target",
     "served_ports",

@@ -267,6 +267,24 @@ normalised), runs
 URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
 port is not 443).
 
+#### Finding the `tailscale` binary
+
+[DESIGN] The CLI is located once, in this order: **`CR_TAILSCALE`** (an explicit
+path — the same escape hatch `CR_WHISPER_CLI` gives the system `whisper-cli`),
+then the first `tailscale` on `PATH`. The located path is then **resolved
+through symlinks** before it is run. That matters on macOS: the App Store install
+keeps the CLI inside `Tailscale.app` and usually symlinks
+`~/.local/bin/tailscale -> /Applications/Tailscale.app/Contents/MacOS/Tailscale`,
+and the app-bundle binary **aborts** when it is invoked *through* the symlink
+(it cannot identify its own bundle, `BundleIdentifiers.swift:47`), while the same
+binary works by its real path. The resolution is automatic; point at a
+non-standard install explicitly with `CR_TAILSCALE`:
+
+```sh
+CR_TAILSCALE=/Applications/Tailscale.app/Contents/MacOS/Tailscale \
+  clear-record web --tailscale
+```
+
 [FACT] The Serve invocation is the **1.52+ CLI form**. Verified against the
 [Tailscale Serve command
 reference](https://tailscale.com/kb/1242/tailscale-serve): a port / partial URL
@@ -333,10 +351,14 @@ clear-record web --tailscale --tailscale-host machine.tailnet.ts.net
 `CR_TRUSTED_HOSTS` still composes: the tailnet name is **added** to whatever
 that variable names, so an existing public hostname keeps working.
 
-Failures are actionable messages, never tracebacks: `tailscale` not on `PATH`;
-the daemon down or logged out (`tailscale up`); a refused `serve` (its own
-`stderr` is surfaced); no DNS name reported (MagicDNS off — pass
-`--tailscale-host`); or unexpected `status --json` output. Each names the fix.
+Failures are actionable messages, never tracebacks: `tailscale` not on `PATH`
+(name a non-standard install with `CR_TAILSCALE`); the daemon down or logged out
+(`tailscale up`); a refused `serve` (its own `stderr` is surfaced); no DNS name
+reported (MagicDNS off — pass `--tailscale-host`); or unexpected `status --json`
+output. A CLI that **dies before it answers** — a fatal/abort signature, a signal
+death, or a non-zero exit with no output — is reported as an *abort*, with the
+macOS app-bundle/symlink cause above and the `CR_TAILSCALE` fix, and never as "not
+logged in": an abort is not a login state. Each names the fix.
 
 Open the printed address. This is the lowest-effort remote shape: no public
 port, no proxy auth config.

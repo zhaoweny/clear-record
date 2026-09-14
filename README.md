@@ -322,7 +322,11 @@ console also resolves this machine's tailnet name, runs a **foreground**
 defaults to `--port`; choose another with `--tailscale-port`), trusts that name,
 and prints the URL. Serve is a child of the console, so the mapping stops with
 it — Ctrl-C included — and a mapping that already existed on that port is left
-untouched. If Serve cannot start, the console still starts and says why. **The
+untouched. If Serve cannot start, the console still starts and says why. The
+`tailscale` binary is found on `PATH` with symlinks resolved before it runs —
+the macOS App Store install symlinks `~/.local/bin/tailscale` into
+`Tailscale.app`, whose bundle aborts when the CLI is invoked through that
+symlink; `CR_TAILSCALE` points at a non-standard install. **The
 tailnet is then the authentication — anyone on your tailnet can reach the
 console**
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),

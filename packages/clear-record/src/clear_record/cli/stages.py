@@ -17,7 +17,10 @@ from pathlib import Path
 import soundfile as sf
 
 from clear_record.core import (
+    DEFAULT_CHUNK_S,
+    DEFAULT_OVERLAP_S,
     EventSink,
+    PipelineOptions,
     Progress,
     RecordDocument,
     Segment,
@@ -27,8 +30,6 @@ from clear_record.core import (
     write_json,
 )
 from clear_record.engine import (
-    DEFAULT_CHUNK_S,
-    DEFAULT_OVERLAP_S,
     SYNTH_SR,
     align_sources,
     attribute_by_source,
@@ -186,10 +187,21 @@ def transcribe(
     jobs: int = 0,
     check_plugin: bool = False,
     *,
+    beam_size: int | None = None,
+    best_of: int | None = None,
+    temperature: float | None = None,
+    entropy_thold: float | None = None,
+    no_speech_thold: float | None = None,
+    max_context: int | None = None,
+    threads: int | None = None,
     on_event: EventSink | None = None,
 ):
     """Transcribe every source, in **resumable overlapping chunks** for long
     tapes, with an optional **glossary** as the decoder's initial prompt.
+
+    The decoder knobs (``beam_size`` … ``threads``) are passed through to the
+    backend only when set; unset means "add no flag", so the built command is
+    unchanged for a caller that does not ask for tuning.
 
     This stage is only wiring: the resumable chunking, cache key/invalidation,
     worker pool, cancellation and chunk merge live in
@@ -248,6 +260,13 @@ def transcribe(
             overlap_seconds=overlap_seconds,
             resume=resume,
             jobs=jobs,
+            beam_size=beam_size,
+            best_of=best_of,
+            temperature=temperature,
+            entropy_thold=entropy_thold,
+            no_speech_thold=no_speech_thold,
+            max_context=max_context,
+            threads=threads,
         ),
         workspace=w,
         on_event=on_event,
@@ -549,36 +568,6 @@ def _render_vtt(record: RecordDocument) -> str:
 # --------------------------------------------------------------------------- #
 # run / calibrate
 # --------------------------------------------------------------------------- #
-@dataclasses.dataclass(frozen=True)
-class PipelineOptions:
-    """The full-pipeline run configuration, threaded to every stage as one value.
-
-    Replaces the 17-keyword interface ``run`` used to take; the CLI fills it once
-    from the parsed arguments. Field defaults match the old keyword defaults, so
-    ``PipelineOptions()`` is the old bare ``run(directory)``.
-    """
-
-    backend: str = "apple"
-    model: str | None = None
-    language: str | None = None
-    model_dir: str | None = None
-    audio_files: tuple[str, ...] | None = None
-    split: str = "auto"
-    glossary: str | None = None
-    chunk_seconds: float = DEFAULT_CHUNK_S
-    overlap_seconds: float = DEFAULT_OVERLAP_S
-    resume: bool = True
-    do_diarize: bool | None = None
-    speakers: int | None = None
-    reference: str | None = None
-    formats: tuple[str, ...] | None = None
-    attribute_energy: bool = False
-    mixed_source: str | None = None
-    window_s: float | None = None
-    jobs: int = 0
-    check_plugin: bool = False
-
-
 def _run_ingest(
     directory: str, options: PipelineOptions, on_event: EventSink | None
 ) -> None:
@@ -611,6 +600,13 @@ def _run_transcribe(
         resume=options.resume,
         jobs=options.jobs,
         check_plugin=options.check_plugin,
+        beam_size=options.beam_size,
+        best_of=options.best_of,
+        temperature=options.temperature,
+        entropy_thold=options.entropy_thold,
+        no_speech_thold=options.no_speech_thold,
+        max_context=options.max_context,
+        threads=options.threads,
         on_event=on_event,
     )
     sources, _ = Workspace.at(directory).load_manifest()

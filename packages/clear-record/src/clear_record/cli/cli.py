@@ -13,9 +13,16 @@ from __future__ import annotations
 import argparse
 from typing import Sequence
 
-from clear_record.core import Step, pipeline_spec
+from clear_record.core import (
+    DEFAULT_CHUNK_S,
+    DEFAULT_OVERLAP_S,
+    PROFILES,
+    PipelineOptions,
+    Step,
+    pipeline_spec,
+    resolve_options,
+)
 from clear_record.providers import BACKENDS, available_backend_ids, resolve_models_dir
-from clear_record.engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 from clear_record.cli import stages
 
@@ -56,6 +63,51 @@ def _build_parser() -> argparse.ArgumentParser:
             help="explicit audio file(s); default: scan the directory",
         )
 
+    def _decoder_args(p: argparse.ArgumentParser) -> None:
+        """The whisper-cli decoder knobs. All default to unset (no flag added)."""
+        p.add_argument(
+            "--beam-size",
+            type=int,
+            default=None,
+            help="beam search width; larger = slower and (usually) more accurate",
+        )
+        p.add_argument(
+            "--best-of",
+            type=int,
+            default=None,
+            help="candidates tried in greedy decoding; larger = slower",
+        )
+        p.add_argument(
+            "--temperature",
+            type=float,
+            default=None,
+            help="decoding temperature (0.0 = deterministic)",
+        )
+        p.add_argument(
+            "--entropy-thold",
+            type=float,
+            default=None,
+            help="entropy threshold; decoding stops when it falls below it",
+        )
+        p.add_argument(
+            "--no-speech-thold",
+            type=float,
+            default=None,
+            help="probability below which a window counts as silence/skip",
+        )
+        p.add_argument(
+            "--max-context",
+            type=int,
+            default=None,
+            help="max tokens of previous text used as decoder context (-1 = default)",
+        )
+        p.add_argument(
+            "--threads",
+            type=int,
+            default=None,
+            help="CPU threads for the decoder (matters on CPU-only paths)",
+        )
+
     def _backend_args(p: argparse.ArgumentParser) -> None:
         default_backend = next(iter(BACKENDS))
         models_dir = resolve_models_dir()
@@ -82,16 +134,19 @@ def _build_parser() -> argparse.ArgumentParser:
             help="glossary file (one term/line) used as the ASR initial prompt; "
             "defaults to <directory>/glossary.txt if present",
         )
+        # These default to None (unset), not to the concrete built-in value, so
+        # resolve_options can tell an explicit `--chunk-seconds 600` from "not
+        # given" and keep the explicit flag on top of any profile/env layer.
         p.add_argument(
             "--chunk-seconds",
             type=float,
-            default=DEFAULT_CHUNK_S,
+            default=None,
             help=f"chunk length for long tape transcription (default {DEFAULT_CHUNK_S:.0f}s)",
         )
         p.add_argument(
             "--overlap-seconds",
             type=float,
-            default=DEFAULT_OVERLAP_S,
+            default=None,
             help=f"overlap between chunks (default {DEFAULT_OVERLAP_S:.0f}s)",
         )
         p.add_argument(
@@ -105,7 +160,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "--jobs",
             "-j",
             type=int,
-            default=0,
+            default=None,
             help="parallel transcription workers (0 = auto; process-isolated "
             "backends only, e.g. the AMD/NVIDIA whisper-cli)",
         )
@@ -116,6 +171,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "actually loads before transcribing (opt-in; the default probe only "
             "checks that the plugin file is present)",
         )
+        p.add_argument(
+            "--profile",
+            choices=tuple(PROFILES),
+            default="custom",
+            help="a preset trading decoder effort at a fixed model; any explicit "
+            "flag overrides it (default custom = set nothing)",
+        )
+        _decoder_args(p)
 
     def _diarize_args(p: argparse.ArgumentParser) -> None:
         g = p.add_mutually_exclusive_group()
@@ -312,27 +375,47 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _pipeline_options(args: argparse.Namespace) -> stages.PipelineOptions:
-    """Fill the one run-options value from the parsed CLI arguments."""
-    return stages.PipelineOptions(
-        backend=args.backend,
-        model=args.model,
-        language=args.language,
-        model_dir=args.models_dir,
+def _backend_option_kwargs(args: argparse.Namespace) -> dict:
+    """The backend/decoder subset shared by `transcribe`, `run` and `calibrate`."""
+    return {
+        "backend": args.backend,
+        "model": args.model,
+        "language": args.language,
+        "model_dir": args.models_dir,
+        "glossary": args.glossary,
+        "chunk_seconds": args.chunk_seconds,
+        "overlap_seconds": args.overlap_seconds,
+        "resume": args.resume,
+        "jobs": args.jobs,
+        "check_plugin": args.check_plugin,
+        "profile": args.profile,
+        "beam_size": args.beam_size,
+        "best_of": args.best_of,
+        "temperature": args.temperature,
+        "entropy_thold": args.entropy_thold,
+        "no_speech_thold": args.no_speech_thold,
+        "max_context": args.max_context,
+        "threads": args.threads,
+    }
+
+
+def _pipeline_options(args: argparse.Namespace) -> PipelineOptions:
+    """Fill the one run-options value from the parsed CLI arguments and resolve it.
+
+    The environment and the profile fill any knob the user left at its default;
+    an explicit flag wins (see :func:`clear_record.core.resolve_options`).
+    """
+    kwargs = _backend_option_kwargs(args)
+    kwargs.update(
         split=args.split,
-        glossary=args.glossary,
-        chunk_seconds=args.chunk_seconds,
-        overlap_seconds=args.overlap_seconds,
-        resume=args.resume,
         do_diarize=args.diarize,
         speakers=args.speakers,
         reference=args.reference,
         attribute_energy=args.attribute_energy,
         mixed_source=args.mixed_source,
         window_s=args.window_s,
-        jobs=args.jobs,
-        check_plugin=args.check_plugin,
     )
+    return resolve_options(PipelineOptions(**kwargs))
 
 
 def _main(args: argparse.Namespace) -> int:
@@ -367,18 +450,26 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if command == "transcribe":
+        options = resolve_options(PipelineOptions(**_backend_option_kwargs(args)))
         stages.transcribe(
             args.directory,
-            args.backend,
-            model=args.model,
-            language=args.language,
-            model_dir=args.models_dir,
-            glossary=args.glossary,
-            chunk_seconds=args.chunk_seconds,
-            overlap_seconds=args.overlap_seconds,
-            resume=args.resume,
-            jobs=args.jobs,
-            check_plugin=args.check_plugin,
+            options.backend,
+            model=options.model,
+            language=options.language,
+            model_dir=options.model_dir,
+            glossary=options.glossary,
+            chunk_seconds=options.chunk_seconds,
+            overlap_seconds=options.overlap_seconds,
+            resume=options.resume,
+            jobs=options.jobs,
+            check_plugin=options.check_plugin,
+            beam_size=options.beam_size,
+            best_of=options.best_of,
+            temperature=options.temperature,
+            entropy_thold=options.entropy_thold,
+            no_speech_thold=options.no_speech_thold,
+            max_context=options.max_context,
+            threads=options.threads,
         )
         return 0
 

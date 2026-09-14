@@ -248,6 +248,32 @@ Pressing Ctrl-C stops the pool promptly: queued chunks are cancelled, in-flight
 `whisper-cli` processes are terminated, and the partial chunk cache is left
 consistent and resumable (each chunk result is published atomically).
 
+**Decoding effort (profiles).** At a fixed model, accuracy trades against speed
+through the decoder settings. A **profile** is a preset for them:
+`--profile fast` is greedy and quick, `balanced` and `accurate` widen the beam
+search (each pass is slower but usually cleaner), and `custom` (the default)
+sets nothing. Any explicit flag overrides the profile, and a `CR_*` environment
+variable overrides the profile too, so `--profile accurate --beam-size 3`
+narrows just that one knob. With no profile and no knob set, the command is
+exactly as it was before profiles existed.
+
+| Flag | Default | What it costs/does |
+|---|---|---|
+| `--beam-size N` | whisper-cli default | Beam-search width: larger = slower, more accurate. |
+| `--best-of N` | whisper-cli default | Candidates tried in greedy decode: larger = slower. |
+| `--temperature T` | whisper-cli default | Decoding temperature; `0.0` is deterministic. |
+| `--entropy-thold T` | whisper-cli default | Stop a decode when its entropy falls below `T`. |
+| `--no-speech-thold T` | whisper-cli default | Probability below which a window is treated as silence. |
+| `--max-context N` | whisper-cli default | Tokens of earlier text used as decoder context (`-1` = default). |
+| `--threads N` | whisper-cli default | CPU threads; matters on the CPU-only paths. |
+
+Each also has a `CR_*` override (`CR_BEAM_SIZE`, `CR_BEST_OF`,
+`CR_TEMPERATURE`, `CR_ENTROPY_THOLD`, `CR_NO_SPEECH_THOLD`, `CR_MAX_CONTEXT`,
+`CR_THREADS`) and a matching `PipelineOptions` field. The chunk cache keys on
+the set knobs, so switching profile re-decodes rather than reusing the other
+profile's chunks. A backend that cannot honour a knob fails loudly instead of
+silently ignoring it.
+
 **Multi-speaker diarization.** A single mixed stream (phone/room mic/podcast)
 has no per-speaker channels, so segments can be clustered into speakers from the
 audio itself (log-mel + F0 fingerprint, k-means; baseline, dependency-free). A

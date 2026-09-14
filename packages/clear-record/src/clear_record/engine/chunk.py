@@ -12,8 +12,10 @@ from pathlib import Path
 
 import soundfile as sf
 
-DEFAULT_CHUNK_S = 600.0  # 10 minutes
-DEFAULT_OVERLAP_S = 5.0
+# Single owner: ``core`` defines the run-option defaults and ``engine`` re-exports
+# them here (``engine → core`` is an allowed edge), so importers of either keep
+# working and there is no second literal to drift.
+from clear_record.core import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 
 def plan_chunks(

@@ -30,6 +30,11 @@ class BackendInfo:
     # In-process backends that share model state keep this False so the
     # pipeline stays sequential and thread-safe.
     parallelizable: bool = False
+    # Which decoder knobs this backend can honour, by their option field name
+    # (see ``core.DECODER_KNOB_FIELDS``). A requested knob outside this set makes
+    # the transcribe stage fail loudly rather than silently drop it; the default
+    # is "none", so a backend must opt in explicitly.
+    decoder_knobs: tuple[str, ...] = ()
 
 
 class Backend(Protocol):
@@ -65,6 +70,13 @@ class Backend(Protocol):
         model_dir: str | None = None,
         initial_prompt: str | None = None,
         process_runner: ProcessRunner | None = None,
+        beam_size: int | None = None,
+        best_of: int | None = None,
+        temperature: float | None = None,
+        entropy_thold: float | None = None,
+        no_speech_thold: float | None = None,
+        max_context: int | None = None,
+        threads: int | None = None,
     ) -> TranscriptionResult:
         """Transcribe ``audio_path`` and return timestamped segments.
 
@@ -74,6 +86,10 @@ class Backend(Protocol):
         biases decoding toward a glossary of names/terms. ``process_runner``
         optionally overrides how the backend launches its CLI, so a caller can
         scope cancellation to its own children (see ``clear_record.providers.process``).
+
+        The trailing decoder knobs are optional; a backend advertises which it
+        supports via :attr:`BackendInfo.decoder_knobs` and must implement the
+        rest. ``None`` means "unset" — the backend's own default applies.
         """
         ...
 

@@ -21,17 +21,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 from clear_record.cli import stages
-from clear_record.core import EventSink, JobEvent
+from clear_record.core import EventSink, JobEvent, PipelineOptions
 from clear_record.service.models import Meeting, PipelineRun
 from clear_record.service.store import Registry
 
 #: What the manager calls to run a pipeline: the CLI's stage wiring by default.
-PipelineCallable = Callable[[str, "stages.PipelineOptions", EventSink | None], None]
+PipelineCallable = Callable[[str, PipelineOptions, EventSink | None], None]
 
-#: The pipeline run configuration, owned publicly by the service: it is what
-#: ``RunManager.start`` accepts and defaults, so callers (web, MCP, scripts) set
-#: options without importing the CLI's stage module themselves.
-PipelineOptions = stages.PipelineOptions
+#: The pipeline run configuration. Owned by ``clear_record.core`` (dependency-free)
+#: and re-exported here for the service's callers (web, MCP, scripts), so they can
+#: set options without importing the CLI's stage module themselves. It is the same
+#: object as ``clear_record.cli.stages.PipelineOptions``.
 
 
 def _now() -> str:
@@ -68,7 +68,7 @@ def collect_artifacts(workspace: Path) -> list[tuple[str, Path]]:
 
 
 def _default_pipeline(
-    directory: str, options: "stages.PipelineOptions", on_event: EventSink | None
+    directory: str, options: PipelineOptions, on_event: EventSink | None
 ) -> None:
     stages.run(directory, options, on_event=on_event)
 
@@ -144,7 +144,7 @@ class RunManager:
 
     # --- running ------------------------------------------------------------ #
     def start(
-        self, meeting: Meeting, options: "stages.PipelineOptions | None" = None
+        self, meeting: Meeting, options: PipelineOptions | None = None
     ) -> PipelineRun:
         if not meeting.workspace_path:
             raise ValueError("meeting has no workspace path; set one before running")
@@ -155,7 +155,7 @@ class RunManager:
             raise ValueError("a run is already in flight for this meeting")
 
         options = dataclasses.replace(
-            options or stages.PipelineOptions(), audio_files=tuple(tape_set.paths)
+            options or PipelineOptions(), audio_files=tuple(tape_set.paths)
         )
         run = self._registry.create_run(
             meeting.id,
@@ -183,7 +183,7 @@ class RunManager:
     def _execute(
         self,
         meeting: Meeting,
-        options: "stages.PipelineOptions",
+        options: PipelineOptions,
         run_id: int,
         state: RunState,
     ) -> None:

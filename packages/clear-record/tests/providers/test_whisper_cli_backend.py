@@ -20,6 +20,8 @@ import pytest
 import clear_record.providers.backends as backends
 from clear_record.providers.backends import (
     AmdBackend,
+    AppleBackend,
+    NvidiaBackend,
     _GGML_BACKEND_DIRS,
     _resolve_ggml_model,
     _whispercli_segments,
@@ -675,3 +677,87 @@ def test_transcribe_invalid_utf8_is_runtime_error(tmp_path, monkeypatch) -> None
 
     with pytest.raises(RuntimeError, match="unparseable JSON"):
         AmdBackend().transcribe(str(tmp_path / "a.wav"), model=_stub_model(tmp_path))
+
+
+# --------------------------------------------------------------------------- #
+# Decoder knobs on the built command (unset leaves it unchanged)
+# --------------------------------------------------------------------------- #
+def _capture_command(monkeypatch, captured: list[list[str]]):
+    """A fake CLI that records the command and answers with an empty transcript."""
+
+    def behavior(cmd):
+        captured.append(list(cmd))
+        out_prefix = cmd[cmd.index("-of") + 1]
+        with open(out_prefix + ".json", "w", encoding="utf-8") as fh:
+            json.dump({"result": {"language": "en"}, "transcription": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    _install_fake_run(monkeypatch, behavior)
+
+
+def test_transcribe_without_knobs_leaves_the_command_unchanged(
+    tmp_path, monkeypatch
+) -> None:
+    """The byte-identical promise: no decoder flags appear when none are set."""
+    captured: list[list[str]] = []
+    _capture_command(monkeypatch, captured)
+    model = _stub_model(tmp_path)
+
+    AmdBackend().transcribe(str(tmp_path / "a.wav"), model=model)
+
+    (cmd,) = captured
+    assert cmd == [
+        "/usr/bin/whisper-cli",
+        "-m",
+        model,
+        "-f",
+        str(tmp_path / "a.wav"),
+        "-l",
+        "auto",
+        "-ojf",
+        "-of",
+        cmd[cmd.index("-of") + 1],
+    ]
+
+
+def test_transcribe_builds_each_decoder_flag_when_set(tmp_path, monkeypatch) -> None:
+    captured: list[list[str]] = []
+    _capture_command(monkeypatch, captured)
+
+    AmdBackend().transcribe(
+        str(tmp_path / "a.wav"),
+        model=_stub_model(tmp_path),
+        beam_size=4,
+        best_of=3,
+        temperature=0.2,
+        entropy_thold=2.0,
+        no_speech_thold=0.5,
+        max_context=64,
+        threads=8,
+    )
+
+    (cmd,) = captured
+    for flag, value in (
+        ("--beam-size", "4"),
+        ("--best-of", "3"),
+        ("--temperature", "0.2"),
+        ("--entropy-thold", "2.0"),
+        ("--no-speech-thold", "0.5"),
+        ("--max-context", "64"),
+        ("--threads", "8"),
+    ):
+        assert flag in cmd, f"{flag} missing from {cmd}"
+        assert cmd[cmd.index(flag) + 1] == value
+
+
+def test_decoder_flag_map_matches_the_core_knob_fields() -> None:
+    from clear_record.core import DECODER_KNOB_FIELDS
+
+    assert set(backends._DECODER_FLAGS) == set(DECODER_KNOB_FIELDS)
+
+
+def test_all_whisper_cli_backends_advertise_the_decoder_knobs() -> None:
+    from clear_record.core import DECODER_KNOB_FIELDS
+
+    for backend in (AppleBackend(), AmdBackend(), NvidiaBackend()):
+        assert backend.info.decoder_knobs == DECODER_KNOB_FIELDS

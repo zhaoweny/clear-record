@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from clear_record.core import (
@@ -116,14 +116,17 @@ def chunk_cache_key(
     chunk_seconds: float,
     overlap_seconds: float,
     n_chunks: int,
+    decoders: Mapping[str, object] | None = None,
 ) -> dict:
     """The run-meta that keys one source's chunk cache.
 
     The cache is invalidated whenever any field here changes — backend, model,
-    language, glossary prompt or the chunk plan — which is what lets a first
-    pass run in the background and then be corrected with a finished glossary.
+    language, glossary prompt, the chunk plan or a decoder knob — which is what
+    lets a first pass run in the background and then be corrected with a finished
+    glossary. An unset decoder knob adds nothing, so a run that does not set any
+    keeps the cache key it had before tunable decoding existed.
     """
-    return {
+    key = {
         "backend": backend,
         "model": model,
         "language": language or "auto",
@@ -132,6 +135,9 @@ def chunk_cache_key(
         "overlap_seconds": overlap_seconds,
         "n_chunks": n_chunks,
     }
+    if decoders:
+        key["decoders"] = dict(decoders)
+    return key
 
 
 @dataclasses.dataclass(frozen=True)

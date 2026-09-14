@@ -23,12 +23,30 @@ from clear_record.core.model import (
     to_dict,
     write_json,
 )
+from clear_record.core.options import (
+    DECODER_KNOB_FIELDS,
+    DEFAULT_CHUNK_S,
+    DEFAULT_OVERLAP_S,
+    PROFILE_CUSTOM,
+    PROFILES,
+    RESOLVABLE_FIELDS,
+    PipelineOptions,
+    profile_values,
+    resolve_options,
+)
 from clear_record.core.pipeline import PipelineSpec, PipelineStage, Step, pipeline_spec
 
 __all__ = [
     "Alignment",
+    "DECODER_KNOB_FIELDS",
+    "DEFAULT_CHUNK_S",
+    "DEFAULT_OVERLAP_S",
     "EventSink",
     "JobEvent",
+    "PROFILE_CUSTOM",
+    "PROFILES",
+    "RESOLVABLE_FIELDS",
+    "PipelineOptions",
     "PipelineSpec",
     "PipelineStage",
     "Progress",
@@ -41,7 +59,9 @@ __all__ = [
     "emit",
     "load_json",
     "pipeline_spec",
+    "profile_values",
     "record_from_dict",
+    "resolve_options",
     "segment_from_dict",
     "source_from_dict",
     "to_dict",

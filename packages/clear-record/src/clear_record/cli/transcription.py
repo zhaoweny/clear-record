@@ -25,10 +25,16 @@ from pathlib import Path
 
 import soundfile as sf
 
-from clear_record.core import EventSink, Progress, Segment, Source
-from clear_record.engine import (
+from clear_record.core import (
+    DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    EventSink,
+    Progress,
+    Segment,
+    Source,
+)
+from clear_record.engine import (
     clean_segments,
     plan_chunks,
     write_chunk,
@@ -56,6 +62,23 @@ class TranscriptionOptions:
     overlap_seconds: float = DEFAULT_OVERLAP_S
     resume: bool = True
     jobs: int = 0
+    # Decoder knobs; ``None`` = unset (the backend's own default applies).
+    beam_size: int | None = None
+    best_of: int | None = None
+    temperature: float | None = None
+    entropy_thold: float | None = None
+    no_speech_thold: float | None = None
+    max_context: int | None = None
+    threads: int | None = None
+
+    def decoder_knobs(self) -> dict[str, object]:
+        """The decoder knobs that are set, keyed by field name."""
+        out: dict[str, object] = {}
+        for name in DECODER_KNOB_FIELDS:
+            value = getattr(self, name)
+            if value is not None:
+                out[name] = value
+        return out
 
 
 @dataclasses.dataclass(frozen=True)
@@ -383,6 +406,18 @@ def transcribe(
     overlap_seconds = options.overlap_seconds
     log = workspace.log
 
+    # Decoder knobs are passed to the backend only when set. A backend that does
+    # not advertise a requested knob must fail loudly here, not silently drop it.
+    decoders = options.decoder_knobs()
+    supported = tuple(getattr(backend.info, "decoder_knobs", ()) or ())
+    unsupported = sorted(set(decoders) - set(supported))
+    if unsupported:
+        raise ValueError(
+            f"[transcribe] backend '{backend_id}' cannot honour decoder "
+            f"option(s): {', '.join(unsupported)}. It supports: "
+            f"{', '.join(supported) or 'none'}."
+        )
+
     # Plan every source first (cheap I/O), then run the uncached chunks through
     # one bounded pool so the GPU stays fed across source boundaries too.
     plans: list[_SourcePlan] = []
@@ -400,6 +435,7 @@ def transcribe(
             chunk_seconds=chunk_seconds,
             overlap_seconds=overlap_seconds,
             n_chunks=len(chunks),
+            decoders=decoders,
         )
 
         reuse = options.resume and cache.matches(run_meta)
@@ -459,6 +495,7 @@ def transcribe(
                 model_dir=model_dir,
                 initial_prompt=prompt or None,
                 process_runner=runner,
+                **decoders,
             )
         finally:
             chunk_wav.unlink(missing_ok=True)  # segments cached; wav regenerable

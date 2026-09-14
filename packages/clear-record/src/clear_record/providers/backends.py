@@ -40,7 +40,7 @@ import threading
 import urllib.request
 from collections.abc import Callable
 
-from clear_record.core import Segment, TranscriptionResult
+from clear_record.core import DECODER_KNOB_FIELDS, Segment, TranscriptionResult
 
 from clear_record.providers.base import Backend, BackendBase, BackendInfo
 from clear_record.providers.paths import resolve_models_dir
@@ -603,6 +603,21 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
     return data
 
 
+# whisper-cli's long flags for the tunable decoder knobs, keyed by the option
+# field name (``core.DECODER_KNOB_FIELDS``). A flag is added only when its knob is
+# set, so an unset knob leaves the built command exactly as it was before these
+# knobs existed. Kept in lock-step with ``DECODER_KNOB_FIELDS`` by a test.
+_DECODER_FLAGS: dict[str, str] = {
+    "beam_size": "--beam-size",
+    "best_of": "--best-of",
+    "temperature": "--temperature",
+    "entropy_thold": "--entropy-thold",
+    "no_speech_thold": "--no-speech-thold",
+    "max_context": "--max-context",
+    "threads": "--threads",
+}
+
+
 class _WhisperCliBackend(BackendBase):
     """System ``whisper-cli`` backend, accelerated by a ggml backend plugin.
 
@@ -631,7 +646,9 @@ class _WhisperCliBackend(BackendBase):
         system: str = "Linux",
         runner: ProcessRunner | None = None,
     ) -> None:
-        self.info = info
+        # The shared CLI adapter implements every decoder knob, so all three
+        # families advertise the full set without repeating it per subclass.
+        self.info = dataclasses.replace(info, decoder_knobs=DECODER_KNOB_FIELDS)
         self._gpu_backends = gpu_backends
         self._device_check = device_check
         self._system = system
@@ -671,6 +688,13 @@ class _WhisperCliBackend(BackendBase):
         model_dir: str | None = None,
         initial_prompt: str | None = None,
         process_runner: ProcessRunner | None = None,
+        beam_size: int | None = None,
+        best_of: int | None = None,
+        temperature: float | None = None,
+        entropy_thold: float | None = None,
+        no_speech_thold: float | None = None,
+        max_context: int | None = None,
+        threads: int | None = None,
     ) -> TranscriptionResult:
         cli = _find_whisper_cli()
         if cli is None:  # defensive: available() already checked this
@@ -694,6 +718,19 @@ class _WhisperCliBackend(BackendBase):
                 "-of",
                 out_prefix,
             ]
+            knobs = {
+                "beam_size": beam_size,
+                "best_of": best_of,
+                "temperature": temperature,
+                "entropy_thold": entropy_thold,
+                "no_speech_thold": no_speech_thold,
+                "max_context": max_context,
+                "threads": threads,
+            }
+            for name, flag in _DECODER_FLAGS.items():
+                value = knobs[name]
+                if value is not None:
+                    cmd += [flag, str(value)]
             if initial_prompt:
                 cmd += ["--prompt", initial_prompt]
             proc = runner.run(cmd, capture_output=True, text=True)

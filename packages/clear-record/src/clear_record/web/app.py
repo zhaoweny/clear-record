@@ -34,6 +34,8 @@ from clear_record.service import (
     Registry,
     RunManager,
     RunState,
+    archive_meeting,
+    verify_archive,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -94,6 +96,10 @@ class RunCreate(BaseModel):
     split: str = "auto"
     resume: bool = True
     jobs: int = 0
+
+
+class ArchiveCreate(BaseModel):
+    root: str | None = None
 
 
 def _out(obj) -> dict:
@@ -168,6 +174,21 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
             )
         return rows
 
+    def archive_status(archive) -> dict | None:
+        """The verification summary, or None when the manifest is gone."""
+        try:
+            return verify_archive(archive.root_path)
+        except FileNotFoundError:
+            return None
+
+    def archive_rows(slug: str) -> list[dict]:
+        rows: list[dict] = []
+        for meeting in registry.list_meetings(slug):
+            for archive in registry.list_archives(meeting.id):
+                rows.append({"archive": archive, "meeting": meeting})
+        rows.sort(key=lambda row: row["archive"].id, reverse=True)
+        return rows
+
     def render_run(request: Request, state: RunState) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(
             request,
@@ -197,7 +218,7 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
             },
         )
 
-    def detail(request: Request, slug: str) -> HTMLResponse:
+    def detail(request: Request, slug: str, error: str | None = None) -> HTMLResponse:
         try:
             project = registry.require_project(slug)
         except KeyError as exc:
@@ -211,6 +232,8 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
                 "statuses": TERM_STATUSES,
                 "meetings": meeting_rows(slug),
                 "backends": BACKEND_CHOICES,
+                "archives": archive_rows(slug),
+                "error": error,
             },
         )
 
@@ -316,6 +339,30 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return detail(request, meeting.project_slug)
+
+    @app.post("/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
+    def ui_archive_meeting(
+        request: Request, meeting_id: int, root: str = Form("")
+    ) -> HTMLResponse:
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        try:
+            archive_meeting(registry, meeting, root or None)
+        except ValueError as exc:
+            # A missing archive root is fixable in the form, so re-render the
+            # project with the message rather than an error status htmx skips.
+            return detail(request, meeting.project_slug, error=str(exc))
+        return detail(request, meeting.project_slug)
+
+    @app.get("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    @app.post("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    def ui_verify_archive(request: Request, archive_id: int) -> HTMLResponse:
+        archive = registry.get_archive(archive_id)
+        if archive is None:
+            raise HTTPException(status_code=404, detail=f"no archive {archive_id}")
+        row = {"archive": archive, "verification": archive_status(archive)}
+        return TEMPLATES.TemplateResponse(request, "_archive_status.html", {"row": row})
 
     @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
     def ui_start_run(
@@ -541,6 +588,49 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
             "events": [_out(event) for event in events],
             "next": after + len(events),
         }
+
+    # --- JSON API: archives ------------------------------------------------- #
+    @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
+    def post_archive(meeting_id: int, body: ArchiveCreate | None = None) -> dict:
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        root = body.root if body else None
+        try:
+            archive = archive_meeting(registry, meeting, root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _out(archive)
+
+    @app.get("/api/projects/{slug}/archives")
+    def list_project_archives(slug: str) -> list[dict]:
+        try:
+            registry.require_project(slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
+        archives = [
+            archive
+            for meeting in registry.list_meetings(slug)
+            for archive in registry.list_archives(meeting.id)
+        ]
+        archives.sort(key=lambda archive: archive.id, reverse=True)
+        return [_out(archive) for archive in archives]
+
+    @app.get("/api/meetings/{meeting_id}/archives")
+    def list_meeting_archives(meeting_id: int) -> list[dict]:
+        if registry.meeting_by_id(meeting_id) is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        return [_out(archive) for archive in registry.list_archives(meeting_id)]
+
+    @app.post("/api/archives/{archive_id}/verify")
+    def post_verify(archive_id: int) -> dict:
+        archive = registry.get_archive(archive_id)
+        if archive is None:
+            raise HTTPException(status_code=404, detail=f"no archive {archive_id}")
+        try:
+            return verify_archive(archive.root_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/shutdown", status_code=202)
     def shutdown() -> dict:

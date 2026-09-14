@@ -390,3 +390,171 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert 'hx-trigger="every 1s"' not in done.text
 
     assert client.get("/ui/runs/999").status_code == 404
+
+
+# --- JSON API: archives --------------------------------------------------- #
+def _seed_archivable(client, tmp_path, *, default_root: bool = True):
+    """A project (optionally with a default archive root) and a meeting with one tape."""
+    root = tmp_path / "archive"
+    project = {"name": "Ops"}
+    if default_root:
+        project["default_archive_root"] = str(root)
+    client.post("/api/projects", json=project)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake-audio")
+    meeting = client.post(
+        "/api/projects/ops/meetings",
+        json={"title": "Kickoff", "workspace_path": str(tmp_path)},
+    ).json()
+    client.put(f"/api/meetings/{meeting['id']}/tapes", json={"paths": [str(tape)]})
+    return root, tape, meeting
+
+
+def test_archive_api_lifecycle(client, tmp_path) -> None:
+    root, _tape, meeting = _seed_archivable(client, tmp_path)
+
+    created = client.post(f"/api/meetings/{meeting['id']}/archives", json={})
+    assert created.status_code == 201
+    archive = created.json()
+    assert archive["meeting_id"] == meeting["id"]
+    assert archive["project_id"] == meeting["project_id"]
+    assert Path(archive["root_path"]).parent == root.resolve() / "ops"
+    assert Path(archive["manifest_path"]).is_file()
+    assert archive["manifest_sha256"]
+
+    project_archives = client.get("/api/projects/ops/archives").json()
+    assert [a["id"] for a in project_archives] == [archive["id"]]
+    meeting_archives = client.get(f"/api/meetings/{meeting['id']}/archives").json()
+    assert [a["id"] for a in meeting_archives] == [archive["id"]]
+
+    verified = client.post(f"/api/archives/{archive['id']}/verify")
+    assert verified.status_code == 200
+    assert verified.json()["ok"] is True
+    assert verified.json()["checked"] == 1
+    assert verified.json()["mismatched"] == []
+
+    # A same-length tamper of a copied tape is caught by the digest alone.
+    copy = Path(archive["root_path"]) / "tapes" / "a.wav"
+    copy.write_bytes(bytes(copy.stat().st_size))
+    tampered = client.post(f"/api/archives/{archive['id']}/verify").json()
+    assert tampered["ok"] is False
+    assert tampered["mismatched"] == ["tapes/a.wav"]
+
+
+def test_archive_api_accepts_an_explicit_root(client, tmp_path) -> None:
+    _seed_archivable(client, tmp_path, default_root=False)
+    meeting_id = client.get("/api/projects/ops/meetings").json()[0]["id"]
+    override = tmp_path / "somewhere-else"
+
+    refused = client.post(f"/api/meetings/{meeting_id}/archives", json={})
+    assert refused.status_code == 400
+    assert "no archive root" in refused.json()["detail"]
+
+    created = client.post(
+        f"/api/meetings/{meeting_id}/archives", json={"root": str(override)}
+    )
+    assert created.status_code == 201
+    assert Path(created.json()["root_path"]).parent == override.resolve() / "ops"
+
+
+def test_archive_api_unknown_ids_are_404(client, tmp_path) -> None:
+    _seed_archivable(client, tmp_path)
+    assert client.post("/api/meetings/999/archives", json={}).status_code == 404
+    assert client.get("/api/meetings/999/archives").status_code == 404
+    assert client.get("/api/projects/nope/archives").status_code == 404
+    assert client.post("/api/archives/999/verify").status_code == 404
+
+
+def test_archive_api_verify_without_a_manifest_is_404(client, tmp_path) -> None:
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    archive = client.post(f"/api/meetings/{meeting['id']}/archives", json={}).json()
+    (Path(archive["root_path"]) / "archive.json").unlink()
+    assert client.post(f"/api/archives/{archive['id']}/verify").status_code == 404
+
+
+# --- HTML surface: archiving and verification ----------------------------- #
+def test_ui_archive_a_meeting_and_list_it(client, tmp_path) -> None:
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    assert f'hx-post="/ui/meetings/{meeting["id"]}/archives"' in (
+        client.get("/ui/projects/ops").text
+    )
+
+    archived = client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    assert archived.status_code == 200
+    assert "Kickoff" in archived.text
+    assert "Archives" in archived.text
+    archive = client.get("/api/projects/ops/archives").json()[0]
+    assert archive["root_path"] in archived.text
+    # The status is fetched lazily by the row, never hashed during the render.
+    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in archived.text
+    assert 'hx-trigger="load"' in archived.text
+    assert '<span class="badge">ok</span>' not in archived.text
+
+    # The status endpoint produces the verification fragment on demand.
+    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    assert status.status_code == 200
+    assert '<span class="badge">ok</span>' in status.text
+    assert "file verified" in status.text
+
+    # The project view renders the same archive (with the lazy wiring).
+    detail = client.get("/ui/projects/ops")
+    assert archive["root_path"] in detail.text
+    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text
+
+
+def test_project_detail_does_not_hash_archives(client, tmp_path, monkeypatch) -> None:
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/projects/ops/archives").json()[0]
+
+    def boom(_path):
+        raise AssertionError("the detail render must not verify archives")
+
+    monkeypatch.setattr("clear_record.web.app.verify_archive", boom)
+    detail = client.get("/ui/projects/ops")
+    assert detail.status_code == 200
+    assert archive["root_path"] in detail.text
+    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text
+
+
+def test_ui_verify_reports_a_tampered_archive_inline(client, tmp_path) -> None:
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/projects/ops/archives").json()[0]
+    copy = Path(archive["root_path"]) / "tapes" / "a.wav"
+    copy.write_bytes(bytes(copy.stat().st_size))
+
+    verified = client.post(f"/ui/archives/{archive['id']}/verify")
+    assert verified.status_code == 200
+    assert '<span class="badge">failed</span>' in verified.text
+    assert "1 mismatched" in verified.text
+    assert "tapes/a.wav" in verified.text
+
+    # The lazy GET resolves the same fragment the button would swap in.
+    lazy = client.get(f"/ui/archives/{archive['id']}/verify")
+    assert '<span class="badge">failed</span>' in lazy.text
+
+    assert client.post("/ui/archives/999/verify").status_code == 404
+    assert client.get("/ui/archives/999/verify").status_code == 404
+
+
+def test_ui_verify_reports_a_missing_manifest(client, tmp_path) -> None:
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/projects/ops/archives").json()[0]
+    (Path(archive["root_path"]) / "archive.json").unlink()
+
+    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    assert status.status_code == 200
+    assert '<span class="badge">missing</span>' in status.text
+    assert "no manifest" in status.text
+
+
+def test_ui_archive_without_a_root_explains_itself(client, tmp_path) -> None:
+    _seed_archivable(client, tmp_path, default_root=False)
+    meeting_id = client.get("/api/projects/ops/meetings").json()[0]["id"]
+
+    refused = client.post(f"/ui/meetings/{meeting_id}/archives", data={"root": ""})
+    assert refused.status_code == 200
+    assert "no archive root" in refused.text
+    assert "No archives yet." in refused.text

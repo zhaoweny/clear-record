@@ -1,0 +1,31 @@
+<h3>Archives</h3>
+{% if archives %}
+<table>
+  <thead>
+    <tr><th>Created</th><th>Meeting</th><th>Path</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for row in archives %}
+    <tr>
+      <td>{{ row.archive.created_at }}</td>
+      <td>{{ row.meeting.title }}</td>
+      <td><code>{{ row.archive.root_path }}</code></td>
+      {# Verification is lazy: the row fetches its own status, so the project
+         render never re-hashes a multi-GB archive. #}
+      <td id="archive-status-{{ row.archive.id }}"
+          hx-get="/ui/archives/{{ row.archive.id }}/verify"
+          hx-trigger="load"
+          hx-swap="innerHTML"><span class="muted">checking&hellip;</span></td>
+      <td>
+        <button class="icon"
+                hx-post="/ui/archives/{{ row.archive.id }}/verify"
+                hx-target="#archive-status-{{ row.archive.id }}"
+                hx-swap="innerHTML">Verify</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No archives yet.</div>
+{% endif %}

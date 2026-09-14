@@ -1,5 +1,6 @@
 <h2>{{ project.name }}</h2>
 <div class="muted">{{ project.notes or "No notes." }} &middot; slug <code>{{ project.slug }}</code></div>
+{% if error %}<div class="run-error">{{ error }}</div>{% endif %}
 
 <h3>Meetings</h3>
 {% if meetings %}
@@ -36,11 +37,20 @@
     {% else %}
       <div id="run-{{ row.meeting.id }}"><span class="muted">No run yet.</span></div>
     {% endif %}
+    <form class="row"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/archives"
+          hx-target="#detail"
+          hx-swap="innerHTML">
+      <input name="root" placeholder="Archive root (optional)">
+      <button type="submit">Archive</button>
+    </form>
   </div>
   {% endfor %}
 {% else %}
   <div class="empty">No meetings yet.</div>
 {% endif %}
+
+{% include "_archives.html" %}
 
 <h3>Add a meeting</h3>
 <form class="stack"

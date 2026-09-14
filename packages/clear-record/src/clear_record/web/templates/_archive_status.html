@@ -1,0 +1,26 @@
+{% if row.verification is none %}
+<span class="badge">missing</span>
+<span class="muted">no manifest</span>
+{% elif row.verification.ok %}
+<span class="badge">ok</span>
+<span class="muted">
+  {{ row.verification.checked }}
+  file{{ "" if row.verification.checked == 1 else "s" }} verified
+</span>
+{% else %}
+<span class="badge">failed</span>
+<span class="muted">
+  {{ row.verification.missing | length }} missing,
+  {{ row.verification.mismatched | length }} mismatched
+</span>
+{% if row.verification.missing %}
+<div class="muted" style="font-size:12px">
+  missing: {{ row.verification.missing | join(", ") }}
+</div>
+{% endif %}
+{% if row.verification.mismatched %}
+<div class="muted" style="font-size:12px">
+  mismatched: {{ row.verification.mismatched | join(", ") }}
+</div>
+{% endif %}
+{% endif %}

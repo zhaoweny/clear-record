@@ -369,3 +369,20 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
 - [DECISION] **Ship the macOS app unsigned**, keeping the documented Gatekeeper
   workaround (no Apple Developer Program spend).
 - [DECISION] Flatpak keeps **`--share=network`** for first-use provisioning.
+
+## Agent task execution: no bundled harness (2026-09-14)
+
+- Owner answer to the last open question — *"should we build / bundle a genuine
+  agent harness for jump start the agent experience?"* — is **no bundle**: task
+  pipelines over a **BYOK endpoint**. See
+  [ADR-0018](../adr/0018-agent-task-execution.md).
+- [DECISION] Three rungs, in setup order: **endpoint (default)** — a
+  BYOK/local OpenAI-compatible server, which is what the web UI runs; **command
+  (advanced)**; **MCP (power)** for a real agent.
+- [FACT] The rationale turns on task **shape**, not preference: glossary
+  collection, transcript check and minutes are structured generation, not agentic
+  loops, so a harness would import a Node runtime (in the wheel *and* the desktop
+  bundle) for capability the default path does not use. maa-whirlwind bundles
+  pi-agent because *its* tasks really are agentic.
+- [REQ] BYOK is enforced: the credential is read from the environment, never
+  stored in config/registry, never bundled; a local endpoint needs no key.

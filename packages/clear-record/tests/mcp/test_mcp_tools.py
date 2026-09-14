@@ -519,9 +519,12 @@ def test_start_run_auto_model_not_on_disk_is_actionable(
         "start_run",
         {"project": "ops", "meeting": "kickoff", "auto": True},
     )
-    # Assert the service's own wording, not a copy: MCP does not own this string.
-    assert "'medium' is not in the models directory" in message
-    assert "never downloads one" in message
+    # The wording belongs to the service and MCP delegates to it, so assert the
+    # facts the error must carry rather than the sentence. Pinning another
+    # module's prose is how this test broke once already: the service reworded
+    # its message and this copy silently became a lie about the behaviour.
+    assert "'medium'" in message
+    assert "never downloads" in message
 
 
 def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:

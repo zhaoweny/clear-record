@@ -17,6 +17,7 @@ import pytest
 
 from clear_record.service import (
     CONTRACTS,
+    TASK_INPUTS,
     TASK_KINDS,
     AgentConfig,
     AgentConfigError,
@@ -26,13 +27,17 @@ from clear_record.service import (
     EndpointRunner,
     OutputContractError,
     TaskStep,
+    build_task,
     canonical_payload,
     context_hash,
     contract_for,
+    glossary_collection_task,
     load_agent_config,
+    minutes_task,
     plan_for,
     prompt_hash,
     render_prompt,
+    transcript_check_task,
 )
 from clear_record.service import agent as agent_module
 
@@ -210,6 +215,111 @@ def test_render_prompt_carries_context_and_chains_a_previous_step() -> None:
 def test_a_task_rejects_an_unknown_kind_up_front() -> None:
     with pytest.raises(AgentTaskError, match="unknown task kind"):
         AgentTask(kind="summarize", project="p", meeting="m")
+
+
+# --- the per-kind prompts --------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("kind", "tokens"),
+    [
+        (
+            "glossary_collection",
+            ("transcript", "glossary", "evidence", "aliases", "correct spelling"),
+        ),
+        (
+            "transcript_check",
+            ("transcript", "glossary", "context", "revision", "changes"),
+        ),
+        (
+            "minutes",
+            ("transcript", "glossary", "context", "attendees", "decisions", "actions"),
+        ),
+    ],
+)
+def test_each_kind_leads_with_its_own_prompt(
+    kind: str, tokens: tuple[str, ...]
+) -> None:
+    plan = plan_for(kind)
+    assert len(plan) == 1  # one coherent structured generation
+    instructions = plan[0].instructions
+    for token in tokens:
+        assert token in instructions
+    assert "Answer only with the JSON object" in instructions
+
+
+def test_the_three_kinds_do_not_share_a_prompt() -> None:
+    prompts = {kind: plan_for(kind)[0].instructions for kind in TASK_KINDS}
+    assert len(set(prompts.values())) == len(TASK_KINDS)
+
+
+def test_a_prompt_does_not_name_a_runtime_or_a_model() -> None:
+    """Prompts are data: no vendor, endpoint or bundled harness may appear."""
+    banned = ("openai", "ollama", "lm studio", "llama.cpp", "gpt", "claude")
+    for kind in TASK_KINDS:
+        text = plan_for(kind)[0].instructions.lower()
+        assert not any(name in text for name in banned)
+
+
+# --- the task builders ------------------------------------------------------ #
+
+
+def test_builders_package_the_sections_each_kind_declares() -> None:
+    tasks = {
+        "glossary_collection": glossary_collection_task(
+            "ops", "kickoff", transcript="t", glossary="Falcon\n"
+        ),
+        "transcript_check": transcript_check_task(
+            "ops", "kickoff", transcript="t", glossary="Falcon\n", context="c"
+        ),
+        "minutes": minutes_task(
+            "ops", "kickoff", transcript="t", glossary="Falcon\n", context="c"
+        ),
+    }
+    for kind, task in tasks.items():
+        assert task.kind == kind
+        assert task.project == "ops"
+        assert task.meeting == "kickoff"
+        assert set(task.inputs) == set(TASK_INPUTS[kind])
+
+
+def test_build_task_refuses_a_missing_section_and_an_unknown_kind() -> None:
+    with pytest.raises(AgentTaskError, match="missing context section"):
+        build_task("minutes", "ops", "kickoff", {"transcript": "t"})
+    with pytest.raises(AgentTaskError, match="unknown task kind"):
+        build_task("summarize", "ops", "kickoff", {})
+
+
+def test_build_task_passes_an_extra_section_through() -> None:
+    task = build_task(
+        "minutes",
+        "ops",
+        "kickoff",
+        {"transcript": "t", "glossary": "", "context": "", "notes": "side note"},
+    )
+    assert task.inputs["notes"] == "side note"
+
+
+def test_editing_a_packaged_section_changes_the_context_hash() -> None:
+    base = glossary_collection_task("ops", "kickoff", transcript="a", glossary="G")
+    edited = glossary_collection_task("ops", "kickoff", transcript="b", glossary="G")
+    assert context_hash(base) != context_hash(edited)
+
+
+def test_a_packaged_task_renders_its_sections_and_contract() -> None:
+    task = minutes_task(
+        "Ops",
+        "Kickoff",
+        transcript="00:00:03 [mic] the falcon is up",
+        glossary="Falcon\n",
+        context="meeting: Kickoff",
+    )
+    step = plan_for("minutes")[0]
+    prompt = render_prompt(
+        step, canonical_payload(task), step.resolved_contract("minutes")
+    )
+    for token in ("Kickoff", "Falcon", "attendees"):
+        assert token in prompt
 
 
 # --- agent config ----------------------------------------------------------- #

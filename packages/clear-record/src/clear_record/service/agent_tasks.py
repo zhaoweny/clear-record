@@ -15,6 +15,14 @@ provenance. **This** module owns the task half of that seam:
 - :data:`CONTRACTS` — a machine-checkable output contract per kind. A response
   that cannot be parsed into the contract fails the task; nothing malformed is
   ever accepted, not even in part (ADR-0018).
+- the **task builders** (:func:`glossary_collection_task`,
+  :func:`transcript_check_task`, :func:`minutes_task`) — package the context a
+  kind declares (:data:`TASK_INPUTS`), so each task carries its transcript, the
+  project glossary snapshot and the meeting context under the same section
+  names.
+- the per-kind **prompt text** lives in
+  :mod:`clear_record.service.agent_prompts`; this module only places it as each
+  :class:`TaskStep`'s instructions.
 
 **Nothing in this module names an agent runtime or a vendor.** A task is data;
 *how* it executes is the runner's business, so a future bundled harness is a
@@ -34,6 +42,8 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+
+from clear_record.service.agent_prompts import INSTRUCTIONS
 
 #: The three task kinds (ADR-0018's structured generation, not agentic work).
 TASK_KINDS: tuple[str, ...] = ("glossary_collection", "transcript_check", "minutes")
@@ -293,32 +303,18 @@ class TaskStep:
         return self.contract or contract_for(kind)
 
 
-_GLOSSARY_INSTRUCTIONS = (
-    "Collect the names, jargon and domain terms that this meeting's transcript "
-    "spells wrongly or uses inconsistently, together with a plausible reading, "
-    "aliases and the transcript evidence for each. Answer only with the JSON "
-    "object the output contract requires."
-)
-
-_TRANSCRIPT_CHECK_INSTRUCTIONS = (
-    "Check this meeting's transcript against the project glossary. Return the "
-    "corrected transcript revision, then a change list explaining every edit. "
-    "Answer only with the JSON object the output contract requires."
-)
-
-_MINUTES_INSTRUCTIONS = (
-    "Write the minutes for this meeting from its record and notes: attendees, "
-    "decisions and actions in the structured fields, and the Markdown minutes "
-    "document in 'body'. Answer only with the JSON object the output contract "
-    "requires."
-)
-
-#: The fixed pipeline per kind. One step today; a task that needs more declares
-#: its steps here (collect → dedupe → verify) and the seam runs exactly those.
+#: The fixed pipeline per kind, each step leading with the kind's instructions
+#: from :mod:`clear_record.service.agent_prompts`. Each of the three kinds is a
+#: single coherent structured generation: the contract already forces one
+#: complete answer per kind, and a second pass without a second contract would
+#: only re-ask the same question. A kind that genuinely needs more passes
+#: declares them here as an explicit tuple (collect → dedupe → verify) and the
+#: seam runs exactly those steps, chaining each step's raw output into the next -
+#: never a loop.
 PIPELINES: dict[str, tuple[TaskStep, ...]] = {
-    "glossary_collection": (TaskStep("collect", _GLOSSARY_INSTRUCTIONS),),
-    "transcript_check": (TaskStep("check", _TRANSCRIPT_CHECK_INSTRUCTIONS),),
-    "minutes": (TaskStep("draft", _MINUTES_INSTRUCTIONS),),
+    "glossary_collection": (TaskStep("collect", INSTRUCTIONS["glossary_collection"]),),
+    "transcript_check": (TaskStep("check", INSTRUCTIONS["transcript_check"]),),
+    "minutes": (TaskStep("draft", INSTRUCTIONS["minutes"]),),
 }
 
 
@@ -422,6 +418,104 @@ def render_prompt(
     return "\n\n".join(sections) + "\n"
 
 
+# --- task builders (packaging the declared inputs) -------------------------- #
+
+
+#: The named context sections each task kind is built with: ``transcript`` (the
+#: meeting's rendered transcript), ``glossary`` (the project's glossary snapshot,
+#: one term per line, possibly empty) and ``context`` (the meeting/project
+#: metadata and notes). The builders package exactly these, so every prompt sees
+#: the same labeled sections whatever the caller's source of truth was.
+TASK_INPUTS: dict[str, tuple[str, ...]] = {
+    "glossary_collection": ("transcript", "glossary"),
+    "transcript_check": ("transcript", "glossary", "context"),
+    "minutes": ("transcript", "glossary", "context"),
+}
+
+
+def build_task(
+    kind: str,
+    project: str,
+    meeting: str,
+    inputs: Mapping[str, str],
+) -> AgentTask:
+    """Package any task kind, insisting on the context sections it declares.
+
+    The seam itself accepts arbitrary named sections (a task is data), but a
+    *task kind* is built with the sections :data:`TASK_INPUTS` names, so a
+    caller who forgets the transcript gets a named error rather than a prompt
+    that silently omits it. Extra sections are allowed and passed through.
+    """
+    expected = TASK_INPUTS.get(kind)
+    if expected is None:
+        raise AgentTaskError(
+            f"unknown task kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
+        )
+    missing = [name for name in expected if name not in inputs]
+    if missing:
+        raise AgentTaskError(
+            f"{kind}: missing context section(s) "
+            f"{', '.join(repr(name) for name in missing)}; "
+            f"expected: {', '.join(expected)}"
+        )
+    return AgentTask(
+        kind=kind,
+        project=project,
+        meeting=meeting,
+        inputs={name: inputs[name] for name in inputs},
+    )
+
+
+def glossary_collection_task(
+    project: str,
+    meeting: str,
+    *,
+    transcript: str,
+    glossary: str = "",
+) -> AgentTask:
+    """A glossary-collection task: the meeting transcript and the glossary."""
+    return build_task(
+        "glossary_collection",
+        project,
+        meeting,
+        {"transcript": transcript, "glossary": glossary},
+    )
+
+
+def transcript_check_task(
+    project: str,
+    meeting: str,
+    *,
+    transcript: str,
+    glossary: str = "",
+    context: str = "",
+) -> AgentTask:
+    """A transcript-check task: the transcript, the glossary and meeting context."""
+    return build_task(
+        "transcript_check",
+        project,
+        meeting,
+        {"transcript": transcript, "glossary": glossary, "context": context},
+    )
+
+
+def minutes_task(
+    project: str,
+    meeting: str,
+    *,
+    transcript: str,
+    glossary: str = "",
+    context: str = "",
+) -> AgentTask:
+    """A minutes task: the transcript, the glossary and the meeting context."""
+    return build_task(
+        "minutes",
+        project,
+        meeting,
+        {"transcript": transcript, "glossary": glossary, "context": context},
+    )
+
+
 __all__ = [
     "AgentTask",
     "AgentTaskError",
@@ -431,13 +525,18 @@ __all__ = [
     "OutputContract",
     "OutputContractError",
     "PIPELINES",
+    "TASK_INPUTS",
     "TASK_KINDS",
     "TaskStep",
     "TranscriptCheckContract",
+    "build_task",
     "canonical_payload",
     "context_hash",
     "contract_for",
+    "glossary_collection_task",
+    "minutes_task",
     "plan_for",
     "prompt_hash",
     "render_prompt",
+    "transcript_check_task",
 ]

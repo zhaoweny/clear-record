@@ -2,8 +2,7 @@
 
 Status: operator guide
 Date: 2026-09-15
-Lane: `.scratch/service-deployment`, ticket
-[`02-proxy-recipe-and-guard.md`](../.scratch/service-deployment/issues/02-proxy-recipe-and-guard.md)
+Lane: the local tracker's `service-deployment` lane, ticket 02
 (tracker lives in the main checkout).
 
 Provenance: [FACT] claims are verifiable in this repo or in the sources the

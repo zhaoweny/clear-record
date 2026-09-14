@@ -2,8 +2,7 @@
 
 Status: research complete
 Date: 2026-09-14
-Lane: `.scratch/hardware-backends`, issue
-[`02-dgx-spark-research.md`](../../.scratch/hardware-backends/issues/02-dgx-spark-research.md)
+Lane: the local tracker's `hardware-backends` lane, ticket 02
 (that tracker lives in the main checkout; this note is the deliverable).
 
 Provenance rule: every claim below carries a label (**FACT / VOICE / REQ / DESIGN /

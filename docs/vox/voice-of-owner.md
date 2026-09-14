@@ -186,7 +186,7 @@ this repository. See `docs/architecture.md` §7.
   >   produce a meeting minutes for given meetings, which belongs to a project.
 - The selections below are **owner decisions**; the option wording was
   agent-authored. They are not yet implementation — the scoped design lives in
-  the local tracker (`.scratch/project-console/`, gitignored) and lands as a spec
+  the local tracker (`project-console` lane, gitignored) and lands as a spec
   plus tickets.
   1. [DECISION] The UI is a **local web UI**, not a Qt desktop app. PySide2 is
      unusable on this project's Python (its wheels stop at 3.10; the project
@@ -292,7 +292,7 @@ this repository. See `docs/architecture.md` §7.
   Microsoft.Windows.AI.Speech"*.
 - [REQ] Recorded as a **feature request**, not a decision. The scoped design,
   the platform `[FACT]`s and the `[OPEN]` items live in the local tracker
-  (`.scratch/system-speech-backends/`); tickets 01–03 cover the backend seam, the
+  (`system-speech-backends` lane); tickets 01–03 cover the backend seam, the
   Apple `SpeechTranscriber` backend and the Windows `Microsoft.Windows.AI.Speech`
   backend.
 - [FACT] This **changes an ADR-0005 property**: today every backend drives the
@@ -304,8 +304,8 @@ this repository. See `docs/architecture.md` §7.
 - Owner request, verbatim: *"feature request: provide sufficent knobs to build a
   'recommended default / auto mode' and profiles like 'fast, balanced, accurate,
   custom'"*.
-- [REQ] Recorded as a feature request, not a decision. Scoped in
-  `.scratch/transcription-profiles/` (spec + tickets 01–04): one shared
+- [REQ] Recorded as a feature request, not a decision. Scoped in the local
+  tracker's `transcription-profiles` lane (spec + tickets 01–04): one shared
   run-options + profile table, the missing decoder knobs, an explainable `--auto`
   resolver, and the profile surface on CLI/MCP/web.
 - [FACT] It **unblocks two recorded `[OPEN]`s**: ADR-0017's "MCP `start_run`
@@ -319,8 +319,8 @@ this repository. See `docs/architecture.md` §7.
   is a nvidia powerhouse) story, as well as mobile chip story like apple,
   qualcomm and mediatek, rockchip"*.
 - [REQ] Recorded as a **research** request — not a decision and not an
-  implementation. Tracker `.scratch/hardware-backends/` (spec + tickets 01–03);
-  findings land as dated notes in `docs/research/`, matching the owner's
+  implementation. The local tracker's `hardware-backends` lane (spec + tickets
+  01–03); findings land as dated notes in `docs/research/`, matching the owner's
   convention (maa-whirlwind keeps `docs/research/`).
 - [FACT] The research feeds two existing docs rather than creating a decision:
   **ADR-0005** (whether the "one interface, three families" story becomes four,
@@ -374,9 +374,9 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
 
 - Owner request, verbatim: *"also: do a web-hook as some user might want a
   notification system to their, umm, knowledge and project management system"*.
-- [REQ] Recorded as a feature request. Scoped in
-  `.scratch/project-console/issues/24-webhooks.md`. An **ADR is owed when it is
-  built**, because outbound delivery is the first feature that pushes *data*
+- [REQ] Recorded as a feature request. Scoped in the local tracker's
+  `project-console` lane, ticket 24. An **ADR is owed when it is built**,
+  because outbound delivery is the first feature that pushes *data*
   outward and therefore touches the local-first stance (VOICE §4) and ADR-0006's
   privacy boundary.
 
@@ -388,13 +388,13 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   - *"and system-service check - can clear-record's web interface run as a web
     service then? docker or systemd or flatpak service situation, need
     investigation"*
-- [REQ] Scoped in `.scratch/diagnostics/` (the log system + a user-feedback
-  bundle) and `.scratch/service-deployment/` (the systemd / Docker / Flatpak
-  service investigation).
+- [REQ] Scoped in the local tracker's `diagnostics` lane (the log system + a
+  user-feedback bundle) and `service-deployment` lane (the systemd / Docker /
+  Flatpak service investigation).
 - [VOICE: owner, 2026-09-15] i18n request, verbatim: *"I'd like to have some i18n,
   as I'd like to have pybabel or something, for all user-facing UI strings. I
   propose a `tr()` shorthand for strings needed to translate"*.
-  - [DESIGN] Scoped in `.scratch/i18n/`. The agent proposal is **stdlib `gettext`
+  - [DESIGN] Scoped in the `i18n` lane. The agent proposal is **stdlib `gettext`
     at runtime, Babel at build time** — that keeps `clear_record.core`'s
     no-third-party rule intact (no new runtime dependency at all) while still
     using `pybabel` for extraction and compilation, and reuses the owner's
@@ -418,7 +418,7 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
     unchanged, and the managed root is the console's addition.
   - [FACT] It also raises the stakes on **ADR-0021**: every surface before this one
     *read* local files; uploads **write multi-GB files** to a node whose auth is
-    the operator's proxy. Recorded in `.scratch/managed-workspace/`.
+    the operator's proxy. Recorded in the `managed-workspace` lane.
   - [VOICE: owner, 2026-09-15] Location clarification, verbatim: *"let's say that
     user could use a default workspace under `$XDG_DATA_HOME` or
     `$XDG_STATE_HOME`; but they may also choose a new place where they would save
@@ -462,7 +462,7 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   rebinding — so the app now owes the operator a proxy recipe **and** that guard.
 - [VOICE: owner, 2026-09-15] CLI framework suggestion, verbatim: *"perhaps we may
   adopt click for cli interfaces"*. Recorded as an evaluation, not a decision
-  (`.scratch/cli-framework/spec.md`). Grounding it surfaced the real defect — the
+  (the `cli-framework` lane). Grounding it surfaced the real defect — the
   CLI is argparse but the **`CR_*` environment surface has grown to 21 variables**
   with precedence re-implemented in several modules — so the recommended order is
   to unify the env layer first and treat the Click port as a later, deliberate
@@ -476,7 +476,7 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   - [DECISION] `--tailscale` ships; **no child process** — the resolved tailnet
     name is passed straight into `create_app(trusted_hosts=...)`, the explicit
     seam that already existed, so the env var stops being load-bearing (agent
-    recommendation, accepted; `.scratch/tailscale/`).
+    recommendation, accepted; the `tailscale` lane).
   - [DECISION] Owner follow-up on **ports**: *"it could take same port or different
     port as the server on 127.0.0.1 - I think default to same port, and user may
     choose different ports."*

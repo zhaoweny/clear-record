@@ -1,15 +1,14 @@
 # Mobile and edge NPUs — Apple, Qualcomm, MediaTek, Rockchip
 
-Status: research (not a decision) · Date: 2026-09-14 · Ticket:
-`.scratch/hardware-backends/issues/03-mobile-npus-research.md`
+Status: research (not a decision) · Date: 2026-09-14 · Ticket: the local
+tracker's `hardware-backends` lane, ticket 03
 
 This note answers one question per silicon class: **which of the two roles the
 architecture actually names could this platform serve?** The roles are **client
 / control surface** (laptop, phone) and **node** (the always-on Mac mini; the NAS
 holds tapes). It is *not* "can it run Whisper". Verdicts below are labelled
-`[SUGGESTION]` because nothing here is a decision
-(`.scratch/hardware-backends/spec.md`: "This is research and a recommendation
-only").
+`[SUGGESTION]` because nothing here is a decision (that lane's spec is explicit:
+"This is research and a recommendation only").
 
 ## Provenance key
 
@@ -29,8 +28,8 @@ community repo it is labelled as such.
 the **system `whisper-cli` + a ggml plugin**, process-isolated, and the core is
 vendor-free (ADR-0005, `docs/adr/0005-transcription-backend-strategy.md`).
 Adding a backend that does **not** drive `whisper-cli` "changes the property this
-ADR fixes" and needs its own ADR (ADR-0005, `[OPEN]` note; and the
-`.scratch/system-speech-backends/` tracker exists for exactly that class).
+ADR fixes" and needs its own ADR (ADR-0005, `[OPEN]` note; and the local
+tracker's `system-speech-backends` lane exists for exactly that class).
 
 `[FACT]` `whisper.cpp` (MIT) and `llama.cpp` (MIT) each **vendor their own copy of
 `ggml`**. Upstream `whisper.cpp`'s acceleration list is ARM NEON, Accelerate,
@@ -72,8 +71,8 @@ transcript; canonical API refs
 <https://developer.apple.com/documentation/speech/speechtranscriber> — the doc
 pages are JS-rendered and could not be read as text here).
 `[OPEN]` The exact minimum versions (iOS 26.0 / macOS 26.0) and the claim that the
-model runs **on the Neural Engine** are recorded in the repo's
-`.scratch/system-speech-backends/spec.md`, but the WWDC transcript I read says
+model runs **on the Neural Engine** are recorded in the local tracker's
+`system-speech-backends` lane, but the WWDC transcript I read says
 only "on-device" and "outside of your application's memory space"; the ANE
 attribution is not confirmed from a primary Apple doc here.
 
@@ -105,7 +104,7 @@ conversion tooling licences (`coremltools`, `ane_transformers`) are `[OPEN]`.
 (shipped).** **iOS/iPadOS phone = client / control surface only.** A phone cannot
 run the Python pipeline + subprocess `whisper-cli`; it reaches the node through
 the local console (architecture §8 `service`/`web`). Its on-device
-`SpeechTranscriber` is the `.scratch/system-speech-backends/` story, not a new
+`SpeechTranscriber` is the `system-speech-backends` lane's story, not a new
 hardware backend, and is out of scope for *this* lane.
 
 ---
@@ -161,7 +160,7 @@ proprietary non-ggml SDK. Nothing here changes the phone's role.
 ## Class 3 — Qualcomm Snapdragon X (PC-class ARM: Windows on Snapdragon, Copilot+)
 
 This is deliberately kept separate: it is a **PC vendor** story, not a phone one,
-and it overlaps the Windows AI APIs / `.scratch/system-speech-backends/` tracker.
+and it overlaps the Windows AI APIs and the `system-speech-backends` lane.
 
 **Roles.** `[FACT]` It competes with the existing node classes (the Mac mini /
 AMD box) as a **node**, not as a phone client.
@@ -193,7 +192,7 @@ AI APIs additionally impose the MSIX + `systemAIModels` packaging constraint.
 
 **Verdict.** `[SUGGESTION]` **Out of scope for the mobile/edge lane.** If this
 platform becomes a backend, it is a **system-speech backend** (Windows AI APIs,
-already scoped in `.scratch/system-speech-backends/`) and/or a PC-vendor
+already scoped in the `system-speech-backends` lane) and/or a PC-vendor
 (`Intel`/`NVIDIA`) question — not a phone/edge NPU. Treating it here would
 double-count an existing tracker.
 

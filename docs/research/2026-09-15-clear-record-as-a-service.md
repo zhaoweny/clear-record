@@ -2,8 +2,7 @@
 
 Status: research complete
 Date: 2026-09-15
-Lane: `.scratch/service-deployment`, issue
-[`01-service-investigation.md`](../../.scratch/service-deployment/issues/01-service-investigation.md)
+Lane: the local tracker's `service-deployment` lane, ticket 01
 (that tracker lives in the main checkout; this note is the deliverable).
 
 Provenance rule: every claim carries a label (**FACT / VOICE / REQ / DESIGN /

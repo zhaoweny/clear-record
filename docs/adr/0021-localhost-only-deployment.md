@@ -67,7 +67,7 @@ Date: 2026-09-15
 ## Consequences / review hook
 
 - The **reverse-proxy recipe** and the **request guard** become deliverables
-  (ticket 02 in `.scratch/service-deployment/`).
+  (ticket 02 in the local tracker's `service-deployment` lane).
 - Operator documentation must say plainly: expose it only *through* the proxy, and
   the proxy must be the **only** ingress.
 - Revisit if the product grows multi-user, or if it should ever be reachable

@@ -159,10 +159,10 @@ and the platform default is **native first, `whisper-cli` fallback** where a
 native path exists; the shipped `apple` / `nvidia` / `amd` adapters all use the
 `whisper-cli` + ggml substrate today (owner position, ADR-0005's 2026-09-14
 Update). The native family is **specified but unbuilt** — the seam and the Apple
-backend are scoped in the local tracker `.scratch/system-speech-backends/`
+backend are scoped in the local tracker's `system-speech-backends` lane
 (Apple first; Windows deferred for its MSIX/`systemAIModels` packaging
 requirement). Backend *selection* is its own capability knob (`--backend auto`),
-not a profile choice (`.scratch/transcription-profiles/`).
+not a profile choice (the `transcription-profiles` lane).
 
 [VOICE] Support all three desktop compute families behind **one interface**
 instead of locking to a vendor. [FACT] The relevant ecosystem facts:
@@ -229,8 +229,8 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   | NAS | raw tapes + derived artifacts |
 
   Research pointers (dated, primary-source notes — **not** project decisions or
-  measured results; see `docs/research/` and the tracker
-  `.scratch/hardware-backends/`):
+  measured results; see `docs/research/` and the tracker's `hardware-backends`
+  lane):
 
   - **Intel:** reachable through the existing `whisper-cli` + ggml seam —
     `ggml-vulkan` (cross-vendor, already the AMD hot-test) is the primary path,
@@ -406,18 +406,19 @@ candidate target); the **AMD** path's ROCm/HIP half is not exercised;
 **diarization** is a transparent baseline, not a deep-embedding system, and will
 struggle with same-pitch speakers and heavy overlap; and the exotic
 spatial-invention scope (§7) remains out of scope. Beyond the pipeline, these
-are **specified but unbuilt**:
+are **specified but unbuilt** (each scoped in a lane of the local tracker, which
+is not published):
 
 - **Apple-native** (`SpeechTranscriber`) first, **Windows-native** deferred —
-  `.scratch/system-speech-backends/`;
+  the `system-speech-backends` lane;
 - **profiles and `--auto`** (fast · balanced · accurate · custom, the missing
-  decoder knobs, backend `auto`) — `.scratch/transcription-profiles/`;
+  decoder knobs, backend `auto`) — the `transcription-profiles` lane;
 - the **agent tasks** (BYOK runner + glossary collection, transcript check,
-  minutes) — ADR-0018, `.scratch/project-console/` tickets 07–10;
+  minutes) — ADR-0018, the `project-console` lane, tickets 07–10;
 - the **MCP tuning-loop surface** (read transcript, project/meeting notes, run
-  options on `start_run`) — `.scratch/project-console/issues/21-*`;
+  options on `start_run`) — the `project-console` lane, tickets 21+;
 - the **console UI** still to come — **archive view**, meeting review +
-  minutes, and **guided agent setup** — `.scratch/project-console/` tickets
+  minutes, and **guided agent setup** — the `project-console` lane, tickets
   16–17, 20.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**

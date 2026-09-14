@@ -5,7 +5,7 @@ or the host's ``/proc/meminfo``: the glob result, the ``nvidia-smi`` stdout and
 the meminfo file are all supplied by the test, so the suite behaves identically
 on a laptop, a discrete-GPU box and a unified-memory (DGX Spark) machine.
 
-The contract under test (ticket 04, ``.scratch/hardware-backends``):
+The contract under test (the local tracker's ``hardware-backends`` lane, ticket 04):
 
 - precedence stays ``CR_VRAM_GB`` > DRM ``mem_info_vram_total`` > ``nvidia-smi``
   > the new UMA fallback > the 8 GB floor;

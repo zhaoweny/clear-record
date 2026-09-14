@@ -51,10 +51,10 @@ BACKEND_AUTO = "auto"
 #:
 #: ``apple-speech`` (macOS 26+ ``SpeechTranscriber``) and ``windows-ai``
 #: (``Microsoft.Windows.AI.Speech``) are the intended native top of the order,
-#: scoped in ``.scratch/system-speech-backends/``; they are **not registered
-#: backends yet** and become selectable with no change here once that work
-#: lands. Until then the tuple is honest today — no native id can be available —
-#: and already correct for later. The remaining ids are the shipped
+#: scoped in the local tracker's ``system-speech-backends`` lane; they are **not
+#: registered backends yet** and become selectable with no change here once that
+#: work lands. Until then the tuple is honest today — no native id can be
+#: available — and already correct for later. The remaining ids are the shipped
 #: ``whisper-cli`` family and are the portable fallback.
 BACKEND_PREFERENCE: tuple[str, ...] = (
     APPLE_SPEECH_BACKEND_ID,  # macOS 26+ SpeechTranscriber (unbuilt; native path)

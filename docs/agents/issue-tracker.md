@@ -28,3 +28,29 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 - **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
 - **Claim**: set `Status: claimed` and save before any work.
 - **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+
+## Citing the tracker from committed files
+
+The tracker is gitignored and never published (ADR-0006 sets the same
+environment-local boundary for recordings and model weights). A committed file
+therefore must not reference it **by path**: a reader of the public repo can
+follow neither a markdown link nor a backticked path into a directory that is
+not there, and nothing in a normal checkout flags the rot.
+
+A tracker directory is a **lane**. Committed prose names the lane and drops the
+path:
+
+- **Never link** into the tracker — no `[…](../.scratch/…)`.
+- **Never cite a tracker file as evidence.** Durable claims stand on durable
+  sources: an ADR, `docs/research/…`, or `docs/vox/voice-of-owner.md`.
+- **Name the lane, not the path**: write *the local tracker's
+  `hardware-backends` lane*, not `.scratch/hardware-backends/`.
+- **The arrow points one way.** Tracker entries link *to* `docs/`; a committed
+  file never links back. A tracker finding that needs to be citable graduates
+  into `docs/`.
+
+Enforced by `packages/clear-record/tests/test_tracker_refs.py` — the
+`test_layering.py` pattern, so `just verify` and CI reject a new reference with
+no separate job. Extending the guard to another gitignored class is one entry in
+that test's `IGNORED_PREFIXES`, plus a ruling on which files may legitimately
+name it.

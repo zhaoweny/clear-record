@@ -2,7 +2,7 @@
 
 Status: research note (desk research, no hardware run)
 Date: 2026-09-14
-Ticket: `.scratch/hardware-backends/issues/01-intel-research.md`
+Ticket: the local tracker's `hardware-backends` lane, ticket 01
 Provenance: every factual claim is cited to a primary source (upstream repo,
 vendor doc, or licence text). Items that could not be verified are labelled
 `[OPEN]`.
@@ -433,5 +433,4 @@ Licences
 
 Repo context (read-only): `AGENTS.md`, `docs/adr/0003-license-boundary.md`,
 `docs/adr/0005-transcription-backend-strategy.md`, `docs/architecture.md` §5/§8,
-`.scratch/hardware-backends/spec.md`, `issues/01-intel-research.md`,
 `packages/clear-record/src/clear_record/providers/{base,backends,process}.py`.

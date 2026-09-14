@@ -3,9 +3,9 @@
 Status: active
 Date: 2026-09-15
 
-- Implements the seam half of the local tracker's
-  `.scratch/system-speech-backends/issues/01-system-backend-seam.md`; the Apple
-  adapter is ticket 02 and the Windows adapter ticket 03 (**deferred**).
+- Implements the seam half of the local tracker's `system-speech-backends`
+  lane, ticket 01; the Apple adapter is ticket 02 and the Windows adapter
+  ticket 03 (**deferred**).
 
 ## Context
 
@@ -17,8 +17,8 @@ Date: 2026-09-15
   **family** that decision opens, and the seam a native adapter needs.
 - [VOICE: owner, 2026-09-14] The request, verbatim: *"we'd like to system
   default transcription services, like apple SpeechTranscriber and Windows
-  Microsoft.Windows.AI.Speech"* (recorded in the tracker spec
-  `.scratch/system-speech-backends/spec.md`).
+  Microsoft.Windows.AI.Speech"* (recorded in the local tracker's
+  `system-speech-backends` lane).
 - [DECISION] **Apple-native is built first; Windows-native is deferred** (owner,
   round-3 grilling, 2026-09-14). Windows requires an **MSIX package with the
   `systemAIModels` capability**, which collides with the PyInstaller desktop app

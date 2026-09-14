@@ -23,7 +23,7 @@ from mcp.server import MCPServer
 
 from clear_record.core import Progress, RecordDocument, Segment, write_json
 from clear_record.mcp.server import TOOL_NAMES, build_server
-from clear_record.service import Registry, RunManager
+from clear_record.service import Registry, RunManager, project_snapshot
 
 
 def _registry(tmp_path: Path) -> Registry:
@@ -445,3 +445,44 @@ def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
 
     assert cache_key(seen[0]) != cache_key(seen[1])
     assert cache_key(seen[1]) == cache_key(seen[2])
+
+
+def test_start_run_defaults_to_the_project_glossary_snapshot(tmp_path: Path) -> None:
+    """No explicit glossary: the MCP run applies the project's confirmed terms.
+
+    The tuning loop closes here — an agent edits the glossary over MCP, then a
+    plain ``start_run`` picks the edit up, writing it to the workspace
+    ``glossary.txt`` and recording the snapshot hash. Candidates are ignored.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    registry.add_term("ops", "Falcon", status="confirmed")
+    registry.add_term("ops", "Draft", added_by="agent")  # candidate
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.set_recording_set(meeting.id, [str(tape)])
+
+    seen: dict = {}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen["options"] = options
+        seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    server = build_server(registry, manager)
+
+    run = _payload(server, "start_run", {"project": "ops", "meeting": "kickoff"})
+    manager.wait(run["id"], timeout=10)
+
+    assert seen["text"] == "Falcon\n"  # the candidate term is excluded
+    snapshot = project_snapshot(registry, "ops")
+    assert run["options"]["glossary"] == seen["options"].glossary
+    assert run["options"]["glossary_sha256"] == snapshot.sha256
+    assert (workspace / "glossary.txt").read_text(encoding="utf-8") == "Falcon\n"
+
+    # The recorded identity is still readable after the run finishes.
+    status = _payload(server, "run_status", {"run_id": run["id"]})
+    assert status["options"]["glossary_sha256"] == snapshot.sha256

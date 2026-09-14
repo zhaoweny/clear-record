@@ -21,7 +21,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from clear_record.cli import stages
+from clear_record.cli.workspace import Workspace
 from clear_record.core import EventSink, JobEvent, PipelineOptions
+from clear_record.service.glossary import (
+    project_snapshot,
+    snapshot_from_text,
+    write_snapshot,
+)
 from clear_record.service.models import Meeting, PipelineRun
 from clear_record.service.store import Registry
 
@@ -157,11 +163,13 @@ class RunManager:
         options = dataclasses.replace(
             options or PipelineOptions(), audio_files=tuple(tape_set.paths)
         )
+        options, run_meta = self._resolve_glossary(meeting, options)
         run = self._registry.create_run(
             meeting.id,
             backend=options.backend,
             model=options.model,
             language=options.language,
+            options=run_meta,
         )
         state = RunState(run_id=run.id, meeting_id=meeting.id, status="queued")
         with self._lock:
@@ -175,6 +183,60 @@ class RunManager:
         self._threads[run.id] = thread
         thread.start()
         return run
+
+    @staticmethod
+    def _glossary_meta(path: Path) -> dict:
+        """The run meta for a glossary **file**: its path and, if readable, its
+        canonical sha256 (so an explicit file's identity is comparable to a
+        project snapshot's)."""
+        meta: dict = {"glossary": str(path)}
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return meta
+        meta["glossary_sha256"] = snapshot_from_text(text).sha256
+        return meta
+
+    def _resolve_glossary(
+        self, meeting: Meeting, options: PipelineOptions
+    ) -> tuple[PipelineOptions, dict]:
+        """Apply the glossary a run should use and return its recorded identity.
+
+        Precedence, strongest first:
+
+        1. An **explicit** glossary always wins; its terms are hashed so the run
+           meta is comparable to a snapshot's.
+        2. Otherwise the **project's confirmed-term snapshot** wins **when it has
+           terms**: it is written to the meeting's workspace ``glossary.txt``, so
+           a glossary edit reaches the next run with no extra wiring (the
+           ADR-0018 tuning loop).
+        3. When the project has **no confirmed terms**, the registry has nothing
+           to say and the user's ``glossary.txt`` — a documented, user-editable
+           artifact (``clear-record glossary`` / the README) — **stands**: it is
+           left untouched and used as the run's glossary. With no such file the
+           run simply has no glossary.
+
+        Candidates and retired terms never reach the decoder. The returned meta
+        records the glossary path and its sha256, so a re-run is explainable.
+        """
+        if options.glossary is not None:
+            return options, self._glossary_meta(Path(options.glossary))
+
+        assert meeting.workspace_path is not None  # guaranteed by start()
+        workspace = Workspace.at(meeting.workspace_path)
+        snapshot = project_snapshot(self._registry, meeting.project_slug)
+        if snapshot.empty:
+            # The registry is authoritative only when it has confirmed terms;
+            # otherwise the user's file stands and is never clobbered.
+            if workspace.glossary_path.exists():
+                return options, self._glossary_meta(workspace.glossary_path)
+            return options, {}
+
+        path = write_snapshot(workspace, snapshot)
+        return (
+            dataclasses.replace(options, glossary=str(path)),
+            {"glossary": str(path), "glossary_sha256": snapshot.sha256},
+        )
 
     def _record(self, state: RunState, event: JobEvent) -> None:
         with self._lock:

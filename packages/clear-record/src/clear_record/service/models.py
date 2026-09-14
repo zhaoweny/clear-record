@@ -95,6 +95,10 @@ class PipelineRun:
     backend: str | None
     model: str | None
     language: str | None
+    #: Run meta recorded at start: the glossary path actually used and the
+    #: sha256 of that glossary snapshot (plus anything future runs add). It is
+    #: what makes a re-run explainable — see ``service.glossary``.
+    options: dict | None
     started_at: str | None
     ended_at: str | None
     error: str | None

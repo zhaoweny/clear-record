@@ -617,6 +617,8 @@ class Registry:
         language: str | None = None,
         options: dict | None = None,
     ) -> PipelineRun:
+        """Create a queued run. ``options`` is run meta (e.g. the glossary
+        snapshot identity) recorded so a re-run can be explained later."""
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
         with self._connect() as conn:
@@ -876,6 +878,7 @@ class Registry:
             backend=row["backend"],
             model=row["model"],
             language=row["language"],
+            options=json.loads(row["options"]) if row["options"] else None,
             started_at=row["started_at"],
             ended_at=row["ended_at"],
             error=row["error"],

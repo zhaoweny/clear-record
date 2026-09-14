@@ -299,11 +299,19 @@ class ServiceTools:
         The run executes in the background; read it with ``run_status`` and
         ``run_events``. Any of ``profile``, ``backend``, ``model``, ``language``
         and ``glossary`` (a glossary file path) may be set to re-run
-        deliberately — e.g. after tuning the glossary; they are resolved by
+        deliberately; they are resolved by
         ``clear_record.core.options.resolve_options`` (explicit value →
         ``CR_*`` environment → profile → built-in default). Refused (with a
         reason) when the meeting has no workspace, no tape set, or a run
         already in flight.
+
+        **Glossary default.** Omit ``glossary`` to apply the **project's
+        confirmed-term snapshot**: it is written to the meeting workspace's
+        ``glossary.txt`` and used by this run, so a glossary edit reaches the
+        next run with no extra wiring (the tuning loop). Pass ``glossary`` to
+        override it explicitly. The returned run meta records
+        ``options.glossary`` and ``options.glossary_sha256`` so a re-run is
+        explainable.
         """
         found = self._meeting(project, meeting)
         explicit: dict[str, Any] = {}

@@ -13,6 +13,16 @@ metadata, never audio blobs.
 from __future__ import annotations
 
 from clear_record.service.archive import archive_meeting, verify_archive
+from clear_record.service.glossary import (
+    CONFIRMED,
+    GlossarySnapshot,
+    build_snapshot,
+    canonical_terms,
+    project_snapshot,
+    snapshot_from_text,
+    write_project_snapshot,
+    write_snapshot,
+)
 from clear_record.service.models import (
     MEETING_STATUSES,
     RUN_STATUSES,
@@ -46,6 +56,8 @@ __all__ = [
     "APP",
     "Archive",
     "Artifact",
+    "CONFIRMED",
+    "GlossarySnapshot",
     "GlossaryTerm",
     "MEETING_STATUSES",
     "Meeting",
@@ -63,10 +75,16 @@ __all__ = [
     "TERM_STATUSES",
     "TranscriptSlice",
     "archive_meeting",
+    "build_snapshot",
+    "canonical_terms",
     "collect_artifacts",
     "config_path",
+    "project_snapshot",
     "read_transcript",
     "registry_path",
     "resolve_data_dir",
+    "snapshot_from_text",
     "verify_archive",
+    "write_project_snapshot",
+    "write_snapshot",
 ]

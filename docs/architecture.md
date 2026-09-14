@@ -150,7 +150,19 @@ restarted-from-zero.
 
 ---
 
-## 5. Backend strategy — Apple · NVIDIA · AMD
+## 5. Backend strategy — native first, `whisper-cli` fallback
+
+[VOICE] **Native, OS-provided transcription paths are first-class, and
+`whisper-cli` is the fallback.** Apple's `SpeechAnalyzer`/`SpeechTranscriber`
+(macOS 26+) and Windows' `Microsoft.Windows.AI.Speech` are the native direction,
+and the platform default is **native first, `whisper-cli` fallback** where a
+native path exists; the shipped `apple` / `nvidia` / `amd` adapters all use the
+`whisper-cli` + ggml substrate today (owner position, ADR-0005's 2026-09-14
+Update). The native family is **specified but unbuilt** — the seam and the Apple
+backend are scoped in the local tracker `.scratch/system-speech-backends/`
+(Apple first; Windows deferred for its MSIX/`systemAIModels` packaging
+requirement). Backend *selection* is its own capability knob (`--backend auto`),
+not a profile choice (`.scratch/transcription-profiles/`).
 
 [VOICE] Support all three desktop compute families behind **one interface**
 instead of locking to a vendor. [FACT] The relevant ecosystem facts:
@@ -181,9 +193,10 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 - A backend is a **capability**, not a hard dependency. It is usable only when
   its runtime probe succeeds (see `clear_record.providers.base.Backend.available()`).
   `clear-record backends` lists what is available on the current machine.
-- All three **drive the system `whisper-cli`**, which links the system `ggml`
-  and loads a backend plugin (`ggml-metal` on macOS via Homebrew `whisper-cpp`;
-  `ggml-vulkan`/`ggml-hip` for AMD, `ggml-cuda`/`ggml-vulkan` for NVIDIA). There
+- All three **drive the system `whisper-cli`** (the fallback substrate), which
+  links the system `ggml` and loads a backend plugin (`ggml-metal` on macOS via
+  Homebrew `whisper-cpp`; `ggml-vulkan`/`ggml-hip` for AMD,
+  `ggml-cuda`/`ggml-vulkan` for NVIDIA). There
   is no in-process wheel: PyPI ships no GPU-accelerated ggml backend, so `apple`,
   `nvidia` and `amd` all use the same process-isolated path, and all three extras
   are no-op markers. `available()` requires the platform (`Darwin`/`Linux`),
@@ -214,6 +227,23 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   | AMD Radeon RX 7900 XTX Linux box | high-throughput ROCm/Vulkan worker |
   | Laptop / phone | client / control surface |
   | NAS | raw tapes + derived artifacts |
+
+  Research pointers (dated, primary-source notes — **not** project decisions or
+  measured results; see `docs/research/` and the tracker
+  `.scratch/hardware-backends/`):
+
+  - **Intel:** reachable through the existing `whisper-cli` + ggml seam —
+    `ggml-vulkan` (cross-vendor, already the AMD hot-test) is the primary path,
+    `ggml-sycl` the Intel-native option, and `ggml-openvino` the only NPU route
+    (plausible but unvalidated); **OpenVINO GenAI is not recommended**
+    (in-process, a second model format). `docs/research/2026-09-14-intel-transcription.md`.
+  - **NVIDIA DGX Spark (GB10):** works with the existing `nvidia` backend — no
+    new backend code — but its **unified memory** makes `detect_vram_gb()` fall
+    to the 8 GB floor and under-provisions `large` to one worker; `CR_VRAM_GB`
+    closes it. Not hot-tested here. `docs/research/2026-09-14-nvidia-dgx-spark.md`.
+  - **Mobile / edge:** no phone SoC is a node (client / control surface only),
+    and Rockchip has **no upstream ggml backend**, so it stays outside the
+    current seam. `docs/research/2026-09-14-mobile-edge-npus.md`.
 
 ---
 
@@ -286,14 +316,40 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0017
+docs/adr/                     decision records 0001–0018
+docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```
 
 **Current status: v0.2 development trunk.** The pipeline below is landed and
-runnable; the **project console** — a headless service (projects, glossary,
-meetings, runs, archive), a local web UI, a tray supervisor and an MCP server —
-is built on top of it (ADR-0013/0016/0017).
+runnable, and the **project console** is built on top of it:
+
+- `clear_record.service` — the headless service: an app-owned SQLite **project
+  registry**, per-project **glossary** terms, **meetings** and their **tape
+  sets**, background **pipeline runs** with structured progress events and
+  recorded artifacts, and the **archive** (copy + sha256 manifest). It is
+  importable with no web stack, which is what keeps the console optional
+  (ADR-0013).
+- `clear_record.web` — the local console: FastAPI serving a server-rendered
+  **htmx + Alpine.js** UI on `/ui/*` and a JSON API on `/api/*`, bound to
+  localhost, with no build step and no account (extra: `web`)
+  (ADR-0013, ADR-0016).
+- `clear_record.tray` — a **PySide6** system-tray supervisor / desktop entry
+  point (open / status / quit) over a Qt-free `ServiceController` (extra:
+  `tray`) (ADR-0016).
+- `clear_record.mcp` — the **agent boundary**: the service exposed as stdio MCP
+  tools (projects, glossary, meetings, runs, artifacts), BYOK, with no harness
+  entering the core (extra: `agents`) (ADR-0016, ADR-0017).
+- Packaging on top of the wheel: a **PyInstaller** desktop build
+  (`clear-record-web` / `clear-record.app`, unsigned, no bundled weights) and a
+  deferred Flatpak story (ADR-0014, ADR-0015).
+
+The console's **service** owns projects, the glossary, meetings and tape sets,
+background runs and the **archive** (copy + sha256 manifest); the **web UI**
+currently renders projects, the glossary table, meetings and tape sets, and the
+**live run view**. The **archive view**, the **agent tasks**, the **MCP
+tuning-loop surface** and **guided agent setup** are **specified but unbuilt** —
+see ADR-0018 and the trackers below.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
@@ -337,33 +393,48 @@ is built on top of it (ADR-0013/0016/0017).
 `just verify` is green; the CLI surface is derived from
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel input (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
-glossary initial prompt, and Apple/macOS transcription are all landed. Apple
-is CLI-only (system `whisper-cli` + `ggml-metal`) and auto-downloads its ggml
-model on first use.
-**Remaining gaps:** the NVIDIA path (system `whisper-cli` + ggml CUDA/Vulkan)
-shares the hot-tested AMD code path but is not yet hot-tested on real NVIDIA
-hardware; the AMD path is hot-tested on an RX
-7900 XTX (its ROCm/HIP half is not exercised); diarization is a transparent
-baseline (not a deep-embedding system) and will struggle with same-pitch
-speakers and heavy overlap; and the exotic spatial-invention scope (§7) remains
-out of scope.
+glossary initial prompt, and Apple/macOS transcription are all landed. The
+Apple backend runs through the system `whisper-cli` + `ggml-metal` (a
+subprocess, no Python wheel) and auto-downloads its ggml model on first use.
+
+**Remaining gaps.** The **NVIDIA** path shares the hot-tested AMD code path but
+is **not hot-tested** on real NVIDIA hardware (the DGX Spark note in §5 is a
+candidate target); the **AMD** path's ROCm/HIP half is not exercised;
+**diarization** is a transparent baseline, not a deep-embedding system, and will
+struggle with same-pitch speakers and heavy overlap; and the exotic
+spatial-invention scope (§7) remains out of scope. Beyond the pipeline, these
+are **specified but unbuilt**:
+
+- **Apple-native** (`SpeechTranscriber`) first, **Windows-native** deferred —
+  `.scratch/system-speech-backends/`;
+- **profiles and `--auto`** (fast · balanced · accurate · custom, the missing
+  decoder knobs, backend `auto`) — `.scratch/transcription-profiles/`;
+- the **agent tasks** (BYOK runner + glossary collection, transcript check,
+  minutes) — ADR-0018, `.scratch/project-console/` tickets 07–10;
+- the **MCP tuning-loop surface** (read transcript, project/meeting notes, run
+  options on `start_run`) — `.scratch/project-console/issues/21-*`;
+- the **console UI** still to come — **archive view**, meeting review +
+  minutes, and **guided agent setup** — `.scratch/project-console/` tickets
+  16–17, 20.
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
-1. `ingest` — richer manifest metadata (sample rate, channels, original path,
-   a checksum); *(normalize + channel split landed)*.
-2. `align` — per-source alignment confidence and a manual-offset override;
-   *(synthesized-badness harness landed)*.
-3. `transcribe` — hot-test the **nvidia** backend on real hardware
-   (**amd** hot-tested via system `whisper-cli` + `ggml-vulkan`; **apple**
-   hot-tested end-to-end on an M4 via `whisper-cli` + `ggml-metal`); retire the
-   AMD subprocess if a maintained Vulkan/HIP wheel appears; *(chunked resume +
-   glossary landed)*.
-4. `diarize` — replace/augment the spectral+F0 baseline with a deep embedding
-   provider behind the same seam; handle same-pitch speakers and overlap.
-5. `reconcile` — `--prefer` tie-breaking; better same-speaker joining across
-   sources.
-6. `export` — per-format options (word timestamps, speaker labels in SRT).
+1. **Backend evidence** — hot-test the **nvidia** backend on real hardware (the
+   DGX Spark research is a candidate target), decide whether to add an **Intel**
+   adapter from the hardware research, and retire the AMD subprocess if a
+   maintained Vulkan/HIP wheel appears.
+2. **Apple-native backend** — `SpeechAnalyzer`/`SpeechTranscriber` as the first
+   native backend behind the existing `Backend` seam; Windows-native stays
+   deferred, and `--backend auto` picks the native path once it lands.
+3. **Profiles / `--auto`** — the shared profile table, the missing decoder
+   knobs, and the explainable recommended default; this also unblocks run
+   options in the console and over MCP.
+4. **Agent tasks** — the BYOK runner seam plus glossary collection, transcript
+   check and minutes, landing as reviewable drafts (ADR-0018).
+5. **MCP tuning-loop surface** — read-transcript, project/meeting notes, and run
+   options on `start_run`, so the glossary ↔ transcript loop is real.
+6. **Console UI** — archive view, meeting review + minutes, and guided agent
+   setup. **Diarization** remains a baseline to deepen behind the same seam.
 
 ---
 

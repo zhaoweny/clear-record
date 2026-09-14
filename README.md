@@ -355,7 +355,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0017)
+docs/adr/                     (decision records 0001–0018)
 ```
 
 ## License

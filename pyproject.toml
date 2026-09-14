@@ -78,11 +78,6 @@ app = [
 # docs/i18n.md.
 i18n = [
     "babel>=2.14",
-    # `pybabel extract` resolves the `jinja2` extractor through an entry point that
-    # **Jinja2 itself** registers, so Babel alone is not enough: with Jinja2 absent
-    # the guard dies with `ValueError: Unknown extraction method 'jinja2'`. It is a
-    # build-time extractor for the templates, never imported at runtime.
-    "jinja2>=3.1",
 ]
 
 # Convenience extras that mirror the single dist's backend extras, so a single

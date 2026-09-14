@@ -391,6 +391,21 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
 - [REQ] Scoped in `.scratch/diagnostics/` (the log system + a user-feedback
   bundle) and `.scratch/service-deployment/` (the systemd / Docker / Flatpak
   service investigation).
+- [VOICE: owner, 2026-09-15] i18n request, verbatim: *"I'd like to have some i18n,
+  as I'd like to have pybabel or something, for all user-facing UI strings. I
+  propose a `tr()` shorthand for strings needed to translate"*.
+  - [DESIGN] Scoped in `.scratch/i18n/`. The agent proposal is **stdlib `gettext`
+    at runtime, Babel at build time** — that keeps `clear_record.core`'s
+    no-third-party rule intact (no new runtime dependency at all) while still
+    using `pybabel` for extraction and compilation, and reuses the owner's
+    established pattern of a **committed compiled artifact plus a CI freshness
+    guard** (ADR-0023's `web-assets-check`).
+  - [DECISION] `tr()` is the shorthand, message IDs are the English strings, and
+    **the English default is provably unchanged** — the same
+    byte-identical-default discipline the CLI already carries.
+  - [DECISION] A hard boundary: **logs, the JSON API, exports and the diagnostics
+    bundle are never translated** — the record is the user's data, in the language
+    they spoke.
 - [FACT] Both touch the local-first/privacy stance: logs are where private
   material leaks by accident (file names, glossary terms, transcripts), and a
   *service* exposed beyond localhost collides with ADR-0013's "localhost only, no

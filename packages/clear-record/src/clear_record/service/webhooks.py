@@ -20,8 +20,10 @@ The boundaries, and why the defaults are what they are:
   delivery time and used for an HMAC-SHA256 signature header. An endpoint that
   names a secret env but finds it unset is recorded as failed and sent nothing:
   there is no silent unsigned downgrade.
-- **Delivery is recorded.** Every delivery's outcome is kept (bounded) so a user
-  can tell whether an endpoint is healthy.
+- **Delivery is recorded, and readable.** Every delivery's outcome is kept in a
+  bounded ring buffer and exposed through :meth:`WebhookEmitter.status` together
+  with the endpoint's config problems, so a console can answer "is my endpoint
+  configured, and did the last event arrive?" without ever seeing the secret.
 
 Delivery uses the stdlib only (:mod:`urllib.request`), so the base install gains
 no HTTP dependency.
@@ -182,6 +184,77 @@ class Delivery:
     at: str
 
 
+@dataclasses.dataclass(frozen=True)
+class EndpointReport:
+    """One endpoint's config health and its most recent delivery, as a reader sees it.
+
+    A read-only *view*: ``problems`` is this endpoint's slice of the existing
+    config-problem surface — the rule that raised a problem lives where it was
+    raised, and nothing here re-decides what makes a config valid — and
+    ``last_delivery`` is the newest entry for this URL in the bounded delivery
+    history. It carries no secret material: the signing secret is read from the
+    environment at delivery time and never stored (ADR-0020), so only the fact
+    that the endpoint is signed (``signed``) is exposed.
+    """
+
+    name: str | None
+    url: str
+    events: tuple[str, ...]
+    include_content: bool
+    #: Whether the endpoint names a signing secret; the secret itself is never held.
+    signed: bool
+    problems: tuple[str, ...]
+    last_delivery: Delivery | None
+
+    @property
+    def health(self) -> str:
+        """One of ``config_problem`` / ``delivery_failed`` / ``delivered`` / ``no_delivery_yet``."""
+        if self.problems:
+            return "config_problem"
+        if self.last_delivery is None:
+            return "no_delivery_yet"
+        return (
+            "delivered"
+            if self.last_delivery.status == "delivered"
+            else "delivery_failed"
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class WebhookStatus:
+    """The console's whole view: the config problems and one report per endpoint.
+
+    :attr:`state` keeps apart the three silences that must not be confused
+    (ADR-0020's review catch — a silently disabled webhook is indistinguishable
+    from "no events happened"):
+
+    - ``"not_configured"`` — no endpoint is set up, so nothing is delivered.
+      This is **not** "healthy" and **not** "failing"; it is opt-out.
+    - ``"config_problem"`` — resolving the config found a problem; delivery is
+      off entirely or affected for one endpoint. This is the state a malformed
+      config used to hide in.
+    - ``"delivery_failed"`` / ``"ok"`` — the config is valid, so the newest
+      delivery outcome decides.
+
+    ``problems`` is :attr:`WebhookEmitter.problems` verbatim — the same surface
+    that already warns on stderr, never a recomputation.
+    """
+
+    endpoints: tuple[EndpointReport, ...] = ()
+    problems: tuple[str, ...] = ()
+
+    @property
+    def state(self) -> str:
+        """``not_configured`` / ``config_problem`` / ``delivery_failed`` / ``ok``."""
+        if not self.endpoints and not self.problems:
+            return "not_configured"
+        if self.problems:
+            return "config_problem"
+        if any(report.health == "delivery_failed" for report in self.endpoints):
+            return "delivery_failed"
+        return "ok"
+
+
 # --- configuration (ADR-0007 precedence) ----------------------------------- #
 
 #: The TOML schema, documented where the user sets it::
@@ -205,6 +278,12 @@ class WebhookConfig:
 
     endpoints: tuple[WebhookEndpoint, ...] = ()
     problems: tuple[str, ...] = ()
+    #: Per-endpoint slices of ``problems``, parallel to ``endpoints``: which of
+    #: the problems concern each *configured* endpoint. A projection of the same
+    #: detection that built ``problems`` — never a second opinion about validity.
+    #: A problem that names no configured endpoint (a skipped or malformed entry)
+    #: stays in ``problems`` only.
+    endpoint_problems: tuple[tuple[str, ...], ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -296,18 +375,30 @@ def _config_endpoints(
 
 
 def _secret_problems(
-    endpoints: Iterable[WebhookEndpoint], environ: Mapping[str, str]
-) -> tuple[str, ...]:
-    """Flag endpoints that named a secret env the environment does not set."""
-    problems: list[str] = []
+    endpoints: Sequence[WebhookEndpoint], environ: Mapping[str, str]
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """Flag endpoints that named a secret env the environment does not set.
+
+    Returns the flat problems *and* the same problems grouped per endpoint
+    (parallel to ``endpoints``). The detection rule lives here, once: the flat
+    tuple is what :attr:`WebhookConfig.problems` has always been, and the grouped
+    view is what lets the console say *which* endpoint is broken without
+    restating the rule.
+    """
+    flat: list[str] = []
+    grouped: list[tuple[str, ...]] = []
     for endpoint in endpoints:
         if endpoint.secret_env and not environ.get(endpoint.secret_env):
-            problems.append(
+            problem = (
                 f"endpoint {endpoint.url!r} names secret_env "
                 f"{endpoint.secret_env!r}, which is not set: it will fail closed "
                 "and deliver nothing"
             )
-    return tuple(problems)
+            flat.append(problem)
+            grouped.append((problem,))
+        else:
+            grouped.append(())
+    return tuple(flat), tuple(grouped)
 
 
 def load_webhook_config(
@@ -345,10 +436,15 @@ def load_webhook_config(
                     )
         else:
             resolved, problems = _config_endpoints(config_file)
-    problems = problems + _secret_problems(resolved, env)
+    secret_flat, endpoint_problems = _secret_problems(resolved, env)
+    problems = problems + secret_flat
     for problem in problems:
         _warn(problem)
-    return WebhookConfig(endpoints=resolved, problems=problems)
+    return WebhookConfig(
+        endpoints=resolved,
+        problems=problems,
+        endpoint_problems=endpoint_problems,
+    )
 
 
 def resolve_endpoints(
@@ -377,6 +473,8 @@ class WebhookEmitter:
     ``problems`` carries any config problems found while resolving the endpoints
     (see :func:`load_webhook_config`); :meth:`from_config` fills it in, so a bad
     config is inspectable on the emitter the app is actually using.
+    :meth:`status` packages that surface with the last delivery per endpoint for
+    a console; it changes nothing about how delivery runs.
     """
 
     def __init__(
@@ -384,6 +482,7 @@ class WebhookEmitter:
         endpoints: Sequence[WebhookEndpoint] = (),
         *,
         problems: Sequence[str] = (),
+        endpoint_problems: Sequence[Sequence[str]] = (),
         timeout: float = 5.0,
         max_attempts: int = 3,
         backoff_base: float = 1.0,
@@ -395,6 +494,7 @@ class WebhookEmitter:
             raise ValueError("max_attempts must be at least 1")
         self._endpoints = tuple(endpoints)
         self._problems = tuple(problems)
+        self._endpoint_problems = tuple(tuple(entry) for entry in endpoint_problems)
         self._timeout = timeout
         self._max_attempts = max_attempts
         self._backoff_base = backoff_base
@@ -429,7 +529,12 @@ class WebhookEmitter:
         config = load_webhook_config(
             endpoints, environ=environ, config_file=config_file
         )
-        return cls(config.endpoints, problems=config.problems, **kwargs)
+        return cls(
+            config.endpoints,
+            problems=config.problems,
+            endpoint_problems=config.endpoint_problems,
+            **kwargs,
+        )
 
     @property
     def endpoints(self) -> tuple[WebhookEndpoint, ...]:
@@ -489,6 +594,41 @@ class WebhookEmitter:
         """The recorded delivery outcomes, oldest first."""
         with self._condition:
             return tuple(self._deliveries)
+
+    def status(self) -> WebhookStatus:
+        """The console's read-only view: config validity and last delivery per endpoint.
+
+        Reads only state the emitter already keeps — :attr:`problems` (verbatim,
+        sliced per endpoint) and the bounded delivery history — so it never
+        recomputes a config rule and never touches the network. It is safe to
+        call from a request thread: it takes the emitter's lock and copies; an
+        unconfigured emitter reports ``state == "not_configured"``, which is
+        kept distinct from both "healthy" and "failing" (ADR-0020).
+        """
+        with self._condition:
+            deliveries = tuple(self._deliveries)
+        reports: list[EndpointReport] = []
+        for index, endpoint in enumerate(self._endpoints):
+            own = (
+                self._endpoint_problems[index]
+                if index < len(self._endpoint_problems)
+                else ()
+            )
+            last = next(
+                (d for d in reversed(deliveries) if d.url == endpoint.url), None
+            )
+            reports.append(
+                EndpointReport(
+                    name=endpoint.name,
+                    url=endpoint.url,
+                    events=endpoint.events,
+                    include_content=endpoint.include_content,
+                    signed=endpoint.secret_env is not None,
+                    problems=own,
+                    last_delivery=last,
+                )
+            )
+        return WebhookStatus(endpoints=tuple(reports), problems=self._problems)
 
     def flush(self, timeout: float | None = None) -> bool:
         """Block until every queued delivery has finished (tests). Returns done."""
@@ -673,6 +813,7 @@ __all__ = [
     "DELIVERY_HISTORY",
     "Delivery",
     "EMITTED_EVENTS",
+    "EndpointReport",
     "ENV_ENDPOINTS",
     "EVENT_HEADER",
     "FUTURE_EVENTS",
@@ -685,6 +826,7 @@ __all__ = [
     "WebhookEmitter",
     "WebhookEndpoint",
     "WebhookEvent",
+    "WebhookStatus",
     "default_emitter",
     "load_webhook_config",
     "reset_default_emitter",

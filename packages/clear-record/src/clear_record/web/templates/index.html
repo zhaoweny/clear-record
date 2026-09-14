@@ -13,6 +13,18 @@
     <input name="name" placeholder="{{ tr("New project name") }}" required>
     <button class="primary" type="submit">{{ tr("Add project") }}</button>
   </form>
+
+  {# The webhook delivery panel (ADR-0020): process-wide, so it lives in the
+     sidebar beside the projects, not inside a project. Polled so the last
+     outcome appears as a run finishes; the placeholder inside is swapped in on
+     load. #}
+  <h2 class="sidebar-title">{{ tr("Notifications") }}</h2>
+  <div id="webhooks"
+       hx-get="/ui/webhooks"
+       hx-trigger="load, every 20s"
+       hx-swap="innerHTML">
+    <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
+  </div>
 </aside>
 
 <section id="detail" class="content">

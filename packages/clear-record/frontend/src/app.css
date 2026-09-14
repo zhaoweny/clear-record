@@ -14,13 +14,15 @@
    the status glyphs, which are text content).
 
    Layout contract — do not move these hooks, this file only decorates them:
-   `#projects`, `#detail`, `#run-<id>`, `#profile-options-<id>`,
+   `#projects`, `#detail`, `#webhooks`, `#run-<id>`, `#profile-options-<id>`,
    `#archive-status-<id>` (the htmx targets).
 
    Status vocabulary (see the badge/status block):
      glossary  candidate / confirmed / retired
      runs      queued / running / done / failed (and the template's `error`)
      archives  checking / ok / failed / missing
+     webhooks  ok / config_problem / delivery_failed / not_configured and the
+               per-endpoint delivered / delivery_failed / no_delivery_yet
    Each has a hue *and* its own glyph, so status never depends on colour alone.
    ========================================================================== */
 
@@ -347,6 +349,37 @@ h3:first-child { margin-top: 0; }
   --chip-line: var(--warn-line);
   --chip-glyph: "\003F\00a0"; /* ?  no manifest */
 }
+/* Webhook delivery (ADR-0020). The overall state and an endpoint's health share
+   a vocabulary; `delivered` reuses the ok hue, `no_delivery_yet` stays neutral
+   so a configured-but-idle endpoint cannot be read as either a success or a
+   failure. Underscores keep the class aligned with the service's state words. */
+.status-webhook-ok,
+.status-webhook-delivered {
+  --chip-bg: var(--ok-bg);
+  --chip-ink: var(--ok-ink);
+  --chip-line: var(--ok-line);
+  --chip-glyph: "\2713\00a0"; /* ✓  delivering */
+}
+.status-webhook-config_problem {
+  --chip-bg: var(--warn-bg);
+  --chip-ink: var(--warn-ink);
+  --chip-line: var(--warn-line);
+  --chip-glyph: "\0021\00a0"; /* !  config broken */
+}
+.status-webhook-delivery_failed {
+  --chip-bg: var(--danger-bg);
+  --chip-ink: var(--danger-ink);
+  --chip-line: var(--danger-line);
+  --chip-glyph: "\2715\00a0"; /* ✕  delivery failed */
+}
+.status-webhook-not_configured,
+.status-webhook-no_delivery_yet {
+  --chip-bg: var(--neutral-bg);
+  --chip-ink: var(--neutral-ink);
+  --chip-line: var(--neutral-line);
+}
+.status-webhook-not_configured { --chip-glyph: "\2013\00a0"; } /* –  opted out */
+.status-webhook-no_delivery_yet { --chip-glyph: "\2026\00a0"; } /* …  waiting */
 
 /* The archive fragment swaps into a table cell; this wrapper is layout only. */
 .status {
@@ -891,6 +924,54 @@ tbody tr:last-child td { border-bottom: none; }
   background-color: var(--accent);
   border-radius: var(--radius-pill);
 }
+
+/* --- Webhooks (delivery status) ------------------------------------------ */
+/* A sidebar panel, so it is compact: the state chip headlines, then the
+   emitter's own config problems (if any), then one card per endpoint with its
+   health and last delivery. */
+.webhooks { display: grid; gap: var(--space-2); }
+
+.webhooks-head { gap: var(--space-2); }
+
+.webhooks-note { margin: 0; font-size: var(--text-xs); line-height: 1.5; }
+
+.webhooks-problems { display: grid; gap: var(--space-1); }
+
+.webhooks-problem {
+  padding: var(--space-2);
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.webhooks-endpoints {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.webhook-endpoint {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.webhook-endpoint-head { gap: var(--space-1); }
+
+.webhook-name { overflow-wrap: anywhere; }
+
+.webhook-url,
+.webhook-meta,
+.webhook-last { font-size: var(--text-xs); overflow-wrap: anywhere; }
 
 /* --- Empty and error states ---------------------------------------------- */
 .empty {

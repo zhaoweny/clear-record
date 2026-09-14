@@ -61,6 +61,11 @@ from clear_record.service import (
     resolve_run,
     verify_archive,
 )
+from clear_record.service.webhooks import (
+    WebhookEmitter,
+    WebhookStatus,
+    default_emitter,
+)
 from clear_record.web import guard
 
 WEB_DIR = Path(__file__).parent
@@ -359,11 +364,89 @@ def _run_context(
     return context
 
 
+# --- webhooks: delivery health (ADR-0020) ---------------------------------- #
+# The label for each overall webhook state. Each branch calls ``tr`` with a
+# literal so the catalog tooling can extract it; a state the service adds later
+# falls through to its own word rather than vanishing.
+def _webhook_state_label(state: str) -> str:
+    if state == "not_configured":
+        return tr("Not configured")
+    if state == "config_problem":
+        return tr("Configuration problem")
+    if state == "delivery_failed":
+        return tr("A delivery is failing")
+    return tr("Configured")
+
+
+def _webhook_health_label(health: str) -> str:
+    if health == "config_problem":
+        return tr("Config problem")
+    if health == "delivery_failed":
+        return tr("Failing")
+    if health == "delivered":
+        return tr("Delivered")
+    return tr("No delivery yet")
+
+
+def webhook_status_view(status: WebhookStatus) -> dict:
+    """The console's webhook view: overall state, config problems, per-endpoint last delivery.
+
+    Built field by field rather than by ``dataclasses.asdict`` on purpose: the
+    endpoint view names only what a reader needs, so no field that could ever
+    carry secret material can leak into a template or the JSON API by accident.
+    The signing secret is read from the environment at delivery time and never
+    stored (ADR-0020); the config problems are the emitter's own strings —
+    ``tr``nslated for display, never re-derived — and even those name the
+    *environment variable*, never its value. The endpoint carries only *whether*
+    it is signed.
+
+    ``state`` comes from :attr:`WebhookStatus.state`, so "not configured",
+    "config broken" and "delivery failing" stay distinct.
+    """
+    endpoints = []
+    for report in status.endpoints:
+        last = report.last_delivery
+        endpoints.append(
+            {
+                "name": report.name,
+                "url": report.url,
+                "events": list(report.events),
+                "include_content": report.include_content,
+                "signed": report.signed,
+                "health": report.health,
+                "health_label": _webhook_health_label(report.health),
+                "problems": list(report.problems),
+                "last_delivery": None
+                if last is None
+                else {
+                    "outcome": "delivered" if last.status == "delivered" else "failed",
+                    "outcome_label": tr("Delivered")
+                    if last.status == "delivered"
+                    else tr("Failed"),
+                    "at": last.at,
+                    "attempts": last.attempts,
+                    "http_status": last.http_status,
+                    "error": last.error,
+                    "event_type": last.type,
+                    "event_id": last.event_id,
+                },
+            }
+        )
+    return {
+        "state": status.state,
+        "state_label": _webhook_state_label(status.state),
+        "configured": bool(status.endpoints),
+        "problems": list(status.problems),
+        "endpoints": endpoints,
+    }
+
+
 def create_app(
     registry: Registry,
     runs: RunManager | None = None,
     *,
     trusted_hosts: Sequence[str] | None = None,
+    webhooks: WebhookEmitter | None = None,
 ) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
 
@@ -374,6 +457,10 @@ def create_app(
     ``trusted_hosts`` overrides the extra hostnames the request guard accepts
     (default: ``CR_TRUSTED_HOSTS``, on top of loopback); tests and embedders can
     pass an explicit set, and ``()`` pins the loopback-only default.
+
+    ``webhooks`` is the emitter whose health the console reports; it defaults to
+    the shared config-driven one the runs already deliver through, and a test can
+    inject an inert or a failing one to exercise the status surface offline.
     """
     # The console's user-facing text is translated per process. A CLI ``--lang``
     # (or an explicit ``install``) has already chosen; otherwise honour
@@ -381,6 +468,10 @@ def create_app(
     # source renders — the byte-identical default.
     install_if_unset()
     runs = runs or RunManager(registry)
+    # The emitter the runs already deliver through (``RunManager`` defaults to
+    # the shared one), so the console reports on the same delivery the runs make.
+    # Injecting one lets a test drive the status surface with no config file.
+    emitter = webhooks if webhooks is not None else default_emitter()
     app = FastAPI(
         title="clear-record",
         summary="Local project console: projects, glossary, meetings and runs.",
@@ -391,6 +482,7 @@ def create_app(
     # supervisor stop draining cleanly on shutdown (``serve``), and lets an
     # embedder reach the same seam.
     app.state.runs = runs
+    app.state.webhooks = emitter
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -1005,10 +1097,36 @@ def create_app(
             },
         )
 
+    @app.get("/ui/webhooks", response_class=HTMLResponse)
+    def ui_webhooks(request: Request) -> HTMLResponse:
+        """The webhook status panel: config validity and the last delivery (ADR-0020).
+
+        Reads the emitter the runs already deliver through — its existing
+        ``problems`` surface and its bounded delivery history — so a config
+        mistake is visible on the console, not only on stderr, and silence
+        ("not configured") stays distinct from success and failure.
+        """
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_webhooks.html",
+            {"status": webhook_status_view(emitter.status())},
+        )
+
     # --- JSON API (machines, scripts, later MCP) ---------------------------- #
     @app.get("/api/health")
     def health() -> dict:
         return {"status": "ok", "registry": str(registry.db_path)}
+
+    @app.get("/api/webhooks")
+    def webhooks_status() -> dict:
+        """Webhook endpoint health as JSON; see :func:`webhook_status_view`.
+
+        Not configured, config-broken and delivery-failing are distinct
+        ``state`` values. The signing secret is never part of this response —
+        only whether an endpoint is signed — and the problem text names the
+        environment variable, never its value.
+        """
+        return webhook_status_view(emitter.status())
 
     @app.get("/api/projects")
     def list_projects() -> list[dict]:

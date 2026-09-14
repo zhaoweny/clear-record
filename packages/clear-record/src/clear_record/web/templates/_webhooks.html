@@ -1,0 +1,63 @@
+{# The webhook delivery panel (ADR-0020). Every value is the service's own: the
+   state and the config `problems` come from `WebhookEmitter.status()`, which
+   surfaces the existing `problems` surface verbatim; the last delivery is the
+   newest entry in the bounded history. The signing secret is never here — only
+   whether an endpoint is signed #}
+<div class="webhooks">
+  <div class="row webhooks-head">
+    <span class="badge status-webhook-{{ status.state }}">{{ status.state_label }}</span>
+    <button class="btn btn-sm btn-ghost" type="button"
+            hx-get="/ui/webhooks" hx-target="#webhooks" hx-swap="innerHTML"
+            title="{{ tr('Refresh webhook status') }}">{{ tr('Refresh') }}</button>
+  </div>
+
+  {% if status.state == 'not_configured' %}
+  {# Opt-in silence. Deliberately not "healthy" and not "failing": nothing is
+     set up, so nothing is delivered and no event has been missed. #}
+  <p class="muted webhooks-note">{{ tr('No webhook endpoints are configured, so nothing is delivered. Set CR_WEBHOOKS or add endpoints under [webhooks.endpoints] in the config file to send notifications.') }}</p>
+  {% endif %}
+
+  {% if status.problems %}
+  <div class="webhooks-problems">
+    {% for problem in status.problems %}
+    {# The service's own wording, translated for display; the console never
+       restates the rule that raised it. #}
+    <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if status.endpoints %}
+  <ul class="webhooks-endpoints">
+    {% for endpoint in status.endpoints %}
+    <li class="webhook-endpoint">
+      <div class="row webhook-endpoint-head">
+        <strong class="webhook-name">{{ endpoint.name or endpoint.url }}</strong>
+        <span class="badge status-webhook-{{ endpoint.health }}">{{ endpoint.health_label }}</span>
+      </div>
+      {% if endpoint.name %}<div class="webhook-url muted">{{ endpoint.url }}</div>{% endif %}
+      <div class="muted webhook-meta">
+        {% if endpoint.events %}{{ tr('Events:') }} {{ endpoint.events | join(', ') }}{% else %}{{ tr('All events') }}{% endif %}
+        &middot; {% if endpoint.signed %}{{ tr('signed') }}{% else %}{{ tr('unsigned') }}{% endif %}
+        {% if endpoint.include_content %}&middot; {{ tr('content included') }}{% endif %}
+      </div>
+      {% for problem in endpoint.problems %}
+      <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+      {% endfor %}
+      {% if endpoint.last_delivery %}
+      {% set last = endpoint.last_delivery %}
+      <div class="webhook-last muted">
+        {{ tr('Last delivery:') }}
+        <span class="badge status-{{ 'done' if last.outcome == 'delivered' else 'failed' }}">{{ last.outcome_label }}</span>
+        <span class="webhook-at">{{ last.at }}</span>
+        {% if last.http_status is not none %}&middot; HTTP {{ last.http_status }}{% endif %}
+        {% if last.error %}&middot; {{ last.error }}{% endif %}
+      </div>
+      {% else %}
+      <div class="webhook-last muted">{{ tr('No delivery yet') }}</div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>

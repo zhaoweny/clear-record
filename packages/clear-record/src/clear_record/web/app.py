@@ -12,7 +12,10 @@ No domain logic lives here, which is what lets the GUI, the MCP server and
 scripts share one tested service seam.
 
 The app binds localhost by default and has no authentication —
-it is a local-first tool, not a hosted service (ADR-0013).
+it is a local-first tool, not a hosted service (ADR-0013). "Localhost-only"
+bounds who can connect, not who can act: the :mod:`clear_record.web.guard`
+middleware rejects a hostile page's cross-origin or rebound requests (ADR-0021),
+while remote access stays the operator's reverse proxy.
 """
 
 from __future__ import annotations
@@ -20,10 +23,11 @@ from __future__ import annotations
 import dataclasses
 import threading
 import webbrowser
+from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -45,6 +49,7 @@ from clear_record.service import (
     collect_bundle,
     verify_archive,
 )
+from clear_record.web import guard
 
 WEB_DIR = Path(__file__).parent
 TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
@@ -166,12 +171,21 @@ def _run_context(state: RunState | None, *, meeting_id: int, fallback=None) -> d
     }
 
 
-def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
+def create_app(
+    registry: Registry,
+    runs: RunManager | None = None,
+    *,
+    trusted_hosts: Sequence[str] | None = None,
+) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
 
     ``runs`` is the background run manager; inject one with a fake pipeline in
     tests so a whole run lifecycle is exercised with no ASR backend. It defaults
     to the real manager over the same registry.
+
+    ``trusted_hosts`` overrides the extra hostnames the request guard accepts
+    (default: ``CR_TRUSTED_HOSTS``, on top of loopback); tests and embedders can
+    pass an explicit set, and ``()`` pins the loopback-only default.
     """
     runs = runs or RunManager(registry)
     app = FastAPI(
@@ -181,6 +195,32 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
         openapi_url="/api/openapi.json",
     )
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+
+    extra_hosts = (
+        guard.normalize_hosts(trusted_hosts)
+        if trusted_hosts is not None
+        else guard.trusted_extra_hosts()
+    )
+
+    @app.middleware("http")
+    async def request_guard(request: Request, call_next):
+        """Reject a hostile page's rebound or cross-origin requests (ADR-0021).
+
+        ``Host`` is checked on every request (DNS rebinding is method-blind and a
+        rebound read is still a disclosure); ``Origin``/``Referer`` on the
+        state-changing ones. A rejection is a plain 403 with an actionable
+        message — it is the attacker's request, not the operator's UI.
+        """
+        problem = guard.host_problem(request.headers.get("host"), extra_hosts)
+        if problem is None and request.method not in guard.SAFE_METHODS:
+            problem = guard.source_problem(
+                request.headers.get("origin"),
+                request.headers.get("referer"),
+                extra_hosts,
+            )
+        if problem is not None:
+            return JSONResponse(status_code=403, content={"detail": problem})
+        return await call_next(request)
 
     # --- HTML views (htmx + Alpine) ---------------------------------------- #
     def project_rows() -> list[dict]:

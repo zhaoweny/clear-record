@@ -26,14 +26,21 @@ Upload is a **write surface**, so every guard is here and each failure is a
   inside the managed root, and the ``.part`` file is created ``O_EXCL |
   O_NOFOLLOW``.
 
+An upload may carry a client-supplied **upload id**: a bare, bounded token that
+names the transfer. It is validated and honoured as the ``.part`` scratch file's
+identity, so a resumable layer can be added later without changing the request's
+shape. **Resuming itself is not built**: a fresh id still starts at zero, and an
+id whose ``.part`` is already on disk (an interrupted or in-flight upload) is
+refused as explicitly unsupported, with an actionable message.
+
 The stream is copied in fixed-size blocks to a ``.part`` file beside its
 destination, ``fsync``-ed, then atomically renamed; only then is the tape
 recorded (with its ``sha256`` and size). A partial or failed upload never
 becomes a tape.
 
 **Limitation (deliberate, this slice):** the POST is a single stream. A dropped
-multi-GB upload restarts from zero — chunked/resumable upload is out of scope
-until it is asked for (ticket 01).
+multi-GB upload restarts from zero — resumable upload is out of scope until it
+is asked for; the upload id is the seam that layer will use.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import os
+import re
 import secrets
 import shutil
 from pathlib import Path
@@ -68,6 +76,19 @@ DISK_HEADROOM_BYTES = 64 * 1024**2
 #: body; a declared ``Content-Length`` is checked against the cap with this much
 #: slack so framing never rejects a file that is itself within the cap.
 _FORM_OVERHEAD_BYTES = 1 << 20
+
+#: Longest client-supplied upload id accepted. The id is a bare token, never a
+#: path: ``[A-Za-z0-9][A-Za-z0-9._-]*`` up to this length, so it can name the
+#: scratch file for a future resume layer without escaping the tapes directory.
+MAX_UPLOAD_ID_LENGTH = 64
+_UPLOAD_ID_RE = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{MAX_UPLOAD_ID_LENGTH - 1}}}"
+)
+
+#: The in-flight scratch file: ``.cr-upload-<token>.part``. The ``.part`` suffix
+#: keeps it out of ``discover_audio``, and the prefix marks it as ours.
+_SCRATCH_PREFIX = ".cr-upload-"
+_SCRATCH_SUFFIX = ".part"
 
 _READ_BLOCK = 1 << 20
 
@@ -101,6 +122,14 @@ class UploadTooLarge(UploadRejected):
 
 class InsufficientSpace(UploadRejected):
     """The managed root has too little free space for the declared upload."""
+
+
+class InvalidUploadId(UploadRejected):
+    """The client's upload id is not a valid bare token."""
+
+
+class ResumeNotSupported(UploadRejected):
+    """The id names an interrupted/in-flight upload, and resume is not built."""
 
 
 def managed_root(explicit: str | os.PathLike | None = None) -> Path:
@@ -143,20 +172,41 @@ def ensure_managed_workspace(
     return meeting
 
 
+def root_free_bytes(root: str | os.PathLike | None = None) -> int:
+    """Free bytes on the managed root.
+
+    The **one accounting** of this fact: the upload guard checks it before the
+    body is read, and :func:`meeting_storage` reports it for the console, so a
+    panel can never say there is room while the guard refuses. Creates the root
+    when it is missing (the guard needs it to exist to measure it) and lets an
+    ``OSError`` propagate when the filesystem cannot report it; a *reporting*
+    caller turns that into "unknown" rather than a failure.
+    """
+    resolved_root = managed_root(root)
+    resolved_root.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(resolved_root).free
+
+
 def precheck_upload(
     registry: Registry,
     meeting: Meeting,
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
+    upload_id: str | None = None,
 ) -> Meeting:
     """Refuse an upload *before* its body is read, where the guard can.
 
     ``declared_bytes`` is the request's ``Content-Length`` (the whole multipart
     body, an upper bound on the file). It is checked against the cap and against
-    free space on the managed root. Returns the (possibly newly provisioned)
-    meeting so the caller need not resolve it twice.
+    free space on the managed root. ``upload_id`` is the client's optional
+    upload id: it is validated here, and an id whose scratch file is already on
+    disk is refused as unsupported (resume is not built). Returns the (possibly
+    newly provisioned) meeting so the caller need not resolve it twice.
     """
     meeting = _upload_workspace(registry, meeting, root)
+    token = validate_upload_id(upload_id)
+    if token is not None:
+        _refuse_occupied_upload_id(meeting, token)
     cap = max_upload_bytes()
     if declared_bytes is None:
         return meeting
@@ -165,8 +215,7 @@ def precheck_upload(
     resolved_root = managed_root(root)
     # The root is operator-chosen, so a symlink there is allowed (it is not a
     # component the upload creates); the *destination* dirs are what is checked.
-    resolved_root.mkdir(parents=True, exist_ok=True)
-    free = shutil.disk_usage(resolved_root).free
+    free = root_free_bytes(resolved_root)
     needed = declared_bytes + DISK_HEADROOM_BYTES
     if free < needed:
         raise _no_space(free, needed, resolved_root)
@@ -181,17 +230,23 @@ def upload_tape(
     filename: str | None,
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
+    upload_id: str | None = None,
 ) -> Tape:
     """Stream one uploaded tape to the meeting's managed workspace.
 
-    Guards run first (filename, extension, cap, disk). The body is then copied
-    in blocks to a sibling ``.part`` file, ``fsync``-ed and atomically renamed;
-    the tape is recorded — checksum and size — only after the rename. Any
-    failure (a truncated body included) removes the partial file and leaves no
-    tape behind.
+    Guards run first (filename, extension, cap, disk, upload id). The body is
+    then copied in blocks to a sibling ``.part`` file, ``fsync``-ed and
+    atomically renamed; the tape is recorded — checksum and size — only after
+    the rename. Any failure (a truncated body included) removes the partial file
+    and leaves no tape behind.
+
+    ``upload_id``, when given, names that scratch file, so it is the transfer's
+    identity for a future resume layer. This slice still starts every upload at
+    zero: an id whose scratch file exists is refused by the precheck.
     """
-    meeting = precheck_upload(registry, meeting, declared_bytes, root)
+    meeting = precheck_upload(registry, meeting, declared_bytes, root, upload_id)
     assert meeting.workspace_path is not None  # precheck provisioned it
+    token = validate_upload_id(upload_id)
     name = sanitize_filename(filename)
     if not is_audio(Path(name)):
         raise DisallowedExtension(
@@ -211,16 +266,28 @@ def upload_tape(
         )
 
     cap = max_upload_bytes()
-    # A short, random scratch name (not the tape name, which may be near the
-    # filesystem's 255-byte limit) that cannot collide with a sibling upload.
-    part = tapes_dir / f".cr-upload-{secrets.token_hex(8)}.part"
+    # A client id names its own scratch file (so a resume layer can find it); a
+    # request without one gets a short random name that cannot collide with a
+    # sibling upload. Either way the name is not the tape name, which may be near
+    # the filesystem's 255-byte limit.
+    part = _scratch_path(tapes_dir, token)
     digest = hashlib.sha256()
     written = 0
+    created = False
     replaced = False
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(part, flags, 0o600)
+        try:
+            fd = os.open(part, flags, 0o600)
+        except FileExistsError as exc:
+            # Only a client id can land here (a random name cannot collide): the
+            # slot holds an interrupted or in-flight upload, which this node
+            # cannot resume. The existing file is left untouched.
+            if token is not None:
+                raise _resume_not_supported(token) from exc
+            raise
+        created = True
         with os.fdopen(fd, "wb") as handle:
             while True:
                 block = stream.read(_READ_BLOCK)
@@ -240,7 +307,8 @@ def upload_tape(
             meeting.id, path=str(target), sha256=digest.hexdigest(), bytes=written
         )
     except OSError as exc:
-        part.unlink(missing_ok=True)
+        if created:
+            part.unlink(missing_ok=True)
         if replaced:
             target.unlink(missing_ok=True)
         if exc.errno == errno.ENOSPC:
@@ -254,7 +322,8 @@ def upload_tape(
             ) from exc
         raise
     except BaseException:
-        part.unlink(missing_ok=True)
+        if created:
+            part.unlink(missing_ok=True)
         if replaced:
             target.unlink(missing_ok=True)
         raise
@@ -283,12 +352,27 @@ def meeting_storage(
     meeting: Meeting,
     root: str | os.PathLike | None = None,
 ) -> dict:
-    """The meeting's workspace size and its uploaded tapes (storage visibility)."""
+    """The meeting's workspace size, its uploaded tapes and the root's free space.
+
+    ``free_bytes`` is the same accounting the upload guard checks (one function,
+    :func:`root_free_bytes`), so the console's panel and the guard cannot drift;
+    it is ``None`` when the root cannot report it, or when the meeting is not
+    managed (its disk is not this app's concern).
+    """
+    resolved_root = managed_root(root)
+    managed_here = is_managed(meeting, resolved_root)
+    free_bytes: int | None = None
+    if managed_here:
+        try:
+            free_bytes = root_free_bytes(resolved_root)
+        except OSError:  # pragma: no cover - a root that cannot be measured
+            free_bytes = None
     return {
         "workspace_path": meeting.workspace_path,
-        "managed": is_managed(meeting, root),
-        "managed_root": str(managed_root(root)),
+        "managed": managed_here,
+        "managed_root": str(resolved_root),
         "bytes": workspace_usage(meeting),
+        "free_bytes": free_bytes,
         "tapes": [
             {
                 "id": tape.id,
@@ -380,6 +464,30 @@ def sanitize_filename(filename: str | None) -> str:
     return name
 
 
+def validate_upload_id(upload_id: str | None) -> str | None:
+    """Return a well-formed client upload id, or ``None`` when none was sent.
+
+    The id is a **bare token**, never a path: it must match
+    :data:`MAX_UPLOAD_ID_LENGTH`-bounded ``[A-Za-z0-9][A-Za-z0-9._-]*``. An id
+    is optional — the console sends none — but a malformed one is refused rather
+    than silently ignored, because the whole point of accepting one is that a
+    resumable layer can later trust it.
+    """
+    if upload_id is None:
+        return None
+    if _UPLOAD_ID_RE.fullmatch(upload_id) is None:
+        raise InvalidUploadId(
+            deferred(
+                "the upload id {id!r} is not valid: use 1-{max_length} characters "
+                "from A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a "
+                "letter or digit"
+            ),
+            id=upload_id,
+            max_length=MAX_UPLOAD_ID_LENGTH,
+        )
+    return upload_id
+
+
 def max_upload_bytes() -> int:
     """The upload cap: ``CR_MAX_UPLOAD_BYTES`` bytes, else 8 GiB.
 
@@ -453,6 +561,33 @@ def _safe_mkdir(path: Path, *, root: Path | None = None) -> Path:
     return path
 
 
+def _scratch_path(tapes_dir: Path, upload_id: str | None) -> Path:
+    """The in-flight scratch file for one upload.
+
+    A client id names its own scratch file (the id's identity on disk, for a
+    future resume layer); a request without one gets a short random name that
+    cannot collide with a sibling upload.
+    """
+    token = upload_id if upload_id is not None else secrets.token_hex(8)
+    return tapes_dir / f"{_SCRATCH_PREFIX}{token}{_SCRATCH_SUFFIX}"
+
+
+def _refuse_occupied_upload_id(meeting: Meeting, upload_id: str) -> None:
+    """Refuse an id whose scratch file already exists.
+
+    An id names one transfer. A file already at that slot is an interrupted or
+    in-flight upload, and this node cannot resume either, so it is refused with
+    an actionable message rather than overwritten or silently restarted. A
+    symlink at the slot is refused the same way (and the write stays
+    ``O_EXCL | O_NOFOLLOW`` regardless).
+    """
+    if not meeting.workspace_path:
+        return
+    partial = _scratch_path(Path(meeting.workspace_path) / TAPES_DIRNAME, upload_id)
+    if partial.is_symlink() or partial.exists():
+        raise _resume_not_supported(upload_id)
+
+
 def _unique_target(directory: Path, name: str) -> Path:
     """A destination filename that does not collide, mirroring the archive's
     disagreement-free suffixes (``a.wav`` -> ``a-2.wav``)."""
@@ -515,11 +650,25 @@ def _no_space(free: int, needed: int, root: Path) -> InsufficientSpace:
     )
 
 
+def _resume_not_supported(upload_id: str) -> ResumeNotSupported:
+    return ResumeNotSupported(
+        deferred(
+            "an upload with id {id!r} is already in progress or was left "
+            "interrupted, and this node cannot resume one; start again with a new "
+            "upload id"
+        ),
+        id=upload_id,
+    )
+
+
 __all__ = [
     "DEFAULT_MAX_UPLOAD_BYTES",
     "DISK_HEADROOM_BYTES",
     "DisallowedExtension",
     "InsufficientSpace",
+    "InvalidUploadId",
+    "MAX_UPLOAD_ID_LENGTH",
+    "ResumeNotSupported",
     "TAPES_DIRNAME",
     "UnsafeFilename",
     "UploadRejected",
@@ -531,8 +680,10 @@ __all__ = [
     "max_upload_bytes",
     "meeting_storage",
     "precheck_upload",
+    "root_free_bytes",
     "sanitize_filename",
     "upload_tape",
+    "validate_upload_id",
     "workspace_path_for",
     "workspace_usage",
 ]

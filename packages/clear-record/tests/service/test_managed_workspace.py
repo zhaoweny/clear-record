@@ -232,6 +232,131 @@ def test_a_failed_registry_write_removes_the_file(
     assert list((Path(meeting.workspace_path) / "tapes").iterdir()) == []
 
 
+# --- the upload id --------------------------------------------------------- #
+def test_a_valid_upload_id_names_the_scratch_file(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The id is honoured: it is the transfer's identity on disk."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    seen: list[str] = []
+    real_replace = managed.os.replace
+
+    def record(src, dst):
+        seen.append(Path(src).name)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(managed.os, "replace", record)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", upload_id="take-01"
+    )
+
+    assert seen == [".cr-upload-take-01.part"]
+    assert Path(tape.path).read_bytes() == b"RIFF"
+    # Success consumed the slot: the id can be used again for a new upload.
+    managed.upload_tape(
+        registry, meeting, io.BytesIO(b"RIFF"), filename="b.wav", upload_id="take-01"
+    )
+    assert len(registry.list_tapes(meeting.id)) == 2
+
+
+def test_no_upload_id_keeps_the_random_scratch_name(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    seen: list[str] = []
+    real_replace = managed.os.replace
+
+    def record(src, dst):
+        seen.append(Path(src).name)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(managed.os, "replace", record)
+    managed.upload_tape(registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav")
+
+    assert len(seen) == 1
+    assert seen[0].startswith(".cr-upload-")
+    assert seen[0].endswith(".part")
+    assert seen[0] != ".cr-upload-take-01.part"
+
+
+@pytest.mark.parametrize(
+    "upload_id",
+    [
+        "",
+        "has space",
+        "a/b",
+        "../escape",
+        ".hidden",  # leading dot would make a hidden-name token
+        "-leading-dash",
+        "x" * 65,
+        "caf\u00e9",  # non-ASCII
+    ],
+)
+def test_a_malformed_upload_id_is_refused_before_the_body_is_read(
+    registry, tmp_path, monkeypatch, upload_id
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+
+    with pytest.raises(managed.InvalidUploadId, match="upload id"):
+        managed.upload_tape(
+            registry,
+            meeting,
+            _MustNotBeRead(b"ignored"),
+            filename="a.wav",
+            upload_id=upload_id,
+        )
+    assert registry.list_tapes(meeting.id) == []
+    assert list(Path(meeting.workspace_path).rglob("*.part")) == []
+
+
+def test_an_occupied_upload_id_is_refused_as_unsupported(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """An id already on disk cannot be resumed here — refuse, never overwrite."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tapes = Path(meeting.workspace_path) / "tapes"
+    tapes.mkdir(parents=True, exist_ok=True)
+    partial = tapes / ".cr-upload-take-01.part"
+    partial.write_bytes(b"interrupted upload")
+
+    with pytest.raises(managed.ResumeNotSupported, match="cannot resume"):
+        managed.upload_tape(
+            registry,
+            meeting,
+            _MustNotBeRead(b"ignored"),
+            filename="a.wav",
+            upload_id="take-01",
+        )
+
+    assert partial.read_bytes() == b"interrupted upload"  # untouched
+    assert registry.list_tapes(meeting.id) == []
+
+
+def test_a_symlink_at_an_upload_id_is_refused_the_same_way(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tapes = Path(meeting.workspace_path) / "tapes"
+    tapes.mkdir(parents=True, exist_ok=True)
+    secret = tmp_path / "secret.bin"
+    secret.write_bytes(b"SECRET")
+    (tapes / ".cr-upload-take-01.part").symlink_to(secret)
+
+    with pytest.raises(managed.ResumeNotSupported):
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename="a.wav", upload_id="take-01"
+        )
+
+    assert secret.read_bytes() == b"SECRET"
+
+
+def test_validate_upload_id_passes_a_token_and_none_through() -> None:
+    assert managed.validate_upload_id(None) is None
+    assert managed.validate_upload_id("take-01") == "take-01"
+    with pytest.raises(managed.InvalidUploadId):
+        managed.validate_upload_id("not a token")
+
+
 # --- guards ---------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "filename",
@@ -373,6 +498,67 @@ def test_storage_reports_the_workspace_size_and_the_tapes(
     assert storage["bytes"] == 8
     assert [tape["name"] for tape in storage["tapes"]] == ["a.wav", "b.wav"]
     assert storage["tapes"][0]["sha256"] == hashlib.sha256(b"12345").hexdigest()
+
+
+def test_storage_reports_free_space_from_the_guards_accounting(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """One fact, one home: `free_bytes` is the guard's own `root_free_bytes`."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        managed.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 123_456_789})(),
+    )
+
+    assert managed.meeting_storage(registry, meeting)["free_bytes"] == 123_456_789
+
+
+def test_storage_reports_no_free_space_for_a_user_chosen_workspace(
+    registry, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    chosen = tmp_path / "user-docs"
+    chosen.mkdir()
+    meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+
+    assert managed.meeting_storage(registry, meeting)["free_bytes"] is None
+
+
+def test_storage_reports_unknown_free_space_rather_than_failing(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+
+    def unreadable(_path):
+        raise OSError("the disk cannot be measured")
+
+    monkeypatch.setattr(managed.shutil, "disk_usage", unreadable)
+
+    storage = managed.meeting_storage(registry, meeting)
+
+    assert storage["free_bytes"] is None
+    assert storage["managed"] is True
+
+
+def test_the_guard_and_the_storage_report_share_root_free_bytes(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Patching the one function moves the guard and the report together."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    calls: list[object] = []
+
+    def no_space(root=None):
+        calls.append(root)
+        return 0
+
+    monkeypatch.setattr(managed, "root_free_bytes", no_space)
+
+    with pytest.raises(managed.InsufficientSpace):
+        managed.precheck_upload(registry, meeting, declared_bytes=1)
+    assert managed.meeting_storage(registry, meeting)["free_bytes"] == 0
+    assert calls  # both read the seam, neither re-implements it
 
 
 def test_deleting_a_tape_removes_its_file_and_the_tape_set(

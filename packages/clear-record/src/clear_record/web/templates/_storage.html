@@ -1,7 +1,8 @@
 {# One meeting's storage panel (ADR-0024). `_detail.html` fetches it per meeting
    (htmx `load`), so a project render never walks a workspace. Every fact is the
    service's own accounting (`managed.meeting_storage`): the resolved workspace
-   path, the workspace and tape sizes, the managed root and the tapes.
+   path, the workspace and tape sizes, the managed root, the root's free space
+   and the tapes.
 
    Retention is **manual only** (owner, 2026-09-15): nothing here suggests the
    node will clean up on its own, and every delete names the archive as the

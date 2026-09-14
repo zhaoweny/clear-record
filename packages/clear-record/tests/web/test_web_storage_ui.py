@@ -208,6 +208,61 @@ def test_the_disk_guard_is_surfaced(client, monkeypatch) -> None:
     assert "CR_WORKSPACE_ROOT" in panel.text
 
 
+def test_the_panel_renders_the_services_free_space(client, monkeypatch) -> None:
+    _project(client)
+    meeting = _managed_meeting(client)
+    monkeypatch.setattr(managed, "root_free_bytes", lambda root=None: 5 * 1024**3)
+
+    panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
+
+    assert "Free on the managed disk: 5.0 GiB" in panel.text
+
+
+def test_the_panel_and_the_guard_share_one_free_space_accounting(
+    client, monkeypatch
+) -> None:
+    """Patching the one seam moves both the panel's number and the guard."""
+    _project(client)
+    meeting = _managed_meeting(client)
+    monkeypatch.setattr(managed, "root_free_bytes", lambda root=None: 0)
+
+    panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
+    assert "Free on the managed disk: 0 B" in panel.text
+
+    refused = _upload(client, meeting["id"], "a.wav", b"x")
+    assert "Not enough disk space" in refused.text
+    assert "CR_WORKSPACE_ROOT" in refused.text
+
+
+def test_the_ui_upload_accepts_an_upload_id(client) -> None:
+    _project(client)
+    meeting = _managed_meeting(client)
+
+    panel = client.post(
+        f"/ui/meetings/{meeting['id']}/tapes/upload?upload_id=take-01",
+        files={"file": ("a.wav", b"RIFF", "audio/wav")},
+    )
+
+    assert panel.status_code == 200
+    assert "a.wav" in panel.text
+    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    assert [tape["name"] for tape in storage["tapes"]] == ["a.wav"]
+
+
+def test_the_ui_upload_surfaces_a_malformed_upload_id(client) -> None:
+    _project(client)
+    meeting = _managed_meeting(client)
+
+    panel = client.post(
+        f"/ui/meetings/{meeting['id']}/tapes/upload?upload_id=not%20a%20token",
+        files={"file": ("a.wav", b"x", "audio/wav")},
+    )
+
+    assert panel.status_code == 200
+    assert "Invalid upload id" in panel.text
+    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+
+
 def test_the_user_chosen_workspace_guard_is_surfaced(client, tmp_path) -> None:
     _project(client)
     chosen = tmp_path / "user-docs"
@@ -283,3 +338,17 @@ def test_the_panel_strings_go_through_tr(client) -> None:
 
     assert "受管工作区" in panel.text  # managed workspace
     assert "上传录音" in panel.text  # Upload tape
+    assert "受管磁盘可用空间" in panel.text  # Free on the managed disk
+
+
+def test_the_upload_id_refusal_is_translated(client) -> None:
+    _project(client)
+    meeting = _managed_meeting(client)
+    client.cookies.set(LANG_COOKIE, "zh_CN")
+
+    panel = client.post(
+        f"/ui/meetings/{meeting['id']}/tapes/upload?upload_id=not%20a%20token",
+        files={"file": ("a.wav", b"x", "audio/wav")},
+    )
+
+    assert "上传 ID 无效" in panel.text  # Invalid upload id

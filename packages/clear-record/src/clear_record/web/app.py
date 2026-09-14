@@ -23,7 +23,6 @@ while remote access stays the operator's reverse proxy.
 from __future__ import annotations
 
 import dataclasses
-import shutil
 import threading
 import webbrowser
 from collections.abc import Mapping, Sequence
@@ -305,6 +304,10 @@ _UPLOAD_STATUS = {
     managed.UploadTooLarge: 413,
     managed.DisallowedExtension: 415,
     managed.InsufficientSpace: 507,
+    managed.InvalidUploadId: 400,
+    # The node does not implement resuming, so an id whose scratch file already
+    # exists is refused as "not implemented" rather than as a bad request.
+    managed.ResumeNotSupported: 501,
 }
 
 
@@ -685,6 +688,10 @@ def create_app(
             return tr("Upload too large")
         if isinstance(exc, managed.InsufficientSpace):
             return tr("Not enough disk space")
+        if isinstance(exc, managed.InvalidUploadId):
+            return tr("Invalid upload id")
+        if isinstance(exc, managed.ResumeNotSupported):
+            return tr("Resuming is not supported")
         return tr("Upload refused")
 
     def refusal(exc: managed.UploadRejected, label: str) -> dict:
@@ -718,18 +725,14 @@ def create_app(
         """The template context for one meeting's storage panel (ADR-0024).
 
         Everything factual is the service's: the resolved workspace path, the
-        workspace and tape sizes, the managed root and the tapes. Free space on
-        the managed root is the one number the service reports only inside a
-        guard message, so the view reads it with the same stdlib call the guard
-        uses (a follow-up note asks the service to expose it — see the report).
+        workspace and tape sizes, the managed root, free space on it and the
+        tapes. Free space is ``meeting_storage['free_bytes']`` — the **same**
+        ``root_free_bytes`` the upload guard checks, so the panel and the guard
+        can never disagree about the disk. Formatting it for a human is the only
+        thing this view does with it.
         """
         usage = managed.meeting_storage(registry, meeting)
-        free_bytes: int | None = None
-        if usage["managed"]:
-            try:
-                free_bytes = shutil.disk_usage(Path(usage["managed_root"])).free
-            except OSError:  # pragma: no cover - a root that vanished
-                free_bytes = None
+        free_bytes = usage["free_bytes"]
         tapes = [
             {
                 "id": tape["id"],
@@ -916,21 +919,25 @@ def create_app(
         return render_storage(request, meeting)
 
     @app.post("/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
-    async def ui_upload_tape(request: Request, meeting_id: int) -> HTMLResponse:
+    async def ui_upload_tape(
+        request: Request, meeting_id: int, upload_id: str | None = None
+    ) -> HTMLResponse:
         """Receive one tape and re-render the panel (ADR-0024).
 
         The service's guards are the same ones the JSON endpoint uses. A refusal
         re-renders the panel with the guard's translated label and its own
         message as a 200, so htmx swaps the error into place and the form stays
-        usable. The body is one stream: the endpoint takes no upload id, so
-        there is no resume to offer (see the report).
+        usable. An optional ``upload_id`` query parameter names the transfer; the
+        console sends none, and this node still cannot resume one.
         """
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         declared = _content_length(request)
         try:
-            meeting = managed.precheck_upload(registry, meeting, declared)
+            meeting = managed.precheck_upload(
+                registry, meeting, declared, upload_id=upload_id
+            )
             try:
                 form = await request.form()
             except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
@@ -949,6 +956,7 @@ def create_app(
                 upload.file,
                 filename=upload.filename,
                 declared_bytes=declared,
+                upload_id=upload_id,
             )
         except managed.UploadRejected as exc:
             return render_storage(
@@ -1280,7 +1288,9 @@ def create_app(
         return _out(tape_set)
 
     @app.post("/api/meetings/{meeting_id}/tapes", status_code=201)
-    async def upload_tape(request: Request, meeting_id: int) -> dict:
+    async def upload_tape(
+        request: Request, meeting_id: int, upload_id: str | None = None
+    ) -> dict:
         """Receive one tape into the meeting's **managed** workspace (ADR-0024).
 
         Multipart, one file part named ``file``. The guards run first — and the
@@ -1289,15 +1299,20 @@ def create_app(
         The bytes then stream to a ``.part`` file and are renamed into place;
         only a complete, checksummed tape is recorded.
 
-        A single POST, deliberately: a dropped multi-GB upload restarts. Chunked
-        / resumable upload is out of scope for this slice.
+        An optional ``upload_id`` names the transfer: it is validated, and it
+        becomes the upload's identity on disk so a resumable layer can be added
+        later without changing this request. **Resume itself is not built** — a
+        dropped multi-GB upload still restarts from zero, and an id whose scratch
+        file already exists is refused as unsupported (501).
         """
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         declared = _content_length(request)
         try:
-            meeting = managed.precheck_upload(registry, meeting, declared)
+            meeting = managed.precheck_upload(
+                registry, meeting, declared, upload_id=upload_id
+            )
         except managed.UploadRejected as exc:
             raise HTTPException(
                 status_code=_upload_status(exc), detail=str(exc)
@@ -1324,6 +1339,7 @@ def create_app(
                 upload.file,
                 filename=upload.filename,
                 declared_bytes=declared,
+                upload_id=upload_id,
             )
         except managed.UploadRejected as exc:
             raise HTTPException(
@@ -1333,7 +1349,11 @@ def create_app(
 
     @app.get("/api/meetings/{meeting_id}/storage")
     def meeting_storage(meeting_id: int) -> dict:
-        """A managed meeting's workspace size and uploaded tapes (ADR-0024)."""
+        """A managed meeting's workspace size, tapes and root free space (ADR-0024).
+
+        ``free_bytes`` is ``None`` unless the meeting is managed; it comes from
+        the same accounting the upload guard checks.
+        """
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")

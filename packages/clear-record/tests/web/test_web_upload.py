@@ -98,6 +98,49 @@ def test_upload_to_an_unknown_meeting_is_404(client) -> None:
     )
 
 
+# --- the upload id --------------------------------------------------------- #
+def test_an_upload_with_an_upload_id_is_accepted(client) -> None:
+    meeting = _managed_meeting(client)
+    res = client.post(
+        f"/api/meetings/{meeting['id']}/tapes?upload_id=take-01",
+        files={"file": ("a.wav", b"RIFF", "audio/wav")},
+    )
+
+    assert res.status_code == 201, res.text
+    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    assert [tape["name"] for tape in storage["tapes"]] == ["a.wav"]
+
+
+def test_a_malformed_upload_id_is_400(client) -> None:
+    meeting = _managed_meeting(client)
+    res = client.post(
+        f"/api/meetings/{meeting['id']}/tapes?upload_id=not%20a%20token",
+        files={"file": ("a.wav", b"x", "audio/wav")},
+    )
+
+    assert res.status_code == 400
+    assert "upload id" in res.json()["detail"]
+    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+
+
+def test_an_occupied_upload_id_is_501_and_names_the_way_out(client) -> None:
+    meeting = _managed_meeting(client)
+    tapes = Path(meeting["workspace_path"]) / "tapes"
+    tapes.mkdir(parents=True, exist_ok=True)
+    partial = tapes / ".cr-upload-take-01.part"
+    partial.write_bytes(b"interrupted")
+
+    res = client.post(
+        f"/api/meetings/{meeting['id']}/tapes?upload_id=take-01",
+        files={"file": ("a.wav", b"x", "audio/wav")},
+    )
+
+    assert res.status_code == 501
+    assert "cannot resume" in res.json()["detail"]
+    assert partial.read_bytes() == b"interrupted"  # never overwritten
+    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+
+
 # --- guards ---------------------------------------------------------------- #
 def test_traversal_filename_is_rejected(client) -> None:
     meeting = _managed_meeting(client)
@@ -170,6 +213,29 @@ def test_storage_reports_size_and_tapes(client) -> None:
     assert storage["managed"] is True
     assert storage["bytes"] == 8
     assert [tape["name"] for tape in storage["tapes"]] == ["a.wav", "b.wav"]
+
+
+def test_storage_reports_free_space_from_the_service(client, monkeypatch) -> None:
+    meeting = _managed_meeting(client)
+    monkeypatch.setattr(managed, "root_free_bytes", lambda root=None: 4096)
+
+    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+
+    assert storage["free_bytes"] == 4096
+
+
+def test_storage_has_no_free_space_for_a_user_chosen_meeting(client, tmp_path) -> None:
+    client.post("/api/projects", json={"name": "Ops"})
+    chosen = tmp_path / "user-docs"
+    chosen.mkdir()
+    meeting = client.post(
+        "/api/projects/ops/meetings",
+        json={"title": "Local", "workspace_path": str(chosen)},
+    ).json()
+
+    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+
+    assert storage["free_bytes"] is None
 
 
 def test_storage_unknown_meeting_is_404(client) -> None:

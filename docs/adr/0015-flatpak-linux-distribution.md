@@ -97,8 +97,9 @@ Date: 2026-09-14
   narrower and covers the realistic workspace. Portal-based sandboxing is the
   eventual correct answer, deferred.
 - **No network at all (fully offline edition)** — preserves the sandbox ideal but
-  breaks the documented first-run model download; kept as an `[OPEN]` variant
-  rather than the default.
+  breaks the documented first-run model download; **closed by the owner
+  2026-09-14** (round-4 grilling): the sandbox keeps `--share=network` for
+  provisioning, so this variant is not taken.
 - **A dedicated `clear-record-flatpak` dist** — no: the Flatpak packages the one
   published wheel; a second dist would revive multi-publisher machinery for no
   gain.

@@ -170,12 +170,15 @@ ADR (the interface, the capability gating, the vendor-free core) stands.
   backend uses — a subprocess, an OS API bridge, or an in-process library — it
   lives in `clear_record.providers` and never in `core`. An extra stops being a
   no-op marker only when a real Python dependency appears.
-- [OPEN] Whether the **default** backend on a platform becomes the native one
-  (least setup, fastest) with `whisper-cli` as the fallback, or the reverse. The
-  profiles / auto-mode work (`.scratch/transcription-profiles/`) is where that
-  gets decided — not here.
+- [DECISION] **Native first, `whisper-cli` fallback** (owner, round-3 grilling,
+  2026-09-14): where a platform has a native path, it is the **default**;
+  `whisper-cli` + ggml is the **portable fallback**. Backend *selection* is
+  capability-driven via the separate `--backend auto` knob
+  (`.scratch/transcription-profiles/issues/05-backend-auto.md`); profiles still
+  never choose a backend.
 - [OPEN] Whether an in-process, non-`whisper-cli` runtime such as Intel's
   OpenVINO GenAI is admitted under the same rule, and what it costs; the Intel
-  research lane (`.scratch/hardware-backends/`) is answering that.
+  research lane (`.scratch/hardware-backends/`) is answering that. **(Answered in
+  practice: the Intel note recommends against adopting OpenVINO GenAI.)**
 - [OPEN] The owner called this the position *"at this moment"*, so the balance
   between native and fallback is expected to move as the native paths land.

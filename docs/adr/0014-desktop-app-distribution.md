@@ -73,7 +73,8 @@ Date: 2026-09-14
   neither in this repo. Apple's fee waivers cover nonprofits, accredited
   educational institutions and government entities, **not individuals**, so a
   personal OSS project would not qualify. Recorded as a future step with the
-  exact user-facing workaround documented instead.
+  exact user-facing workaround documented instead. **(Owner confirmed
+  2026-09-14, round-4 grilling: ship unsigned and keep the workaround.)**
 - **Bundling the ggml model(s)** — would grow the artifact by hundreds of MB,
   duplicate model management, and violate the environment-local rule
   (ADR-0006).

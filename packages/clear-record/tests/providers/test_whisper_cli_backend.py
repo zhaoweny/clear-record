@@ -8,8 +8,10 @@ machine-dependent and is covered by the hot-test.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -25,6 +27,12 @@ from clear_record.providers.backends import (
     _GGML_BACKEND_DIRS,
     _resolve_ggml_model,
     _whispercli_segments,
+)
+from clear_record.providers.ggml_hashes import (
+    ENV_MODEL_CHECKSUM,
+    GGML_MODEL_SHA256,
+    ModelChecksumError,
+    checksum_enabled,
 )
 
 
@@ -73,6 +81,16 @@ def test_resolve_ggml_model_by_name_and_path(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # First-run model download (no real network)
 # --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _checksum_switch_is_hermetic(monkeypatch) -> None:
+    """A developer's exported ``CR_MODEL_CHECKSUM`` must not change a test.
+
+    The switch defaults to *on*, so clearing it here lets the download tests
+    assert the real default; a test that wants it off sets it itself.
+    """
+    monkeypatch.delenv(ENV_MODEL_CHECKSUM, raising=False)
+
+
 class _FakeResponse:
     """A minimal ``urlopen`` result yielding ``chunks`` then EOF."""
 
@@ -98,11 +116,23 @@ def _fake_urlopen(chunks: list[bytes], *, calls=None):
     return urlopen
 
 
+def _pin_digest(monkeypatch, name: str, payload: bytes) -> None:
+    """Point ``name``'s pinned digest at ``payload``, in the one shipped table.
+
+    The download tests exercise the mechanics with tiny fake models, so they
+    override the real digest through the table's single home rather than
+    restating a production hash — which could silently drift from what the
+    download actually checks.
+    """
+    monkeypatch.setitem(GGML_MODEL_SHA256, name, hashlib.sha256(payload).hexdigest())
+
+
 def test_resolve_ggml_model_downloads_when_absent(
     tmp_path, monkeypatch, capsys
 ) -> None:
     payload = b"ggml-model-bytes"
     calls: list[tuple[str, float | None]] = []
+    _pin_digest(monkeypatch, "ggml-medium.bin", payload)
     monkeypatch.setattr(
         backends.urllib.request,
         "urlopen",
@@ -119,11 +149,13 @@ def test_resolve_ggml_model_downloads_when_absent(
     assert calls and calls[0][1] == backends._GGML_DOWNLOAD_TIMEOUT_S
     err = capsys.readouterr().err
     assert "downloaded ggml-medium.bin" in err
+    assert "sha256 verified" in err
     assert path in err
 
 
 def test_resolve_ggml_model_respects_cr_models_dir(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path))
+    _pin_digest(monkeypatch, "ggml-tiny.bin", b"tiny-bytes")
     monkeypatch.setattr(
         backends.urllib.request, "urlopen", _fake_urlopen([b"tiny-bytes"])
     )
@@ -138,6 +170,7 @@ def test_resolve_ggml_model_honours_hf_endpoint(tmp_path, monkeypatch) -> None:
     """A reachable mirror served via ``HF_ENDPOINT`` replaces the pinned host."""
     monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
     calls: list[tuple[str, float | None]] = []
+    _pin_digest(monkeypatch, "ggml-medium.bin", b"bytes")
     monkeypatch.setattr(
         backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
     )
@@ -153,6 +186,7 @@ def test_resolve_ggml_model_honours_hf_endpoint(tmp_path, monkeypatch) -> None:
 def test_resolve_ggml_model_defaults_to_huggingface(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("HF_ENDPOINT", raising=False)
     calls: list[tuple[str, float | None]] = []
+    _pin_digest(monkeypatch, "ggml-medium.bin", b"bytes")
     monkeypatch.setattr(
         backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
     )
@@ -170,6 +204,7 @@ def test_resolve_ggml_model_strips_trailing_slash_from_endpoint(
 ) -> None:
     monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com/")
     calls: list[tuple[str, float | None]] = []
+    _pin_digest(monkeypatch, "ggml-medium.bin", b"bytes")
     monkeypatch.setattr(
         backends.urllib.request, "urlopen", _fake_urlopen([b"bytes"], calls=calls)
     )
@@ -263,6 +298,7 @@ def test_resolve_ggml_model_is_single_flight_under_concurrency(
     calls: list[str] = []
     errors: list[BaseException] = []
     start = threading.Barrier(2)
+    _pin_digest(monkeypatch, "ggml-medium.bin", payload)
 
     def urlopen(url: str, timeout=None):
         calls.append(url)  # recorded before any replace can happen
@@ -289,6 +325,119 @@ def test_resolve_ggml_model_is_single_flight_under_concurrency(
     assert (tmp_path / "ggml-medium.bin").read_bytes() == payload
     # Only the model remains: no `.part` / temp from either caller.
     assert [p.name for p in tmp_path.iterdir()] == ["ggml-medium.bin"]
+
+
+# --------------------------------------------------------------------------- #
+# Download integrity: the pinned SHA-256 check (defence in depth)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "value, enabled",
+    [
+        (None, True),  # unset -> the check stays on
+        ("", True),  # blank -> on, i.e. fail closed
+        ("off", False),
+        ("OFF", False),
+        (" off ", False),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("on", True),
+        ("strict", True),
+        ("ofl", True),  # a typo must not silently disable the check
+    ],
+)
+def test_checksum_switch_only_disables_on_an_explicit_falsy_value(value, enabled):
+    environ = {} if value is None else {ENV_MODEL_CHECKSUM: value}
+    assert checksum_enabled(environ) is enabled
+
+
+def test_checksum_mismatch_discards_the_download_and_raises(tmp_path, monkeypatch):
+    """A complete body of the wrong bytes must never be installed as a model."""
+    name = "ggml-medium.bin"
+    _pin_digest(monkeypatch, name, b"the-expected-bytes")
+    monkeypatch.setattr(
+        backends.urllib.request, "urlopen", _fake_urlopen([b"substituted-bytes"])
+    )
+
+    with pytest.raises(ModelChecksumError) as excinfo:
+        _resolve_ggml_model("medium", str(tmp_path))
+
+    exc = excinfo.value
+    assert "SHA-256" in str(exc)
+    assert exc.params["name"] == name
+    assert exc.params["expected"] == GGML_MODEL_SHA256[name]
+    assert ENV_MODEL_CHECKSUM in str(exc)
+    # A stable ID plus parameters: the English rendering is exactly what a
+    # `tr(exc.msgid, **exc.params)` presentation boundary would reproduce.
+    assert exc.msgid.format(**exc.params) == str(exc)
+    # Fail closed: neither the model nor the staged `.part` survives.
+    assert [p.name for p in tmp_path.iterdir()] == []
+
+
+def test_checksum_can_be_disabled_for_a_mirror(tmp_path, monkeypatch, capsys):
+    """``CR_MODEL_CHECKSUM=off`` accepts the endpoint's bytes unchecked."""
+    payload = b"mirror-serves-its-own-bytes"
+    _pin_digest(monkeypatch, "ggml-medium.bin", b"the-canonical-bytes")
+    monkeypatch.setenv(ENV_MODEL_CHECKSUM, "off")
+    monkeypatch.setattr(backends.urllib.request, "urlopen", _fake_urlopen([payload]))
+
+    path = _resolve_ggml_model("medium", str(tmp_path))
+
+    assert path == str(tmp_path / "ggml-medium.bin")
+    assert (tmp_path / "ggml-medium.bin").read_bytes() == payload
+    assert "sha256 verified" not in capsys.readouterr().err
+
+
+def test_unpinned_model_downloads_unchecked(tmp_path, monkeypatch, capsys):
+    """A name with no pinned digest has nothing to check, so it is not an error."""
+    assert "ggml-medium-q5_0.bin" not in GGML_MODEL_SHA256
+    payload = b"an-unpinned-quantization"
+    monkeypatch.setattr(backends.urllib.request, "urlopen", _fake_urlopen([payload]))
+
+    path = _resolve_ggml_model("medium-q5_0", str(tmp_path))
+
+    assert path == str(tmp_path / "ggml-medium-q5_0.bin")
+    assert (tmp_path / "ggml-medium-q5_0.bin").read_bytes() == payload
+    assert "sha256 verified" not in capsys.readouterr().err
+
+
+def test_present_model_needs_no_network_and_is_not_re_hashed(tmp_path, monkeypatch):
+    """Offline/manual pre-fetch is unchanged: a model on disk is returned as-is.
+
+    Verification costs a full read of a GB-scale file, so it belongs to the
+    download that already streams those bytes -- not to every later resolve.
+    """
+    model = tmp_path / "ggml-medium.bin"
+    model.write_bytes(b"pre-fetched by hand")
+
+    def urlopen(url: str, timeout=None):
+        raise AssertionError("a model already on disk must not be re-fetched")
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", urlopen)
+
+    assert _resolve_ggml_model("medium", str(tmp_path)) == str(model)
+    assert model.read_bytes() == b"pre-fetched by hand"
+
+
+def test_pinned_table_covers_the_auto_ladder() -> None:
+    """Every size ``--auto`` can recommend has a digest to check.
+
+    The ladder lives in ``cli.auto``; reading it here keeps the two in step
+    without restating the list in a second place.
+    """
+    from clear_record.cli.auto import _MODEL_LADDER
+
+    missing = [
+        size for size in _MODEL_LADDER if f"ggml-{size}.bin" not in GGML_MODEL_SHA256
+    ]
+    assert not missing, f"no pinned digest for auto ladder size(s): {missing}"
+
+
+def test_pinned_digests_are_well_formed() -> None:
+    assert GGML_MODEL_SHA256
+    for name, digest in GGML_MODEL_SHA256.items():
+        assert name.startswith("ggml-") and name.endswith(".bin")
+        assert re.fullmatch(r"[0-9a-f]{64}", digest), f"{name}: {digest!r}"
 
 
 def test_amd_backend_metadata_unchanged() -> None:

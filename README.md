@@ -128,6 +128,11 @@ available on this machine. See
   offline/manual route. On a
   restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
   Face-compatible endpoint works); the default is `https://huggingface.co`.
+  A size `clear-record` knows is also **verified against a pinned SHA-256**
+  before it is installed: a mismatch is discarded and reported rather than fed
+  to `whisper-cli`. A mirror or self-hosted endpoint that serves different bytes
+  under a pinned name can be accepted with `CR_MODEL_CHECKSUM=off`; a name with
+  no pinned digest is downloaded unchecked.
   The download is a **provisioning** step, not an execution dependency: once
   the model is present on disk, transcription needs no network.
 

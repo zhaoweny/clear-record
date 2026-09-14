@@ -208,8 +208,10 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   Metal needs no device probe; the CLI plus plugin is the check. A missing
   `ggml-*.bin` is downloaded on first use into `model_dir` / `CR_MODELS_DIR` /
   `<data>/models` (ADR-0025); the download is a **provisioning** step, not an execution
-  dependency (once the model is on disk the pipeline needs no network), and
-  offline, the actionable `hf download …` error is raised.
+  dependency (once the model is on disk the pipeline needs no network), the
+  known sizes are checked against a pinned SHA-256 before being installed
+  (`providers.ggml_hashes`; `CR_MODEL_CHECKSUM=off` opts out), and offline the
+  actionable `hf download …` error is raised.
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is
   driven as a subprocess in the providers layer, so a plain dev/CI environment
   needs no GPU framework.

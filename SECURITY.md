@@ -62,7 +62,10 @@ period.
   [ffmpeg.org](https://ffmpeg.org) respectively.
 - **Model weights.** The `ggml-*.bin` files are downloaded from
   [`ggerganov/whisper.cpp`](https://huggingface.co/ggerganov/whisper.cpp) on
-  Hugging Face, not authored here.
+  Hugging Face, not authored here. `clear-record` checks the sizes it downloads
+  against SHA-256 digests pinned in `clear_record.providers.ggml_hashes` and
+  discards a mismatch (`CR_MODEL_CHECKSUM=off` opts out); that guards the
+  transport, but the *contents* of a weight file remain upstream's to fix.
 - **Third-party Python dependencies** (`numpy`, `soundfile`, and the dev-only
   `pytest`/`ruff` — see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
   Report these upstream; if one affects `clear-record`, we are happy to

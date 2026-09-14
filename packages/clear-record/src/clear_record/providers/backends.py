@@ -20,8 +20,10 @@ against the system ``ggml``, which loads a GPU backend as a plugin (``ggml-cuda`
 / ``ggml-vulkan`` / ``ggml-hip`` on Linux; ``ggml-metal`` on macOS). The probe
 checks for an accepted plugin and, on Linux, the vendor's GPU device — not just
 an import. When the ggml model is absent locally, ``_resolve_ggml_model``
-downloads it from Hugging Face on first use (and falls back to a clear pre-fetch
-error when offline).
+downloads it from Hugging Face on first use, verifies it against a pinned
+SHA-256 digest when one is known
+(:mod:`clear_record.providers.ggml_hashes`), and falls back to a clear pre-fetch
+error when offline.
 """
 
 from __future__ import annotations
@@ -49,6 +51,10 @@ from clear_record.providers.base import (
     Backend,
     BackendBase,
     BackendInfo,
+)
+from clear_record.providers.ggml_hashes import (
+    ModelChecksumError,
+    verify_model_sha256,
 )
 from clear_record.providers.paths import resolve_models_dir
 from clear_record.providers.process import ProcessRunner, SubprocessRunner
@@ -521,6 +527,10 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
     success so an interrupted download is never mistaken for a model. On a
     network failure the temp file is removed and the original clear pre-fetch
     error (with the ``hf download`` hint) is raised.
+
+    A model already on disk is returned as-is: the check applies to what this
+    process downloads, so the manual ``hf download`` / offline pre-fetch route
+    keeps working and a multi-GB file is not re-hashed on every run.
     """
     expanded = os.path.expanduser(model)
     if os.path.isfile(expanded):
@@ -542,9 +552,15 @@ def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> st
 
     A process-wide lock serialises the check-and-download, and each call streams
     to its own temp file, so concurrent workers can neither interleave writes nor
-    lose the ``os.replace`` race. Any failure -- including a failed replace --
-    removes the temp and raises the actionable ``FileNotFoundError``; an
-    interrupt still cleans the temp before propagating.
+    lose the ``os.replace`` race. A model with a pinned digest is verified
+    **before** the rename (see :mod:`clear_record.providers.ggml_hashes`), so a
+    corrupt or substituted body is never installed as a model.
+
+    Any failure -- including a failed replace -- removes the temp and raises the
+    actionable ``FileNotFoundError``. A checksum mismatch is deliberately *not*
+    folded into that error: nothing failed to download, the bytes were wrong, so
+    its own clear error propagates (after the temp is removed). An interrupt
+    still cleans the temp before propagating.
     """
     os.makedirs(base, exist_ok=True)
     url = _ggml_model_url(name)
@@ -553,6 +569,7 @@ def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> st
         if os.path.isfile(candidate):
             return candidate
         part = f"{candidate}.{os.getpid()}.{next(_PART_COUNTER)}.part"
+        verified = False
         try:
             with (
                 urllib.request.urlopen(
@@ -561,8 +578,14 @@ def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> st
                 open(part, "wb") as out,
             ):
                 shutil.copyfileobj(response, out)
-            # Inside the try: a failed rename surfaces as the clear error too.
+            # Inside the try, so a mismatch discards the staged bytes before the
+            # rename -- fail closed, and never leave a `.part` behind.
+            verified = verify_model_sha256(name, part)
+            # Inside the try too: a failed rename surfaces as the clear error.
             os.replace(part, candidate)
+        except ModelChecksumError:
+            _remove_partial(part)  # wrong bytes: keep neither part nor model
+            raise
         except (KeyboardInterrupt, SystemExit):
             _remove_partial(part)  # interrupted: leave no stray temp
             raise
@@ -574,8 +597,10 @@ def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> st
                 f"`hf download ggerganov/whisper.cpp {name} --local-dir {base}`."
             ) from exc
         size = os.path.getsize(candidate)
+    checked = ", sha256 verified" if verified else ""
     print(
-        f"[clear_record.providers] downloaded {name} ({size} bytes) to {candidate}",
+        f"[clear_record.providers] downloaded {name} ({size} bytes{checked}) to "
+        f"{candidate}",
         file=sys.stderr,
     )
     return candidate

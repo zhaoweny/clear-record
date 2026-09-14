@@ -380,6 +380,22 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   outward and therefore touches the local-first stance (VOICE §4) and ADR-0006's
   privacy boundary.
 
+## User-feedback logging, and running the console as a service (2026-09-15)
+
+- Owner requests, verbatim:
+  - *"log system. do logs so actual user can feed back actual logs to us - if
+    there are any user."*
+  - *"and system-service check - can clear-record's web interface run as a web
+    service then? docker or systemd or flatpak service situation, need
+    investigation"*
+- [REQ] Scoped in `.scratch/diagnostics/` (the log system + a user-feedback
+  bundle) and `.scratch/service-deployment/` (the systemd / Docker / Flatpak
+  service investigation).
+- [FACT] Both touch the local-first/privacy stance: logs are where private
+  material leaks by accident (file names, glossary terms, transcripts), and a
+  *service* exposed beyond localhost collides with ADR-0013's "localhost only, no
+  auth".
+
 ## Agent task execution: no bundled harness (2026-09-14)
 
 - Owner answer to the last open question — *"should we build / bundle a genuine

@@ -39,10 +39,12 @@ Date: 2026-09-15
   mitigation.
 - [DECISION] Deployment shapes (systemd / launchd / container) are documented as
   **how to run the backend**, never as an auth story.
-- [OPEN] Whether to honour `X-Forwarded-*` (`--proxy-headers`) when a proxy
-  terminates TLS. The UI uses relative URLs, so it is probably unnecessary — and
-  trusting forwarded headers from anything but the proxy is itself a risk, so
-  verify before adding.
+- [DECISION: owner, 2026-09-15] **Honour `X-Forwarded-*`, but only from a
+  configured trusted proxy** (`CR_TRUSTED_PROXIES`) — with a **quick path for
+  Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
+  instead of asking the operator to declare it. Trusting forwarded headers from
+  *anything else* remains a risk to the request guard, and the bind stays
+  localhost-only; the UI's relative URLs mean nothing is lost by refusing.
 
 ## Rationale
 

@@ -76,12 +76,15 @@ Date: 2026-09-15
 
 ## Consequences / review hook
 
-- [OPEN] **No content producer yet.** `include_content` is implemented and tested,
-  but nothing generates a summary, and sending the raw transcript would contradict
-  the metadata-only decision. The likely answer is an **agent-produced summary**,
-  which needs the agent runtime (ADR-0018) — so content stays off until then.
-- [OPEN] The console does not yet surface delivery status or config problems (both
-  are on stderr and on the emitter); a small status view is the natural follow-up.
+- [DECISION: owner, 2026-09-15] **Content stays off until the agent runtime.**
+  Webhooks carry **metadata on lifecycle events only** — ids, status, counts and
+  artifact paths. `include_content` stays implemented and tested but unused: the
+  agent runtime (ADR-0018) is the producer, and a built-in summary would be a
+  second, worse producer for clear-record to own.
+- [DECISION: owner, 2026-09-15] **The console surfaces endpoint health and the last
+  delivery outcome** (ok / failed / why). "Loud config errors" cannot mean only a
+  log line a user never reads — a silently-disabled webhook is the exact defect
+  class this ADR exists to prevent.
 - [OPEN] Per-project endpoints, per-event filtering in the UI, and whether the
   process-lifetime config cache should be re-read on demand.
 - **Revisit** if delivery grows past notifications — e.g. a user wanting to *write

@@ -74,6 +74,9 @@ web = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
 ]
+# `tray` is the native desktop entry point (PySide6). PySide2 is not an option:
+# its wheels stop at Python 3.10 and this project requires >= 3.12.
+tray = ["pyside6>=6.7"]
 
 [project.scripts]
 clear-record = "clear_record.cli:main"
@@ -82,3 +85,4 @@ clear-record = "clear_record.cli:main"
 # them (ADR-0013). The bundled web console is the first provider.
 [project.entry-points."clear_record.commands"]
 web = "clear_record.web:register"
+tray = "clear_record.tray:register"

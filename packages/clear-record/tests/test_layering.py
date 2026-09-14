@@ -1,7 +1,7 @@
 """Import-boundary guard: the ``clear_record`` layer DAG and the vendor-free core.
 
-The single ``clear-record`` distribution ships six internal layers as
-subpackages (``clear_record.{core,engine,providers,cli,service,web}``). One
+The single ``clear-record`` distribution ships seven internal layers as
+subpackages (``clear_record.{core,engine,providers,cli,service,web,tray}``). One
 distribution means there is no per-dist dependency graph left to enforce the
 layering or the vendor-free core, so this test enforces both with two independent
 passes (no third-party imports):
@@ -26,10 +26,12 @@ Rules:
 - ``cli`` may import any internal layer (``core``, ``engine``, ``providers``).
 - ``service`` may import ``core`` and ``cli`` (it drives the CLI's stage wiring
   in-process); it owns the app registry and must not reach the web layer.
-- ``web`` may import ``core`` and ``service``; it is the outermost layer.
-- ``core``/``engine``/``providers`` never import ``cli``, ``service`` or
-  ``web``; the CLI reaches ``web`` only through an entry point, never an import
-  (ADR-0013).
+- ``web`` may import ``core`` and ``service``; it is the browser surface.
+- ``tray`` may import ``core``, ``service`` and ``web``; it supervises the console
+  and is the native desktop entry point.
+- ``core``/``engine``/``providers`` never import ``cli``, ``service``, ``web`` or
+  ``tray``; the CLI reaches the optional surfaces only through entry points,
+  never an import (ADR-0013).
 
 If a real edge does not fit this DAG, that is a deliberate design change: update
 the layer DAG here and in the ADRs (ADR-0004 / ADR-0012) — do not silently widen
@@ -49,7 +51,7 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src" / "clear_record"
 
 # Internal layers, leaf-first: each layer may only import layers to its left
 # (plus its own submodules).
-LAYERS = ("core", "engine", "providers", "cli", "service", "web")
+LAYERS = ("core", "engine", "providers", "cli", "service", "web", "tray")
 
 # The exact internal edges derived from the code. ``layer -> layers it imports``.
 ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
@@ -59,6 +61,7 @@ ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
     "cli": frozenset({"core", "engine", "providers"}),
     "service": frozenset({"core", "cli"}),
     "web": frozenset({"core", "service"}),
+    "tray": frozenset({"core", "service", "web"}),
 }
 
 _ROOT = "clear_record"
@@ -76,12 +79,13 @@ BLOCKED_THIRD_PARTY = ("numpy", "soundfile", "torch", "tensorflow", "onnxruntime
 # legal chain. The static pass above is the real edge check; this pass catches a
 # *dynamic* import of a layer the layer must never reach.
 ISOLATION_CASES = (
-    ("core", ("engine", "providers", "cli", "service", "web"), True),
-    ("engine", ("providers", "cli", "service", "web"), False),
-    ("providers", ("cli", "service", "web"), False),
-    ("cli", ("service", "web"), False),
-    ("service", ("web",), False),
-    ("web", (), False),
+    ("core", ("engine", "providers", "cli", "service", "web", "tray"), True),
+    ("engine", ("providers", "cli", "service", "web", "tray"), False),
+    ("providers", ("cli", "service", "web", "tray"), False),
+    ("cli", ("service", "web", "tray"), False),
+    ("service", ("web", "tray"), False),
+    ("web", ("tray",), False),
+    ("tray", (), False),
 )
 
 

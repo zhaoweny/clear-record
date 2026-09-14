@@ -81,6 +81,7 @@ nvidia = ["clear-record[nvidia]"]
 amd = ["clear-record[amd]"]
 all = ["clear-record[all]"]
 web = ["clear-record[web]"]
+tray = ["clear-record[tray]"]
 
 [tool.ruff]
 target-version = "py312"

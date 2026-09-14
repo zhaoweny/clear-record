@@ -46,6 +46,7 @@ RUNTIME_DEPS = {"numpy", "soundfile"}
 # The optional `web` extra's dependency set (ADR-0013). It must not leak into
 # the base dependencies; the MCP SDK gets its own extra when the MCP server lands.
 WEB_EXTRA_DEPS = {"fastapi", "uvicorn", "jinja2", "python-multipart"}
+TRAY_EXTRA_DEPS = {"pyside6"}
 
 
 def _load(path: Path) -> dict:
@@ -121,13 +122,15 @@ def test_web_surface_is_an_extra_not_a_base_dependency() -> None:
         for extra, specs in extras.items()
     }
     assert names.get("web") == WEB_EXTRA_DEPS, names.get("web")
+    assert names.get("tray") == TRAY_EXTRA_DEPS, names.get("tray")
 
     base = {_NAME_RE.match(spec).group() for spec in project.get("dependencies", [])}
-    leaked = WEB_EXTRA_DEPS & base
+    leaked = (WEB_EXTRA_DEPS | TRAY_EXTRA_DEPS) & base
     assert not leaked, f"optional stack leaked into base dependencies: {sorted(leaked)}"
 
     declared = project.get("entry-points", {}).get("clear_record.commands", {})
     assert declared.get("web") == "clear_record.web:register", declared
+    assert declared.get("tray") == "clear_record.tray:register", declared
 
 
 def test_web_console_assets_ship_with_the_package() -> None:

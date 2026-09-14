@@ -252,6 +252,7 @@ dev = [
 ]
 i18n = [
     { name = "babel" },
+    { name = "jinja2" },
 ]
 
 [package.metadata]
@@ -280,7 +281,10 @@ dev = [
     { name = "trove-classifiers", specifier = ">=2026.6.1" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-i18n = [{ name = "babel", specifier = ">=2.14" }]
+i18n = [
+    { name = "babel", specifier = ">=2.14" },
+    { name = "jinja2", specifier = ">=3.1" },
+]
 
 [[package]]
 name = "click"

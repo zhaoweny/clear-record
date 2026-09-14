@@ -60,8 +60,41 @@ def register(group: click.Group) -> None:
         show_envvar=True,
         help="override the app data directory (default: CR_DATA_DIR / XDG)",
     )
-    def _web(host: str, port: int, no_browser: bool, data_dir: str | None) -> int:
-        return _run(host=host, port=port, no_browser=no_browser, data_dir=data_dir)
+    @click.option(
+        "--tailscale",
+        is_flag=True,
+        help=(
+            "set up Tailscale Serve for this port, trust this machine's tailnet "
+            "name, and print its https URL. The tailnet is the authentication: "
+            "anyone on your tailnet can reach the console. Serve is left running "
+            "on purpose; turn it off with `tailscale serve off`."
+        ),
+    )
+    @click.option(
+        "--tailscale-host",
+        default=None,
+        metavar="NAME",
+        help=(
+            "trust NAME instead of the machine's resolved tailnet name "
+            "(requires --tailscale)"
+        ),
+    )
+    def _web(
+        host: str,
+        port: int,
+        no_browser: bool,
+        data_dir: str | None,
+        tailscale: bool,
+        tailscale_host: str | None,
+    ) -> int:
+        return _run(
+            host=host,
+            port=port,
+            no_browser=no_browser,
+            data_dir=data_dir,
+            tailscale=tailscale,
+            tailscale_host=tailscale_host,
+        )
 
 
 def _run(
@@ -70,8 +103,20 @@ def _run(
     port: int,
     no_browser: bool,
     data_dir: str | None,
+    tailscale: bool = False,
+    tailscale_host: str | None = None,
 ) -> int:
     _require_web_stack()
+    trusted_hosts: list[str] | None = None
+    if tailscale_host and not tailscale:
+        raise click.UsageError(
+            "--tailscale-host overrides the name --tailscale resolves; pass "
+            "--tailscale too (or set CR_TRUSTED_HOSTS to trust a hostname "
+            "without Serve)."
+        )
+    if tailscale:
+        _require_loopback_bind(host)
+        trusted_hosts = _tailscale_hosts(port=port, override=tailscale_host)
     from clear_record.web.app import serve
 
     return serve(
@@ -79,7 +124,61 @@ def _run(
         port=port,
         open_browser=not no_browser,
         data_dir=data_dir,
+        trusted_hosts=trusted_hosts,
     )
+
+
+def _require_loopback_bind(host: str) -> None:
+    """Reject a bind Serve could not reach, before anything is set up.
+
+    Tailscale Serve proxies **only** to ``http://127.0.0.1:<port>`` (ADR-0021),
+    so a non-loopback ``--host`` would publish a target that 502s to the whole
+    tailnet. The loopback notion is the request guard's own
+    :func:`clear_record.web.guard.is_loopback_host` (via ``host_name``), so the
+    bind check and the guard agree on what "loopback" means — no second list.
+    """
+    from clear_record.web import guard
+
+    if not guard.is_loopback_host(guard.host_name(host)):
+        raise click.UsageError(
+            "--tailscale sets up Tailscale Serve against "
+            f"http://127.0.0.1:<port>, but --host {host!r} is not a loopback "
+            "address, so Serve could not reach the console.\n"
+            "  Drop --host (the console binds 127.0.0.1 by default), or drop "
+            "--tailscale and front the loopback console with your own proxy "
+            "(ADR-0021)."
+        )
+
+
+def _tailscale_hosts(*, port: int, override: str | None) -> list[str]:
+    """Set up Serve, echo the URL and turn-off hint, return the names to trust.
+
+    ``CR_TRUSTED_HOSTS`` still composes: the tailnet name is added to it, so a
+    console already served on a public name keeps working. No environment
+    variable is set or needed — the name is passed straight to ``create_app``.
+    """
+    from clear_record.web import guard, tailscale
+
+    try:
+        name = tailscale.normalize_name(override) or tailscale.resolve_dns_name()
+        if not name or "/" in name:
+            raise tailscale.TailscaleError(
+                f"--tailscale-host {override!r} is not a bare hostname.\n"
+                "    Fix: pass the name Tailscale gives you, e.g. "
+                "machine.tailnet.ts.net."
+            )
+        tailscale.serve(port)
+    except tailscale.TailscaleError as exc:
+        raise SystemExit(f"[tailscale] {exc}") from exc
+
+    click.echo(
+        "[tailscale] console is now shared on your tailnet:\n"
+        f"    {tailscale.console_url(name)}\n"
+        "    The tailnet is the authentication: anyone on your tailnet can "
+        "reach this console.\n"
+        f"    To stop sharing it, run:  {tailscale.disable_hint()}"
+    )
+    return sorted(guard.trusted_extra_hosts() | {name})
 
 
 __all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "register"]

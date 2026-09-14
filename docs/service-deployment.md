@@ -253,16 +253,64 @@ Caddy passes the original `Host` through, so set
 only to a loopback target; the tailnet is itself authenticated by Tailscale, so
 there is no separate password.
 
+`clear-record web --tailscale` does the whole setup — resolve this machine's
+tailnet name, run Serve, trust that name in the guard, and print the URL:
+
 ```sh
-tailscale serve --bg http://127.0.0.1:8765
-tailscale serve status
+clear-record web --tailscale                 # interactive: opens the console too
+clear-record web --tailscale --no-browser    # for a service unit
 ```
 
-Open the printed `https://<machine>.<tailnet>.ts.net/` address. Because the
-tailnet name is the hostname the browser uses, add it to `CR_TRUSTED_HOSTS`
-(`myhost.tailnet.ts.net`). The exact `serve` flags differ by Tailscale version —
-see the [Tailscale Serve docs](https://tailscale.com/kb/1242/tailscale-serve).
-This is the lowest-effort remote shape: no public port, no proxy auth config.
+It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
+normalised), runs `tailscale serve --bg http://127.0.0.1:8765`, and prints
+`https://<machine>.<tailnet>.ts.net/`.
+
+`--host` must stay loopback (`127.0.0.1`, `::1`, `localhost`): Serve proxies
+**only** to `http://127.0.0.1:<port>`, so `--tailscale --host 0.0.0.0` is refused
+with a usage error rather than publishing a target that would 502 to the whole
+tailnet.
+
+> **The tailnet is the authentication.** The console still ships no accounts of
+> its own, so **anyone who can reach your tailnet can reach the console.** If
+> that is not what you want, use tailnet access controls and device approval —
+> there is no second password on this path (ADR-0021).
+
+The rule is deliberately **persistent** (`--bg`): the flag leaves it in place
+when the console exits, and prints how to remove it. Remove exactly the default
+HTTPS mapping it created with:
+
+```sh
+tailscale serve --https=443 off
+```
+
+`tailscale serve --https=443 off` and a bare `tailscale serve off` are the same
+on a default setup; naming the port is what makes it explicit (and avoids
+`tailscale serve reset`, which clears **every** Serve rule on the machine).
+
+If the machine's name is not the one to trust (a renamed or unusual tailnet),
+override the resolved name — `tailscale status` is then not consulted:
+
+```sh
+clear-record web --tailscale --tailscale-host machine.tailnet.ts.net
+```
+
+`CR_TRUSTED_HOSTS` still composes: the tailnet name is **added** to whatever
+that variable names, so an existing public hostname keeps working.
+
+[FACT] The Serve invocation is the **1.52+ CLI form**, `tailscale serve --bg
+<target>`, verified against the [Tailscale Serve command
+reference](https://tailscale.com/kb/1242/tailscale-serve): `--bg` is documented
+as the background flag, a port / partial URL / full URL is a valid `<target>`,
+and a reverse proxy accepts **only** `http://127.0.0.1`. Older clients predate
+that form; upgrade Tailscale if the command is refused.
+
+Failures are actionable messages, never tracebacks: `tailscale` not on `PATH`;
+the daemon down or logged out (`tailscale up`); a refused `serve` (its own
+`stderr` is surfaced); no DNS name reported (MagicDNS off — pass
+`--tailscale-host`); or unexpected `status --json` output. Each names the fix.
+
+Open the printed address. This is the lowest-effort remote shape: no public
+port, no proxy auth config.
 
 ## 4. What this does not cover
 

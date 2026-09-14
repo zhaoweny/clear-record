@@ -311,13 +311,20 @@ CLI-only install stays audio-only:
 ```sh
 uv tool install 'clear-record[web]'    # or:  pip install 'clear-record[web]'
 clear-record web                       # serves http://127.0.0.1:8765 and opens it
+clear-record web --tailscale           # sets up Tailscale Serve for remote access
 ```
 
 Running `clear-record web` without the extra prints the exact install command.
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
-server binds **localhost only** and needs no account. The app-owned **project
-registry** (SQLite) lives under `$XDG_DATA_HOME/clear-record`, overridable with
-`CR_DATA_DIR` or a `[paths] data_dir` entry in
+server binds **localhost only** and needs no account. With `--tailscale` the
+console also resolves this machine's tailnet name, runs `tailscale serve --bg`,
+trusts that name, and prints the `https://<machine>.<tailnet>.ts.net/` URL
+(persistent; remove it with `tailscale serve --https=443 off`). **The tailnet is
+then the authentication — anyone on your tailnet can reach the console**
+([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
+[deployment guide](docs/service-deployment.md#tailscale)). The app-owned
+**project registry** (SQLite) lives under `$XDG_DATA_HOME/clear-record`,
+overridable with `CR_DATA_DIR` or a `[paths] data_dir` entry in
 `$XDG_CONFIG_HOME/clear-record/config.toml`; recordings and archives stay in
 your own directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
 [ADR-0007](docs/adr/0007-deployment-directories-xdg.md),

@@ -782,11 +782,18 @@ def serve(
     port: int,
     open_browser: bool,
     data_dir: str | None = None,
+    trusted_hosts: Sequence[str] | None = None,
 ) -> int:
-    """Run the console; called by the ``clear-record web`` handler."""
+    """Run the console; called by the ``clear-record web`` handler.
+
+    ``trusted_hosts`` is forwarded to :func:`create_app` so ``web --tailscale``
+    can trust the resolved tailnet name in-process, with no environment variable
+    handed to a child (the design decision in ticket 01). ``None`` keeps the
+    ``CR_TRUSTED_HOSTS`` default.
+    """
     import uvicorn
 
-    app = create_app(Registry.open(data_dir=data_dir))
+    app = create_app(Registry.open(data_dir=data_dir), trusted_hosts=trusted_hosts)
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop

@@ -50,9 +50,11 @@ Environment=CR_DATA_DIR=%h/.local/share/clear-record
 Environment=CR_MODELS_DIR=%h/.local/share/clear-record/models
 ```
 
-The workspace (your recordings and the derived record) is a **user document**;
-leave it where it is and point meetings at it. Do not move it under the app's
-data directory.
+A workspace is normally a **user document**: your recordings and the derived
+record, left where they are and pointed at by a meeting. Do not move such a
+workspace under the app's data directory. The one exception is a **managed
+workspace** (ADR-0024, §4), which the console creates under data so you can
+**upload** tapes to the node instead of placing them by hand.
 
 ### systemd (Linux, user unit)
 
@@ -363,7 +365,80 @@ logged in": an abort is not a login state. Each names the fix.
 Open the printed address. This is the lowest-effort remote shape: no public
 port, no proxy auth config.
 
-## 4. What this does not cover
+## 4. Managed workspaces and tape upload
+
+[DESIGN] A **managed workspace** is app-owned *additionally*: when you create a
+meeting with `managed: true` (the console's managed mode), clear-record creates
+its workspace under the managed root, and you **upload** the tapes to the node
+instead of placing them by hand first. The pipeline then runs over that
+workspace exactly as it would over a `--dir` one — an uploaded tape is added to
+the meeting's tape set like a path is, so runs, archiving and the MCP surface
+need no new plumbing ([ADR-0024](adr/0024-managed-workspace-tape-upload.md)).
+ADR-0007 is amended only here: a `--dir` workspace and a meeting's user-chosen
+`workspace_path` stay user documents.
+
+### The managed root
+
+[FACT] The managed root defaults to `<data>/workspaces/` (so
+`$XDG_DATA_HOME/clear-record/workspaces`, or under your `CR_DATA_DIR`), and is
+resolved by the same precedence as the other app-owned directories:
+explicit argument > **`CR_WORKSPACE_ROOT`** > a `[paths] workspace_root` config
+entry > the data-dir default. The tapes are the largest thing the app stores,
+so point the root at a NAS or a dedicated disk:
+
+```sh
+Environment=CR_WORKSPACE_ROOT=/mnt/tapes/clear-record
+```
+
+Then back up (or snapshot) that root. It holds the **only** copy of an uploaded
+tape until you archive the meeting.
+
+### Upload guards
+
+[DESIGN] Upload writes files, so it is guarded by construction. Each refusal is
+an actionable message, not a traceback:
+
+| Guard | Refuses | Raise |
+|---|---|---|
+| filename sanitisation | `..` traversal, absolute paths, separators, control characters | 400 |
+| audio extension allow-list (`workspace.is_audio`) | a name that is not an audio type | 415 |
+| size cap (`CR_MAX_UPLOAD_BYTES`, default 8 GiB) | a body over the cap — checked before the transfer, again while streaming | 413 |
+| disk-space precheck | less free space than the declared body + headroom, checked **before** the body is read | 507 |
+| no symlink following | a destination directory or file that resolves outside the managed root | 400 |
+
+An upload streams to a `.part` file beside its destination, `fsync`-es and
+atomically renames it, then records the tape with its **sha256** and size. A
+partial or dropped upload leaves **no** tape behind.
+
+### Storage visibility and deleting tapes
+
+[FACT] `GET /api/meetings/{id}/storage` reports the workspace size and the
+uploaded tapes (path, sha256, size); `DELETE /api/meetings/{id}/tapes/{tape_id}`
+deletes a **managed** tape. A tape in a user-chosen workspace cannot be deleted
+here — it is your document.
+
+> **The archive is the durable copy.** Deleting workspace tapes frees the node;
+> archive the meeting first (`POST /api/meetings/{id}/archives`) if you need to
+> keep it. An archive is a copy, never a move (ADR-0006).
+
+### Security: uploads raise the stakes on the proxy
+
+[DESIGN] Every surface before this one could only **read** local files. This one
+**writes** multi-GB files to the node. ADR-0021's shape does not change — the
+app still binds loopback and ships no auth — but the reason the proxy must be
+the **only** ingress is now sharper: anything that can reach an upload endpoint
+can fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
+treat `CR_TRUSTED_HOSTS` as the minimal, explicit hatch it is (§2). The managed
+root's permissions and free space are operator concerns; the guards bound an
+upload, they do not make a public port safe.
+
+### Limitation
+
+[OPEN] Upload is a **single streaming POST**. A dropped multi-GB upload restarts
+from zero. Chunked/resumable upload (tus or a resume token) is deliberately out
+of scope until a real tape over a bad link makes it worth building.
+
+## 5. What this does not cover
 
 - **In-app authentication.** There is none, by design, for now (ADR-0021
   defers, not rejects, LAN auth). The proxy is the auth.
@@ -374,9 +449,14 @@ port, no proxy auth config.
   Flatpak is the desktop bundle (ADR-0015), not the node.
 - **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021; the UI uses relative URLs,
   so a proxy that terminates TLS does not need them today.
+- **Resumable/chunked upload.** A single POST restarts a dropped transfer
+  (ADR-0024, §4).
+- **The upload UI.** The upload endpoint, storage report and delete endpoint are
+  built; the console's upload control is a follow-up slice.
 
-## 5. Read more
+## 6. Read more
 
+- [ADR-0024](adr/0024-managed-workspace-tape-upload.md) — the managed workspace.
 - [ADR-0021](adr/0021-localhost-only-deployment.md) — the decision.
 - [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — localhost-only, no auth.
 - [Research: clear-record as a service](research/2026-09-15-clear-record-as-a-service.md)

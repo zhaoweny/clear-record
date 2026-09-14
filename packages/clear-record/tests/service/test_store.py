@@ -232,8 +232,8 @@ def test_v1_registry_upgrades_forward(tmp_path) -> None:
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
 
 
-def test_v3_registry_gains_meeting_notes(tmp_path) -> None:
-    """An existing v3 database gains the v4 ``meeting.notes`` column on open."""
+def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
+    """An existing v3 database gains the v4 notes column and the v5 tape table."""
     import sqlite3
 
     from clear_record.service.store import (
@@ -260,7 +260,11 @@ def test_v3_registry_gains_meeting_notes(tmp_path) -> None:
     conn.close()
 
     reg = Registry(db)
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
+    # v5: an uploaded tape can be recorded and joins the meeting's tape set.
+    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    assert reg.list_tapes(meeting.id) == [tape]
+    assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)

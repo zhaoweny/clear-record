@@ -86,6 +86,25 @@ class RecordingSet:
 
 
 @dataclasses.dataclass(frozen=True)
+class Tape:
+    """An **uploaded** tape with the copy's integrity facts (ADR-0024).
+
+    A tape reaches a meeting two ways: a path the user typed (recorded only in
+    the meeting's :class:`RecordingSet`) or a file uploaded to the managed
+    workspace. The uploaded kind is also recorded here, with the ``sha256`` and
+    ``bytes`` measured while streaming it to disk, so storage visibility can
+    show what the node actually holds and detect a later change.
+    """
+
+    id: int
+    meeting_id: int
+    path: str
+    sha256: str
+    bytes: int
+    created_at: str
+
+
+@dataclasses.dataclass(frozen=True)
 class PipelineRun:
     """One execution of the pipeline against a meeting's tape set."""
 
@@ -152,4 +171,5 @@ __all__ = [
     "RUN_STATUSES",
     "TERM_AUTHORS",
     "TERM_STATUSES",
+    "Tape",
 ]

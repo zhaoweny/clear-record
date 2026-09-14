@@ -33,6 +33,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from clear_record.core import (
     PROFILE_CUSTOM,
@@ -49,6 +51,7 @@ from clear_record.service import (
     RunState,
     archive_meeting,
     collect_bundle,
+    managed,
     verify_archive,
 )
 from clear_record.web import guard
@@ -124,8 +127,13 @@ class TermUpdate(BaseModel):
 
 class MeetingCreate(BaseModel):
     title: str
-    workspace_path: str
+    #: A user-chosen workspace (ADR-0007), kept for the CLI-shaped flow. An
+    #: upload requires a *managed* workspace; see ``managed=True``.
+    workspace_path: str | None = None
     recorded_at: str | None = None
+    #: Provision an app-owned workspace under ``CR_WORKSPACE_ROOT`` (ADR-0024)
+    #: instead of using ``workspace_path``.
+    managed: bool = False
 
 
 class TapesUpdate(BaseModel):
@@ -148,6 +156,38 @@ class ArchiveCreate(BaseModel):
 
 def _out(obj) -> dict:
     return dataclasses.asdict(obj)
+
+
+def _content_length(request: Request) -> int | None:
+    """The declared body size, or ``None`` when the client did not say.
+
+    It is an upper bound on the uploaded file (it includes multipart framing),
+    which is enough for the pre-transfer size and disk-space guards.
+    """
+    raw = request.headers.get("content-length")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+#: HTTP status for each upload guard. Kept in the web layer so the service stays
+#: free of HTTP notions; the message itself is always the service's.
+_UPLOAD_STATUS = {
+    managed.UploadTooLarge: 413,
+    managed.DisallowedExtension: 415,
+    managed.InsufficientSpace: 507,
+}
+
+
+def _upload_status(exc: managed.UploadRejected) -> int:
+    for kind, status in _UPLOAD_STATUS.items():
+        if isinstance(exc, kind):
+            return status
+    return 400
 
 
 def _run_context(state: RunState | None, *, meeting_id: int, fallback=None) -> dict:
@@ -629,10 +669,14 @@ def create_app(
                 slug,
                 body.title,
                 recorded_at=body.recorded_at,
-                workspace_path=body.workspace_path,
+                workspace_path=None if body.managed else body.workspace_path,
             )
+            if body.managed:
+                meeting = managed.ensure_managed_workspace(registry, meeting)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
+        except managed.UploadRejected as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return _out(meeting)
@@ -663,6 +707,92 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _out(tape_set)
+
+    @app.post("/api/meetings/{meeting_id}/tapes", status_code=201)
+    async def upload_tape(request: Request, meeting_id: int) -> dict:
+        """Receive one tape into the meeting's **managed** workspace (ADR-0024).
+
+        Multipart, one file part named ``file``. The guards run first — and the
+        size/disk guards run against ``Content-Length`` **before** the body is
+        read, so an over-cap or no-space upload is refused without the transfer.
+        The bytes then stream to a ``.part`` file and are renamed into place;
+        only a complete, checksummed tape is recorded.
+
+        A single POST, deliberately: a dropped multi-GB upload restarts. Chunked
+        / resumable upload is out of scope for this slice.
+        """
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        declared = _content_length(request)
+        try:
+            meeting = managed.precheck_upload(registry, meeting, declared)
+        except managed.UploadRejected as exc:
+            raise HTTPException(
+                status_code=_upload_status(exc), detail=str(exc)
+            ) from exc
+
+        try:
+            form = await request.form()
+        except Exception as exc:  # noqa: BLE001 - a malformed body is a 400
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not read the multipart upload: {exc}",
+            ) from exc
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile) or not upload.filename:
+            raise HTTPException(
+                status_code=400,
+                detail="attach the tape as a multipart file part named 'file'",
+            )
+        try:
+            tape = await run_in_threadpool(
+                managed.upload_tape,
+                registry,
+                meeting,
+                upload.file,
+                filename=upload.filename,
+                declared_bytes=declared,
+            )
+        except managed.UploadRejected as exc:
+            raise HTTPException(
+                status_code=_upload_status(exc), detail=str(exc)
+            ) from exc
+        return _out(tape)
+
+    @app.get("/api/meetings/{meeting_id}/storage")
+    def meeting_storage(meeting_id: int) -> dict:
+        """A managed meeting's workspace size and uploaded tapes (ADR-0024)."""
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        return managed.meeting_storage(registry, meeting)
+
+    @app.delete("/api/meetings/{meeting_id}/tapes/{tape_id}")
+    def delete_tape(meeting_id: int, tape_id: int) -> dict:
+        """Delete one managed tape's file and record.
+
+        The archive is the durable copy; the response says so, and a tape in a
+        user-chosen workspace is refused (it is not app-owned data).
+        """
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        try:
+            tape = managed.delete_tape(registry, meeting, tape_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"no tape {tape_id} for meeting {meeting_id}"
+            ) from exc
+        except managed.UploadRejected as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "deleted": _out(tape),
+            "note": (
+                "the archive is the durable copy; archive this meeting before "
+                "deleting its tapes if you need to keep it"
+            ),
+        }
 
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
     def start_run(meeting_id: int, body: RunCreate) -> dict:

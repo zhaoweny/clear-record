@@ -338,6 +338,20 @@ your own directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
 [ADR-0007](docs/adr/0007-deployment-directories-xdg.md),
 [ADR-0013](docs/adr/0013-bundled-web-and-service-surface.md)).
 
+A **managed workspace** ([ADR-0024](docs/adr/0024-managed-workspace-tape-upload.md))
+is an opt-in, app-owned alternative: create a meeting in managed mode and
+**upload** its tapes to the node, and clear-record stores and transcribes them on
+your behalf — the route to self-hosting a node and managing it remotely. The
+managed root defaults to `$XDG_DATA_HOME/clear-record/workspaces` and is
+overridable with `CR_WORKSPACE_ROOT` (point it at a NAS or a big disk). Uploads
+are guarded by construction: a bare filename, an audio-extension allow-list, a
+`CR_MAX_UPLOAD_BYTES` cap, a disk-space precheck and no symlink following; each
+upload streams to a `.part` file, is `fsync`-ed and atomically renamed, and is
+recorded with its sha256 and size. Upload is a single streaming POST — a dropped
+multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
+`--dir` workspace and a meeting's user-chosen `workspace_path` are unchanged
+([deployment guide §4](docs/service-deployment.md)).
+
 > **Status:** the console currently covers projects and the multi-project
 > glossary table. Running tapes with progress, archiving, and the agent tasks
 > (glossary collection, transcript check, minutes) are the next slices.

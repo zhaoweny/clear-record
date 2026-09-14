@@ -38,10 +38,11 @@ from clear_record.service.models import (
     PipelineRun,
     Project,
     RecordingSet,
+    Tape,
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -153,6 +154,24 @@ _SCHEMA_V4 = """
 ALTER TABLE meeting ADD COLUMN notes TEXT NOT NULL DEFAULT '';
 """
 
+# v5 — the managed workspace (ADR-0024): a tape uploaded to the node is recorded
+# with the copy's integrity facts (``sha256`` and ``bytes``), which the path-only
+# recording set cannot carry. The tape's path is also added to the meeting's
+# recording set, so the pipeline (runs/archive) reads an upload exactly like a
+# user-typed path.
+_SCHEMA_V5 = """
+CREATE TABLE IF NOT EXISTS tape (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+    path       TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    bytes      INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS tape_meeting ON tape (meeting_id);
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -160,6 +179,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (2, _SCHEMA_V2),
     (3, _SCHEMA_V3),
     (4, _SCHEMA_V4),
+    (5, _SCHEMA_V5),
 )
 
 
@@ -607,6 +627,87 @@ class Registry:
             ).fetchone()
         return self._recording_set(row) if row else None
 
+    # --- uploaded tapes ---------------------------------------------------- #
+    def register_tape(
+        self,
+        meeting_id: int,
+        *,
+        path: str,
+        sha256: str,
+        bytes: int,
+    ) -> Tape:
+        """Record an uploaded tape **and** add it to the meeting's tape set.
+
+        One transaction, so the integrity facts and the tape set the pipeline
+        reads can never disagree: the path is appended to the latest set (or a
+        first set is created), then the tape row is written.
+        """
+        if self.meeting_by_id(meeting_id) is None:
+            raise KeyError(meeting_id)
+        with self._connect() as conn:
+            latest = conn.execute(
+                "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
+                (meeting_id,),
+            ).fetchone()
+            paths = list(json.loads(latest["paths"])) if latest else []
+            if path not in paths:
+                paths.append(path)
+            conn.execute(
+                "INSERT INTO recording_set (meeting_id, paths, created_at)"
+                " VALUES (?, ?, ?)",
+                (meeting_id, json.dumps(paths), _now()),
+            )
+            cur = conn.execute(
+                "INSERT INTO tape (meeting_id, path, sha256, bytes, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (meeting_id, path, sha256, bytes, _now()),
+            )
+            return self._tape_row(conn, cur.lastrowid)
+
+    def list_tapes(self, meeting_id: int) -> list[Tape]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tape WHERE meeting_id = ? ORDER BY id", (meeting_id,)
+            ).fetchall()
+        return [self._tape(row) for row in rows]
+
+    def get_tape(self, tape_id: int) -> Tape | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tape WHERE id = ?", (tape_id,)).fetchone()
+        return self._tape(row) if row else None
+
+    def forget_tape(self, tape_id: int) -> Tape:
+        """Drop a tape's row and remove its path from the meeting's tape set.
+
+        The file is the caller's to unlink (the store owns no filesystem). When
+        the deleted tape was the meeting's last one, the tape set is cleared
+        rather than left pointing at a file that no longer exists.
+        """
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tape WHERE id = ?", (tape_id,)).fetchone()
+            if row is None:
+                raise KeyError(tape_id)
+            tape = self._tape(row)
+            conn.execute("DELETE FROM tape WHERE id = ?", (tape_id,))
+            latest = conn.execute(
+                "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
+                (tape.meeting_id,),
+            ).fetchone()
+            if latest is not None:
+                remaining = [p for p in json.loads(latest["paths"]) if p != tape.path]
+                if remaining:
+                    conn.execute(
+                        "INSERT INTO recording_set (meeting_id, paths, created_at)"
+                        " VALUES (?, ?, ?)",
+                        (tape.meeting_id, json.dumps(remaining), _now()),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM recording_set WHERE meeting_id = ?",
+                        (tape.meeting_id,),
+                    )
+            return tape
+
     # --- pipeline runs ----------------------------------------------------- #
     def create_run(
         self,
@@ -868,6 +969,23 @@ class Registry:
         if row is None:
             raise KeyError(set_id)
         return self._recording_set(row)
+
+    @staticmethod
+    def _tape(row: sqlite3.Row) -> Tape:
+        return Tape(
+            id=int(row["id"]),
+            meeting_id=int(row["meeting_id"]),
+            path=row["path"],
+            sha256=row["sha256"],
+            bytes=int(row["bytes"]),
+            created_at=row["created_at"],
+        )
+
+    def _tape_row(self, conn: sqlite3.Connection, tape_id: int) -> Tape:
+        row = conn.execute("SELECT * FROM tape WHERE id = ?", (tape_id,)).fetchone()
+        if row is None:
+            raise KeyError(tape_id)
+        return self._tape(row)
 
     @staticmethod
     def _run(row: sqlite3.Row) -> PipelineRun:

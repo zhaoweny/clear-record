@@ -64,3 +64,7 @@ dist/
 Thumbs.db
 *.swp
 *.swo
+
+# Front-end toolchain: dependencies are installed from the committed bun.lock;
+# only the build output under clear_record/web/static/ is committed (ADR-0023).
+node_modules/

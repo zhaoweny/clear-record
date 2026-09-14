@@ -71,19 +71,31 @@ def _make_project(client, name: str = "Weekly Ops") -> dict:
 
 
 # --- HTML surface (htmx + Alpine, server-rendered) ------------------------ #
-def test_index_is_served_with_the_vendored_libraries(client) -> None:
+def test_index_is_served_with_the_compiled_bundle(client) -> None:
     res = client.get("/")
     assert res.status_code == 200
-    assert "/static/htmx.min.js" in res.text
-    assert "/static/alpine.min.js" in res.text
+    assert "/static/app.js" in res.text
+    assert "/static/app.css" in res.text
     assert "project console" in res.text
 
 
-def test_vendored_assets_are_served(client) -> None:
-    for path in ("/static/htmx.min.js", "/static/alpine.min.js", "/static/app.css"):
+def test_compiled_assets_are_served(client) -> None:
+    for path in ("/static/app.js", "/static/app.css"):
         res = client.get(path)
         assert res.status_code == 200, path
         assert res.content
+
+
+def test_the_bundle_carries_htmx_and_alpine_offline(client) -> None:
+    """The compiled JS is self-contained: htmx and Alpine are bundled in.
+
+    No CDN and no browser-side fetch — the console's offline guarantee
+    (ADR-0023) depends on both libraries riding in the wheel, not a <script>
+    pointing at someone else's server.
+    """
+    bundle = client.get("/static/app.js").content
+    assert b"htmx" in bundle
+    assert b"Alpine" in bundle
 
 
 def test_ui_project_list_and_create(client) -> None:

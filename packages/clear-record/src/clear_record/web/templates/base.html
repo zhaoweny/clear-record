@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}clear-record{% endblock %}</title>
+  {# Compiled, committed build output (Vite + Tailwind v4): htmx and Alpine are
+     bundled in, so the console is offline with no CDN and no hands-kept vendor
+     files. Stable filenames — see packages/clear-record/frontend/README.md. #}
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/alpine.min.js" defer></script>
+  <script type="module" src="/static/app.js"></script>
 </head>
 <body>
   <header class="app-header">

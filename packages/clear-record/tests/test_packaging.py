@@ -146,10 +146,12 @@ def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
 
 
 def test_web_console_assets_ship_with_the_package() -> None:
-    """The console's templates and vendored libraries are package data.
+    """The console's templates and compiled assets are package data.
 
     They must exist on disk (the wheel ships them; the frozen build collects
     them), so a rename that orphans the UI fails here rather than at runtime.
+    The compiled CSS/JS come from the front-end build and are committed — see
+    ADR-0023 and docs/frontend-assets.md.
     """
     web = PACKAGE_DIRS[0] / "src" / "clear_record" / "web"
     required = (
@@ -158,8 +160,7 @@ def test_web_console_assets_ship_with_the_package() -> None:
         "templates/_projects.html",
         "templates/_detail.html",
         "static/app.css",
-        "static/htmx.min.js",
-        "static/alpine.min.js",
+        "static/app.js",
     )
     missing = [rel for rel in required if not (web / rel).is_file()]
     assert not missing, f"missing web console assets: {missing}"
@@ -179,6 +180,20 @@ def _just_recipe(name: str) -> str:
                 break
         break
     return "\n".join(body)
+
+
+def test_web_assets_build_and_guard_are_just_recipes() -> None:
+    """`just` owns both front-end entry points, and `verify` stays Node-less.
+
+    The console's compiled assets are committed and rebuilt by `just
+    web-assets`; `just web-assets-check` is the freshness guard (ADR-0023). The
+    guard needs bun, so it must not be folded into `verify` — a contributor who
+    never touches the UI can still run the Python gate.
+    """
+    assert "bun" in _just_recipe("web-assets")
+    assert "check_web_assets.py" in _just_recipe("web-assets-check")
+    assert "web-assets" not in _just_recipe("verify")
+    assert (REPO_ROOT / "scripts" / "check_web_assets.py").is_file()
 
 
 def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:

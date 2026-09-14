@@ -313,10 +313,11 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
   src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)
+  frontend                    the console's front-end source (Vite + Tailwind v4); output committed into web/static
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0020
+docs/adr/                     decision records 0001–0023
 docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```
@@ -332,8 +333,10 @@ runnable, and the **project console** is built on top of it:
   (ADR-0013).
 - `clear_record.web` — the local console: FastAPI serving a server-rendered
   **htmx + Alpine.js** UI on `/ui/*` and a JSON API on `/api/*`, bound to
-  localhost, with no build step and no account (extra: `web`)
-  (ADR-0013, ADR-0016).
+  localhost, with no account (extra: `web`) (ADR-0013, ADR-0016). Its CSS/JS are
+  built from `packages/clear-record/frontend/` (Vite + Tailwind v4) and the
+  **compiled output is committed**, so the console works offline with no Node on
+  the user's machine (ADR-0023).
 - `clear_record.tray` — a **PySide6** system-tray supervisor / desktop entry
   point (open / status / quit) over a Qt-free `ServiceController` (extra:
   `tray`) (ADR-0016).

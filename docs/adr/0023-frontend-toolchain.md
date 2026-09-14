@@ -88,12 +88,19 @@ Date: 2026-09-15
   *dependencies* (build outputs rather than hand-committed files), and the tests
   that assert `/static/htmx.min.js` and `/static/app.css` move to whatever the
   build emits (a manifest lookup, or stable filenames — decide and say which).
-- [OPEN] Bundler choice (Vite vs esbuild) — Vite is the SPA-shaped default and
-  brings a dev server + manifest; esbuild is smaller and enough for bundling +
-  Tailwind.
-- [OPEN] Whether asset filenames are content-hashed (cache-friendly, needs a
-  manifest and a Jinja helper) or stable (simpler, weaker caching).
-- [OPEN] Whether the freshness guard runs on every `just verify` (needs bun in CI)
-  or in a separate CI job, so a Node-less contributor is not blocked.
+- [DECISION] The bundler is **Vite** (implemented 2026-09-15). It is the
+  SPA-shaped default — dev server, manifest, code splitting — which is the
+  owner's stated reason for a real toolchain; esbuild was smaller but would
+  foreclose the SPA ergonomics. Tailwind v4 is wired through `@tailwindcss/vite`
+  and its CSS-first `@theme` config.
+- [DECISION] Asset filenames are **stable, unhashed** (`app.css`, `app.js`)
+  (implemented 2026-09-15). The console is a localhost-only tool served from the
+  package, so content-hash cache-busting buys nothing, and hashing would need a
+  manifest plus a Jinja helper registered in `web/app.py`. Revisit if the
+  console ever grows long-lived shared caches.
+- [DECISION] The freshness guard runs in a **separate CI job**
+  (`verify.yml` → `web-assets`), not inside `just verify` (implemented
+  2026-09-15). The guard needs bun; the Python gate must stay runnable with no
+  Node, so a contributor who never touches the UI is not blocked.
 - Revisit if the compiled output proves noisy in diffs, or if the front-end grows
   enough that a committed artifact stops being reviewable.

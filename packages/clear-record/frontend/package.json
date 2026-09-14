@@ -1,0 +1,18 @@
+{
+  "name": "clear-record-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Build pipeline for the clear-record web console assets (htmx + Alpine + Tailwind v4, bundled by Vite). Compiled output is committed under src/clear_record/web/static/; end users never need Node.",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "alpinejs": "3.14.9",
+    "htmx.org": "2.0.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "tailwindcss": "^4",
+    "vite": "^7"
+  }
+}

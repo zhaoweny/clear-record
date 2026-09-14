@@ -49,6 +49,19 @@ format:
 test:
     uv run --all-packages pytest
 
+# Build the console's compiled assets into
+# packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
+# output is committed, so `just verify` and end users never need Node.
+web-assets:
+    bun install --frozen-lockfile --cwd packages/clear-record/frontend
+    bun run --cwd packages/clear-record/frontend build
+
+# Freshness guard: rebuild the assets and fail if the committed output differs
+# from its source. Pointer to a Python script because it branches; it needs bun,
+# so it is NOT part of `verify` — CI runs it as its own job.
+web-assets-check:
+    uv run --no-project scripts/check_web_assets.py
+
 # Build the release dist (wheel + sdist) into dist/ (never committed). Names the
 # published package explicitly — NOT `--all-packages` — so a future workspace
 # member (a GUI, an MCP server) can never silently join the PyPI payload.

@@ -380,10 +380,23 @@ just format         # ruff format (in place)
 just test           # pytest
 ./scripts/verify    # thin shim -> `just verify`
 
+# console assets (needs bun; the compiled output is committed — see below):
+just web-assets         # build the console's CSS/JS
+just web-assets-check   # rebuild and fail if the committed output is stale
+
 # backend stacks are optional no-op extra markers (system `whisper-cli`):
 uv sync --all-packages --extra apple       # Apple: system `whisper-cli` + `ggml-metal`
 uv run --all-packages --extra apple clear-record --help
 ```
+
+> **Front-end changes.** The console's CSS and JS are built from a real source
+> tree in `packages/clear-record/frontend/` (Vite + Tailwind v4, bun) and the
+> **compiled output is committed** under `clear_record/web/static/`. A plain
+> `pip install` ships those bytes, so end users never need Node, and neither
+> does `just verify` — the freshness guard runs as its own CI job. Edit the UI,
+> then `just web-assets` and commit both source and output. See
+> [docs/frontend-assets.md](docs/frontend-assets.md) and
+> [ADR-0023](docs/adr/0023-frontend-toolchain.md).
 
 > `uv sync --all-packages` creates the env and installs all workspace members +
 > dev deps (this is the `just verify` step). The `--extra <backend>` markers are
@@ -398,8 +411,10 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
+  src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine
+  frontend                    the console's front-end source (Vite + Tailwind; output committed into web/static)
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0020)
+docs/adr/                     (decision records 0001–0023)
 ```
 
 ## License

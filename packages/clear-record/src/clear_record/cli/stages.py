@@ -17,6 +17,8 @@ from pathlib import Path
 import soundfile as sf
 
 from clear_record.core import (
+    EventSink,
+    Progress,
     RecordDocument,
     Segment,
     Source,
@@ -60,6 +62,8 @@ def ingest(
     directory: str,
     audio_files: list[str] | None = None,
     split: str = "auto",
+    *,
+    on_event: EventSink | None = None,
 ) -> list[Source]:
     """Discover/declare sources and normalize them to 16 kHz mono WAV.
 
@@ -79,6 +83,8 @@ def ingest(
     audio_dir = w.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)
 
+    progress = Progress(Step.INGEST.value, len(files), on_event)
+    progress.start(f"decoding {len(files)} file(s)")
     sources: list[Source] = []
     for p in files:
         base = _source_id(p, d)
@@ -107,6 +113,7 @@ def ingest(
             sources.append(
                 Source(id=base, path=str(norm), label=p.stem, clock_domain="wall")
             )
+        progress.advance(source=base)
     w.write_manifest(sources)
     _print_sources(sources, w)
     return sources
@@ -121,10 +128,18 @@ def _print_sources(sources: list[Source], w: Workspace) -> None:
 # --------------------------------------------------------------------------- #
 # align
 # --------------------------------------------------------------------------- #
-def align(directory: str, reference: str | None = None):
+def align(
+    directory: str,
+    reference: str | None = None,
+    *,
+    on_event: EventSink | None = None,
+):
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
+    progress = Progress(Step.ALIGN.value, 1, on_event)
+    progress.start(f"aligning {len(sources)} source(s)")
     alignment = align_sources(sources, reference_id=reference)
+    progress.advance(message=f"reference={alignment.reference}")
     w.write_manifest(sources, alignment)
     print(
         f"[align] reference={alignment.reference} method={alignment.method} "
@@ -170,6 +185,8 @@ def transcribe(
     resume: bool = True,
     jobs: int = 0,
     check_plugin: bool = False,
+    *,
+    on_event: EventSink | None = None,
 ):
     """Transcribe every source, in **resumable overlapping chunks** for long
     tapes, with an optional **glossary** as the decoder's initial prompt.
@@ -233,6 +250,7 @@ def transcribe(
             jobs=jobs,
         ),
         workspace=w,
+        on_event=on_event,
     )
 
     meta: dict = {
@@ -393,11 +411,19 @@ def glossary(directory: str, add: list[str] | None = None) -> Path:
 # --------------------------------------------------------------------------- #
 # reconcile
 # --------------------------------------------------------------------------- #
-def reconcile(directory: str, prefer: str | None = None):
+def reconcile(
+    directory: str,
+    prefer: str | None = None,
+    *,
+    on_event: EventSink | None = None,
+):
     w = Workspace.at(directory)
+    progress = Progress(Step.RECONCILE.value, 1, on_event)
+    progress.start()
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
     segments = reconcile_segments(per_source, alignment, sources)
+    progress.advance(message=f"{len(segments)} segment(s)")
 
     record = RecordDocument(
         sources=tuple(sources),
@@ -437,29 +463,40 @@ def _fmt_ts(seconds: float) -> str:
 # --------------------------------------------------------------------------- #
 # export
 # --------------------------------------------------------------------------- #
-def export(directory: str, formats: list[str] | None = None) -> dict[str, Path]:
+def export(
+    directory: str,
+    formats: list[str] | None = None,
+    *,
+    on_event: EventSink | None = None,
+) -> dict[str, Path]:
     w = Workspace.at(directory)
     record = w.load_record()
     w.export_dir.mkdir(parents=True, exist_ok=True)
     wanted = set(formats or ["md", "srt", "vtt", "json"])
     written: dict[str, Path] = {}
+    progress = Progress(Step.EXPORT.value, len(wanted), on_event)
+    progress.start()
 
     if "md" in wanted:
         p = w.export_file("record.md")
         p.write_text(_render_markdown(record), encoding="utf-8")
         written["md"] = p
+        progress.advance(source="md")
     if "srt" in wanted:
         p = w.export_file("record.srt")
         p.write_text(_render_srt(record), encoding="utf-8")
         written["srt"] = p
+        progress.advance(source="srt")
     if "vtt" in wanted:
         p = w.export_file("record.vtt")
         p.write_text(_render_vtt(record), encoding="utf-8")
         written["vtt"] = p
+        progress.advance(source="vtt")
     if "json" in wanted:
         p = w.export_file("record.json")
         write_json(p, record)
         written["json"] = p
+        progress.advance(source="json")
 
     for fmt, p in written.items():
         print(f"[export] {fmt:4s} -> {p}")
@@ -542,19 +579,26 @@ class PipelineOptions:
     check_plugin: bool = False
 
 
-def _run_ingest(directory: str, options: PipelineOptions) -> None:
+def _run_ingest(
+    directory: str, options: PipelineOptions, on_event: EventSink | None
+) -> None:
     ingest(
         directory,
         list(options.audio_files) if options.audio_files else None,
         split=options.split,
+        on_event=on_event,
     )
 
 
-def _run_align(directory: str, options: PipelineOptions) -> None:
-    align(directory, reference=options.reference)
+def _run_align(
+    directory: str, options: PipelineOptions, on_event: EventSink | None
+) -> None:
+    align(directory, reference=options.reference, on_event=on_event)
 
 
-def _run_transcribe(directory: str, options: PipelineOptions) -> None:
+def _run_transcribe(
+    directory: str, options: PipelineOptions, on_event: EventSink | None
+) -> None:
     transcribe(
         directory,
         options.backend,
@@ -567,6 +611,7 @@ def _run_transcribe(directory: str, options: PipelineOptions) -> None:
         resume=options.resume,
         jobs=options.jobs,
         check_plugin=options.check_plugin,
+        on_event=on_event,
     )
     sources, _ = Workspace.at(directory).load_manifest()
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to
@@ -586,16 +631,24 @@ def _run_transcribe(directory: str, options: PipelineOptions) -> None:
             diarize(directory, speakers=options.speakers)
 
 
-def _run_reconcile(directory: str, options: PipelineOptions) -> None:
-    reconcile(directory, prefer=options.reference)
+def _run_reconcile(
+    directory: str, options: PipelineOptions, on_event: EventSink | None
+) -> None:
+    reconcile(directory, prefer=options.reference, on_event=on_event)
 
 
-def _run_export(directory: str, options: PipelineOptions) -> None:
-    export(directory, list(options.formats) if options.formats else None)
+def _run_export(
+    directory: str, options: PipelineOptions, on_event: EventSink | None
+) -> None:
+    export(
+        directory,
+        list(options.formats) if options.formats else None,
+        on_event=on_event,
+    )
 
 
 # One runner per declared stage; the drift test checks the keys against the spec.
-_STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions], None]] = {
+_STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions, EventSink | None], None]] = {
     Step.INGEST: _run_ingest,
     Step.ALIGN: _run_align,
     Step.TRANSCRIBE: _run_transcribe,
@@ -604,16 +657,22 @@ _STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions], None]] = {
 }
 
 
-def run(directory: str, options: PipelineOptions | None = None) -> None:
+def run(
+    directory: str,
+    options: PipelineOptions | None = None,
+    *,
+    on_event: EventSink | None = None,
+) -> None:
     """Run every stage the spec declares, in the spec's order.
 
     The order is not restated here: it is read from
     :func:`clear_record.core.pipeline_spec`, the same spec the CLI builds its
     subcommands from, and each stage's wiring lives in :data:`_STAGE_RUNNERS`.
+    ``on_event`` is threaded to every stage so a caller can follow progress.
     """
     options = options or PipelineOptions()
     for stage in pipeline_spec().stages:
-        _STAGE_RUNNERS[stage.step](directory, options)
+        _STAGE_RUNNERS[stage.step](directory, options, on_event)
 
 
 def calibrate_report(directory: str, reference: str | None = None) -> dict:

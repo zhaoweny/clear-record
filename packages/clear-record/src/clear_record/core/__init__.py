@@ -8,6 +8,7 @@ the domain model and the *shape* of the pipeline; vendor adapters live in
 
 from __future__ import annotations
 
+from clear_record.core.events import EventSink, JobEvent, Progress, emit
 from clear_record.core.model import (
     Alignment,
     RecordDocument,
@@ -26,14 +27,18 @@ from clear_record.core.pipeline import PipelineSpec, PipelineStage, Step, pipeli
 
 __all__ = [
     "Alignment",
+    "EventSink",
+    "JobEvent",
     "PipelineSpec",
     "PipelineStage",
+    "Progress",
     "RecordDocument",
     "Segment",
     "Source",
     "Step",
     "TranscriptionResult",
     "alignment_from_dict",
+    "emit",
     "load_json",
     "pipeline_spec",
     "record_from_dict",

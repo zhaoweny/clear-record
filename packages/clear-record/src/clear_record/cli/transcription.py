@@ -25,7 +25,7 @@ from pathlib import Path
 
 import soundfile as sf
 
-from clear_record.core import Segment, Source
+from clear_record.core import EventSink, Progress, Segment, Source
 from clear_record.engine import (
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
@@ -362,6 +362,7 @@ def transcribe(
     options: TranscriptionOptions,
     *,
     workspace: Workspace,
+    on_event: EventSink | None = None,
 ) -> Transcription:
     """Transcribe ``sources`` in resumable overlapping chunks.
 
@@ -386,6 +387,7 @@ def transcribe(
     # one bounded pool so the GPU stays fed across source boundaries too.
     plans: list[_SourcePlan] = []
     pending: list[_ChunkTask] = []
+    cached_hits: list[str] = []
     for src in sources:
         duration = _duration(src.path)
         chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
@@ -415,12 +417,22 @@ def transcribe(
         for i, (start_s, end_s) in enumerate(chunks):
             if reuse and cache.has_segments(i):
                 segs[i] = cache.read_segments(i)
+                cached_hits.append(src.id)
                 log(f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached")
             else:
                 pending.append(
                     _ChunkTask(src.id, i, src.path, start_s, end_s, cache, len(chunks))
                 )
         plans.append(_SourcePlan(src, duration, chunks, segs))
+
+    # One stage-level progress bar over **chunks across all sources**: cached
+    # chunks count as already done, pending ones advance as the pool finishes
+    # them (advance is thread-safe).
+    total_chunks = sum(len(plan.chunks) for plan in plans)
+    progress = Progress("transcribe", total_chunks, on_event)
+    progress.start(f"{total_chunks} chunk(s) over {len(plans)} source(s)")
+    for src_id in cached_hits:
+        progress.advance(source=src_id, message="cached")
 
     plan_by_id = {plan.source.id: plan for plan in plans}
     workers = resolve_jobs(
@@ -464,9 +476,15 @@ def transcribe(
             f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
             f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)"
         )
+        progress.advance(
+            source=task.source_id,
+            message=f"chunk {task.index + 1}/{task.n_chunks}",
+        )
         return task.source_id, task.index, shifted
 
     _run_pending(pending, plan_by_id, workers, _run_chunk, runner)
+    if total_chunks == 0:
+        progress.finish("no chunks to transcribe")
 
     per_source: dict[str, list[Segment]] = {}
     source_meta: dict[str, dict] = {}

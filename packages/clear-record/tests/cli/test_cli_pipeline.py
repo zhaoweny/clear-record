@@ -355,8 +355,8 @@ def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
     seen: dict[str, str] = {}
     real_align = stages.align
 
-    def spy_align(directory, reference=None):
-        alignment = real_align(directory, reference=reference)
+    def spy_align(directory, reference=None, *, on_event=None):
+        alignment = real_align(directory, reference=reference, on_event=on_event)
         seen["reference"] = alignment.reference
         return alignment
 

@@ -71,6 +71,15 @@ app = [
     "pyinstaller>=6.0",
 ]
 
+# The message-catalog toolchain (Babel). Build-time only: `clear_record.core.i18n`
+# uses stdlib `gettext` at runtime and never imports Babel. Kept out of `dev` so
+# the verify gate stays Babel-free (a contributor who never touches a translation
+# can still run `just verify`); the freshness guard runs in its own CI job. See
+# docs/i18n.md.
+i18n = [
+    "babel>=2.14",
+]
+
 # Convenience extras that mirror the single dist's backend extras, so a single
 # `--extra <backend>` switch stays valid in both `uv sync` and `uv run`. These
 # mirror ADR-0005.

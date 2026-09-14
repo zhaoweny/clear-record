@@ -42,6 +42,7 @@ from clear_record.core import (
     profile_values,
     resolve_options,
 )
+from clear_record.core.i18n import install_if_unset, tr, trn
 from clear_record.service import (
     BUNDLE_FILENAME,
     TERM_STATUSES,
@@ -58,6 +59,14 @@ from clear_record.web import guard
 
 WEB_DIR = Path(__file__).parent
 TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+
+#: One lookup point: the same ``tr``/``trn`` a Python module imports, exposed to
+#: Jinja, so a template and a module cannot diverge. They read whatever catalog
+#: the process installed (``--lang``/``CR_LANG``/``LANG``; see
+#: :mod:`clear_record.core.i18n`). With none installed they return the English
+#: source verbatim.
+TEMPLATES.env.globals["tr"] = tr
+TEMPLATES.env.globals["trn"] = trn
 
 #: The ASR backend ids the run form offers, in catalog order. A literal, not an
 #: import of ``clear_record.providers``: the web layer may import only
@@ -229,6 +238,11 @@ def create_app(
     (default: ``CR_TRUSTED_HOSTS``, on top of loopback); tests and embedders can
     pass an explicit set, and ``()`` pins the loopback-only default.
     """
+    # The console's user-facing text is translated per process. A CLI ``--lang``
+    # (or an explicit ``install``) has already chosen; otherwise honour
+    # ``CR_LANG``/``LANG``. With neither, the catalog stays null and the English
+    # source renders — the byte-identical default.
+    install_if_unset()
     runs = runs or RunManager(registry)
     app = FastAPI(
         title="clear-record",

@@ -316,7 +316,9 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 
 Running `clear-record web` without the extra prints the exact install command.
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
-server binds **localhost only** and needs no account. With `--tailscale` the
+server binds **localhost only** and needs no account. The UI language comes from
+`--lang`, `CR_LANG` or `LANG` (English is the source, `de` ships) — see
+[docs/i18n.md](docs/i18n.md). With `--tailscale` the
 console also resolves this machine's tailnet name, runs a **foreground**
 `tailscale serve --https=<port> http://127.0.0.1:<port>` (the tailnet port
 defaults to `--port`; choose another with `--tailscale-port`), trusts that name,
@@ -406,6 +408,11 @@ just test           # pytest
 just web-assets         # build the console's CSS/JS
 just web-assets-check   # rebuild and fail if the committed output is stale
 
+# message catalogs (Babel, build-time only; the compiled .mo is committed):
+just i18n-extract       # merge new source strings into the .po catalogs
+just i18n-compile       # compile each .po into the committed .mo
+just i18n-check         # freshness guard (its own CI job)
+
 # backend stacks are optional no-op extra markers (system `whisper-cli`):
 uv sync --all-packages --extra apple       # Apple: system `whisper-cli` + `ggml-metal`
 uv run --all-packages --extra apple clear-record --help
@@ -419,6 +426,14 @@ uv run --all-packages --extra apple clear-record --help
 > then `just web-assets` and commit both source and output. See
 > [docs/frontend-assets.md](docs/frontend-assets.md) and
 > [ADR-0023](docs/adr/0023-frontend-toolchain.md).
+
+> **Translations.** User-facing UI strings are marked with `tr("…")` (and
+> `trn(...)` for plurals); the **English string is the message ID**, so the
+> English default is unchanged and adoption is incremental. The runtime is
+> stdlib `gettext` (no runtime dependency) and the compiled catalogs are
+> committed, so a `pip install` needs no build step. Babel is a build-time tool
+> (`just i18n-*`, with its own CI freshness job). `--lang` / `CR_LANG` / `LANG`
+> pick the language. See [docs/i18n.md](docs/i18n.md).
 
 > `uv sync --all-packages` creates the env and installs all workspace members +
 > dev deps (this is the `just verify` step). The `--extra <backend>` markers are
@@ -464,6 +479,10 @@ project.
   / OPEN labels).
 - [docs/test-corpus.md](docs/test-corpus.md) — the owner's public reference
   anchors & the synthesize-the-badness strategy.
+- [docs/frontend-assets.md](docs/frontend-assets.md) — how the console's
+  compiled CSS/JS are built and kept fresh.
+- [docs/i18n.md](docs/i18n.md) — how user-facing strings are translated
+  (`tr()` + stdlib `gettext`, Babel at build time).
 - [docs/adr/](docs/adr/) — architecture decision records.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and contribute.
 - [`SECURITY.md`](SECURITY.md) · [`PRIVACY.md`](PRIVACY.md) ·

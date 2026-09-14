@@ -196,6 +196,55 @@ def test_web_assets_build_and_guard_are_just_recipes() -> None:
     assert (REPO_ROOT / "scripts" / "check_web_assets.py").is_file()
 
 
+def test_message_catalogs_ship_with_the_package() -> None:
+    """Every locale carries a committed `.po` **and** its compiled `.mo`.
+
+    `gettext.translation` reads `messages.mo` out of the wheel, so a missing or
+    uncompiled catalog silently degrades a locale to English. Static check only —
+    no Babel, no build; the freshness guard is `just i18n-check` (its own CI
+    job, because it needs Babel).
+    """
+    locales = PACKAGE_DIRS[0] / "src" / "clear_record" / "locales"
+    catalogs = sorted(locales.glob("*/LC_MESSAGES/messages.po"))
+    assert catalogs, f"no message catalogs under {locales}"
+    missing_mo = [
+        p.relative_to(REPO_ROOT) for p in catalogs if not p.with_suffix(".mo").is_file()
+    ]
+    assert not missing_mo, f"missing compiled catalogs: {missing_mo}"
+
+
+def test_i18n_build_and_guard_are_just_recipes() -> None:
+    """`just` owns the catalog entry points; `verify` stays Babel-free.
+
+    The catalogs are committed and rebuilt by `just i18n-extract` /
+    `i18n-compile`; `just i18n-check` is the freshness guard. It needs Babel, so
+    it must not be folded into `verify` — the runtime is stdlib `gettext` and a
+    contributor who never touches a translation can still run the Python gate.
+    """
+    assert "scripts/i18n.py extract" in _just_recipe("i18n-extract")
+    assert "scripts/i18n.py compile" in _just_recipe("i18n-compile")
+    assert "scripts/i18n.py check" in _just_recipe("i18n-check")
+    assert "i18n" not in _just_recipe("verify")
+    assert (REPO_ROOT / "scripts" / "i18n.py").is_file()
+
+
+def test_babel_is_a_build_only_group_not_a_runtime_dependency() -> None:
+    """Babel extracts/compiles catalogs but is never imported at runtime.
+
+    It lives in the root `i18n` dependency group (not `dev`, so the verify gate
+    stays Babel-free) and in neither the base dependencies nor an optional extra
+    of the published dist.
+    """
+    root = _load(ROOT_PYPROJECT)
+    groups = root.get("dependency-groups", {})
+    assert any("babel" in spec.lower() for spec in groups.get("i18n", [])), groups
+    assert not any("babel" in spec.lower() for spec in groups.get("dev", []))
+
+    project = _load(MEMBER_PYPROJECTS[0])["project"]
+    leaked = [spec for spec in _all_dependencies(project) if "babel" in spec.lower()]
+    assert not leaked, f"Babel leaked into the dist's dependencies: {leaked}"
+
+
 def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:
     """The frozen desktop app is the tray, not just a browser launcher (ADR-0016).
 

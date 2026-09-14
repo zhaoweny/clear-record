@@ -4,7 +4,7 @@
    the precedence the run itself uses. #}
 <div class="knobs-head">
   <span class="badge">{{ profile_options.profile }}</span>
-  <span class="knobs-label">resolved knobs</span>
+  <span class="knobs-label">{{ tr("resolved knobs") }}</span>
 </div>
 <div class="knobs-values">
   {% if profile_options.knobs %}
@@ -13,11 +13,9 @@
   <span class="knob">{{ name }}={{ value }}</span>
   {% endfor %}
   {% else %}
-  <span class="muted">no preset &mdash; every knob stays as you set it.</span>
+  <span class="muted">{{ tr("no preset — every knob stays as you set it.") }}</span>
   {% endif %}
 </div>
 <p class="muted knobs-note">
-  A profile tunes the decoder knobs only; your model and backend stay as chosen.
-  Switching profile re-transcribes: the chunk cache is keyed on the decoder
-  knobs, the model and the glossary, so a different profile decodes again.
+  {{ tr("A profile tunes the decoder knobs only; your model and backend stay as chosen. Switching profile re-transcribes: the chunk cache is keyed on the decoder knobs, the model and the glossary, so a different profile decodes again.") }}
 </p>

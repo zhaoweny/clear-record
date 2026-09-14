@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import click
 
+from clear_record.core.i18n import deferred, tr
+
 if TYPE_CHECKING:
     from clear_record.web.tailscale import ServeSession
 
@@ -30,7 +32,7 @@ DEFAULT_PORT = 8765
 #: importable (it ships in the one wheel); these are the optional `web` extra.
 _WEB_STACK = ("fastapi", "uvicorn", "jinja2", "python_multipart")
 
-_MISSING_EXTRA_HINT = (
+_MISSING_EXTRA_HINT = deferred(
     "[web] the web console needs the optional 'web' extra ({missing} not found).\n"
     "  Install it with:   pip install 'clear-record[web]'\n"
     "  Or run without installing:   uvx --from 'clear-record[web]' clear-record web"
@@ -41,7 +43,7 @@ def _require_web_stack() -> None:
     """Fail with an actionable hint when the `web` extra is not installed."""
     missing = [name for name in _WEB_STACK if importlib.util.find_spec(name) is None]
     if missing:
-        raise SystemExit(_MISSING_EXTRA_HINT.format(missing=", ".join(missing)))
+        raise SystemExit(tr(_MISSING_EXTRA_HINT, missing=", ".join(missing)))
 
 
 def register(group: click.Group) -> None:
@@ -50,28 +52,36 @@ def register(group: click.Group) -> None:
     ``group`` is the CLI's Click group (ADR-0022). Registered unconditionally:
     the subcommand is visible in ``--help`` even without the extra, and running
     it explains how to install the extra.
+
+    ``tr`` runs here, at group-build time, not at import: the catalog is
+    installed before the group is assembled (``--lang``/``CR_LANG``/``LANG``),
+    so the help text is translated while the module stays import-light.
     """
 
     @group.command(
         name="web",
-        help="start the local web console (projects, glossary) in a browser",
+        help=tr("start the local web console (projects, glossary) in a browser"),
     )
     @click.option(
-        "--host", default=DEFAULT_HOST, help="bind address (default localhost)"
+        "--host",
+        default=DEFAULT_HOST,
+        help=tr("bind address (default localhost)"),
     )
-    @click.option("--port", type=int, default=DEFAULT_PORT, help="port (default 8765)")
-    @click.option("--no-browser", is_flag=True, help="do not open a browser window")
+    @click.option(
+        "--port", type=int, default=DEFAULT_PORT, help=tr("port (default 8765)")
+    )
+    @click.option("--no-browser", is_flag=True, help=tr("do not open a browser window"))
     @click.option(
         "--data-dir",
         default=None,
         envvar="CR_DATA_DIR",
         show_envvar=True,
-        help="override the app data directory (default: CR_DATA_DIR / XDG)",
+        help=tr("override the app data directory (default: CR_DATA_DIR / XDG)"),
     )
     @click.option(
         "--tailscale",
         is_flag=True,
-        help=(
+        help=tr(
             "set up Tailscale Serve for this port, trust this machine's tailnet "
             "name, and print its https URL. Serve runs in the foreground "
             "alongside the console and stops with it. The tailnet is the "
@@ -82,7 +92,7 @@ def register(group: click.Group) -> None:
         "--tailscale-host",
         default=None,
         metavar="NAME",
-        help=(
+        help=tr(
             "trust NAME instead of the machine's resolved tailnet name "
             "(requires --tailscale)"
         ),
@@ -92,7 +102,7 @@ def register(group: click.Group) -> None:
         type=int,
         default=None,
         metavar="PORT",
-        help=(
+        help=tr(
             "the tailnet HTTPS port Serve exposes (default: the same as "
             "--port); requires --tailscale"
         ),
@@ -130,13 +140,18 @@ def _run(
     _require_web_stack()
     if (tailscale_host is not None or tailscale_port is not None) and not tailscale:
         raise click.UsageError(
-            "--tailscale-host / --tailscale-port configure Serve; pass "
-            "--tailscale too (or set CR_TRUSTED_HOSTS to trust a hostname "
-            "without Serve)."
+            tr(
+                "--tailscale-host / --tailscale-port configure Serve; pass "
+                "--tailscale too (or set CR_TRUSTED_HOSTS to trust a hostname "
+                "without Serve)."
+            )
         )
     if tailscale_port is not None and not 0 < tailscale_port < 65536:
         raise click.UsageError(
-            f"--tailscale-port {tailscale_port} is not a port number (1-65535)."
+            tr(
+                "--tailscale-port {port} is not a port number (1-65535).",
+                port=tailscale_port,
+            )
         )
     trusted_hosts: list[str] | None = None
     session: ServeSession | None = None
@@ -218,12 +233,15 @@ def _require_loopback_bind(host: str) -> None:
 
     if not guard.is_loopback_host(guard.host_name(host)):
         raise click.UsageError(
-            "--tailscale sets up Tailscale Serve against "
-            f"http://127.0.0.1:<port>, but --host {host!r} is not a loopback "
-            "address, so Serve could not reach the console.\n"
-            "  Drop --host (the console binds 127.0.0.1 by default), or drop "
-            "--tailscale and front the loopback console with your own proxy "
-            "(ADR-0021)."
+            tr(
+                "--tailscale sets up Tailscale Serve against "
+                "http://127.0.0.1:<port>, but --host {host!r} is not a loopback "
+                "address, so Serve could not reach the console.\n"
+                "  Drop --host (the console binds 127.0.0.1 by default), or drop "
+                "--tailscale and front the loopback console with your own proxy "
+                "(ADR-0021).",
+                host=host,
+            )
         )
 
 
@@ -246,9 +264,12 @@ def _tailscale_setup(
         name = tailscale.normalize_name(override) or tailscale.resolve_dns_name()
         if not name or "/" in name:
             raise tailscale.TailscaleError(
-                f"--tailscale-host {override!r} is not a bare hostname.\n"
-                "    Fix: pass the name Tailscale gives you, e.g. "
-                "machine.tailnet.ts.net."
+                tr(
+                    "--tailscale-host {override!r} is not a bare hostname.\n"
+                    "    Fix: pass the name Tailscale gives you, e.g. "
+                    "machine.tailnet.ts.net.",
+                    override=override,
+                )
             )
     except tailscale.TailscaleError as exc:
         raise SystemExit(f"[tailscale] {exc}") from exc
@@ -257,27 +278,36 @@ def _tailscale_setup(
         session = tailscale.start_serve(serve_port=serve_port, target_port=target_port)
     except tailscale.TailscaleError as exc:
         click.echo(
-            f"[tailscale] {exc}\n"
-            "    The console is starting anyway, but it will not be reachable "
-            "over the tailnet.",
+            tr(
+                "[tailscale] {error}\n"
+                "    The console is starting anyway, but it will not be reachable "
+                "over the tailnet.",
+                error=exc,
+            ),
             err=True,
         )
         session = None
     else:
         if session.reused:
             click.echo(
-                f"[tailscale] port {serve_port} is already served by Tailscale; "
-                "leaving that mapping untouched.\n"
-                "    If it does not point at this console, pass "
-                "--tailscale-port <port> to expose a different tailnet port."
+                tr(
+                    "[tailscale] port {port} is already served by Tailscale; "
+                    "leaving that mapping untouched.\n"
+                    "    If it does not point at this console, pass "
+                    "--tailscale-port <port> to expose a different tailnet port.",
+                    port=serve_port,
+                )
             )
         else:
             click.echo(
-                "[tailscale] console is now shared on your tailnet:\n"
-                f"    {tailscale.console_url(name, serve_port)}\n"
-                "    The tailnet is the authentication: anyone on your tailnet "
-                "can reach this console.\n"
-                "    Serve runs in the foreground and stops with this console."
+                tr(
+                    "[tailscale] console is now shared on your tailnet:\n"
+                    "    {url}\n"
+                    "    The tailnet is the authentication: anyone on your tailnet "
+                    "can reach this console.\n"
+                    "    Serve runs in the foreground and stops with this console.",
+                    url=tailscale.console_url(name, serve_port),
+                )
             )
     return sorted(guard.trusted_extra_hosts() | {name}), session
 

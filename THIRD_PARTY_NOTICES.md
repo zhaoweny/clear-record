@@ -54,6 +54,18 @@ Not installed in a runtime environment; used by the `just verify` gate.
 | [`pygments`](https://pypi.org/project/pygments/) *(transitive, via pytest)* | 2.21.0 | BSD-2-Clause |
 | [`colorama`](https://pypi.org/project/colorama/) *(transitive, via pytest; Windows only)* | 0.4.6 | BSD-3-Clause |
 
+### Build-only dependencies
+
+Not installed at runtime. The catalog recipes (`just i18n-extract` /
+`i18n-compile` / `i18n-check`) use Babel to extract and compile the message
+catalogs; the Jinja2 extractor comes from Jinja2, already a `web`-extra / dev
+dependency. Neither is part of `just verify`, and neither is imported at runtime
+(the runtime is stdlib `gettext`).
+
+| Package | Version | License |
+| --- | --- | --- |
+| [`babel`](https://pypi.org/project/babel/) | 2.18.0 | BSD-3-Clause |
+
 ## External runtimes (not bundled, not linked)
 
 These are separate programs that `clear-record` invokes as local

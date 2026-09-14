@@ -35,6 +35,10 @@ just test           # pytest
 just lint           # ruff check
 just format         # ruff format (in place)
 just format-check   # ruff format --check
+just web-assets     # rebuild the console's committed CSS/JS (needs bun)
+just i18n-extract   # merge new source strings into the .po catalogs (needs Babel)
+just i18n-compile   # compile each .po into the committed .mo (needs Babel)
+just i18n-check     # catalog freshness guard (its own CI job)
 ```
 
 ## Guidelines
@@ -52,6 +56,11 @@ just format-check   # ruff format --check
 - **Preserve provenance.** Label statements `FACT` / `VOICE` / `REQ` / `DESIGN`
   / `SUGGESTION` / `OPEN`. Do not promote a suggestion or an open question to a
   requirement without owner evidence.
+- **Mark user-facing strings with `tr("…")`** (message IDs are the English
+  strings, so the English default is unchanged). After adding one, run
+  `just i18n-extract` then `just i18n-compile` and commit the regenerated
+  catalogs. Logs, the JSON API, exports and the diagnostics bundle are **never**
+  translated. See [`docs/i18n.md`](docs/i18n.md).
 
 ## Do not add branching scripts
 

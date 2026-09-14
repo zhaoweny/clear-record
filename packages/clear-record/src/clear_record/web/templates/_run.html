@@ -4,9 +4,9 @@
     <span class="badge status-{{ run.status }}">{{ run.status }}</span>
     {% if run.stage %}<span class="run-stage">{{ run.stage }}</span>{% endif %}
     {% if run.total %}<span class="run-count">{{ run.index }} / {{ run.total }}</span>{% endif %}
-    {% if run.eta_s is not none %}<span class="run-eta">ETA {{ run.eta_s | round(0) | int }}s</span>{% endif %}
+    {% if run.eta_s is not none %}<span class="run-eta">{{ tr("ETA") }} {{ run.eta_s | round(0) | int }}s</span>{% endif %}
   </div>
-  <progress aria-label="Transcription progress" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
+  <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
   {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}
 </div>

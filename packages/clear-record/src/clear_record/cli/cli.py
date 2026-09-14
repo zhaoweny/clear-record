@@ -25,6 +25,7 @@ See docs/architecture.md §6 and ADR-0006.
 from __future__ import annotations
 
 import dataclasses
+import sys
 from types import SimpleNamespace
 from typing import Any, Sequence
 
@@ -41,6 +42,13 @@ from clear_record.core import (
     pipeline_spec,
     resolve_options,
     set_level,
+)
+from clear_record.core.i18n import (
+    available_locales,
+    deferred,
+    install as install_language,
+    resolve_locale,
+    tr,
 )
 from clear_record.providers import (
     BACKENDS,
@@ -59,12 +67,55 @@ COMMAND_ENTRY_POINT_GROUP = "clear_record.commands"
 
 #: The command name stays the owner's spelling (ADR-0009, ADR-0022).
 _PROG = "clear-record"
-_DESCRIPTION = "clear-record: from many recordings to one clear record."
+# ``deferred`` marks a message ID whose lookup happens at group-build time (Click
+# snapshots help then); it returns the English string, and ``_build_group``
+# passes the result through ``tr`` once the catalog is installed.
+_DESCRIPTION = deferred("clear-record: from many recordings to one clear record.")
 
-_VERBOSE_HELP = (
+_VERBOSE_HELP = deferred(
     "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
     "log is written to the app state directory, never to stdout"
 )
+
+
+def _lang_help() -> str:
+    """The ``--lang`` help, naming the locales that actually ship a catalog."""
+    shipped = available_locales()
+    extra = f" (shipped: {', '.join(shipped)})" if shipped else ""
+    return (
+        "UI language: a language tag like `de` or `fr_FR`. Precedence is "
+        "--lang > CR_LANG > LC_ALL/LANG > English"
+        f"{extra}; English renders the source strings verbatim."
+    )
+
+
+def _install_language(ctx: click.Context, param: click.Parameter, value: str | None):
+    """Eager callback: install the catalog before the command body runs.
+
+    ``--lang`` is also read in :func:`main` before the group is built so Click's
+    help text (snapshotted at build time) is translated too; this callback keeps
+    a directly-invoked group honest for runtime messages.
+    """
+    install_language(resolve_locale(value))
+    return value
+
+
+def _requested_lang(argv: Sequence[str] | None) -> str | None:
+    """Pull ``--lang``/``--lang=`` out of the raw argv.
+
+    Click parses options only after the command objects exist, but Click's help
+    strings are captured when the group is built. :func:`main` therefore reads
+    the flag once up front so ``clear-record --lang de --help`` is translated;
+    Click still owns validation and the flag's precedence (see the option).
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    for index, token in enumerate(args):
+        if token == "--lang" and index + 1 < len(args):
+            return args[index + 1]
+        if token.startswith("--lang="):
+            return token.split("=", 1)[1]
+    return None
+
 
 #: The ASR set offered by ``--backend``: the provider catalog plus the
 #: capability-driven ``auto`` sentinel. Read from the catalog so a new backend is
@@ -119,7 +170,7 @@ def _ensure_verbose(command: click.Command) -> None:
             is_eager=True,
             expose_value=False,
             callback=_verbose_flag,
-            help=_VERBOSE_HELP,
+            help=tr(_VERBOSE_HELP),
         )
     )
 
@@ -164,7 +215,10 @@ def _split_value(split_channels: bool, mix_down: bool) -> str:
     """
     if split_channels and mix_down:
         raise click.UsageError(
-            "--split-channels and --mix-down are mutually exclusive; pass one or neither."
+            tr(
+                "--split-channels and --mix-down are mutually exclusive; "
+                "pass one or neither."
+            )
         )
     if split_channels:
         return "split"
@@ -177,7 +231,9 @@ def _do_diarize(diarize: bool, no_diarize: bool) -> bool | None:
     """Map `--diarize`/`--no-diarize` to the tri-state (``None`` = choose)."""
     if diarize and no_diarize:
         raise click.UsageError(
-            "--diarize and --no-diarize are mutually exclusive; pass one or neither."
+            tr(
+                "--diarize and --no-diarize are mutually exclusive; pass one or neither."
+            )
         )
     if diarize:
         return True
@@ -536,11 +592,15 @@ def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
                 reason=f"recommended model {choice.model!r} is not on disk",
             )
             raise SystemExit(
-                f"[auto] the recommended model {choice.model!r} is not in the "
-                "models directory, and --auto never downloads one.\n"
-                f"  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp "
-                f"ggml-{choice.model}.bin --local-dir {args.models_dir}`, or pass "
-                "an explicit `--model`."
+                tr(
+                    "[auto] the recommended model {model!r} is not in the "
+                    "models directory, and --auto never downloads one.\n"
+                    "  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp "
+                    "ggml-{model}.bin --local-dir {models_dir}`, or pass "
+                    "an explicit `--model`.",
+                    model=choice.model,
+                    models_dir=args.models_dir,
+                )
             )
         options = dataclasses.replace(options, model=choice.model)
 
@@ -716,7 +776,9 @@ _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "calibrate",
         _cmd_calibrate,
-        "run the pipeline and report transcript quality against a reference if given",
+        deferred(
+            "run the pipeline and report transcript quality against a reference if given"
+        ),
         (
             _DIRECTORY,
             _BACKEND,
@@ -730,31 +792,35 @@ _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "diarize",
         _cmd_diarize,
-        "assign speaker labels to already-transcribed segments",
+        deferred("assign speaker labels to already-transcribed segments"),
         (_DIRECTORY, _DIARIZE),
     ),
     (
         "attribute",
         _cmd_attribute,
-        "re-attribute speakers by relative source energy (close-mic cross-talk)",
+        deferred(
+            "re-attribute speakers by relative source energy (close-mic cross-talk)"
+        ),
         (_DIRECTORY, _ATTRIBUTE_ONLY),
     ),
     (
         "glossary",
         _cmd_glossary,
-        "show or append to the workspace glossary (ASR initial prompt)",
+        deferred("show or append to the workspace glossary (ASR initial prompt)"),
         (_DIRECTORY, _ADD),
     ),
     (
         "synth",
         _cmd_synth,
-        "generate a clean scene + degraded per-device recordings with exact ground truth",
+        deferred(
+            "generate a clean scene + degraded per-device recordings with exact ground truth"
+        ),
         (_DIRECTORY, _SYNTH),
     ),
     (
         "backends",
         _cmd_backends,
-        "list which ASR backends are currently available",
+        deferred("list which ASR backends are currently available"),
         (_BACKEND_ALL,),
     ),
 )
@@ -771,7 +837,7 @@ def _make_command(
     fn.__name__ = f"_{name}"
     for option_set in reversed(tuple(option_sets)):
         fn = option_set(fn)
-    return click.command(name=name, help=help_text)(fn)
+    return click.command(name=name, help=tr(help_text))(fn)
 
 
 def _builtin_commands() -> list[tuple[str, Any, str, tuple]]:
@@ -793,11 +859,21 @@ def _build_group() -> click.Group:
     """
     group = _Group(
         name=_PROG,
-        help=_DESCRIPTION,
+        help=tr(_DESCRIPTION),
         params=[
             click.Option(
-                ("-v", "--verbose"), is_flag=True, default=False, help=_VERBOSE_HELP
-            )
+                ("-v", "--verbose"), is_flag=True, default=False, help=tr(_VERBOSE_HELP)
+            ),
+            # ``--lang`` is eager so a chosen catalog is installed before the
+            # command body runs. Kept on the group (like ``-v``) so it reads as a
+            # process-wide choice; ``CR_LANG``/``LANG`` cover the common case.
+            click.Option(
+                ("--lang",),
+                is_eager=True,
+                expose_value=False,
+                callback=_install_language,
+                help=_lang_help(),
+            ),
         ],
     )
     for name, callback, help_text, option_sets in _builtin_commands():
@@ -817,7 +893,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     errors are converted here into Click's stderr message and exit code, exactly
     as ``argparse`` used to. ``set_level`` is owned by the group so repeated
     programmatic ``main()`` calls stay honest.
+
+    The UI language is installed **before** the group is built: Click snapshots
+    help strings at construction time, so ``clear-record --lang de --help`` has
+    to resolve the flag up front (the group's eager ``--lang`` callback then
+    re-installs the same catalog for the command body).
     """
+    install_language(resolve_locale(_requested_lang(argv)))
     group = _build_group()
     try:
         rv = group.main(args=argv, prog_name=_PROG, standalone_mode=False)

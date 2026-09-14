@@ -1,0 +1,499 @@
+# German translations for clear-record.
+# This catalog is an initial, machine-assisted translation pending native
+# review.
+# Strings left empty fall back to the English source (message IDs are
+# English).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version:  clear-record\n"
+"Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
+"POT-Creation-Date: 2026-09-15 06:26+0800\n"
+"PO-Revision-Date: 2026-09-15 06:25+0800\n"
+"Last-Translator: clear-record contributors\n"
+"Language: de\n"
+"Language-Team: de <LL@li.org>\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:73
+msgid "clear-record: from many recordings to one clear record."
+msgstr "clear-record: aus vielen Aufnahmen ein klares Protokoll."
+
+#: packages/clear-record/src/clear_record/cli/cli.py:76
+msgid ""
+"raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
+"log is written to the app state directory, never to stdout"
+msgstr ""
+"Diagnoseprotokoll ausführlicher (die Flag-Form von CR_LOG_LEVEL=debug); "
+"das Protokoll wird im App-Zustandsverzeichnis geschrieben, nie auf stdout"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:218
+msgid ""
+"--split-channels and --mix-down are mutually exclusive; pass one or "
+"neither."
+msgstr ""
+"--split-channels und --mix-down schließen sich gegenseitig aus; gib eines"
+" oder keines an."
+
+#: packages/clear-record/src/clear_record/cli/cli.py:233
+msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
+msgstr ""
+"--diarize und --no-diarize schließen sich gegenseitig aus; gib eines oder"
+" keines an."
+
+#: packages/clear-record/src/clear_record/cli/cli.py:593
+#, python-brace-format
+msgid ""
+"[auto] the recommended model {model!r} is not in the models directory, "
+"and --auto never downloads one.\n"
+"  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp ggml-{model}.bin "
+"--local-dir {models_dir}`, or pass an explicit `--model`."
+msgstr ""
+"[auto] das empfohlene Modell {model!r} ist nicht im Modellverzeichnis, "
+"und --auto lädt keines herunter.\n"
+"  Lade es vorab, z. B. `hf download ggerganov/whisper.cpp "
+"ggml-{model}.bin --local-dir {models_dir}`, oder gib ein explizites "
+"`--model` an."
+
+#: packages/clear-record/src/clear_record/cli/cli.py:777
+msgid ""
+"run the pipeline and report transcript quality against a reference if "
+"given"
+msgstr ""
+"führt die Pipeline aus und meldet die Transkriptqualität gegen eine "
+"Referenz, falls angegeben"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:792
+msgid "assign speaker labels to already-transcribed segments"
+msgstr "weist bereits transkribierten Segmenten Sprecherbezeichnungen zu"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:799
+msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
+msgstr ""
+"weist Sprecher anhand der relativen Quellenenergie neu zu "
+"(Nahbesprechung/Übersprechen)"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:806
+msgid "show or append to the workspace glossary (ASR initial prompt)"
+msgstr "zeigt das Workspace-Glossar an oder hängt daran an (ASR-Anfangsprompt)"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:813
+msgid ""
+"generate a clean scene + degraded per-device recordings with exact ground"
+" truth"
+msgstr ""
+"erzeugt eine saubere Szene + degradierte Aufnahmen je Gerät mit exakter "
+"Ground Truth"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:820
+msgid "list which ASR backends are currently available"
+msgstr "listet auf, welche ASR-Backends derzeit verfügbar sind"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:36
+#, python-brace-format
+msgid ""
+"[web] the web console needs the optional 'web' extra ({missing} not "
+"found).\n"
+"  Install it with:   pip install 'clear-record[web]'\n"
+"  Or run without installing:   uvx --from 'clear-record[web]' clear-"
+"record web"
+msgstr ""
+"[web] die Web-Konsole benötigt das optionale 'web'-Extra ({missing} nicht"
+" gefunden).\n"
+"  Installiere es mit:   pip install 'clear-record[web]'\n"
+"  Oder führe sie ohne Installation aus:   uvx --from 'clear-record[web]' "
+"clear-record web"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:63
+msgid "start the local web console (projects, glossary) in a browser"
+msgstr "startet die lokale Web-Konsole (Projekte, Glossar) im Browser"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:68
+msgid "bind address (default localhost)"
+msgstr "Bind-Adresse (Standard localhost)"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:71
+msgid "port (default 8765)"
+msgstr "Port (Standard 8765)"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:73
+msgid "do not open a browser window"
+msgstr "kein Browserfenster öffnen"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:79
+msgid "override the app data directory (default: CR_DATA_DIR / XDG)"
+msgstr "App-Datenverzeichnis überschreiben (Standard: CR_DATA_DIR / XDG)"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:85
+msgid ""
+"set up Tailscale Serve for this port, trust this machine's tailnet name, "
+"and print its https URL. Serve runs in the foreground alongside the "
+"console and stops with it. The tailnet is the authentication: anyone on "
+"your tailnet can reach the console."
+msgstr ""
+"richtet Tailscale Serve für diesen Port ein, vertraut dem Tailnet-Namen "
+"dieser Maschine und gibt dessen https-URL aus. Serve läuft im Vordergrund"
+" neben der Konsole und endet mit ihr. Das Tailnet ist die "
+"Authentifizierung: Jeder in deinem Tailnet kann die Konsole erreichen."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:96
+msgid ""
+"trust NAME instead of the machine's resolved tailnet name (requires "
+"--tailscale)"
+msgstr ""
+"vertraut NAME statt des aufgelösten Tailnet-Namens der Maschine "
+"(erfordert --tailscale)"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:106
+msgid ""
+"the tailnet HTTPS port Serve exposes (default: the same as --port); "
+"requires --tailscale"
+msgstr ""
+"der Tailnet-HTTPS-Port, den Serve bereitstellt (Standard: derselbe wie "
+"--port); erfordert --tailscale"
+
+#: packages/clear-record/src/clear_record/web/__init__.py:144
+msgid ""
+"--tailscale-host / --tailscale-port configure Serve; pass --tailscale too"
+" (or set CR_TRUSTED_HOSTS to trust a hostname without Serve)."
+msgstr ""
+"--tailscale-host / --tailscale-port konfigurieren Serve; gib auch "
+"--tailscale an (oder setze CR_TRUSTED_HOSTS, um einem Hostnamen ohne "
+"Serve zu vertrauen)."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:152
+#, python-brace-format
+msgid "--tailscale-port {port} is not a port number (1-65535)."
+msgstr "--tailscale-port {port} ist keine Portnummer (1-65535)."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:237
+#, python-brace-format
+msgid ""
+"--tailscale sets up Tailscale Serve against http://127.0.0.1:<port>, but "
+"--host {host!r} is not a loopback address, so Serve could not reach the "
+"console.\n"
+"  Drop --host (the console binds 127.0.0.1 by default), or drop "
+"--tailscale and front the loopback console with your own proxy "
+"(ADR-0021)."
+msgstr ""
+"--tailscale richtet Tailscale Serve gegen http://127.0.0.1:<port> ein, "
+"aber --host {host!r} ist keine Loopback-Adresse, sodass Serve die Konsole"
+" nicht erreichen könnte.\n"
+"  Lass --host weg (die Konsole bindet standardmäßig 127.0.0.1), oder lass"
+" --tailscale weg und stelle deinen eigenen Proxy vor die Loopback-Konsole"
+" (ADR-0021)."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:268
+#, python-brace-format
+msgid ""
+"--tailscale-host {override!r} is not a bare hostname.\n"
+"    Fix: pass the name Tailscale gives you, e.g. machine.tailnet.ts.net."
+msgstr ""
+"--tailscale-host {override!r} ist kein bloßer Hostname.\n"
+"    Korrektur: Gib den Namen an, den Tailscale dir gibt, z. B. "
+"machine.tailnet.ts.net."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:282
+#, python-brace-format
+msgid ""
+"[tailscale] {error}\n"
+"    The console is starting anyway, but it will not be reachable over the"
+" tailnet."
+msgstr ""
+"[tailscale] {error}\n"
+"    Die Konsole startet trotzdem, ist aber über das Tailnet nicht "
+"erreichbar."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:294
+#, python-brace-format
+msgid ""
+"[tailscale] port {port} is already served by Tailscale; leaving that "
+"mapping untouched.\n"
+"    If it does not point at this console, pass --tailscale-port <port> to"
+" expose a different tailnet port."
+msgstr ""
+"[tailscale] Port {port} wird bereits von Tailscale bedient; diese "
+"Zuordnung bleibt unangetastet.\n"
+"    Wenn sie nicht auf diese Konsole zeigt, gib --tailscale-port <port> "
+"an, um einen anderen Tailnet-Port bereitzustellen."
+
+#: packages/clear-record/src/clear_record/web/__init__.py:304
+#, python-brace-format
+msgid ""
+"[tailscale] console is now shared on your tailnet:\n"
+"    {url}\n"
+"    The tailnet is the authentication: anyone on your tailnet can reach "
+"this console.\n"
+"    Serve runs in the foreground and stops with this console."
+msgstr ""
+"[tailscale] Die Konsole ist jetzt in deinem Tailnet freigegeben:\n"
+"    {url}\n"
+"    Das Tailnet ist die Authentifizierung: Jeder in deinem Tailnet kann "
+"diese Konsole erreichen.\n"
+"    Serve läuft im Vordergrund und endet mit dieser Konsole."
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:20
+msgid "missing"
+msgstr "fehlt"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:6
+msgid "no manifest"
+msgstr "kein Manifest"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:8
+msgid "ok"
+msgstr "ok"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:10
+#, python-brace-format
+msgid "{count} file verified"
+msgid_plural "{count} files verified"
+msgstr[0] "{count} Datei verifiziert"
+msgstr[1] "{count} Dateien verifiziert"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:13
+msgid "failed"
+msgstr "fehlgeschlagen"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:16
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:25
+msgid "mismatched"
+msgstr "abweichend"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:1
+msgid "Archives"
+msgstr "Archive"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
+msgid "Created"
+msgstr "Erstellt"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
+msgid "Meeting"
+msgstr "Besprechung"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
+msgid "Path"
+msgstr "Pfad"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:97
+msgid "Status"
+msgstr "Status"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:19
+msgid "checking…"
+msgstr "prüfe…"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:24
+msgid "Verify"
+msgstr "Prüfen"
+
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:31
+msgid "No archives yet."
+msgstr "Noch keine Archive."
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:2
+msgid "No notes."
+msgstr "Keine Notizen."
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:5
+msgid "Meetings"
+msgstr "Besprechungen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:12
+msgid "no workspace"
+msgstr "kein Workspace"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:19
+msgid "One tape path per line"
+msgstr "Ein Aufnahmepfad pro Zeile"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:20
+msgid "Save tapes"
+msgstr "Aufnahmen speichern"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:31
+msgid "model (optional)"
+msgstr "Modell (optional)"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:32
+msgid "language (optional)"
+msgstr "Sprache (optional)"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:34
+msgid "transcription profile"
+msgstr "Transkriptionsprofil"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:44
+msgid "Run"
+msgstr "Starten"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:52
+msgid "No run yet."
+msgstr "Noch kein Lauf."
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:58
+msgid "Archive root (optional)"
+msgstr "Archiv-Wurzel (optional)"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:59
+msgid "Archive"
+msgstr "Archivieren"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:64
+msgid "No meetings yet."
+msgstr "Noch keine Besprechungen."
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:69
+msgid "Add a meeting"
+msgstr "Besprechung hinzufügen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:76
+msgid "Meeting title"
+msgstr "Titel der Besprechung"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:77
+msgid "Workspace path"
+msgstr "Workspace-Pfad"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:79
+msgid "Add meeting"
+msgstr "Besprechung hinzufügen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:83
+msgid "Glossary"
+msgstr "Glossar"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:85
+msgid "Filter"
+msgstr "Filter"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:87
+msgid "all"
+msgstr "alle"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:97
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:143
+msgid "Term"
+msgstr "Begriff"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:97
+msgid "Aliases"
+msgstr "Aliasse"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:97
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:147
+msgid "Definition"
+msgstr "Definition"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:115
+msgid "Term status"
+msgstr "Begriffsstatus"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:122
+msgid "delete"
+msgstr "löschen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:123
+msgid "Delete term"
+msgstr "Begriff löschen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:132
+msgid "No glossary terms yet."
+msgstr "Noch keine Glossarbegriffe."
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:136
+msgid "Add a term"
+msgstr "Begriff hinzufügen"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:144
+msgid "Reading / pronunciation"
+msgstr "Lesung / Aussprache"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:146
+msgid "Aliases (comma separated)"
+msgstr "Aliasse (durch Kommas getrennt)"
+
+#: packages/clear-record/src/clear_record/web/templates/_detail.html:148
+msgid "Add term"
+msgstr "Begriff hinzufügen"
+
+#: packages/clear-record/src/clear_record/web/templates/_profile_options.html:7
+msgid "resolved knobs"
+msgstr "aufgelöste Regler"
+
+#: packages/clear-record/src/clear_record/web/templates/_profile_options.html:16
+msgid "no preset — every knob stays as you set it."
+msgstr "kein Preset — jeder Regler bleibt, wie du ihn gesetzt hast."
+
+#: packages/clear-record/src/clear_record/web/templates/_profile_options.html:20
+msgid ""
+"A profile tunes the decoder knobs only; your model and backend stay as "
+"chosen. Switching profile re-transcribes: the chunk cache is keyed on the"
+" decoder knobs, the model and the glossary, so a different profile "
+"decodes again."
+msgstr ""
+"Ein Profil stimmt nur die Decoder-Regler ab; Modell und Backend bleiben "
+"wie gewählt. Ein Profilwechsel transkribiert neu: Der Chunk-Cache ist an "
+"den Decoder-Reglern, dem Modell und dem Glossar aufgehängt, daher "
+"dekodiert ein anderes Profil erneut."
+
+#: packages/clear-record/src/clear_record/web/templates/_projects.html:14
+msgid "No projects yet."
+msgstr "Noch keine Projekte."
+
+#: packages/clear-record/src/clear_record/web/templates/_run.html:7
+msgid "ETA"
+msgstr "Restzeit"
+
+#: packages/clear-record/src/clear_record/web/templates/_run.html:9
+msgid "Transcription progress"
+msgstr "Transkriptionsfortschritt"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:20
+msgid "project console"
+msgstr "Projektkonsole"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:21
+msgid "ready"
+msgstr "bereit"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:23
+msgid "Download a redacted diagnostics bundle (not telemetry)"
+msgstr "Ein geschwärztes Diagnose-Bundle herunterladen (keine Telemetrie)"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:23
+msgid "Diagnostics"
+msgstr "Diagnose"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:26
+msgid "stopping…"
+msgstr "wird beendet…"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:26
+msgid "Quit"
+msgstr "Beenden"
+
+#: packages/clear-record/src/clear_record/web/templates/index.html:5
+msgid "Projects"
+msgstr "Projekte"
+
+#: packages/clear-record/src/clear_record/web/templates/index.html:13
+msgid "New project name"
+msgstr "Name des neuen Projekts"
+
+#: packages/clear-record/src/clear_record/web/templates/index.html:14
+msgid "Add project"
+msgstr "Projekt hinzufügen"
+
+#: packages/clear-record/src/clear_record/web/templates/index.html:19
+msgid "Select or create a project."
+msgstr "Wähle ein Projekt aus oder erstelle eines."
+

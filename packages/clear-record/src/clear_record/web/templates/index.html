@@ -2,7 +2,7 @@
 
 {% block body %}
 <aside class="sidebar">
-  <h2 class="sidebar-title">Projects</h2>
+  <h2 class="sidebar-title">{{ tr("Projects") }}</h2>
   <div id="projects" hx-get="/ui/projects" hx-trigger="load" hx-swap="innerHTML"></div>
 
   <form class="stack"
@@ -10,12 +10,12 @@
         hx-target="#projects"
         hx-swap="innerHTML"
         hx-on::after-request="if (event.detail.successful) this.reset()">
-    <input name="name" placeholder="New project name" required>
-    <button class="primary" type="submit">Add project</button>
+    <input name="name" placeholder="{{ tr("New project name") }}" required>
+    <button class="primary" type="submit">{{ tr("Add project") }}</button>
   </form>
 </aside>
 
 <section id="detail" class="content">
-  <div class="empty">Select or create a project.</div>
+  <div class="empty">{{ tr("Select or create a project.") }}</div>
 </section>
 {% endblock %}

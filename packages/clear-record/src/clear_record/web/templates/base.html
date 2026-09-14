@@ -17,13 +17,13 @@
       <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
       <circle cx="12" cy="12" r="4" fill="currentColor"/>
     </svg>
-    <h1>clear-record</h1><span class="tag">project console</span>
-    <span class="badge" id="status">{% block status %}ready{% endblock %}</span>
+    <h1>clear-record</h1><span class="tag">{{ tr("project console") }}</span>
+    <span class="badge" id="status">{% block status %}{{ tr("ready") }}{% endblock %}</span>
     <a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
-       title="Download a redacted diagnostics bundle (not telemetry)">Diagnostics</a>
+       title="{{ tr("Download a redacted diagnostics bundle (not telemetry)") }}">{{ tr("Diagnostics") }}</a>
     <button class="btn btn-ghost btn-danger-ghost"
             hx-post="/api/shutdown" hx-swap="none"
-            onclick="this.disabled=true;this.textContent='stopping…'">Quit</button>
+            onclick="this.disabled=true;this.textContent='{{ tr("stopping…") }}'">{{ tr("Quit") }}</button>
   </header>
   <main>
     {% block body %}{% endblock %}

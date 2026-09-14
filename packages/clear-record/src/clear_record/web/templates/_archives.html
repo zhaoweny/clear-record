@@ -1,8 +1,8 @@
-<h3>Archives</h3>
+<h3>{{ tr("Archives") }}</h3>
 {% if archives %}
 <table class="table-archives">
   <thead>
-    <tr><th>Created</th><th>Meeting</th><th>Path</th><th>Status</th><th></th></tr>
+    <tr><th>{{ tr("Created") }}</th><th>{{ tr("Meeting") }}</th><th>{{ tr("Path") }}</th><th>{{ tr("Status") }}</th><th></th></tr>
   </thead>
   <tbody>
     {% for row in archives %}
@@ -16,17 +16,17 @@
           class="archive-status"
           hx-get="/ui/archives/{{ row.archive.id }}/verify"
           hx-trigger="load"
-          hx-swap="innerHTML"><span class="status status-checking"><span class="muted">checking&hellip;</span></span></td>
+          hx-swap="innerHTML"><span class="status status-checking"><span class="muted">{{ tr("checking…") }}</span></span></td>
       <td>
         <button class="btn btn-sm btn-ghost"
                 hx-post="/ui/archives/{{ row.archive.id }}/verify"
                 hx-target="#archive-status-{{ row.archive.id }}"
-                hx-swap="innerHTML">Verify</button>
+                hx-swap="innerHTML">{{ tr("Verify") }}</button>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="empty">No archives yet.</div>
+<div class="empty">{{ tr("No archives yet.") }}</div>
 {% endif %}

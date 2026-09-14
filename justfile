@@ -62,6 +62,26 @@ web-assets:
 web-assets-check:
     uv run --no-project scripts/check_web_assets.py
 
+# Message catalogs (Babel, build-time only; see docs/i18n.md). Source strings are
+# the English message IDs in the code and templates; `i18n-extract` merges new
+# and changed ones into each locale's messages.po, and `i18n-compile` writes the
+# compiled messages.mo beside it. Both run through the `i18n` dependency group,
+# so `just verify` never needs Babel. The output is committed; change a source
+# string and commit the source and the regenerated catalog together.
+i18n-extract:
+    uv run --all-packages --no-default-groups --group i18n python scripts/i18n.py extract
+
+# Compile every messages.po into the committed messages.mo (needs Babel).
+i18n-compile:
+    uv run --all-packages --no-default-groups --group i18n python scripts/i18n.py compile
+
+# Freshness guard: re-extract and re-compile and fail if the committed catalogs
+# differ from source — the `web-assets-check` pattern. It needs Babel, so it is
+# NOT part of `verify`; CI runs it as its own job, and a contributor who never
+# touches a translation is not blocked.
+i18n-check:
+    uv run --all-packages --no-default-groups --group i18n python scripts/i18n.py check
+
 # Build the release dist (wheel + sdist) into dist/ (never committed). Names the
 # published package explicitly — NOT `--all-packages` — so a future workspace
 # member (a GUI, an MCP server) can never silently join the PyPI payload.

@@ -2,28 +2,27 @@
    tests (`<span class="badge">ok</span>`) is untouched; the wrapper's `--chip-*`
    tokens are inherited by the badge inside. #}
 {% if row.verification is none %}
-<span class="status status-missing"><span class="badge">missing</span>
-<span class="muted">no manifest</span></span>
+<span class="status status-missing"><span class="badge">{{ tr("missing") }}</span>
+<span class="muted">{{ tr("no manifest") }}</span></span>
 {% elif row.verification.ok %}
-<span class="status status-ok"><span class="badge">ok</span>
+<span class="status status-ok"><span class="badge">{{ tr("ok") }}</span>
 <span class="muted">
-  {{ row.verification.checked }}
-  file{{ "" if row.verification.checked == 1 else "s" }} verified
+  {{ trn("{count} file verified", "{count} files verified", row.verification.checked, count=row.verification.checked) }}
 </span></span>
 {% else %}
-<span class="status status-failed"><span class="badge">failed</span>
+<span class="status status-failed"><span class="badge">{{ tr("failed") }}</span>
 <span class="muted">
-  {{ row.verification.missing | length }} missing,
-  {{ row.verification.mismatched | length }} mismatched
+  {{ row.verification.missing | length }} {{ tr("missing") }},
+  {{ row.verification.mismatched | length }} {{ tr("mismatched") }}
 </span></span>
 {% if row.verification.missing %}
 <div class="muted status-detail">
-  missing: {{ row.verification.missing | join(", ") }}
+  {{ tr("missing") }}: {{ row.verification.missing | join(", ") }}
 </div>
 {% endif %}
 {% if row.verification.mismatched %}
 <div class="muted status-detail">
-  mismatched: {{ row.verification.mismatched | join(", ") }}
+  {{ tr("mismatched") }}: {{ row.verification.mismatched | join(", ") }}
 </div>
 {% endif %}
 {% endif %}

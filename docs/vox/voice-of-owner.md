@@ -395,3 +395,12 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   adds no runtime and is reversible; bundling **one** simple harness remains the
   **escalation path**, with a trigger rather than a date. Recorded in
   [ADR-0018](../adr/0018-agent-task-execution.md)'s 2026-09-14 Update.
+- [VOICE: owner, 2026-09-14] Made the iteration half concrete, verbatim: *"the
+  user might want to tell a story or iterate the glossary, or do back and forth of
+  glossary <-> actual transcript, till it's tuned to their need. at that time we
+  might become a simple mcp service and let the agent to do the heavy lifting"*.
+- [DECISION] That loop is the **driving use case for the MCP rung**: clear-record
+  stays a **simple MCP service** and the **agent drives the loop** — no bespoke
+  tuning UI. The shipped surface is not yet sufficient (no transcript read, no
+  project/meeting notes write, `start_run` cannot set options); ticket 21 closes
+  those three. The glossary-keyed chunk cache already makes re-runs re-decode.

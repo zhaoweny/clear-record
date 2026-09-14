@@ -119,3 +119,34 @@ onboard process"*.
 - [OPEN] A **trigger, not a date**, for bundling: bundle one simple harness when a
   guided setup demonstrably fails to get users to a working experience, or when a
   task appears that needs the loop. Until then no runtime ships.
+
+## Update (2026-09-14) — the MCP rung's driving use case: the tuning loop
+
+Owner refinement, verbatim: *"let me be specific - the user might want to tell a
+story or iterate the glossary, or do back and forth of glossary <-> actual
+transcript, till it's tuned to their need. at that time we might become a simple
+mcp service and let the agent to do the heavy lifting"*.
+
+- [REQ] The iterative loop — **glossary ↔ transcript**, conversational, tuned by
+  hand until it fits — is the concrete use case that justifies the MCP rung. It is
+  not a power-user nicety; it is the natural shape of "tuning to their need".
+- [DECISION] For this use case clear-record stays a **simple MCP service** and the
+  **agent drives the loop**. We do **not** build a bespoke tuning UI: the work is
+  a conversation, and a conversation is the agent's job (ADR-0016's boundary).
+- [FACT] The enabling mechanism already exists: the transcription **chunk cache is
+  keyed on the glossary** (backend / model / language / glossary / chunk plan), so
+  editing the glossary and re-running **re-decodes** the affected chunks. That is
+  exactly the "iterate the terms, re-run, compare" loop, and it already ships.
+- [FACT] The shipped MCP surface (ADR-0017, 14 tools) is **not yet sufficient** for
+  the loop:
+  - **no transcript-read tool** — `list_artifacts` returns paths and metadata, so
+    an agent cannot read the transcript it is meant to reason about;
+  - **no `update_project`**, and meetings have no notes — so the **story** the
+    user tells has nowhere to persist;
+  - `start_run` **cannot set options**, so a re-run cannot deliberately apply the
+    glossary (or a model) — ADR-0017's recorded `[OPEN]`.
+- [DESIGN] "A simple MCP service" here means **small but complete for the loop**:
+  read the transcript, write the story and the terms, re-run with intent. Ticket
+  21 closes exactly those three gaps.
+- [OPEN] Whether a re-run should be **scoped** (one source, or a time range) to
+  keep the loop cheap on multi-hour tapes, or always whole-meeting.

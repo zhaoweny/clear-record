@@ -12,7 +12,10 @@ artifacts. It is intentionally not a database::
         transcribe.log      Durable append-only transcription log.
         audio/              Normalized 16 kHz mono copies of the sources.
         export/             Markdown/SRT/VTT/JSON artifacts from `export`.
-        chunks/<source>/    Resumable per-source chunk cache (see `ChunkCache`).
+
+The resumable per-source chunk cache is **not** part of the workspace: it is
+app-owned *cache* (ADR-0007/ADR-0025) under the platform cache directory, keyed
+once per workspace (see :meth:`Workspace.chunk_cache`).
 
 :class:`Workspace` is the single owner of every one of those paths and
 read/writes; stages and the transcription module talk to it rather than composing
@@ -24,6 +27,7 @@ here is ever committed.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import threading
 from collections.abc import Iterable, Mapping
@@ -42,6 +46,7 @@ from clear_record.core import (
     to_dict,
     write_json,
 )
+from clear_record.core.paths import CHUNKS_DIRNAME, resolve_cache_dir
 
 MANIFEST = "manifest.json"
 SEGMENTS = "segments.json"
@@ -76,6 +81,16 @@ SKIP_DIRS = {AUDIO_DIR, EXPORT_DIR, CHUNKS_DIR}
 
 # `transcribe.log` is append-only and shared by the stage and its worker pool.
 _log_lock = threading.Lock()
+
+
+def _cache_key(root: Path) -> str:
+    """A stable short key for one workspace, so two workspaces never share a cache.
+
+    The chunk cache is content-keyed by source but app-owned and global; without
+    a workspace key two workspaces with the same source id would clobber each
+    other's chunks. The resolved absolute root is the workspace's identity.
+    """
+    return hashlib.sha1(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
 
 
 def discover_audio(directory: Path) -> list[Path]:
@@ -151,9 +166,9 @@ class ChunkCache:
         <source>/NNNN.wav      transient decode; regenerable, never trusted
         <source>/*.tmp         atomic-publish scratch; never read
 
-    ADR-0007 relocates the chunks root to ``$XDG_CACHE_HOME``. That is a change
-    to :meth:`Workspace.chunk_cache` alone; callers ask the cache for validity and
-    read/write through it, and never compose a path themselves.
+    ADR-0007/ADR-0025 place the chunks root in the app-owned cache directory;
+    because every chunk path is derived here, that location has one owner
+    (:meth:`Workspace.chunk_cache`) and callers never compose a path themselves.
     """
 
     directory: Path
@@ -252,7 +267,8 @@ class Workspace:
 
     @property
     def chunks_dir(self) -> Path:
-        return self.root / CHUNKS_DIR
+        """This workspace's app-owned chunk-cache root (ADR-0007/ADR-0025)."""
+        return resolve_cache_dir() / CHUNKS_DIRNAME / _cache_key(self.root)
 
     @property
     def ground_truth_path(self) -> Path:
@@ -264,8 +280,9 @@ class Workspace:
     def chunk_cache(self, source_id: str) -> ChunkCache:
         """The resumable chunk cache for one source.
 
-        ADR-0007 will relocate the chunks root to ``$XDG_CACHE_HOME``; because
-        every chunk path is derived here, that move lands in this method alone.
+        The cache is app-owned (the platform cache directory, keyed per
+        workspace) rather than a workspace document: it is evictable, and it
+        outlives a cancelled run so the next pass resumes (ADR-0007/ADR-0025).
         """
         return ChunkCache(self.chunks_dir / source_id)
 

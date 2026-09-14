@@ -58,7 +58,7 @@ def register(group: click.Group) -> None:
         default=None,
         envvar="CR_DATA_DIR",
         show_envvar=True,
-        help="override the app data directory (default: CR_DATA_DIR / XDG)",
+        help="override the app data directory (default: CR_DATA_DIR / platform dir)",
     )
     def _mcp(data_dir: str | None) -> int:
         return _run(data_dir=data_dir)

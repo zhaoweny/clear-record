@@ -49,7 +49,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # extra, not the base install, so `clear-record` stays cheap for CLI-only users
 # while the web *code* still ships in this one wheel. `click` joined the base
 # set with the CLI port (ADR-0022): it is pure Python, zero transitive deps.
-RUNTIME_DEPS = {"click", "numpy", "soundfile"}
+# `platformdirs` joined with ADR-0025: the one platform-native path resolver,
+# MIT, zero dependencies (imported at the package root, never in `core`).
+RUNTIME_DEPS = {"click", "numpy", "platformdirs", "soundfile"}
 
 # The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
 # They must not leak into the base dependencies: a CLI-only install stays

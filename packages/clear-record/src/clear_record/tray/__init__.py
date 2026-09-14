@@ -60,7 +60,7 @@ def register(group: click.Group) -> None:
         default=None,
         envvar="CR_DATA_DIR",
         show_envvar=True,
-        help="override the app data directory (default: CR_DATA_DIR / XDG)",
+        help="override the app data directory (default: CR_DATA_DIR / platform dir)",
     )
     def _tray(host: str, port: int, no_browser: bool, data_dir: str | None) -> int:
         return _run(host=host, port=port, no_browser=no_browser, data_dir=data_dir)

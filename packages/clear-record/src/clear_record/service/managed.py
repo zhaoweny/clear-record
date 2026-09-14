@@ -9,8 +9,9 @@ two are indistinguishable — a managed meeting is just a meeting whose
 ``workspace_path`` points inside the managed root, and its uploaded tapes are
 input recordings discovered and run exactly like user-typed paths.
 
-The managed root itself lives in :mod:`clear_record.service.paths` (one XDG
-resolver, ``CR_WORKSPACE_ROOT`` override, default ``<data>/workspaces/``).
+The managed root itself lives in :mod:`clear_record.service.paths` (the one
+platformdirs-backed resolver, ``CR_WORKSPACE_ROOT`` override, default
+``<data>/workspaces/``).
 
 Upload is a **write surface**, so every guard is here and each failure is a
 :class:`UploadRejected` (a user-facing message, never a traceback):

@@ -113,11 +113,12 @@ available on this machine. See
   `CR_GGML_BACKEND_DIRS=$PWD/build/bin`.
 - WSL2: build with `-DGGML_CUDA=ON`; the device probe accepts the `/dev/dxg`
   passthrough (no `/dev/nvidia*` nodes there).
-- Models: a size like `--model small` resolves to `models/ggml-small.bin` and is
-  **downloaded automatically on first use** (from
+- Models: a size like `--model small` resolves to `ggml-small.bin` in the models
+  directory and is **downloaded automatically on first use** (from
   `huggingface.co/ggerganov/whisper.cpp`, into `--models-dir` / `CR_MODELS_DIR` /
-  `./models`); a path works too, and `hf download ggerganov/whisper.cpp
-  ggml-small.bin --local-dir models` is the offline/manual route. On a
+  `models/` under the platform data directory); a path works too, and `hf
+  download ggerganov/whisper.cpp ggml-small.bin --local-dir models` is the
+  offline/manual route. On a
   restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
   Face-compatible endpoint works); the default is `https://huggingface.co`.
   The download is a **provisioning** step, not an execution dependency: once
@@ -333,18 +334,21 @@ tailnet is then the authentication — anyone on your tailnet can reach the
 console**
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
 [deployment guide](docs/service-deployment.md#tailscale)). The app-owned
-**project registry** (SQLite) lives under `$XDG_DATA_HOME/clear-record`,
-overridable with `CR_DATA_DIR` or a `[paths] data_dir` entry in
-`$XDG_CONFIG_HOME/clear-record/config.toml`; recordings and archives stay in
-your own directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
+**project registry** (SQLite) lives in the platform-native data directory —
+`~/Library/Application Support/clear-record` on macOS, the XDG data dir
+(`~/.local/share/clear-record`) on Linux — overridable with `CR_DATA_DIR` or a
+`[paths] data_dir` entry in the config file
+(`<config>/clear-record/config.toml`); recordings and archives stay in your own
+directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
 [ADR-0007](docs/adr/0007-deployment-directories-xdg.md),
+[ADR-0025](docs/adr/0025-platformdirs.md),
 [ADR-0013](docs/adr/0013-bundled-web-and-service-surface.md)).
 
 A **managed workspace** ([ADR-0024](docs/adr/0024-managed-workspace-tape-upload.md))
 is an opt-in, app-owned alternative: create a meeting in managed mode and
 **upload** its tapes to the node, and clear-record stores and transcribes them on
 your behalf — the route to self-hosting a node and managing it remotely. The
-managed root defaults to `$XDG_DATA_HOME/clear-record/workspaces` and is
+managed root defaults to `workspaces/` under the platform data directory and is
 overridable with `CR_WORKSPACE_ROOT` (point it at a NAS or a big disk). Uploads
 are guarded by construction: a bare filename, an audio-extension allow-list, a
 `CR_MAX_UPLOAD_BYTES` cap, a disk-space precheck and no symlink following; each
@@ -383,8 +387,9 @@ install stays small.
 
 ## Diagnostics (not telemetry)
 
-Structured logs rotate under `$XDG_STATE_HOME/clear-record/logs`
-(`CR_LOG_LEVEL`, or `-v`, raises detail). `clear-record diagnose` — or the
+Structured logs rotate in the platform-native log directory
+(`~/Library/Logs/clear-record` on macOS, `$XDG_STATE_HOME/clear-record/log` on
+Linux) (`CR_LOG_LEVEL`, or `-v`, raises detail). `clear-record diagnose` — or the
 console's **Diagnostics** link — writes a **redacted** bundle you can attach to a
 bug report. **This is not telemetry:** nothing is ever transmitted; you create the
 file, read it, and choose whether to send it.

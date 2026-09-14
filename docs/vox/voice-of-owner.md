@@ -425,13 +425,16 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
     the tape."*
   - [DECISION] The default root is **`$XDG_DATA_HOME/clear-record/workspaces/`** —
     **data, not state** (ADR-0007's split: state is the removable-without-losing-
-    data bucket; an uploaded tape is its opposite). A user-chosen place stays
+    data bucket; an uploaded tape is its opposite). *(Superseded 2026-09-15 by
+    ADR-0025: the root defaults under the platform-native data directory; the
+    data-not-state split stands.)* A user-chosen place stays
     first-class at two levels: globally (`CR_WORKSPACE_ROOT`) and **per meeting**
     (`meeting.workspace_path`, which already exists).
   - [DECISION] **`chunks/` should move to `$XDG_CACHE_HOME`** — ADR-0007 already
     says so, and it matters more in a managed workspace: keeping derived cache
     inside the content directory means deleting tapes does not reclaim the cache,
-    and a cache sweep would walk the user's data.
+    and a cache sweep would walk the user's data. *(Realized 2026-09-15 as the
+    platform-native cache directory — ADR-0025.)*
 - [VOICE: owner, 2026-09-15] platformdirs request, verbatim: *"and feature request:
   adopt https://pypi.org/project/platformdirs/"*.
   - [FACT] Shown that this **reverses ADR-0007's one-layout rule** (macOS moves

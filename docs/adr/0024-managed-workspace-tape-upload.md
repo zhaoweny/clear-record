@@ -50,14 +50,15 @@ Date: 2026-09-15
   `workspace_path`; the managed root is app-owned **additionally**, used only by
   a meeting created for it.
 - [DECISION] **Managed root**: `<data>/workspaces/` by default, resolved by the
-  service's one XDG/paths resolver
-  (`service.paths.resolve_workspace_root`), overridable by the
+  service's one paths resolver
+  (`service.paths.resolve_workspace_root`, ADR-0025), overridable by the
   ``CR_WORKSPACE_ROOT`` environment variable or a `[paths] workspace_root`
   config entry. The tapes are large, so a NAS or a dedicated disk is the
   expected setting. Layout is the **identical** `Workspace` shape
-  (`manifest.json`, `audio/`, `chunks/`, `record.json`, `export/`,
-  `glossary.txt`); uploaded tapes live in a `tapes/` subdirectory, which is not
-  one of the workspace's own output dirs, so `discover_audio` finds them.
+  (`manifest.json`, `audio/`, `record.json`, `export/`, `glossary.txt`); the
+  resumable chunk cache is app-owned *cache*, not a workspace document
+  (ADR-0007/ADR-0025). Uploaded tapes live in a `tapes/` subdirectory, which is
+  not one of the workspace's own output dirs, so `discover_audio` finds them.
 - [DECISION] **A managed meeting's workspace is inside that root**, created when
   the meeting is (`POST /api/projects/{slug}/meetings` with `managed: true`), or
   lazily on first upload. A user-chosen `workspace_path` keeps working

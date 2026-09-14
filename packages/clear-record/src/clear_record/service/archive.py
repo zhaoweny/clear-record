@@ -6,9 +6,9 @@ into a timestamped directory under the project's archive root, together with an
 ``archive.json`` manifest that lists every file with its size and ``sha256``.
 
 The archive root is **user-chosen** (ADR-0006/ADR-0007): an explicit argument,
-else the project's ``default_archive_root``. There is deliberately no XDG
-fallback — an archive the app invented a home for would not be the user's
-document.
+else the project's ``default_archive_root``. There is deliberately no
+app-owned fallback — an archive the app invented a home for would not be the
+user's document.
 
 Layout::
 

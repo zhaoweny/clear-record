@@ -23,7 +23,7 @@ def _reset_level():
 
 @pytest.fixture(autouse=True)
 def _isolated_logs(tmp_path, monkeypatch):
-    """Every test writes logs under its own tmp dir, never the real XDG state."""
+    """Every test writes logs under its own tmp dir, never the real platform log dir."""
     monkeypatch.setenv("CR_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.delenv("CR_LOG_LEVEL", raising=False)
 
@@ -78,8 +78,8 @@ def test_logs_dir_follows_the_precedence(tmp_path, monkeypatch) -> None:
     assert d.logs_dir() == tmp_path / "logs"  # the fixture's CR_LOG_DIR
 
     monkeypatch.delenv("CR_LOG_DIR")
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    assert d.logs_dir() == tmp_path / "state" / "clear-record" / "logs"
+    # With no override, the injected platformdirs log default is used.
+    assert d.logs_dir() == tmp_path / "app" / "logs"
 
 
 def test_rotation_keeps_a_bounded_retained_set(tmp_path) -> None:

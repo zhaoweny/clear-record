@@ -13,15 +13,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from clear_record.core import paths as core_paths
 from clear_record.service import Registry, RunManager
 from clear_record.service import managed
-from clear_record.service import paths
 from clear_record.web.app import create_app
 
 
 @pytest.fixture(autouse=True)
 def _managed_root(tmp_path, monkeypatch):
-    monkeypatch.setattr(paths, "config_path", lambda: tmp_path / "absent.toml")
+    monkeypatch.setattr(core_paths, "config_path", lambda: tmp_path / "absent.toml")
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
 
 
@@ -196,7 +196,7 @@ def test_delete_unknown_tape_is_404(client) -> None:
 
 # --- the upload feeds the existing run path -------------------------------- #
 def test_an_uploaded_tape_feeds_the_existing_run(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(paths, "config_path", lambda: tmp_path / "absent.toml")
+    monkeypatch.setattr(core_paths, "config_path", lambda: tmp_path / "absent.toml")
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     seen: list[list[str]] = []

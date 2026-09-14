@@ -4,6 +4,11 @@ Status: active
 Date: 2026-09-11
 
 - Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
+- Superseded in part by [ADR-0025](0025-platformdirs.md) (2026-09-15): the
+  **one-consistent-layout** directive and the macOS/Windows `[OPEN]` below. Paths
+  are now **platform-native** (`platformdirs`), not XDG on every platform. The
+  other half stands: the *workspace* is not app-owned and stays wherever the user
+  points.
 
 ## Context
 
@@ -27,7 +32,9 @@ Date: 2026-09-11
 ## Decision
 
 - [DECISION] **Follow the XDG Base Directory spec on every supported platform**
-  for all persistent directories — config, data, cache and state:
+  for all persistent directories — config, data, cache and state (the *default*
+  locations are superseded by [ADR-0025](0025-platformdirs.md): platform-native
+  via `platformdirs`; the table below is the Linux form):
 
   | Kind | Variable | Default |
   |---|---|---|
@@ -36,8 +43,9 @@ Date: 2026-09-11
   | cache | `$XDG_CACHE_HOME` | `~/.cache` |
   | state | `$XDG_STATE_HOME` | `~/.local/state` |
 
-  Respect the variables when set; when unset, use the spec defaults. The macOS
-  fallback and the Windows mapping are `[OPEN]` (see Consequences).
+  Respect the variables when set; when unset, use the spec defaults on Linux. The
+  macOS fallback and the Windows mapping were `[OPEN]` here; **ADR-0025 resolves
+  them** with `platformdirs`' platform-native paths.
 - [DECISION] **No config → the user deployment.** Config, models, cache and
   logs/state resolve under the XDG directories above. There is no source-build
   default.
@@ -51,9 +59,10 @@ Date: 2026-09-11
   `CR_*` variable; it may point paths at a checkout (e.g. `models/` and a
   workspace inside the repo), which is how the **source build** is expressed.
   Source build vs user deployment is therefore *not a mode key*: it is simply
-  **"no config = user deployment under XDG; a config may point at the
-  checkout"**. Proposed location `$XDG_CONFIG_HOME/clear-record/config.toml`;
-  the exact keys/schema are `[OPEN]`.
+  **"no config = user deployment under the platform directories; a config may
+  point at the checkout"**. Proposed location
+  `<config>/clear-record/config.toml` (`$XDG_CONFIG_HOME/clear-record/config.toml`
+  on Linux — ADR-0025); the exact keys/schema are `[OPEN]`.
 - [DECISION] The config selects where models are looked up and downloaded (the
   ADR-0005 auto-download target); that target becomes the models-directory
   resolver rather than a hard-coded `<cwd>/models`.
@@ -112,3 +121,21 @@ Date: 2026-09-11
   precedence that lived in `cr_cli.cli._default_models_dir` and
   `cr_providers.backends._resolve_ggml_model`. The config file / XDG defaults
   above land in this one module rather than a third copy.
+
+## Update (2026-09-15) — platformdirs resolves the defaults (ADR-0025)
+
+- [DECISION] Superseded in part by [ADR-0025](0025-platformdirs.md): the defaults
+  are **platform-native** via `platformdirs`, not XDG on every platform. On
+  macOS data/config/state are under `~/Library/Application Support/clear-record`,
+  the cache under `~/Library/Caches/clear-record`, and logs under
+  `~/Library/Logs/clear-record`; Windows uses `%APPDATA%`/`%LOCALAPPDATA%`; Linux
+  keeps the XDG table above.
+- [DESIGN] The three hand-rolled XDG copies are collapsed into one resolver
+  (`clear_record.core.paths`), which *receives* the `platformdirs` defaults
+  because `core` may import no third-party package. The `CR_*` overrides and the
+  flag > env > config > default precedence are unchanged. The models directory
+  default is now `<data>/models` (data, per this ADR's kind-split), not
+  `<cwd>/models`.
+- [DESIGN] An existing pre-platformdirs install is **adopted** rather than
+  orphaned: if the legacy XDG location exists and the native one does not, it is
+  used in place with a one-line notice.

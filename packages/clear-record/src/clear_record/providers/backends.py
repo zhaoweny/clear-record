@@ -508,7 +508,7 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
 
     Accepts an explicit existing path, or a name resolved against the single
     models-directory resolver (``model_dir`` -> ``CR_MODELS_DIR`` ->
-    ``<cwd>/models``; see :func:`clear_record.providers.paths.resolve_models_dir`). When
+    ``<data>/models``; see :func:`clear_record.providers.paths.resolve_models_dir`). When
     the model is absent it is downloaded from Hugging Face on first use,
     streamed to a unique ``<name>.<pid>.<n>.part`` and atomically renamed on
     success so an interrupted download is never mistaken for a model. On a

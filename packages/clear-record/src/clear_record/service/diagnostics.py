@@ -522,7 +522,7 @@ def register(group: click.Group) -> None:
         default=None,
         envvar="CR_DATA_DIR",
         show_envvar=True,
-        help="override the app data directory (default: CR_DATA_DIR / XDG)",
+        help="override the app data directory (default: CR_DATA_DIR / platform dir)",
     )
     def _diagnose(**kwargs) -> int:
         return run_diagnose(SimpleNamespace(**kwargs))

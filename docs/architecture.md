@@ -203,7 +203,7 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   `whisper-cli`, an accepted plugin, and — on Linux — the vendor's GPU device.
   Metal needs no device probe; the CLI plus plugin is the check. A missing
   `ggml-*.bin` is downloaded on first use into `model_dir` / `CR_MODELS_DIR` /
-  `<cwd>/models`; the download is a **provisioning** step, not an execution
+  `<data>/models` (ADR-0025); the download is a **provisioning** step, not an execution
   dependency (once the model is on disk the pipeline needs no network), and
   offline, the actionable `hf download …` error is raised.
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is

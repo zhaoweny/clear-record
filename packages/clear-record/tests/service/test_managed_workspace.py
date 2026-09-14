@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from clear_record.cli.workspace import Workspace, discover_audio
+from clear_record.core import paths as core_paths
 from clear_record.service import Registry
 from clear_record.service import managed
 from clear_record.service import paths
@@ -25,7 +26,7 @@ from clear_record.service import paths
 @pytest.fixture(autouse=True)
 def _no_real_config(tmp_path, monkeypatch):
     """Keep a developer's real config.toml out of every resolution here."""
-    monkeypatch.setattr(paths, "config_path", lambda: tmp_path / "absent.toml")
+    monkeypatch.setattr(core_paths, "config_path", lambda: tmp_path / "absent.toml")
 
 
 @pytest.fixture()
@@ -60,7 +61,6 @@ class _MustNotBeRead(io.BytesIO):
 
 # --- root resolution ------------------------------------------------------- #
 def test_workspace_root_precedence(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("CR_DATA_DIR", raising=False)
     monkeypatch.delenv("CR_WORKSPACE_ROOT", raising=False)
 
@@ -68,10 +68,10 @@ def test_workspace_root_precedence(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "env"))
     assert paths.resolve_workspace_root(tmp_path / "explicit") == tmp_path / "explicit"
 
-    # env beats the config file and the XDG default
+    # env beats the config file and the platform default
     config = tmp_path / "config.toml"
     config.write_text(f'[paths]\nworkspace_root = "{tmp_path / "configured"}"\n')
-    monkeypatch.setattr(paths, "config_path", lambda: config)
+    monkeypatch.setattr(core_paths, "config_path", lambda: config)
     assert paths.resolve_workspace_root() == tmp_path / "env"
 
     # the config beats the default
@@ -84,11 +84,9 @@ def test_workspace_root_defaults_under_the_data_dir(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("CR_DATA_DIR", str(tmp_path / "data"))
     assert paths.resolve_workspace_root() == tmp_path / "data" / "workspaces"
 
+    # With no CR_DATA_DIR the platform default under the injected data dir is used.
     monkeypatch.delenv("CR_DATA_DIR", raising=False)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    assert paths.resolve_workspace_root() == (
-        tmp_path / "xdg" / "clear-record" / "workspaces"
-    )
+    assert paths.resolve_workspace_root() == tmp_path / "app" / "data" / "workspaces"
 
 
 # --- provisioning ---------------------------------------------------------- #

@@ -403,7 +403,7 @@ _BACKEND = _with_options(
         default=resolve_models_dir,
         envvar="CR_MODELS_DIR",
         show_envvar=True,
-        help="model download dir (default: CR_MODELS_DIR, else <cwd>/models)",
+        help="model download dir (default: models/ under the platform data dir)",
     ),
     click.option(
         "--glossary",

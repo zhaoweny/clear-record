@@ -114,16 +114,16 @@ UI work; it is out of scope for the scaffold.
 ## 4. Models
 
 - [FACT] A missing `ggml-*.bin` is downloaded on first use into `--models-dir` /
-  `CR_MODELS_DIR` / `<cwd>/models`, atomically; offline it raises the actionable
+  `CR_MODELS_DIR` / `<data>/models`, atomically; offline it raises the actionable
   `hf download …` error (ADR-0005).
 - [FACT] Inside a Flatpak, `$XDG_DATA_HOME` is the app's own persistent
   `~/.var/app/io.github.zhaoweny.clear-record/data`. A model downloaded there
   **survives app upgrades** (it is not part of the app ref).
-- Because the XDG data default is not wired into the resolver yet (ADR-0007's
-  resolver is flag → `CR_MODELS_DIR` → `<cwd>/models`), the scaffold's
-  `clear-record-web` launcher pins
-  `CR_MODELS_DIR=$XDG_DATA_HOME/clear-record/models`. When the ADR-0007 XDG
-  default lands, this launcher export can go away.
+- The platformdirs-based resolver (ADR-0025) now defaults models to
+  `<data>/models`, which inside a Flatpak is exactly
+  `$XDG_DATA_HOME/clear-record/models`. The scaffold's `clear-record-web`
+  launcher still pins `CR_MODELS_DIR=$XDG_DATA_HOME/clear-record/models` — now
+  merely explicit; the export can go away.
 
 ## 5. Build strategy — wheel, not the PyInstaller bundle
 

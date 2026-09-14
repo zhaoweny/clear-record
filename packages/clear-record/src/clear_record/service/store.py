@@ -1,9 +1,9 @@
 """The SQLite registry: projects and their glossary terms.
 
 One database (stdlib :mod:`sqlite3`, no dependency) holds the **app-owned**
-project/glossary state under the XDG data directory. Audio, workspaces and
-archives stay as files elsewhere; the registry stores metadata only
-(ADR-0007/ADR-0013).
+project/glossary state under the platform data directory (ADR-0025). Audio,
+workspaces and archives stay as files elsewhere; the registry stores metadata
+only (ADR-0007/ADR-0013).
 
 Design notes:
 

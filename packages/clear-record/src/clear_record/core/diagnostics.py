@@ -12,8 +12,12 @@ A record is a stable, additive-only JSON line::
 
 User content is never dumped into a record: fields are short scalars (and a
 short ``message`` at most). The sink rotates at :data:`MAX_LOG_BYTES`, keeping
-:data:`RETAINED_LOGS` files beside the current one, under ``$CR_LOG_DIR`` or
-``$XDG_STATE_HOME/clear-record/logs`` (ADR-0007's *state*).
+:data:`RETAINED_LOGS` files beside the current one, under ``$CR_LOG_DIR`` or the
+platform-native log directory (``~/Library/Logs/clear-record`` on macOS —
+ADR-0007/ADR-0025's *state/logs*).
+
+The location itself is resolved by :mod:`clear_record.core.paths`; this module
+imports no third-party code, so it never computes a platform path.
 
 Vendor-free: stdlib only, like the rest of ``clear_record.core``.
 """
@@ -27,10 +31,9 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 
-#: The app directory under ``$XDG_STATE_HOME`` (ADR-0007).
-APP_DIRNAME = "clear-record"
-#: The rotating diagnostics log directory under the state directory.
-LOG_DIRNAME = "logs"
+from clear_record.core.paths import ENV_LOG_DIR
+from clear_record.core.paths import resolve_logs_dir as _resolve_logs_dir
+
 #: The rotating log file inside :func:`logs_dir`.
 LOG_FILENAME = "clear-record.log"
 
@@ -48,8 +51,8 @@ _LEVEL_NUMBERS = {name: index for index, name in enumerate(LEVELS)}
 #: ``CR_LOG_LEVEL`` overrides this; an unknown value falls back to the default.
 DEFAULT_LEVEL = "info"
 ENV_LOG_LEVEL = "CR_LOG_LEVEL"
-#: ``CR_LOG_DIR`` overrides the sink location (before the XDG state default).
-ENV_LOG_DIR = "CR_LOG_DIR"
+# ``CR_LOG_DIR`` (the documented sink escape hatch) is defined in core.paths and
+# re-exported here, so a reader of diagnostics still sees it.
 
 #: A process-wide level set programmatically (the CLI's ``--verbose``). It beats
 #: the environment for the life of the process; ``set_level(None)`` clears it.
@@ -96,22 +99,14 @@ def enabled(level: str, environ: Mapping[str, str] | None = None) -> bool:
 # --- the sink path -------------------------------------------------------- #
 
 
-def xdg_state_home() -> Path:
-    """``$XDG_STATE_HOME`` or its spec default (``~/.local/state``)."""
-    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-
-
 def logs_dir(explicit: str | os.PathLike | None = None) -> Path:
     """Resolve the rotating log directory.
 
-    Precedence: explicit argument > ``CR_LOG_DIR`` > ``$XDG_STATE_HOME/clear-record/logs``.
+    Precedence: explicit argument > ``CR_LOG_DIR`` > the platform-native log
+    directory. Delegates to the one resolver (:mod:`clear_record.core.paths`), so
+    a writer and a reader can never disagree about where the log lives.
     """
-    if explicit:
-        return Path(explicit).expanduser()
-    env = os.environ.get(ENV_LOG_DIR)
-    if env:
-        return Path(env).expanduser()
-    return xdg_state_home() / APP_DIRNAME / LOG_DIRNAME
+    return _resolve_logs_dir(explicit)
 
 
 def log_path(explicit: str | os.PathLike | None = None) -> Path:
@@ -228,13 +223,11 @@ def read_recent(
 
 
 __all__ = [
-    "APP_DIRNAME",
     "DEFAULT_LEVEL",
     "DEFAULT_LOG_LINES",
     "ENV_LOG_DIR",
     "ENV_LOG_LEVEL",
     "LEVELS",
-    "LOG_DIRNAME",
     "LOG_FILENAME",
     "MAX_LOG_BYTES",
     "RETAINED_LOGS",
@@ -249,5 +242,4 @@ __all__ = [
     "read_recent",
     "rotate",
     "set_level",
-    "xdg_state_home",
 ]

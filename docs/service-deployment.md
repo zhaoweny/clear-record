@@ -42,8 +42,8 @@ clear-record web --no-browser --host 127.0.0.1 --port 8765
 command, and `--no-browser` keeps a daemon from trying to open a desktop
 browser. Keep the bind on `127.0.0.1`; the proxy is what faces the network.
 
-Set the data/model locations explicitly so the service does not depend on its
-working directory (ADR-0007):
+Set the data/model locations explicitly if you want them off the platform default
+(the Linux default is the XDG data dir, ADR-0025):
 
 ```sh
 Environment=CR_DATA_DIR=%h/.local/share/clear-record
@@ -119,8 +119,8 @@ account. Save as `~/Library/LaunchAgents/com.clear-record.web.plist`:
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>CR_DATA_DIR</key><string>/Users/you/.local/share/clear-record</string>
-    <key>CR_MODELS_DIR</key><string>/Users/you/.local/share/clear-record/models</string>
+    <key>CR_DATA_DIR</key><string>/Users/you/Library/Application Support/clear-record</string>
+    <key>CR_MODELS_DIR</key><string>/Users/you/Library/Application Support/clear-record/models</string>
     <!-- <key>CR_TRUSTED_HOSTS</key><string>console.example.com</string> -->
   </dict>
   <key>RunAtLoad</key><true/>
@@ -379,9 +379,9 @@ ADR-0007 is amended only here: a `--dir` workspace and a meeting's user-chosen
 
 ### The managed root
 
-[FACT] The managed root defaults to `<data>/workspaces/` (so
-`$XDG_DATA_HOME/clear-record/workspaces`, or under your `CR_DATA_DIR`), and is
-resolved by the same precedence as the other app-owned directories:
+[FACT] The managed root defaults to `<data>/workspaces/` (for example
+`~/.local/share/clear-record/workspaces` on Linux, or under your `CR_DATA_DIR`),
+and is resolved by the same precedence as the other app-owned directories:
 explicit argument > **`CR_WORKSPACE_ROOT`** > a `[paths] workspace_root` config
 entry > the data-dir default. The tapes are the largest thing the app stores,
 so point the root at a NAS or a dedicated disk:

@@ -117,8 +117,8 @@ Date: 2026-09-09
   CLI prints no load banner the probe reports `inconclusive` rather than failing.
 - The ggml model is **auto-downloaded on first use** from
   `https://huggingface.co/ggerganov/whisper.cpp/` if it is not already in
-  `model_dir` / `CR_MODELS_DIR` / `<cwd>/models`; offline, the actionable
-  `hf download …` pre-fetch error is raised instead.
+  `model_dir` / `CR_MODELS_DIR` / `<data>/models` (ADR-0025); offline, the
+  actionable `hf download …` pre-fetch error is raised instead.
 
 ## Update (2026-09-11) — one CLI implementation; the wheel is retired
 

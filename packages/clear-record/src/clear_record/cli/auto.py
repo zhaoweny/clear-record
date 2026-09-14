@@ -333,7 +333,7 @@ def models_on_disk(model_dir: str | None = None) -> frozenset[str]:
     """The ggml size names already present in the models directory.
 
     Uses the single models-directory resolver (``model_dir`` -> ``CR_MODELS_DIR``
-    -> ``<cwd>/models``) so it agrees with the backend's own lookup. Missing
+    -> ``<data>/models``) so it agrees with the backend's own lookup. Missing
     directory == nothing on disk; no download is ever attempted.
     """
     base = resolve_models_dir(model_dir)

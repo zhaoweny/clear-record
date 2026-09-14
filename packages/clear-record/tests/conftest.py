@@ -8,9 +8,13 @@ Two leaks this closes:
   console through ``i18n.resolve_locale`` and fail unrelated tests. ``CR_LANG=en``
   (the highest-precedence environment layer) pins the source strings, and the
   installed catalog is reset around every test.
-- The app-owned XDG directories (registry, config, logs) are redirected to the
-  test's ``tmp_path``, so a developer's real ``~/.local/share/clear-record``
-  registry — or a config file — can never leak into a test or be written by one.
+- The app-owned directories (registry, config, cache, logs, models) are
+  redirected to the test's ``tmp_path``, so a developer's real
+  ``~/Library/Application Support/clear-record`` registry — or a config file —
+  can never leak into a test or be written by one. Resolution goes through
+  ``platformdirs`` (ADR-0025), whose platform-native paths ignore ``XDG_*`` on
+  macOS, so the redirection replaces the resolved defaults directly rather than
+  the environment.
 
 A test that wants a locale calls :func:`clear_record.core.i18n.install`/``use``
 explicitly, or passes an explicit ``environ=`` to :func:`resolve_locale` — neither
@@ -22,14 +26,33 @@ from __future__ import annotations
 import pytest
 
 from clear_record.core import i18n
+from clear_record.core import paths
 
 
 @pytest.fixture(autouse=True)
 def _hermetic_english_environment(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("CR_LANG", "en")
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    # Redirect the platform-native bases; the legacy bases stay absent so the
+    # ADR-0025 adoption path is only exercised where a test sets it up.
+    app = tmp_path / "app"
+    legacy = tmp_path / "legacy"
+    monkeypatch.setattr(
+        paths,
+        "_defaults",
+        paths.DefaultDirs(
+            data=app / "data",
+            config=app / "config",
+            cache=app / "cache",
+            state=app / "state",
+            logs=app / "logs",
+            legacy_data=legacy / "data",
+            legacy_config=legacy / "config",
+            legacy_cache=legacy / "cache",
+            legacy_state=legacy / "state",
+            legacy_logs=legacy / "logs",
+        ),
+    )
+    monkeypatch.setattr(paths, "_notified", set())
     i18n.reset()
     yield
     i18n.reset()

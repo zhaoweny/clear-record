@@ -406,6 +406,19 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   - [DECISION] A hard boundary: **logs, the JSON API, exports and the diagnostics
     bundle are never translated** — the record is the user's data, in the language
     they spoke.
+- [VOICE: owner, 2026-09-15] Managed-workspace request, verbatim: *"clear-record
+  managed workspace: the user creates a meeting, then upload tapes to
+  clear-record; clear-record manages tapes on behalf of user and do all the
+  transcription work - this is a route to self-host and manage clear-record
+  remotely"*.
+  - [FACT] This **amends ADR-0007 in part**: that ADR decided the workspace is
+    *not* app-owned (*"the user's documents, kept wherever the user points, not
+    clear-record's own data"*). A **managed** workspace is app-owned, so the
+    amendment must be scoped — the CLI's user-chosen `--dir` workspace is
+    unchanged, and the managed root is the console's addition.
+  - [FACT] It also raises the stakes on **ADR-0021**: every surface before this one
+    *read* local files; uploads **write multi-GB files** to a node whose auth is
+    the operator's proxy. Recorded in `.scratch/managed-workspace/`.
 - [FACT] Both touch the local-first/privacy stance: logs are where private
   material leaks by accident (file names, glossary terms, transcripts), and a
   *service* exposed beyond localhost collides with ADR-0013's "localhost only, no

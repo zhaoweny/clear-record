@@ -30,8 +30,22 @@
       </select>
       <input name="model" placeholder="model (optional)">
       <input name="language" placeholder="language (optional)">
+      <select name="profile"
+              title="transcription profile"
+              hx-get="/ui/profile-options"
+              hx-trigger="change"
+              hx-include="this"
+              hx-target="#profile-options-{{ row.meeting.id }}"
+              hx-swap="innerHTML">
+        {% for profile in profiles %}
+        <option value="{{ profile }}"{% if profile == profile_default %} selected{% endif %}>{{ profile }}</option>
+        {% endfor %}
+      </select>
       <button class="primary" type="submit">Run</button>
     </form>
+    <div id="profile-options-{{ row.meeting.id }}" class="profile-options">
+      {% include "_profile_options.html" %}
+    </div>
     {% if row.run %}
       {% set run = row.run %}{% include "_run.html" %}
     {% else %}

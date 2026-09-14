@@ -28,6 +28,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from clear_record.core import (
+    PROFILE_CUSTOM,
+    PROFILES,
+    profile_values,
+    resolve_options,
+)
 from clear_record.service import (
     TERM_STATUSES,
     PipelineOptions,
@@ -45,6 +51,34 @@ TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 #: import of ``clear_record.providers``: the web layer may import only
 #: ``core``/``service`` (layering guard), so it does not probe availability here.
 BACKEND_CHOICES = ("apple", "nvidia", "amd")
+
+#: The picker's choices, derived from the shared ``core`` table (never restated),
+#: with ``custom`` — "no preset" — last. A profile added to ``PROFILES`` shows up
+#: in the picker with no web change, so the console cannot drift from the CLI.
+PROFILE_CHOICES = tuple(name for name in PROFILES if name != PROFILE_CUSTOM) + (
+    PROFILE_CUSTOM,
+)
+
+
+def profile_preview(profile: str) -> dict:
+    """The knob values a profile resolves to, via the shared resolver.
+
+    ``profile_values`` supplies the knobs the preset touches and
+    :func:`resolve_options` their resolved values, so the preview is the table
+    read through the same **explicit > ``CR_*`` env > profile > default**
+    precedence the run will use. ``custom`` touches no knob, so it previews as
+    "no preset". An unknown profile raises :class:`ValueError` from ``core``.
+    """
+    resolved = resolve_options(PipelineOptions(), profile=profile)
+    return {
+        "profile": resolved.profile,
+        "custom": resolved.profile == PROFILE_CUSTOM,
+        "knobs": {
+            name: getattr(resolved, name)
+            for name in profile_values(resolved.profile)
+            if getattr(resolved, name) is not None
+        },
+    }
 
 
 class ProjectCreate(BaseModel):
@@ -96,6 +130,7 @@ class RunCreate(BaseModel):
     split: str = "auto"
     resume: bool = True
     jobs: int = 0
+    profile: str = PROFILE_CUSTOM
 
 
 class ArchiveCreate(BaseModel):
@@ -232,6 +267,9 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
                 "statuses": TERM_STATUSES,
                 "meetings": meeting_rows(slug),
                 "backends": BACKEND_CHOICES,
+                "profiles": PROFILE_CHOICES,
+                "profile_default": PROFILE_CUSTOM,
+                "profile_options": profile_preview(PROFILE_CUSTOM),
                 "archives": archive_rows(slug),
                 "error": error,
             },
@@ -364,6 +402,23 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
         row = {"archive": archive, "verification": archive_status(archive)}
         return TEMPLATES.TemplateResponse(request, "_archive_status.html", {"row": row})
 
+    @app.get("/ui/profile-options", response_class=HTMLResponse)
+    def ui_profile_options(
+        request: Request, profile: str = PROFILE_CUSTOM
+    ) -> HTMLResponse:
+        """The resolved-knobs fragment for the profile currently chosen.
+
+        Fetched by the picker's ``hx-get`` on change; the resolver — not the
+        template — decides the values, so the preview cannot disagree with the run.
+        """
+        try:
+            preview = profile_preview(profile)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return TEMPLATES.TemplateResponse(
+            request, "_profile_options.html", {"profile_options": preview}
+        )
+
     @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
     def ui_start_run(
         request: Request,
@@ -371,13 +426,20 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
         backend: str = Form("apple"),
         model: str = Form(""),
         language: str = Form(""),
+        profile: str = Form(PROFILE_CUSTOM),
     ) -> HTMLResponse:
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
-        options = PipelineOptions(
-            backend=backend, model=model or None, language=language or None
-        )
+        try:
+            options = resolve_options(
+                PipelineOptions(
+                    backend=backend, model=model or None, language=language or None
+                ),
+                profile=profile,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             run = runs.start(meeting, options)
         except ValueError as exc:
@@ -559,6 +621,10 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
             resume=body.resume,
             jobs=body.jobs,
         )
+        try:
+            options = resolve_options(options, profile=body.profile)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             run = runs.start(meeting, options)
         except ValueError as exc:

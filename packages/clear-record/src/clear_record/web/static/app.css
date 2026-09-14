@@ -36,3 +36,4 @@ form.stack { display: grid; gap: 8px; margin-top: 10px; max-width: 560px; }
 .run progress { width: 100%; height: 10px; }
 .run-message { font-size: 13px; }
 .run-error { color: #c0392b; font-size: 13px; }
+.profile-options { margin-top: 6px; display: grid; gap: 4px; }

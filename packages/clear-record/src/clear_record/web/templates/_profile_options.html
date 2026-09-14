@@ -1,0 +1,19 @@
+{# The resolved options for the profile currently selected in the run form.
+   Rendered by /ui/profile-options on change (and initially for `custom`), so the
+   preview always comes from core.resolve_options — the console cannot restate
+   the precedence the run itself uses. #}
+<div class="row">
+  <span class="badge">{{ profile_options.profile }}</span>
+  {% if profile_options.knobs %}
+  {% for name, value in profile_options.knobs.items() %}
+  <span class="muted">{{ name }}={{ value }}</span>
+  {% endfor %}
+  {% else %}
+  <span class="muted">no preset &mdash; every knob stays as you set it.</span>
+  {% endif %}
+</div>
+<div class="muted" style="font-size:13px">
+  A profile tunes the decoder knobs only; your model and backend stay as chosen.
+  Switching profile re-transcribes: the chunk cache is keyed on the decoder
+  knobs, the model and the glossary, so a different profile decodes again.
+</div>

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.core import Progress
+from clear_record.core import PROFILE_CUSTOM, PROFILES, Progress
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
 
@@ -30,8 +30,10 @@ def console(tmp_path) -> SimpleNamespace:
     """A test client over a registry with an injected, gated fake pipeline."""
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     gate = threading.Event()
+    seen: list = []
 
     def fake_pipeline(directory, options, on_event) -> None:
+        seen.append(options)
         progress = Progress("transcribe", 2, on_event)
         progress.start("transcribing")
         progress.advance(source="a", message="chunk 1")
@@ -47,6 +49,7 @@ def console(tmp_path) -> SimpleNamespace:
         registry=registry,
         manager=manager,
         gate=gate,
+        seen=seen,
     )
 
 
@@ -390,6 +393,117 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert 'hx-trigger="every 1s"' not in done.text
 
     assert client.get("/ui/runs/999").status_code == 404
+
+
+# --- HTML surface: the transcription-profile picker ----------------------- #
+def test_profile_picker_lists_the_shared_profiles(console, tmp_path) -> None:
+    """The picker's options are `core.options.PROFILES`, with `custom` the default.
+
+    Reading ``PROFILES`` here (not a literal list) is the point: a profile added
+    to the shared table shows up in the console with no web change.
+    """
+    _make_meeting(console, tmp_path)
+    detail = console.client.get("/ui/projects/ops")
+    assert detail.status_code == 200
+    for profile in PROFILES:
+        assert f'<option value="{profile}"' in detail.text
+    assert f'<option value="{PROFILE_CUSTOM}" selected>' in detail.text
+    assert 'hx-get="/ui/profile-options"' in detail.text
+    assert "re-transcri" in detail.text
+
+
+def test_profile_preview_resolves_the_knobs(client, monkeypatch) -> None:
+    """The preview shows what the selected profile resolves to, via core."""
+    for variable in (
+        "CR_CHUNK_SECONDS",
+        "CR_OVERLAP_SECONDS",
+        "CR_JOBS",
+        "CR_BEAM_SIZE",
+        "CR_BEST_OF",
+        "CR_TEMPERATURE",
+        "CR_ENTROPY_THOLD",
+        "CR_NO_SPEECH_THOLD",
+        "CR_MAX_CONTEXT",
+        "CR_THREADS",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+    accurate = client.get("/ui/profile-options", params={"profile": "accurate"})
+    assert accurate.status_code == 200
+    assert "beam_size" in accurate.text
+    assert "beam_size=8" in accurate.text
+
+    fast = client.get("/ui/profile-options", params={"profile": "fast"})
+    assert fast.status_code == 200
+    assert "best_of=1" in fast.text
+
+    custom = client.get("/ui/profile-options", params={"profile": PROFILE_CUSTOM})
+    assert custom.status_code == 200
+    assert "no preset" in custom.text
+    assert "beam_size" not in custom.text
+
+    assert (
+        client.get("/ui/profile-options", params={"profile": "turbo"}).status_code
+        == 400
+    )
+
+
+def _start_ui_run(console, meeting_id: int, **data):
+    res = console.client.post(f"/ui/meetings/{meeting_id}/runs", data=data)
+    assert res.status_code == 200, res.text
+    console.gate.set()
+    run_id = console.registry.list_runs(meeting_id)[0].id
+    console.manager.wait(run_id, timeout=10)
+    return console.seen[-1]
+
+
+def test_ui_run_carries_the_chosen_profile(console, tmp_path) -> None:
+    """The resolved profile reaches the run's options (not just the form)."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    options = _start_ui_run(console, meeting["id"], backend="apple", profile="accurate")
+
+    assert options.profile == "accurate"
+    assert options.beam_size == 8  # the preset, applied by resolve_options
+
+
+def test_ui_run_custom_sets_no_profile_knobs(console, tmp_path) -> None:
+    """`custom` is the escape hatch: every knob stays the user's."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    options = _start_ui_run(console, meeting["id"], backend="apple", profile="custom")
+
+    assert options.profile == "custom"
+    assert options.beam_size is None
+    assert options.best_of is None
+
+
+def test_run_api_accepts_a_profile(console, tmp_path) -> None:
+    """The JSON surface offers the same choice as the form."""
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    started = console.client.post(
+        f"/api/meetings/{meeting['id']}/runs",
+        json={"backend": "apple", "profile": "fast"},
+    )
+    assert started.status_code == 202
+    console.gate.set()
+    console.manager.wait(started.json()["run"]["id"], timeout=10)
+
+    assert console.seen[-1].profile == "fast"
+    assert console.seen[-1].best_of == 1
 
 
 # --- JSON API: archives --------------------------------------------------- #

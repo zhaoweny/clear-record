@@ -30,6 +30,14 @@ from clear_record.service.glossary import (
 )
 from clear_record.service.models import Meeting, PipelineRun
 from clear_record.service.store import Registry
+from clear_record.service.webhooks import (
+    RUN_FAILED,
+    RUN_FINISHED,
+    RUN_STARTED,
+    TRANSCRIPT_READY,
+    WebhookEmitter,
+    default_emitter,
+)
 
 #: What the manager calls to run a pipeline: the CLI's stage wiring by default.
 PipelineCallable = Callable[[str, PipelineOptions, EventSink | None], None]
@@ -119,10 +127,16 @@ class RunManager:
     """
 
     def __init__(
-        self, registry: Registry, pipeline: PipelineCallable | None = None
+        self,
+        registry: Registry,
+        pipeline: PipelineCallable | None = None,
+        webhooks: WebhookEmitter | None = None,
     ) -> None:
         self._registry = registry
         self._pipeline = pipeline or _default_pipeline
+        # Delivery is opt-in (no configured endpoints = inert) and off-thread, so
+        # a webhook can never fail or stall a run.
+        self._webhooks = webhooks if webhooks is not None else default_emitter()
         self._lock = threading.Lock()
         self._states: dict[int, RunState] = {}
         self._threads: dict[int, threading.Thread] = {}
@@ -252,6 +266,12 @@ class RunManager:
         state.status = "running"
         self._registry.update_run(run_id, status="running", started_at=_now())
         self._registry.set_meeting_status(meeting.id, "running")
+        self._webhooks.emit(
+            RUN_STARTED,
+            project_id=meeting.project_id,
+            meeting_id=meeting.id,
+            run_id=run_id,
+        )
 
         def sink(event: JobEvent) -> None:
             self._record(state, event)
@@ -269,18 +289,40 @@ class RunManager:
                 progress=state.summary(),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
+            self._webhooks.emit(
+                RUN_FAILED,
+                project_id=meeting.project_id,
+                meeting_id=meeting.id,
+                run_id=run_id,
+            )
             return
 
-        self._register_artifacts(meeting, run_id)
+        artifacts = self._register_artifacts(meeting, run_id)
         state.status = "done"
         self._registry.update_run(
             run_id, status="done", ended_at=_now(), progress=state.summary()
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
+        self._webhooks.emit(
+            RUN_FINISHED,
+            project_id=meeting.project_id,
+            meeting_id=meeting.id,
+            run_id=run_id,
+        )
+        if any(kind == "transcript" for kind, _ in artifacts):
+            self._webhooks.emit(
+                TRANSCRIPT_READY,
+                project_id=meeting.project_id,
+                meeting_id=meeting.id,
+                run_id=run_id,
+            )
 
-    def _register_artifacts(self, meeting: Meeting, run_id: int) -> None:
+    def _register_artifacts(
+        self, meeting: Meeting, run_id: int
+    ) -> list[tuple[str, Path]]:
         assert meeting.workspace_path is not None
-        for kind, path in collect_artifacts(Path(meeting.workspace_path)):
+        artifacts = collect_artifacts(Path(meeting.workspace_path))
+        for kind, path in artifacts:
             try:
                 digest = _sha256(path)
             except OSError:
@@ -293,6 +335,7 @@ class RunManager:
                 sha256=digest,
                 bytes=path.stat().st_size,
             )
+        return artifacts
 
     def wait(self, run_id: int, timeout: float | None = None) -> RunState:
         """Block until the run's thread finishes (tests; bounded by timeout)."""

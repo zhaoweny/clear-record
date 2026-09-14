@@ -31,6 +31,11 @@ from pathlib import Path
 
 from clear_record.service.models import Archive, Meeting
 from clear_record.service.store import Registry
+from clear_record.service.webhooks import (
+    ARCHIVE_CREATED,
+    WebhookEmitter,
+    default_emitter,
+)
 
 #: Section holding the incoming tapes inside an archive.
 TAPES_DIRNAME = "tapes"
@@ -140,6 +145,8 @@ def archive_meeting(
     registry: Registry,
     meeting: Meeting,
     root: str | Path | None = None,
+    *,
+    webhooks: WebhookEmitter | None = None,
 ) -> Archive:
     """Copy ``meeting``'s tape set and pipeline artifacts into a new archive.
 
@@ -151,6 +158,10 @@ def archive_meeting(
     An existing archive is never reused or overwritten; every call makes a new
     directory. On any failure the partial directory is removed, so a registry
     row always points at a complete archive.
+
+    ``webhooks`` defaults to the shared config-driven emitter; ``archive.created``
+    is emitted only after the archive is complete, and delivery (off-thread)
+    can never fail the archive.
     """
     root_path = _resolve_root(registry, meeting, root)
 
@@ -200,13 +211,18 @@ def archive_meeting(
         shutil.rmtree(archive_dir, ignore_errors=True)
         raise
 
-    return registry.add_archive(
+    archive = registry.add_archive(
         meeting.id,
         meeting.project_id,
         root_path=str(archive_dir),
         manifest_path=str(manifest_path),
         manifest_sha256=manifest_sha256,
     )
+    # Announced only after the archive is complete; delivery is off-thread, so it
+    # can never fail the archive.
+    emitter = webhooks if webhooks is not None else default_emitter()
+    emitter.emit(ARCHIVE_CREATED, project_id=meeting.project_id, meeting_id=meeting.id)
+    return archive
 
 
 def verify_archive(archive_dir: str | Path) -> dict:

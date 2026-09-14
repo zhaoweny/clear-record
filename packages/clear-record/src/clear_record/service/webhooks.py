@@ -1,0 +1,693 @@
+"""Opt-in outbound webhooks: POST an event to a user's own system.
+
+A user can point clear-record at their knowledge base or project-management
+system and be told when something happens here. The feature is **opt-in** —
+with no endpoints configured nothing is sent — and **non-blocking**: delivery
+runs on its own worker thread, so an unreachable endpoint, a timeout or a
+non-2xx response can never fail or stall a pipeline run.
+
+The boundaries, and why the defaults are what they are:
+
+- **Content-free by default.** The receiver is usually a third party and a
+  transcript is private (the spirit of ADR-0006), so the payload carries an
+  event id, a type, a timestamp and the project/meeting/run ids — never
+  transcript text. Content is an explicit **per-endpoint** opt-in
+  (:attr:`WebhookEndpoint.include_content`); the producer supplies it through
+  ``emit(..., content=...)`` and it is stripped for every endpoint that did not
+  ask for it.
+- **The signing secret lives in the environment, never the registry** (the BYOK
+  rule of ADR-0018). ``secret_env`` names the variable; its value is read at
+  delivery time and used for an HMAC-SHA256 signature header. An endpoint that
+  names a secret env but finds it unset is recorded as failed and sent nothing:
+  there is no silent unsigned downgrade.
+- **Delivery is recorded.** Every delivery's outcome is kept (bounded) so a user
+  can tell whether an endpoint is healthy.
+
+Delivery uses the stdlib only (:mod:`urllib.request`), so the base install gains
+no HTTP dependency.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime as _dt
+import hashlib
+import hmac
+import json
+import os
+import queue
+import sys
+import threading
+import time
+import tomllib
+import urllib.error
+import urllib.request
+import uuid
+from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
+
+from clear_record.service.paths import config_path
+
+# --- the event vocabulary -------------------------------------------------- #
+
+#: Events this build emits.
+RUN_STARTED = "run.started"
+RUN_FINISHED = "run.finished"
+RUN_FAILED = "run.failed"
+TRANSCRIPT_READY = "transcript.ready"
+ARCHIVE_CREATED = "archive.created"
+
+EMITTED_EVENTS: tuple[str, ...] = (
+    RUN_STARTED,
+    RUN_FINISHED,
+    RUN_FAILED,
+    TRANSCRIPT_READY,
+    ARCHIVE_CREATED,
+)
+
+#: Reserved names for hooks whose producer does not exist yet: a glossary edit,
+#: an agent-task draft and an accepted minutes document. Named here so the
+#: vocabulary is stable and a receiver can filter on them early.
+FUTURE_EVENTS: tuple[str, ...] = (
+    "glossary.updated",
+    "agent_task.draft",
+    "minutes.accepted",
+)
+
+#: Every event name a config may filter on.
+ALL_EVENTS: tuple[str, ...] = EMITTED_EVENTS + FUTURE_EVENTS
+
+#: The environment variable naming the signing secret for an endpoint.
+SIGNATURE_HEADER = "X-Clear-Record-Signature"
+EVENT_HEADER = "X-Clear-Record-Event"
+DELIVERY_HEADER = "X-Clear-Record-Delivery"
+
+#: ``CR_WEBHOOKS``: a JSON array of endpoint objects, the ``CR_*`` layer of the
+#: ADR-0007 precedence. It beats the config file but loses to an explicit
+#: argument.
+ENV_ENDPOINTS = "CR_WEBHOOKS"
+
+#: How many delivery outcomes to keep for health inspection.
+DELIVERY_HISTORY = 200
+
+
+def _now() -> str:
+    return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
+
+
+def sign(secret: str, body: bytes) -> str:
+    """The HMAC-SHA256 hex digest of ``body`` under ``secret``.
+
+    The receiver recomputes this over the exact request body and compares it to
+    the signature header (``sha256=<digest>``) with a constant-time compare.
+    """
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
+@dataclasses.dataclass(frozen=True)
+class WebhookEndpoint:
+    """One user-configured receiver.
+
+    ``events`` filters the events sent here; empty means every event. Secret
+    material is **never** stored: ``secret_env`` names the environment variable
+    the secret is read from at delivery time.
+    """
+
+    url: str
+    events: tuple[str, ...] = ()
+    include_content: bool = False
+    secret_env: str | None = None
+    name: str | None = None
+
+    def wants(self, event_type: str) -> bool:
+        """Whether this endpoint subscribed to ``event_type`` (empty = all)."""
+        return not self.events or event_type in self.events
+
+
+@dataclasses.dataclass(frozen=True)
+class WebhookEvent:
+    """One event to deliver: its identity and the ids it concerns."""
+
+    id: str
+    type: str
+    occurred_at: str
+    project_id: int | None = None
+    meeting_id: int | None = None
+    run_id: int | None = None
+    content: dict | None = None
+
+    def payload(self, *, include_content: bool) -> dict:
+        """The JSON payload for one endpoint.
+
+        Content is attached only when the endpoint opted in *and* the producer
+        supplied it; otherwise the payload is metadata only.
+        """
+        data: dict = {
+            "event": self.id,
+            "type": self.type,
+            "occurred_at": self.occurred_at,
+        }
+        if self.project_id is not None:
+            data["project_id"] = self.project_id
+        if self.meeting_id is not None:
+            data["meeting_id"] = self.meeting_id
+        if self.run_id is not None:
+            data["run_id"] = self.run_id
+        if include_content and self.content is not None:
+            data["content"] = self.content
+        return data
+
+    def body(self, *, include_content: bool) -> bytes:
+        """The exact bytes posted and signed for this endpoint."""
+        return json.dumps(
+            self.payload(include_content=include_content),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+
+@dataclasses.dataclass(frozen=True)
+class Delivery:
+    """The recorded outcome of delivering one event to one endpoint."""
+
+    event_id: str
+    type: str
+    url: str
+    #: ``"delivered"`` or ``"failed"``.
+    status: str
+    attempts: int
+    http_status: int | None
+    error: str | None
+    at: str
+
+
+# --- configuration (ADR-0007 precedence) ----------------------------------- #
+
+#: The TOML schema, documented where the user sets it::
+#:
+#:     [[webhooks.endpoints]]
+#:     url = "https://example.test/hooks/clear-record"
+#:     events = ["run.finished", "archive.created"]  # omit for all events
+#:     include_content = false                        # private: default off
+#:     secret_env = "CR_WEBHOOK_SECRET"               # never the value itself
+
+
+@dataclasses.dataclass(frozen=True)
+class WebhookConfig:
+    """The resolved endpoints and any problems found while resolving them.
+
+    ``problems`` is what makes a misconfiguration visible: a user asking "why is
+    nothing being delivered?" can read it — and the matching stderr warning —
+    instead of guessing. Resolving never raises; a bad entry is reported and
+    skipped, so the app keeps running.
+    """
+
+    endpoints: tuple[WebhookEndpoint, ...] = ()
+    problems: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        """Whether the config resolved with no problems."""
+        return not self.problems
+
+
+def _warn(problem: str) -> None:
+    """Surface a config problem on stderr, as one line — never a traceback."""
+    print(f"clear-record: webhook config: {problem}", file=sys.stderr)
+
+
+def _parse_endpoint(
+    raw: Mapping, *, source: str
+) -> tuple[WebhookEndpoint | None, str | None]:
+    """One endpoint from a config table or env JSON object: ``(endpoint, problem)``."""
+    if not isinstance(raw, Mapping):
+        return None, f"{source}: each endpoint must be a table/object"
+    url = str(raw.get("url") or "").strip()
+    if not url:
+        return None, f"{source}: endpoint is missing 'url'"
+    raw_events = raw.get("events")
+    if raw_events is None:
+        events: tuple[str, ...] = ()
+    elif isinstance(raw_events, str):
+        events = tuple(part.strip() for part in raw_events.split(",") if part.strip())
+    else:
+        events = tuple(str(part).strip() for part in raw_events if str(part).strip())
+    unknown = sorted({name for name in events if name not in ALL_EVENTS})
+    if unknown:
+        return None, f"{source}: unknown event(s) {unknown}; choose from {ALL_EVENTS}"
+    secret_env = raw.get("secret_env")
+    name = raw.get("name")
+    return (
+        WebhookEndpoint(
+            url=url,
+            events=events,
+            include_content=bool(raw.get("include_content", False)),
+            secret_env=str(secret_env).strip() if secret_env else None,
+            name=str(name).strip() if name else None,
+        ),
+        None,
+    )
+
+
+def _coerce_endpoints(
+    endpoints: Iterable, *, source: str
+) -> tuple[tuple[WebhookEndpoint, ...], tuple[str, ...]]:
+    """Parse a sequence of endpoint entries into ``(endpoints, problems)``."""
+    out: list[WebhookEndpoint] = []
+    problems: list[str] = []
+    for index, raw in enumerate(endpoints):
+        if isinstance(raw, WebhookEndpoint):
+            out.append(raw)
+            continue
+        endpoint, problem = _parse_endpoint(raw, source=f"{source}[{index}]")
+        if problem is not None:
+            problems.append(problem)
+        elif endpoint is not None:
+            out.append(endpoint)
+    return tuple(out), tuple(problems)
+
+
+def _config_endpoints(
+    config_file: str | Path | None = None,
+) -> tuple[tuple[WebhookEndpoint, ...], tuple[str, ...]]:
+    """Endpoints from the ``[webhooks]`` table of the config file.
+
+    A missing config is **not** a problem (webhooks are opt-in). A config that is
+    present but unreadable or malformed **is**: it becomes a problem rather than
+    being silently ignored.
+    """
+    path = Path(config_file) if config_file is not None else config_path()
+    if not path.is_file():
+        return (), ()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return (), (f"{path}: not valid TOML ({exc})",)
+    webhooks = data.get("webhooks")
+    if webhooks is None:
+        return (), ()
+    if not isinstance(webhooks, dict):
+        return (), (f"{path}: [webhooks] must be a table",)
+    raw = webhooks.get("endpoints") or []
+    if not isinstance(raw, list):
+        return (), (f"{path}: webhooks.endpoints must be an array of tables",)
+    return _coerce_endpoints(raw, source=str(path))
+
+
+def _secret_problems(
+    endpoints: Iterable[WebhookEndpoint], environ: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Flag endpoints that named a secret env the environment does not set."""
+    problems: list[str] = []
+    for endpoint in endpoints:
+        if endpoint.secret_env and not environ.get(endpoint.secret_env):
+            problems.append(
+                f"endpoint {endpoint.url!r} names secret_env "
+                f"{endpoint.secret_env!r}, which is not set: it will fail closed "
+                "and deliver nothing"
+            )
+    return tuple(problems)
+
+
+def load_webhook_config(
+    endpoints: Sequence[WebhookEndpoint | Mapping] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    config_file: str | Path | None = None,
+) -> WebhookConfig:
+    """Resolve the configured endpoints and collect any problems; never raises.
+
+    Precedence (ADR-0007): explicit argument > ``CR_WEBHOOKS`` > config file >
+    none. Every problem found is written to stderr as a one-line warning and
+    returned in :attr:`WebhookConfig.problems`, so a misconfiguration is visible
+    and inspectable instead of silently meaning "no notifications".
+    """
+    env = os.environ if environ is None else environ
+    if endpoints is not None:
+        resolved, problems = _coerce_endpoints(endpoints, source="explicit endpoints")
+    else:
+        raw_env = env.get(ENV_ENDPOINTS)
+        if raw_env and raw_env.strip():
+            try:
+                parsed = json.loads(raw_env)
+            except json.JSONDecodeError as exc:
+                resolved, problems = (), (f"${ENV_ENDPOINTS} is not valid JSON: {exc}",)
+            else:
+                if not isinstance(parsed, list):
+                    resolved, problems = (
+                        (),
+                        (f"${ENV_ENDPOINTS} must be a JSON array of objects",),
+                    )
+                else:
+                    resolved, problems = _coerce_endpoints(
+                        parsed, source=f"${ENV_ENDPOINTS}"
+                    )
+        else:
+            resolved, problems = _config_endpoints(config_file)
+    problems = problems + _secret_problems(resolved, env)
+    for problem in problems:
+        _warn(problem)
+    return WebhookConfig(endpoints=resolved, problems=problems)
+
+
+def resolve_endpoints(
+    endpoints: Sequence[WebhookEndpoint | Mapping] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    config_file: str | Path | None = None,
+) -> tuple[WebhookEndpoint, ...]:
+    """The resolved endpoints only; see :func:`load_webhook_config` for problems."""
+    config = load_webhook_config(endpoints, environ=environ, config_file=config_file)
+    return config.endpoints
+
+
+# --- the emitter ------------------------------------------------------------ #
+
+
+class WebhookEmitter:
+    """Delivers events to the configured endpoints on a background worker.
+
+    ``emit`` only enqueues, so it is safe to call from a pipeline run's thread
+    and can never slow a run down. The worker performs the POSTs, retries a
+    bounded number of times with exponential backoff, and records each
+    delivery's outcome. With no endpoints the emitter is inert: no worker
+    thread is created and ``emit`` is a no-op.
+
+    ``problems`` carries any config problems found while resolving the endpoints
+    (see :func:`load_webhook_config`); :meth:`from_config` fills it in, so a bad
+    config is inspectable on the emitter the app is actually using.
+    """
+
+    def __init__(
+        self,
+        endpoints: Sequence[WebhookEndpoint] = (),
+        *,
+        problems: Sequence[str] = (),
+        timeout: float = 5.0,
+        max_attempts: int = 3,
+        backoff_base: float = 1.0,
+        opener=None,
+        sleep=time.sleep,
+        clock=_now,
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        self._endpoints = tuple(endpoints)
+        self._problems = tuple(problems)
+        self._timeout = timeout
+        self._max_attempts = max_attempts
+        self._backoff_base = backoff_base
+        self._opener = opener or urllib.request.urlopen
+        self._sleep = sleep
+        self._clock = clock
+        self._condition = threading.Condition()
+        self._queue: queue.Queue[tuple[WebhookEvent, WebhookEndpoint] | None] = (
+            queue.Queue()
+        )
+        self._pending = 0
+        self._idle = threading.Event()
+        self._idle.set()
+        self._thread: threading.Thread | None = None
+        self._closed = False
+        self._deliveries: deque[Delivery] = deque(maxlen=DELIVERY_HISTORY)
+
+    @classmethod
+    def from_config(
+        cls,
+        endpoints: Sequence[WebhookEndpoint | Mapping] | None = None,
+        *,
+        environ: Mapping[str, str] | None = None,
+        config_file: str | Path | None = None,
+        **kwargs,
+    ) -> WebhookEmitter:
+        """Build an emitter from the resolved config (see :func:`load_webhook_config`).
+
+        Any config problem is attached to the emitter's :attr:`problems` and a
+        warning is written to stderr; construction never raises.
+        """
+        config = load_webhook_config(
+            endpoints, environ=environ, config_file=config_file
+        )
+        return cls(config.endpoints, problems=config.problems, **kwargs)
+
+    @property
+    def endpoints(self) -> tuple[WebhookEndpoint, ...]:
+        return self._endpoints
+
+    @property
+    def problems(self) -> tuple[str, ...]:
+        """The config problems found while resolving this emitter's endpoints."""
+        return self._problems
+
+    @property
+    def enabled(self) -> bool:
+        """Whether any endpoint is configured."""
+        return bool(self._endpoints)
+
+    def emit(
+        self,
+        event_type: str,
+        *,
+        project_id: int | None = None,
+        meeting_id: int | None = None,
+        run_id: int | None = None,
+        content: dict | None = None,
+        occurred_at: str | None = None,
+    ) -> WebhookEvent | None:
+        """Enqueue ``event_type`` for every subscribed endpoint; never raises.
+
+        Returns the event (with its id) when at least one endpoint subscribed,
+        else ``None``. The POSTs happen on the worker thread.
+        """
+        try:
+            matching = tuple(e for e in self._endpoints if e.wants(event_type))
+            if not matching:
+                return None
+            event = WebhookEvent(
+                id=str(uuid.uuid4()),
+                type=event_type,
+                occurred_at=occurred_at or self._clock(),
+                project_id=project_id,
+                meeting_id=meeting_id,
+                run_id=run_id,
+                content=content,
+            )
+            with self._condition:
+                if self._closed:
+                    return None
+                self._ensure_worker()
+                for endpoint in matching:
+                    self._queue.put((event, endpoint))
+                    self._pending += 1
+                self._idle.clear()
+            return event
+        except Exception:  # noqa: BLE001 - delivery must never affect the caller
+            return None
+
+    def deliveries(self) -> tuple[Delivery, ...]:
+        """The recorded delivery outcomes, oldest first."""
+        with self._condition:
+            return tuple(self._deliveries)
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Block until every queued delivery has finished (tests). Returns done."""
+        return self._idle.wait(timeout)
+
+    def close(self, timeout: float | None = None) -> None:
+        """Stop the worker once its queue is drained (tests, shutdown)."""
+        with self._condition:
+            self._closed = True
+            thread = self._thread
+            self._queue.put(None)
+        if thread is not None:
+            thread.join(timeout)
+
+    # --- worker ------------------------------------------------------------- #
+    def _ensure_worker(self) -> None:
+        if self._thread is None and not self._closed:
+            self._thread = threading.Thread(
+                target=self._work, name="cr-webhooks", daemon=True
+            )
+            self._thread.start()
+
+    def _work(self) -> None:
+        while True:
+            job = self._queue.get()
+            if job is None:  # sentinel: shutdown requested
+                self._queue.task_done()
+                return
+            try:
+                self._deliver(*job)
+            except Exception as exc:  # noqa: BLE001 - keep the worker alive
+                event, endpoint = job
+                self._record(
+                    Delivery(
+                        event_id=event.id,
+                        type=event.type,
+                        url=endpoint.url,
+                        status="failed",
+                        attempts=0,
+                        http_status=None,
+                        error=f"{type(exc).__name__}: {exc}",
+                        at=self._clock(),
+                    )
+                )
+            finally:
+                self._queue.task_done()
+                with self._condition:
+                    self._pending = max(0, self._pending - 1)
+                    if self._pending == 0:
+                        self._idle.set()
+                    self._condition.notify_all()
+
+    def _deliver(self, event: WebhookEvent, endpoint: WebhookEndpoint) -> Delivery:
+        body = event.body(include_content=endpoint.include_content)
+        secret = os.environ.get(endpoint.secret_env) if endpoint.secret_env else None
+        if endpoint.secret_env and not secret:
+            # Fail closed: an endpoint that asked for a signature must never
+            # silently receive an unsigned request. Surface the dropped event,
+            # not just the recorded outcome, so the reason is visible.
+            problem = (
+                f"endpoint {endpoint.url!r} names secret_env {endpoint.secret_env!r}, "
+                "which is not set: refusing to send unsigned"
+            )
+            _warn(problem)
+            return self._record(
+                Delivery(
+                    event_id=event.id,
+                    type=event.type,
+                    url=endpoint.url,
+                    status="failed",
+                    attempts=0,
+                    http_status=None,
+                    error=problem,
+                    at=self._clock(),
+                )
+            )
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "clear-record-webhooks/1",
+            EVENT_HEADER: event.type,
+            DELIVERY_HEADER: event.id,
+        }
+        if secret:
+            headers[SIGNATURE_HEADER] = f"sha256={sign(secret, body)}"
+
+        http_status: int | None = None
+        last_error: str | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                request = urllib.request.Request(
+                    endpoint.url, data=body, headers=headers, method="POST"
+                )
+                response = self._opener(request, timeout=self._timeout)
+                try:
+                    status = getattr(response, "status", None)
+                    if status is None:
+                        status = response.getcode()
+                    http_status = int(status)
+                finally:
+                    close = getattr(response, "close", None)
+                    if close is not None:
+                        close()
+                if 200 <= http_status < 300:
+                    return self._record(
+                        Delivery(
+                            event_id=event.id,
+                            type=event.type,
+                            url=endpoint.url,
+                            status="delivered",
+                            attempts=attempt,
+                            http_status=http_status,
+                            error=None,
+                            at=self._clock(),
+                        )
+                    )
+                last_error = f"HTTP {http_status}"
+            except urllib.error.HTTPError as exc:
+                http_status = exc.code
+                last_error = f"HTTP {exc.code}"
+                exc.close()
+            except Exception as exc:  # noqa: BLE001 - recorded, then retried
+                last_error = f"{type(exc).__name__}: {exc}"
+            if attempt < self._max_attempts:
+                self._sleep(self._backoff_base * (2 ** (attempt - 1)))
+        return self._record(
+            Delivery(
+                event_id=event.id,
+                type=event.type,
+                url=endpoint.url,
+                status="failed",
+                attempts=self._max_attempts,
+                http_status=http_status,
+                error=last_error,
+                at=self._clock(),
+            )
+        )
+
+    def _record(self, delivery: Delivery) -> Delivery:
+        with self._condition:
+            self._deliveries.append(delivery)
+        return delivery
+
+
+# --- process-wide default --------------------------------------------------- #
+
+_DEFAULT_LOCK = threading.Lock()
+_DEFAULT: WebhookEmitter | None = None
+
+
+def default_emitter() -> WebhookEmitter:
+    """The shared config-driven emitter (one worker for the process).
+
+    A malformed webhook config never raises; it is surfaced as a stderr warning
+    and recorded on the emitter's :attr:`WebhookEmitter.problems` — the visible
+    answer to "why is nothing being delivered?". The resolved config is cached
+    for the process lifetime.
+    """
+    global _DEFAULT
+    if _DEFAULT is None:
+        with _DEFAULT_LOCK:
+            if _DEFAULT is None:
+                try:
+                    _DEFAULT = WebhookEmitter.from_config()
+                except Exception as exc:  # noqa: BLE001 - never take the app down
+                    problem = f"webhooks disabled: {type(exc).__name__}: {exc}"
+                    _warn(problem)
+                    _DEFAULT = WebhookEmitter((), problems=(problem,))
+    return _DEFAULT
+
+
+def reset_default_emitter() -> None:
+    """Drop the cached default emitter (tests that reconfigure the process)."""
+    global _DEFAULT
+    with _DEFAULT_LOCK:
+        _DEFAULT = None
+
+
+__all__ = [
+    "ALL_EVENTS",
+    "ARCHIVE_CREATED",
+    "DELIVERY_HEADER",
+    "DELIVERY_HISTORY",
+    "Delivery",
+    "EMITTED_EVENTS",
+    "ENV_ENDPOINTS",
+    "EVENT_HEADER",
+    "FUTURE_EVENTS",
+    "RUN_FAILED",
+    "RUN_FINISHED",
+    "RUN_STARTED",
+    "SIGNATURE_HEADER",
+    "TRANSCRIPT_READY",
+    "WebhookConfig",
+    "WebhookEmitter",
+    "WebhookEndpoint",
+    "WebhookEvent",
+    "default_emitter",
+    "load_webhook_config",
+    "reset_default_emitter",
+    "resolve_endpoints",
+    "sign",
+]

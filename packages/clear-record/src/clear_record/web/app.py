@@ -5,8 +5,10 @@ Two surfaces over the same **thin** service adapter:
 - ``/api/*`` returns JSON — the machine surface the GUI, scripts and (later) the
   MCP server share. Every route is a small translation of a service call.
 - ``/ui/*`` returns HTML fragments for the browser, driven by **htmx** (partial
-  updates) and **Alpine.js** (local UI state). Server-rendered, no build step:
-  the two libraries are vendored under ``static/`` so the console works offline.
+  updates) and **Alpine.js** (local UI state). Server-rendered: the assets are
+  **built** from ``frontend/`` (Tailwind v4 + Vite) and the **compiled output is
+  committed** under ``static/``, so the console works offline and a plain install
+  needs no Node (ADR-0023).
 
 No domain logic lives here, which is what lets the GUI, the MCP server and
 scripts share one tested service seam.
@@ -505,7 +507,7 @@ def create_app(
     def ui_diagnostics() -> Response:
         """The same redacted bundle `clear-record diagnose` writes, as a download.
 
-        A plain link target (``<a download>``): no build step, no new JS. The
+        A plain link target (``<a download>``): a file download needs no JS. The
         bundle states what it withholds and that nothing is transmitted.
         """
         bundle = collect_bundle(registry=registry)

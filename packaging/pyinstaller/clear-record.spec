@@ -9,8 +9,8 @@ Produces, from one analysis:
     dist/clear-record/clear-record       the full console CLI
     dist/clear-record.app                (macOS only) the above as an app bundle
 
-The web console's frontend is package data — Jinja templates plus vendored
-htmx/Alpine — so it is collected explicitly. The web/service and tray modules are
+The web console's frontend is package data — Jinja templates plus the built
+CSS/JS — so it is collected explicitly. The web/service and tray modules are
 imported only *dynamically* (through the `clear_record.commands` entry point and
 lazy imports), so they are listed as hidden imports; `copy_metadata("clear-record")`
 keeps the entry point resolvable inside the frozen app, which is what makes
@@ -64,8 +64,8 @@ hiddenimports = [
 
 datas = [
     *collect_data_files("soundfile"),
-    # The console's frontend (Jinja templates + vendored htmx/Alpine) is package
-    # data; without this the frozen app serves a blank page.
+    # The console's frontend (Jinja templates + the built app.css/app.js) is
+    # package data; without this the frozen app serves a blank page.
     *collect_data_files("clear_record"),
     # Dist metadata so `importlib.metadata.entry_points(group="clear_record.commands")`
     # still finds the bundled `web`/`tray` providers after freezing.

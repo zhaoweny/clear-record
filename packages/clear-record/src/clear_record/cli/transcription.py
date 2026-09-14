@@ -166,6 +166,20 @@ _UNKNOWN_MODEL_VRAM_GB = _MODEL_VRAM_GB["large"]
 _DEFAULT_VRAM_GB = 8.0
 # Leave headroom for the display/compositor and driver overhead.
 _VRAM_SAFETY = 0.85
+# A unified-memory GPU (an NVIDIA GB10 / DGX Spark, or any iGPU) has no dedicated
+# framebuffer, so ``nvidia-smi`` memory fields report ``N/A`` and the DRM path
+# (amdgpu-only) finds nothing. The probe then claims this *fraction* of total
+# system memory (``/proc/meminfo`` ``MemTotal``). Half is deliberately
+# conservative: that same RAM backs the CPU, the compositor and every other
+# process, and ``_VRAM_SAFETY`` (0.85) is applied on top, so the pool's budget is
+# ~42% of RAM. On a 128 GB DGX Spark that is ~62 GB — far above the 4-way cap —
+# while a small UMA box stays under-provisioned rather than handed memory it does
+# not have. ``MemTotal`` (capacity) is used rather than ``MemAvailable`` so the
+# advisory probe is stable, not a snapshot of the moment.
+_UMA_MEMORY_SHARE = 0.5
+# ``/proc/meminfo`` is Linux-only: off Linux it is simply absent and the 8 GB
+# floor applies, with no new dependency and no platform-specific import.
+_PROC_MEMINFO = Path("/proc/meminfo")
 _DEFAULT_MAX_JOBS = 4
 
 
@@ -192,13 +206,19 @@ def model_vram_gb(model: str | None) -> float:
 
 
 def detect_vram_gb() -> float | None:
-    """Best-effort total VRAM (GB) of the machine's GPU, or ``None``.
+    """Best-effort VRAM (GB) the worker pool may claim, or ``None``.
 
     Advisory only: it bounds the ``jobs=0`` default so a small-VRAM GPU cannot
     OOM. It never gates backend availability — that stays in
-    ``clear_record.providers``. ``CR_VRAM_GB`` overrides the probe; NVIDIA is
-    read from ``nvidia-smi`` and
-    AMD/Intel from the DRM card's ``mem_info_vram_total``.
+    ``clear_record.providers``. Probes, highest precedence first:
+
+    1. ``CR_VRAM_GB`` (the operator override);
+    2. the DRM card's ``mem_info_vram_total`` (amdgpu);
+    3. ``nvidia-smi --query-gpu=memory.total``;
+    4. when ``nvidia-smi`` runs but reports no numeric total — the unified-memory
+       signature on a GPU with no dedicated framebuffer — a conservative share
+       of ``/proc/meminfo`` ``MemTotal`` (see :data:`_UMA_MEMORY_SHARE`);
+    5. otherwise ``None``, and :func:`auto_jobs` uses the 8 GB floor.
     """
     override = os.environ.get("CR_VRAM_GB", "").strip()
     if override:
@@ -228,13 +248,50 @@ def detect_vram_gb() -> float | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
+    # A failed query (no device attached, driver hiccup) tells us nothing about
+    # memory, so it must not be mistaken for UMA: only a successful query with a
+    # device row may be read as unified memory. A row that yields no number
+    # (``N/A`` / ``Not Supported``) is exactly that signal.
     totals: list[float] = []
+    rows = 0
     for line in (proc.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        rows += 1
         try:
             totals.append(float(line.strip()))
         except ValueError:
             continue
-    return max(totals) / 1024 if totals else None
+    if proc.returncode != 0 or rows == 0:
+        return None
+    if totals:
+        return max(totals) / 1024
+    return _uma_vram_gb()
+
+
+def _uma_vram_gb() -> float | None:
+    """Claimable VRAM (GB) on a unified-memory GPU, or ``None`` off Linux.
+
+    Called only when ``nvidia-smi`` ran but reported no numeric total, which on
+    an iGPU means memory is shared with the CPU (NVIDIA's own guidance for the
+    DGX Spark/GB10). Read total system memory from ``/proc/meminfo`` and claim
+    only :data:`_UMA_MEMORY_SHARE` of it. That file is Linux-only, so elsewhere
+    this returns ``None`` — the 8 GB floor then applies — without a new
+    dependency.
+    """
+    try:
+        text = _PROC_MEMINFO.read_text(encoding="ascii")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("MemTotal:"):
+            continue
+        try:
+            kib = float(line.split()[1])
+        except (IndexError, ValueError):
+            return None
+        return kib / (1024**2) * _UMA_MEMORY_SHARE
+    return None
 
 
 def auto_jobs(

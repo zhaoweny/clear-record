@@ -12,15 +12,21 @@ from clear_record.providers.backends import (
     BACKENDS,
     PluginLoadProbe,
     available_backend_ids,
+    backend_availability,
     get_backend,
     probe_ggml_plugin_load,
 )
 from clear_record.providers.base import (
+    APPLE_SPEECH_BACKEND_ID,
+    Availability,
     Backend,
     BackendBase,
     BackendId,
     BackendInfo,
     DEFAULT_MODEL,
+    RUNTIME_SYSTEM,
+    RUNTIME_WHISPER_CLI,
+    WINDOWS_AI_BACKEND_ID,
 )
 from clear_record.providers.paths import resolve_models_dir
 from clear_record.providers.process import (
@@ -31,7 +37,9 @@ from clear_record.providers.process import (
 )
 
 __all__ = [
+    "APPLE_SPEECH_BACKEND_ID",
     "BACKENDS",
+    "Availability",
     "Backend",
     "BackendBase",
     "BackendId",
@@ -41,8 +49,12 @@ __all__ = [
     "PluginLoadProbe",
     "ProcessCancelled",
     "ProcessRunner",
+    "RUNTIME_SYSTEM",
+    "RUNTIME_WHISPER_CLI",
     "SubprocessRunner",
+    "WINDOWS_AI_BACKEND_ID",
     "available_backend_ids",
+    "backend_availability",
     "get_backend",
     "probe_ggml_plugin_load",
     "resolve_models_dir",

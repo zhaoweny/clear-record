@@ -212,18 +212,30 @@ def transcribe(
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
     backend = get_backend(backend_id)
-    if not backend.available():
-        hint = (
-            "`brew install whisper-cpp`"
-            if backend_id == "apple"
-            else "a system `whisper-cli` + a ggml GPU plugin (see README)"
-        )
+    status = backend.availability()
+    if not status.available:
+        if not backend.info.uses_ggml_plugin:
+            hint = "the runtime this backend needs (see docs/adr/0019)"
+        elif backend_id == "apple":
+            hint = "`brew install whisper-cpp`"
+        else:
+            hint = "a system `whisper-cli` + a ggml GPU plugin (see README)"
+        reason = f" — {status.reason}" if status.reason else ""
         raise SystemExit(
-            f"[transcribe] backend '{backend_id}' is not available on this machine.\n"
+            f"[transcribe] backend '{backend_id}' is not available on this machine"
+            f"{reason}.\n"
             f"  Install {hint}; runtime requirements are in docs/adr/0005."
         )
 
-    if check_plugin:
+    if check_plugin and not backend.info.uses_ggml_plugin:
+        # `--check-plugin` is a whisper-cli/ggml probe; a system-native backend
+        # has no plugin to load, so the flag is a documented no-op rather than an
+        # inconclusive result.
+        w.log(
+            f"[transcribe] --check-plugin ignored: backend '{backend_id}' is a "
+            f"{backend.info.runtime} backend (it has no ggml plugin)"
+        )
+    elif check_plugin:
         # Opt-in: `available()` proves the plugin *file* is present, not that the
         # CLI can load it. A one-shot probe (cached per CLI invocation) catches an
         # ABI/build mismatch that would otherwise fall back to CPU silently.

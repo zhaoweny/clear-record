@@ -24,7 +24,12 @@ from clear_record.core import (
     pipeline_spec,
     resolve_options,
 )
-from clear_record.providers import BACKENDS, available_backend_ids, resolve_models_dir
+from clear_record.providers import (
+    BACKENDS,
+    available_backend_ids,
+    backend_availability,
+    resolve_models_dir,
+)
 
 from clear_record.cli import auto
 from clear_record.cli import stages
@@ -489,13 +494,12 @@ def _main(args: argparse.Namespace) -> int:
     command = args.command
 
     if command == "backends":
-        known = tuple(BACKENDS)
-        available = available_backend_ids()
-        for bid in known:
-            state = "available" if bid in available else "unavailable"
-            if not args.all and state != "available":
+        for bid, status in backend_availability().items():
+            if not args.all and not status.available:
                 continue
-            print(f"{bid:8s} {state}")
+            state = "available" if status.available else "unavailable"
+            reason = f" — {status.reason}" if status.reason else ""
+            print(f"{bid:12s} {state}{reason}")
         return 0
 
     if command == "synth":

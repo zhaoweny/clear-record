@@ -453,6 +453,10 @@ def transcribe(
     backends that share in-process model state are always serialized).
     Cancellation terminates exactly this pool's children through its own
     injected :class:`CancellableProcessRunner`.
+
+    A backend that declares ``chunked=False`` — a whole-file OS service — is
+    handed each source as a single window; the cache and the worker pool are
+    otherwise unchanged (ADR-0019).
     """
     backend_id = backend.info.id
     chosen_model = options.model or backend.info.default_model
@@ -482,7 +486,13 @@ def transcribe(
     cached_hits: list[str] = []
     for src in sources:
         duration = _duration(src.path)
-        chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
+        if backend.info.chunked:
+            chunks = plan_chunks(duration, chunk_seconds, overlap_seconds)
+        else:
+            # A whole-file/streaming backend (``chunked=False``) is handed the
+            # source once; the per-source chunk cache still provides coarse
+            # progress and resume (ADR-0019).
+            chunks = [(0.0, duration)] if duration > 0 else []
         cache = workspace.chunk_cache(src.id).ensure()
         run_meta = chunk_cache_key(
             backend=backend_id,

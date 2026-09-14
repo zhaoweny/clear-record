@@ -42,7 +42,7 @@ from collections.abc import Callable
 
 from clear_record.core import DECODER_KNOB_FIELDS, Segment, TranscriptionResult
 
-from clear_record.providers.base import Backend, BackendBase, BackendInfo
+from clear_record.providers.base import Availability, Backend, BackendBase, BackendInfo
 from clear_record.providers.paths import resolve_models_dir
 from clear_record.providers.process import ProcessRunner, SubprocessRunner
 
@@ -336,6 +336,15 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
     process, so it is a one-shot cost per CLI invocation, never per chunk. It
     never runs on the default ``available()`` path.
     """
+    info = getattr(backend, "info", None)
+    if info is not None and not getattr(info, "uses_ggml_plugin", True):
+        # A system-native (or otherwise non-whisper-cli) backend has no ggml
+        # plugin to load; the probe is not applicable rather than inconclusive.
+        return PluginLoadProbe(
+            None,
+            f"{info.id!r} is a {info.runtime} backend; the ggml plugin probe "
+            "does not apply",
+        )
     families = tuple(getattr(backend, "gpu_backends", ()) or ())
     if not families:
         return PluginLoadProbe(None, "backend does not use ggml plugins")
@@ -661,13 +670,30 @@ class _WhisperCliBackend(BackendBase):
         """The ggml backend families this adapter accepts (for the load probe)."""
         return self._gpu_backends
 
-    def available(self) -> bool:
-        return (
-            platform.system() == self._system
-            and _find_whisper_cli() is not None
-            and _find_ggml_gpu_backend(self._gpu_backends) is not None
-            and self._device_check()
-        )
+    def availability(self) -> Availability:
+        """Cheap probe naming the first failing check, for ``clear-record backends``.
+
+        Same verdict as the old boolean, with the reason attached: the platform,
+        the CLI, the ggml plugin, or the vendor GPU device. ``available()`` is
+        inherited from :class:`BackendBase` and derives from this.
+        """
+        system = platform.system()
+        if system != self._system:
+            return Availability(False, f"requires {self._system} (this is {system})")
+        if _find_whisper_cli() is None:
+            return Availability(
+                False, "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
+            )
+        plugin = _find_ggml_gpu_backend(self._gpu_backends)
+        if plugin is None:
+            families = "/".join(self._gpu_backends)
+            return Availability(
+                False, f"no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
+            )
+        if not self._device_check():
+            return Availability(False, "no matching GPU device found")
+        families = "/".join(self._gpu_backends)
+        return Availability(True, f"whisper-cli + ggml {families} plugin")
 
     def prepare(self, model: str | None, model_dir: str | None) -> str:
         """Resolve (downloading on first use) this backend's ggml model path.
@@ -850,6 +876,15 @@ def available_backend_ids() -> tuple[str, ...]:
     return tuple(bid for bid, backend in BACKENDS.items() if backend.available())
 
 
+def backend_availability() -> dict[str, Availability]:
+    """Each catalog backend's probe verdict with its reason, in catalog order.
+
+    The ``clear-record backends`` command reads this so an unavailable backend
+    reports *why* (OS version, capability, asset), not only that it is absent.
+    """
+    return {bid: backend.availability() for bid, backend in BACKENDS.items()}
+
+
 def get_backend(backend_id: str) -> Backend:
     try:
         return BACKENDS[backend_id]
@@ -861,6 +896,7 @@ __all__ = [
     "BACKENDS",
     "PluginLoadProbe",
     "available_backend_ids",
+    "backend_availability",
     "get_backend",
     "probe_ggml_plugin_load",
 ]

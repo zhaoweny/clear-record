@@ -32,7 +32,12 @@ import soundfile as sf
 
 from clear_record.engine import channel_count
 from clear_record.engine.audio import read_audio
-from clear_record.providers import available_backend_ids, resolve_models_dir
+from clear_record.providers import (
+    APPLE_SPEECH_BACKEND_ID,
+    WINDOWS_AI_BACKEND_ID,
+    available_backend_ids,
+    resolve_models_dir,
+)
 
 from clear_record.cli.transcription import auto_jobs, detect_vram_gb, model_vram_gb
 from clear_record.cli.workspace import discover_audio
@@ -52,8 +57,8 @@ BACKEND_AUTO = "auto"
 #: and already correct for later. The remaining ids are the shipped
 #: ``whisper-cli`` family and are the portable fallback.
 BACKEND_PREFERENCE: tuple[str, ...] = (
-    "apple-speech",  # macOS 26+ SpeechTranscriber (unbuilt; future native path)
-    "windows-ai",  # Windows AI Speech (unbuilt; future native path)
+    APPLE_SPEECH_BACKEND_ID,  # macOS 26+ SpeechTranscriber (unbuilt; native path)
+    WINDOWS_AI_BACKEND_ID,  # Windows AI Speech (unbuilt; native path)
     "apple",  # whisper-cli + ggml Metal
     "nvidia",  # whisper-cli + ggml CUDA/Vulkan
     "amd",  # whisper-cli + ggml Vulkan/ROCm

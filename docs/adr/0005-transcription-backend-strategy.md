@@ -4,12 +4,12 @@ Status: active
 Date: 2026-09-09
 
 - Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
-- [OPEN] A **system-native backend family** — Apple `SpeechTranscriber` (macOS
-  26+) and Windows `Microsoft.Windows.AI.Speech` — is a requested, unbuilt
-  feature (owner, 2026-09-14). Neither drives `whisper-cli`, so adding them
-  **changes the property this ADR fixes** ("every backend drives the system
-  `whisper-cli` + a ggml plugin") and needs its own ADR. Scoped in the local
-  tracker `.scratch/system-speech-backends/`.
+- Superseded in part by the **2026-09-14 Update** below: the strategy is **not
+  bound to `whisper-cli`**. Native, OS-provided transcription paths are
+  first-class backends, and `whisper-cli` + a ggml plugin is the **portable
+  fallback**. The system-native family (Apple `SpeechTranscriber`, Windows
+  `Microsoft.Windows.AI.Speech`) is scoped in the local tracker
+  `.scratch/system-speech-backends/`.
 
 ## Context
 
@@ -143,3 +143,39 @@ Date: 2026-09-09
   transcribe stage calls it once, single-threaded, before the chunk pool. This
   mildly extends the interface enumerated above; `docs/architecture.md` and
   `packages/providers/README.md` describe the same seam.
+
+## Update (2026-09-14) — native backends are first-class; `whisper-cli` is the fallback
+
+Owner position, verbatim: *"we are expanding to cover apple native and windows
+native path anyway, so we are not strictly bound to just whisper-cli - it's a
+good and honest fallback at this moment"* (recorded in
+[`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md)). This **supersedes the
+Decision that every backend drives the system `whisper-cli`**; the rest of this
+ADR (the interface, the capability gating, the vendor-free core) stands.
+
+- [DECISION] The strategy is **not bound to `whisper-cli`**. Native, OS-provided
+  transcription paths — Apple's `SpeechAnalyzer`/`SpeechTranscriber` (macOS 26+)
+  and Windows' `Microsoft.Windows.AI.Speech` — are **first-class backends**, not
+  exceptions carved out of the rule.
+- [DECISION] **`whisper-cli` + a ggml plugin remains the portable fallback**, and
+  is the substrate the shipped `apple` / `nvidia` / `amd` adapters use today. Its
+  hot-tested evidence (M4 Metal; RX 7900 XTX Vulkan) is unchanged; what is
+  superseded is only the claim that *every* backend must go through it.
+- [DESIGN] The **`Backend` interface is the invariant** (`available()` /
+  `prepare()` / `transcribe()`), not the runtime behind it. `parallelizable`
+  becomes a **per-backend statement** rather than a property of the CLI adapter:
+  an OS service is not a per-chunk subprocess, so a native backend may be
+  process-isolated, in-process, or neither.
+- [DESIGN] The vendor-free core (ADR-0003) is unchanged: whichever runtime a
+  backend uses — a subprocess, an OS API bridge, or an in-process library — it
+  lives in `clear_record.providers` and never in `core`. An extra stops being a
+  no-op marker only when a real Python dependency appears.
+- [OPEN] Whether the **default** backend on a platform becomes the native one
+  (least setup, fastest) with `whisper-cli` as the fallback, or the reverse. The
+  profiles / auto-mode work (`.scratch/transcription-profiles/`) is where that
+  gets decided — not here.
+- [OPEN] Whether an in-process, non-`whisper-cli` runtime such as Intel's
+  OpenVINO GenAI is admitted under the same rule, and what it costs; the Intel
+  research lane (`.scratch/hardware-backends/`) is answering that.
+- [OPEN] The owner called this the position *"at this moment"*, so the balance
+  between native and fallback is expected to move as the native paths land.

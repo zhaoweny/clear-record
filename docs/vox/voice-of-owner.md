@@ -327,3 +327,18 @@ this repository. See `docs/architecture.md` §7.
   and whether a non-`whisper-cli` runtime such as OpenVINO is admitted) and
   **architecture §5/§8** (the hardware-lab table and the "NVIDIA not hot-tested"
   gap).
+
+## `whisper-cli` is a fallback, not the substrate (2026-09-14)
+
+- Owner position, verbatim: *"we are expanding to cover apple native and windows
+  native path anyway, so we are not strictly bound to just whisper-cli - it's a
+  good and honest fallback at this moment"*.
+- [DECISION] Native, OS-provided transcription paths (Apple `SpeechTranscriber`,
+  Windows `Microsoft.Windows.AI.Speech`) are **first-class backends**;
+  `whisper-cli` + a ggml plugin is the **portable fallback**. This **supersedes**
+  the "every backend drives `whisper-cli`" property — recorded as an Update on
+  [ADR-0005](../adr/0005-transcription-backend-strategy.md).
+- [OPEN] Which backend is the **default** on a platform (native vs. the fallback)
+  is left to the profiles / auto-mode work. The owner framed the balance as
+  current, not permanent (*"at this moment"*), so it is expected to move as the
+  native paths land.

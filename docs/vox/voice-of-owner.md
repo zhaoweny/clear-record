@@ -241,3 +241,31 @@ this repository. See `docs/architecture.md` §7.
   / SmartScreen first-run workarounds are documented, and signing/notarization
   is an explicit future step. No model weights or keys are bundled. See
   [ADR-0014](../adr/0014-desktop-app-distribution.md).
+
+## App shell: htmx/Alpine, PySide6 tray, pi-agent (2026-09-14)
+
+- Owner directives, verbatim:
+  - *"so we would have: a python back-end, a python mcp service, a pi-agent
+    powered local agent doing the useful stuff."*
+  - *"I'd like to change my decision: let's make a pi-agent compatible vue /
+    react app and produce a bundle that our fastapi could serve it; we need
+    fastapi or something for the mcp anyway."*
+  - *"and beside the obvious web ui route, let's make a pyside2 native tray icon
+    app, for supervising the service and give the whole app an entry point"*
+  - correction: *"nah, I'd like to change it again. let's try htmx and alpine.js
+    for the web-ui."*
+- [DECISION] The application shape is **Python backend + Python MCP service +
+  pi-agent-powered local agent**. The local agent talks to the MCP server; it is
+  a replaceable client, never imported by `clear_record.core` (BYOK — no key or
+  agent runtime is bundled). Prior art: maa-whirlwind ADR-0005.
+- [DECISION] The web UI is **htmx + Alpine.js**, server-rendered by FastAPI, with
+  the two libraries vendored under `clear_record/web/static/` — **no build
+  step**. This **supersedes** the briefly-stated Vue/React direction (and
+  ADR-0013's embedded Python-string assets). See
+  [ADR-0016](../adr/0016-app-shell-htmx-tray-pi-agent.md).
+- [DECISION] A **native tray supervisor** gives the app an entry point:
+  `clear-record tray` runs the console in the background and offers open /
+  status / quit from the system tray. The owner asked for "pyside2"; **PySide2
+  cannot work** on this project's Python (its wheels stop at 3.10, the project
+  requires ≥3.12), so this is **PySide6** — noted to the owner at the time.
+  It is an optional `tray` extra so the base install stays audio-only.

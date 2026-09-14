@@ -3,6 +3,11 @@
 Status: active
 Date: 2026-09-14
 
+- Superseded in part by [ADR-0016](0016-app-shell-htmx-tray-pi-agent.md)
+  (2026-09-14): the console is now server-rendered htmx/Alpine with **package-data
+  templates and vendored static assets**, not embedded Python string assets, and
+  there is a PySide6 `tray` surface beside `web`.
+
 ## Context
 
 - [VOICE: owner, 2026-09-14] *"I expect we can bundle the web up with our wheel

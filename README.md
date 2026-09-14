@@ -316,6 +316,11 @@ Run anyway (Windows); signing is a documented future step. No model weights or
 keys are bundled — the app drives the machine's own `whisper-cli` and downloads a
 ggml model on first use, exactly like the CLI.
 
+For a menu-bar app instead of a browser launch, `clear-record tray` runs the
+console in the background under a **system-tray icon** (open / status / quit).
+It is an optional extra — `pip install 'clear-record[tray]'` — so the base
+install stays small.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) (workspace tooling) and
@@ -350,7 +355,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0014)
+docs/adr/                     (decision records 0001–0016)
 ```
 
 ## License

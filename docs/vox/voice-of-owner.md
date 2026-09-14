@@ -419,6 +419,19 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   - [FACT] It also raises the stakes on **ADR-0021**: every surface before this one
     *read* local files; uploads **write multi-GB files** to a node whose auth is
     the operator's proxy. Recorded in `.scratch/managed-workspace/`.
+  - [VOICE: owner, 2026-09-15] Location clarification, verbatim: *"let's say that
+    user could use a default workspace under `$XDG_DATA_HOME` or
+    `$XDG_STATE_HOME`; but they may also choose a new place where they would save
+    the tape."*
+  - [DECISION] The default root is **`$XDG_DATA_HOME/clear-record/workspaces/`** —
+    **data, not state** (ADR-0007's split: state is the removable-without-losing-
+    data bucket; an uploaded tape is its opposite). A user-chosen place stays
+    first-class at two levels: globally (`CR_WORKSPACE_ROOT`) and **per meeting**
+    (`meeting.workspace_path`, which already exists).
+  - [DECISION] **`chunks/` should move to `$XDG_CACHE_HOME`** — ADR-0007 already
+    says so, and it matters more in a managed workspace: keeping derived cache
+    inside the content directory means deleting tapes does not reclaim the cache,
+    and a cache sweep would walk the user's data.
 - [FACT] Both touch the local-first/privacy stance: logs are where private
   material leaks by accident (file names, glossary terms, transcripts), and a
   *service* exposed beyond localhost collides with ADR-0013's "localhost only, no

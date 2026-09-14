@@ -156,19 +156,22 @@ restarted-from-zero.
 `whisper-cli` is the fallback.** Apple's `SpeechAnalyzer`/`SpeechTranscriber`
 (macOS 26+) and Windows' `Microsoft.Windows.AI.Speech` are the native direction,
 and the platform default is **native first, `whisper-cli` fallback** where a
-native path exists; the shipped `apple` / `nvidia` / `amd` adapters all use the
-`whisper-cli` + ggml substrate today (owner position, ADR-0005's 2026-09-14
-Update). The native family is **specified but unbuilt** — the seam and the Apple
-backend are scoped in the local tracker's `system-speech-backends` lane
-(Apple first; Windows deferred for its MSIX/`systemAIModels` packaging
-requirement). Backend *selection* is its own capability knob (`--backend auto`),
-not a profile choice (the `transcription-profiles` lane).
+native path exists; the shipped `apple` / `nvidia` / `amd` adapters use the
+`whisper-cli` + ggml substrate (owner position, ADR-0005's 2026-09-14 Update).
+The native family is **built**: `apple-speech` drives Apple's
+`SpeechAnalyzer`/`SpeechTranscriber` on macOS 26+ behind the same `Backend`
+interface (ADR-0019), with `whisper-cli` as the fallback wherever it is absent.
+Windows' `Microsoft.Windows.AI.Speech` is specified but **deferred** for its
+MSIX/`systemAIModels` packaging requirement. Backend *selection* is its own
+capability knob (`--backend auto`), not a profile choice (the
+`transcription-profiles` lane).
 
 [VOICE] Support all three desktop compute families behind **one interface**
 instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 
-- Apple/macOS: the **implemented** backend uses `whisper.cpp`'s **Metal**
-  backend (`ggml-metal`). `whisper.cpp` also has a **Core ML** path, and a
+- Apple/macOS: the **implemented** `apple` backend uses `whisper.cpp`'s
+  **Metal** backend (`ggml-metal`). `whisper.cpp` also has a **Core ML** path,
+  and a
   June-2026 community experiment reported an **ANE**-native encoder roughly 2×
   that; Core ML and ANE are **not implemented** in clear-record — future
   ecosystem possibilities, not claimed capabilities.
@@ -183,17 +186,18 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
             │  Backend interface: available() / prepare() / transcribe()
             ▼
    clear_record.providers
-     ┌───────────┬───────────┬───────────┐
-   apple       nvidia       amd
- Metal         CUDA         ROCm/Vulkan
- ggml-metal    Vulkan       gfx1100…
- whisper-cli   whisper-cli  whisper-cli
+     ┌─────────────┬────────────┬────────────┬────────────┐
+  apple-speech     apple        nvidia       amd
+  SpeechAnalyzer   Metal        CUDA         ROCm/Vulkan
+  on-device        ggml-metal   Vulkan       gfx1100…
+  (macOS 26+)      whisper-cli  whisper-cli  whisper-cli
 ```
 
 - A backend is a **capability**, not a hard dependency. It is usable only when
   its runtime probe succeeds (see `clear_record.providers.base.Backend.available()`).
   `clear-record backends` lists what is available on the current machine.
-- All three **drive the system `whisper-cli`** (the fallback substrate), which
+- The three `whisper-cli` backends (`apple` / `nvidia` / `amd`) **drive the
+  system `whisper-cli`** (the fallback substrate), which
   links the system `ggml` and loads a backend plugin (`ggml-metal` on macOS via
   Homebrew `whisper-cpp`; `ggml-vulkan`/`ggml-hip` for AMD,
   `ggml-cuda`/`ggml-vulkan` for NVIDIA). There
@@ -309,7 +313,7 @@ Layout:
 packages/clear-record → clear-record  single published dist; import clear_record
   src/clear_record/core       domain model — NO vendor/ML code
   src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
-  src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
+  src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech) behind the Backend interface
   src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
   src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)
@@ -317,7 +321,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0023
+docs/adr/                     decision records 0001–0026
 docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```
@@ -349,10 +353,11 @@ runnable, and the **project console** is built on top of it:
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI**
-currently renders projects, the glossary table, meetings and tape sets, and the
-**live run view**. The **archive view**, the **agent tasks**, the **MCP
-tuning-loop surface** and **guided agent setup** are **specified but unbuilt** —
-see ADR-0018 and the trackers below.
+renders projects, the glossary table, meetings and tape sets, the **live run
+view**, **tape upload** into a managed workspace, and the **archive view**, and
+the **MCP surface** now carries the **tuning loop** (ADR-0017, ADR-0018). The
+**agent tasks** (their prompts and console wiring) and **guided agent setup**
+are **specified but unbuilt** — see ADR-0018 and the trackers below.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
@@ -397,29 +402,34 @@ see ADR-0018 and the trackers below.
 `PipelineSpec`. **Meeting-tape readiness:** multi-channel input (per-channel
 split), chunked/resumable transcription with progress, baseline diarization, a
 glossary initial prompt, and Apple/macOS transcription are all landed. The
-Apple backend runs through the system `whisper-cli` + `ggml-metal` (a
-subprocess, no Python wheel) and auto-downloads its ggml model on first use.
+`apple` backend runs through the system `whisper-cli` + `ggml-metal` (a
+subprocess, no Python wheel) and auto-downloads its ggml model on first use;
+the separate **`apple-speech`** native backend needs neither (ADR-0019).
 
 **Remaining gaps.** The **NVIDIA** path shares the hot-tested AMD code path but
 is **not hot-tested** on real NVIDIA hardware (the DGX Spark note in §5 is a
 candidate target); the **AMD** path's ROCm/HIP half is not exercised;
 **diarization** is a transparent baseline, not a deep-embedding system, and will
 struggle with same-pitch speakers and heavy overlap; and the exotic
-spatial-invention scope (§7) remains out of scope. Beyond the pipeline, these
-are **specified but unbuilt** (each scoped in a lane of the local tracker, which
-is not published):
+spatial-invention scope (§7) remains out of scope. Beyond the pipeline, what is
+still **specified but unbuilt** (each scoped in a lane of the local tracker,
+which is not published):
 
-- **Apple-native** (`SpeechTranscriber`) first, **Windows-native** deferred —
-  the `system-speech-backends` lane;
-- **profiles and `--auto`** (fast · balanced · accurate · custom, the missing
-  decoder knobs, backend `auto`) — the `transcription-profiles` lane;
-- the **agent tasks** (BYOK runner + glossary collection, transcript check,
-  minutes) — ADR-0018, the `project-console` lane, tickets 07–10;
-- the **MCP tuning-loop surface** (read transcript, project/meeting notes, run
-  options on `start_run`) — the `project-console` lane, tickets 21+;
-- the **console UI** still to come — **archive view**, meeting review +
-  minutes, and **guided agent setup** — the `project-console` lane, tickets
-  16–17, 20.
+- **Windows-native** (`Microsoft.Windows.AI.Speech`) — deferred for its
+  MSIX/`systemAIModels` packaging requirement. Apple-native has left this list:
+  it landed as the `apple-speech` backend (ADR-0019);
+- the **three agent tasks** — glossary collection, transcript check and minutes.
+  Their runner seam has landed (ADR-0018); the task prompts and their console
+  wiring have not;
+- **meeting review + minutes** and **guided agent setup** in the console, and
+  deeper **diarization** behind the same seam.
+
+No longer gaps, having landed since this list was written: **profiles and
+`--auto`** (the profile table, the decoder knobs and the explainable recommended
+default), the **MCP tuning-loop surface** (read transcript, notes, run options
+on `start_run`), the **archive view**, **tape upload / storage** for a managed
+workspace, and **scoped re-runs** (a glossary edit no longer re-decodes every
+chunk of every source, so the tuning loop is affordable on multi-hour tapes).
 
 **Ordered next slices (each a ticket-tracked slice; no branching in recipes):**
 
@@ -427,18 +437,11 @@ is not published):
    DGX Spark research is a candidate target), decide whether to add an **Intel**
    adapter from the hardware research, and retire the AMD subprocess if a
    maintained Vulkan/HIP wheel appears.
-2. **Apple-native backend** — `SpeechAnalyzer`/`SpeechTranscriber` as the first
-   native backend behind the existing `Backend` seam; Windows-native stays
-   deferred, and `--backend auto` picks the native path once it lands.
-3. **Profiles / `--auto`** — the shared profile table, the missing decoder
-   knobs, and the explainable recommended default; this also unblocks run
-   options in the console and over MCP.
-4. **Agent tasks** — the BYOK runner seam plus glossary collection, transcript
-   check and minutes, landing as reviewable drafts (ADR-0018).
-5. **MCP tuning-loop surface** — read-transcript, project/meeting notes, and run
-   options on `start_run`, so the glossary ↔ transcript loop is real.
-6. **Console UI** — archive view, meeting review + minutes, and guided agent
-   setup. **Diarization** remains a baseline to deepen behind the same seam.
+2. **Agent tasks** — glossary collection, transcript check and minutes as
+   reviewable drafts, on the runner seam that has landed (ADR-0018).
+3. **Console UI** — meeting review + minutes, and guided agent setup, over the
+   agent tasks. **Diarization** remains a baseline to deepen behind the same
+   seam.
 
 ---
 

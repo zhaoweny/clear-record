@@ -81,20 +81,27 @@ uv run --all-packages --extra apple clear-record --help
 The release flow — version bump, TestPyPI rehearsal, tag, and the OIDC publish —
 is in [`docs/releasing.md`](docs/releasing.md).
 
-## Backends (Apple · NVIDIA · AMD)
+## Backends (native Apple Speech · Apple / NVIDIA / AMD via `whisper-cli`)
 
 Inspired by the observation (Marco Arment / Overcast) that Mac frameworks are
-excellent for on-device transcription, the transcription step supports all
-three major desktop compute families behind one interface:
+excellent for on-device transcription, the transcription step supports the three
+major desktop compute families behind one interface — and, on macOS 26+, Apple's
+own on-device transcriber:
 
 | id | Vendor | Frameworks | Stack |
 |---|---|---|---|
+| `apple-speech` | Apple/macOS 26+ | `SpeechAnalyzer`/`SpeechTranscriber` | on-device; no `whisper-cli`, no model download |
 | `apple` | Apple/macOS | Metal | system `whisper-cli` + `ggml-metal` |
 | `nvidia` | NVIDIA | CUDA, Vulkan | system `whisper-cli` + `ggml-cuda`/`ggml-vulkan` |
 | `amd` | AMD Radeon | ROCm, Vulkan | system `whisper-cli` + `ggml-vulkan`/`ggml-hip` |
 
 Each backend is a *capability*, not a hard dependency — it is usable only when
-its runtime probe succeeds. All three drive the system `whisper-cli`
+its runtime probe succeeds. A native path is preferred where one exists, so the
+default is **native first, `whisper-cli` fallback** (ADR-0005), and
+`--backend auto` applies the same order. `apple-speech` installs nothing: no
+`whisper-cli`, no ggml plugin, no downloaded model — it needs macOS 26+ and
+reserves the locale's asset on first use. The three ggml backends drive the
+system `whisper-cli`
 (macOS/Homebrew: `whisper-cpp` + `ggml-metal`; Arch: `whisper-cpp` +
 `ggml-cuda`/`ggml-vulkan`/`ggml-hip`) and their extras install no
 Python package (they are no-op markers). `clear-record backends` shows what is
@@ -358,9 +365,12 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 `--dir` workspace and a meeting's user-chosen `workspace_path` are unchanged
 ([deployment guide §4](docs/service-deployment.md)).
 
-> **Status:** the console currently covers projects and the multi-project
-> glossary table. Running tapes with progress, archiving, and the agent tasks
-> (glossary collection, transcript check, minutes) are the next slices.
+> **Status:** the console covers projects, the multi-project glossary table,
+> meetings and tape sets, running tapes with progress and a live run view, tape
+> upload into a managed workspace, and the archive view; the MCP surface carries
+> the glossary ↔ transcript tuning loop. The **agent tasks** (glossary
+> collection, transcript check, minutes) and the guided agent setup are the next
+> slices (ADR-0018).
 
 ### Desktop app (macOS · Windows)
 
@@ -442,8 +452,9 @@ uv run --all-packages --extra apple clear-record --help
 
 > `uv sync --all-packages` creates the env and installs all workspace members +
 > dev deps (this is the `just verify` step). The `--extra <backend>` markers are
-> no-ops: they install no Python package, because every backend drives the
-> system `whisper-cli` + a ggml plugin (see *Backends* above).
+> no-ops: they install no Python package, because the `apple` / `nvidia` / `amd`
+> backends drive the system `whisper-cli` + a ggml plugin, and the native
+> `apple-speech` path needs neither (see *Backends* above).
 
 ## Repository layout
 
@@ -451,12 +462,12 @@ uv run --all-packages --extra apple clear-record --help
 packages/clear-record → dist clear-record, import clear_record
   src/clear_record/core       backend-agnostic domain model (no vendor/ML code)
   src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
-  src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
+  src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine
   frontend                    the console's front-end source (Vite + Tailwind; output committed into web/static)
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0023)
+docs/adr/                     (decision records 0001–0026)
 ```
 
 ## License

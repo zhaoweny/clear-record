@@ -18,9 +18,12 @@ subscription.
   provider interface; permissive stacks are preferred, copyleft components are
   never linked or vendored into the MIT core (ADR-0003).
 - **Backends:** Apple/macOS (Metal), NVIDIA (CUDA/Vulkan), AMD (ROCm/Vulkan) —
-  one interface, three families (ADR-0005). All three drive the system
+  one interface, three families (ADR-0005) — plus Apple's native `apple-speech`
+  (`SpeechAnalyzer`/`SpeechTranscriber`, macOS 26+; ADR-0019) as the preferred
+  native path where it exists. The three families drive the system
   `whisper-cli` + a ggml plugin (`ggml-metal` on macOS, `ggml-cuda`/
-  `ggml-vulkan`/`ggml-hip` on Linux); every backend extra (including `apple`) is
+  `ggml-vulkan`/`ggml-hip` on Linux); the native path drives neither. Every
+  backend extra (including `apple` and `apple-speech`) is
   a no-op Python marker. A missing ggml model auto-downloads on first use — a
   **provisioning** step, not an execution dependency: once present, transcription
   needs no network (offline → the actionable `hf download` pre-fetch error).
@@ -35,7 +38,7 @@ subscription.
 |---|---|
 | Architecture + provenance (the primary doc) | `docs/architecture.md` |
 | Owner voice (what the owner actually wants) | `docs/vox/voice-of-owner.md` |
-| Decision records (0001–0020) | `docs/adr/` |
+| Decision records (0001–0026) | `docs/adr/` |
 | Agent workflow / landing geometry | `AGENTS.md`, `docs/agents/git-worktree.toml` |
 | Issue tracker + triage | `docs/agents/` |
 

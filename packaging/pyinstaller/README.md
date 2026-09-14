@@ -40,11 +40,15 @@ built on macOS, a Windows app on Windows. The `build-app` CI workflow does both.
 
 The builds are **unsigned**. That means:
 
-- **macOS:** Gatekeeper will refuse a downloaded `.app` ("Apple could not verify
-  …"). Users can still open it via right-click → **Open**, or
-  `xattr -dr com.apple.quarantine /Applications/clear-record.app`. Removing this
-  friction needs an Apple Developer ID and notarization — a deliberate future
-  step, not done here.
+- **macOS:** Gatekeeper refuses a downloaded `.app` ("Apple could not verify
+  …"). On macOS 15 (Sequoia) and later the old right-click → **Open** shortcut
+  **no longer works**; the user has to try opening it once, then go to
+  **System Settings → Privacy & Security**, scroll to Security, and click
+  **Open Anyway**. Clearing the download flag also works:
+  `xattr -dr com.apple.quarantine /Applications/clear-record.app`.
+  Removing this friction needs an **Apple Developer Program membership
+  ($99/year)** — a Developer ID certificate plus notarization; a deliberate
+  future step, not done here.
 - **Windows:** SmartScreen may show "Windows protected your PC" → **More info** →
   **Run anyway**. Removing this needs a code-signing certificate.
 

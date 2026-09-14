@@ -67,9 +67,13 @@ Date: 2026-09-14
   conventional, well-documented choice and needs no extra packaging DSL; the
   others trade familiarity for size/speed gains not worth the learning curve
   here.
-- **Signing and notarizing now** — requires a paid Apple Developer ID and a
-  Windows code-signing certificate; the owner has neither in this repo. Recorded
-  as a future step with the exact user-facing workaround documented instead.
+- **Signing and notarizing now** — requires a paid **Apple Developer Program
+  membership (US$99/year)** for a Developer ID certificate (notarization itself
+  is free but member-only) and a Windows code-signing certificate; the owner has
+  neither in this repo. Apple's fee waivers cover nonprofits, accredited
+  educational institutions and government entities, **not individuals**, so a
+  personal OSS project would not qualify. Recorded as a future step with the
+  exact user-facing workaround documented instead.
 - **Bundling the ggml model(s)** — would grow the artifact by hundreds of MB,
   duplicate model management, and violate the environment-local rule
   (ADR-0006).

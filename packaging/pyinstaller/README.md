@@ -15,13 +15,15 @@ Artifacts land in `dist/` (gitignored):
 
 | Path | What |
 |---|---|
-| `dist/clear-record/clear-record-web` | the double-click target — starts the console and opens the browser |
+| `dist/clear-record/clear-record-tray` | the double-click target — runs the console behind a menu-bar tray icon |
+| `dist/clear-record/clear-record-web` | starts the console and opens the browser |
 | `dist/clear-record/clear-record` | the full console CLI (all subcommands) |
-| `dist/clear-record.app` | macOS only — the above as an app bundle |
+| `dist/clear-record.app` | macOS only — the above as an app bundle (`CFBundleExecutable = clear-record-tray`) |
 
 `just app` runs PyInstaller from the optional `app` dependency group and pulls
-the console's stack in through the `web` extra (ADR-0013), so the verify
-environment never carries the build toolchain.
+the console's stack in through the `web` extra and PySide6 through the `tray`
+extra (ADR-0013/0016) — the tray supervises the console, so it needs both — so
+the verify environment never carries the build toolchain.
 
 **Build on each target OS.** PyInstaller does not cross-compile: a macOS app is
 built on macOS, a Windows app on Windows. The `build-app` CI workflow does both.
@@ -30,11 +32,16 @@ built on macOS, a Windows app on Windows. The `build-app` CI workflow does both.
 
 - Python + `numpy` + `soundfile` (with its bundled `libsndfile`) — the audio
   stack the pipeline needs.
-- `fastapi` + `uvicorn` and the console's UI (embedded as Python strings, so
-  there are no frontend data files to collect).
+- `fastapi` + `uvicorn` and the console's UI (templates + vendored htmx/Alpine,
+  collected as package data).
+- `PySide6` — the menu-bar tray that supervises the console and is the app's
+  entry point. Its Qt plugins and libraries come from PyInstaller's PySide6
+  hooks; the spec only has to keep `clear_record.tray.app` on the module graph
+  (its `PySide6` imports are deferred into the entry function).
 - The `clear-record` dist metadata, so the `clear_record.commands` entry point
   still resolves inside the frozen app — that is what keeps `clear-record web`
-  working there (`copy_metadata("clear-record")` in the spec).
+  and `clear-record tray` working there (`copy_metadata("clear-record")` in the
+  spec).
 
 ## Signing and first-run friction
 
@@ -59,8 +66,9 @@ The app is a **console**, not an offline bundle of models.
 ## Quitting
 
 The windowed app has no terminal, so the console's page carries a **Quit**
-button that asks the local server to stop (`POST /api/shutdown`). Closing the
-browser tab does not stop the server.
+button that asks the local server to stop (`POST /api/shutdown`), and the tray's
+menu has a **Quit** item that stops the server and exits. Closing the browser
+tab does not stop the server.
 
 ## Adding an icon later
 

@@ -28,6 +28,13 @@ ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 ALL_PYPROJECTS = [ROOT_PYPROJECT, *MEMBER_PYPROJECTS]
 PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
 
+# The desktop app build (ADR-0014, ADR-0016): the `app` recipe and the
+# PyInstaller spec must keep shipping the tray, or a double-click silently
+# degrades from a menu-bar home to a browser tab.
+JUSTFILE = REPO_ROOT / "justfile"
+PYINSTALLER_SPEC = REPO_ROOT / "packaging" / "pyinstaller" / "clear-record.spec"
+TRAY_LAUNCHER = PYINSTALLER_SPEC.parent / "tray_launch.py"
+
 # The version shapes the manifests carry: stable X.Y.Z, a pre-release
 # X.Y.Z{a|b|rc}N (a/b accepted but unused), and the in-development X.Y.Z.devN
 # marker, which is a CI artifact and never published (no local versions; PyPI
@@ -155,6 +162,61 @@ def test_web_console_assets_ship_with_the_package() -> None:
     )
     missing = [rel for rel in required if not (web / rel).is_file()]
     assert not missing, f"missing web console assets: {missing}"
+
+
+def _just_recipe(name: str) -> str:
+    """Return a recipe's indented body, up to the next top-level entry."""
+    body: list[str] = []
+    lines = JUSTFILE.read_text().splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(f"{name}:"):
+            continue
+        for following in lines[index + 1 :]:
+            if following.startswith((" ", "\t")):
+                body.append(following.strip())
+            elif following.strip():
+                break
+        break
+    return "\n".join(body)
+
+
+def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:
+    """The frozen desktop app is the tray, not just a browser launcher (ADR-0016).
+
+    Three literals have to move together or a double-click silently degrades to a
+    browser tab: the `app` recipe pulls the `tray` extra (and `web`, which the
+    tray supervises the console through), the spec does not exclude PySide6, and
+    the macOS bundle's main executable is the tray launcher. Static text checks
+    over the justfile and the spec — no PyInstaller run, no PySide6 download.
+    """
+    recipe = _just_recipe("app")
+    assert "--extra web" in recipe, f"`just app` must pull the web extra: {recipe!r}"
+    assert "--extra tray" in recipe, f"`just app` must pull the tray extra: {recipe!r}"
+
+    spec = PYINSTALLER_SPEC.read_text()
+    excludes = re.search(r"excludes=\[(.*?)\]", spec, re.S)
+    assert excludes is not None, "spec has no excludes list"
+    assert "PySide6" not in excludes.group(1), "the spec excludes PySide6"
+
+    hidden = re.search(r"hiddenimports = \[(.*?)\]", spec, re.S)
+    assert hidden is not None, "spec has no hiddenimports list"
+    for module in (
+        "clear_record.tray",
+        "clear_record.tray.app",
+        "clear_record.tray.service",
+    ):
+        assert module in hidden.group(1), f"missing hidden import {module!r}"
+
+    assert TRAY_LAUNCHER.is_file(), f"missing frozen tray launcher: {TRAY_LAUNCHER}"
+    assert 'str(SPEC_DIR / "tray_launch.py")' in spec, "spec omits the tray launcher"
+    assert 'name="clear-record-tray"' in spec, "spec builds no clear-record-tray binary"
+    assert '"CFBundleExecutable": "clear-record-tray"' in spec, (
+        "the macOS bundle still points at a non-tray executable"
+    )
+    # The tray is the default, not the only path: the browser launcher and the
+    # CLI must remain in the bundle.
+    assert 'name="clear-record-web"' in spec
+    assert 'name="clear-record"' in spec
 
 
 def test_declares_the_clear_record_script() -> None:

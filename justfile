@@ -56,12 +56,14 @@ test:
 build:
     uv build --package clear-record --no-sources
 
-# Build the double-clickable desktop app (PyInstaller) into dist/: the web
-# launcher, the CLI, and (on macOS) a `clear-record.app` bundle. Unsigned — see
-# packaging/pyinstaller/README.md. The `app` group keeps PyInstaller out of the
-# verify environment; the `web` extra supplies the console's stack.
+# Build the double-clickable desktop app (PyInstaller) into dist/: the tray
+# launcher (the default entry point), the web launcher, the CLI, and (on macOS) a
+# `clear-record.app` bundle. Unsigned — see packaging/pyinstaller/README.md. The
+# `app` group keeps PyInstaller out of the verify environment; the `web` extra
+# supplies the console's stack and the `tray` extra supplies PySide6 — the tray
+# supervises the console, so it needs both.
 app:
-    uv run --all-packages --group app --extra web pyinstaller --noconfirm --clean packaging/pyinstaller/clear-record.spec
+    uv run --all-packages --group app --extra web --extra tray pyinstaller --noconfirm --clean packaging/pyinstaller/clear-record.spec
 
 # Show the published version. The member `clear-record` is the single published
 # dist; the virtual root is bumped in step with it by the recipes below, so the

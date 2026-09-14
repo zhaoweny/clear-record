@@ -38,13 +38,28 @@ jobs:
       - name: Build the app
         run: just app
 
-      - name: Smoke test — the frozen app still exposes `web` (macOS)
+      - name: Smoke test — the frozen CLI still exposes `web` and `tray` (macOS)
         if: runner.os == 'macOS'
-        run: ./dist/clear-record/clear-record --help | grep -q " web "
-      - name: Smoke test — the frozen app still exposes `web` (Windows)
+        run: |
+          ./dist/clear-record/clear-record --help | grep -q " web "
+          ./dist/clear-record/clear-record --help | grep -q " tray "
+      - name: Smoke test — the frozen CLI still exposes `web` and `tray` (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./dist/clear-record/clear-record.exe --help | Select-String -Quiet "web"
+        run: |
+          if (-not (./dist/clear-record/clear-record.exe --help | Select-String -Quiet "web")) { throw "web missing" }
+          if (-not (./dist/clear-record/clear-record.exe --help | Select-String -Quiet "tray")) { throw "tray missing" }
+
+      - name: Smoke test — the tray binary is bundled and is the app's entry point (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          test -x dist/clear-record/clear-record-tray
+          test "$(plutil -extract CFBundleExecutable raw dist/clear-record.app/Contents/Info.plist)" = "clear-record-tray"
+      - name: Smoke test — the tray binary is bundled (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ./dist/clear-record/clear-record-tray.exe)) { throw "tray binary missing" }
 
       - name: Package the app bundle (macOS)
         if: runner.os == 'macOS'

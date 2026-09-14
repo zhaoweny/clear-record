@@ -23,7 +23,13 @@ from mcp.server import MCPServer
 
 from clear_record.core import Progress, RecordDocument, Segment, write_json
 from clear_record.mcp.server import TOOL_NAMES, build_server
-from clear_record.service import Registry, RunManager, project_snapshot
+from clear_record.service import (
+    AutoProbe,
+    Meeting,
+    Registry,
+    RunManager,
+    project_snapshot,
+)
 
 
 def _registry(tmp_path: Path) -> Registry:
@@ -392,6 +398,130 @@ def test_start_run_rejects_unknown_profile(tmp_path: Path) -> None:
         {"project": "ops", "meeting": "kickoff", "profile": "turbo"},
     )
     assert "unknown profile 'turbo'" in message
+
+
+def _probe(**over: object) -> AutoProbe:
+    """A deterministic ``--auto`` probe (mirrors ``tests/service/test_auto.py``)."""
+    base: dict = dict(
+        available_backends=("apple",),
+        vram_gb=8.0,
+        cpu_count=16,
+        models_on_disk=frozenset({"small", "medium"}),
+        duration_s=600.0,
+        channels=1,
+        language=None,
+    )
+    base.update(over)
+    return AutoProbe(**base)
+
+
+def _runnable_meeting(tmp_path: Path) -> tuple[Registry, Meeting]:
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.set_recording_set(meeting.id, [str(tape)])
+    return registry, meeting
+
+
+def test_start_run_backend_auto_resolves_and_reports_the_choice(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``backend='auto'`` runs the resolved backend and returns the CLI's why."""
+    monkeypatch.setattr(
+        "clear_record.service.auto.available_backend_ids", lambda: ("amd", "nvidia")
+    )
+    registry, _ = _runnable_meeting(tmp_path)
+
+    seen: list = []
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen.append(options)
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    server = build_server(registry, manager)
+    run = _payload(
+        server,
+        "start_run",
+        {"project": "ops", "meeting": "kickoff", "backend": "auto"},
+    )
+    manager.wait(run["id"], timeout=10)
+
+    assert seen[0].backend == "nvidia"  # first available in the preference order
+    assert run["backend"] == "nvidia"  # the resolved options are what ran
+    assert run["options"]["backend_auto"]["backend"] == "nvidia"
+    assert any("--backend auto" in line for line in run["explanations"])
+
+
+def test_start_run_auto_resolves_and_reports_the_explanation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``auto=True`` fills the unset profile/model and returns the explanation."""
+    monkeypatch.setattr(
+        "clear_record.service.auto.probe_auto", lambda *a, **k: _probe()
+    )
+    registry, _ = _runnable_meeting(tmp_path)
+
+    seen: list = []
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen.append(options)
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    server = build_server(registry, manager)
+    run = _payload(
+        server,
+        "start_run",
+        {"project": "ops", "meeting": "kickoff", "auto": True},
+    )
+    manager.wait(run["id"], timeout=10)
+
+    assert seen[0].profile == "accurate"  # short tape, roomy machine
+    assert seen[0].model == "medium"  # the largest checkpoint already on disk
+    auto_meta = run["options"]["auto"]
+    assert auto_meta["chose"] == ["model", "profile"]
+    assert run["explanations"] == [auto_meta["explanation"]]
+
+
+def test_start_run_backend_auto_without_a_backend_is_actionable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No backend for ``backend='auto'``: a usable error, not a traceback."""
+    monkeypatch.setattr("clear_record.service.auto.available_backend_ids", lambda: ())
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
+
+    message = _error_text(
+        server,
+        "start_run",
+        {"project": "ops", "meeting": "kickoff", "backend": "auto"},
+    )
+    assert "no ASR backend is available" in message
+    assert "--backend auto" in message
+
+
+def test_start_run_auto_model_not_on_disk_is_actionable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``--auto`` never downloads: an absent model is a usable error."""
+    monkeypatch.setattr(
+        "clear_record.service.auto.probe_auto",
+        lambda *a, **k: _probe(models_on_disk=frozenset()),
+    )
+    registry, _ = _runnable_meeting(tmp_path)
+    server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
+
+    message = _error_text(
+        server,
+        "start_run",
+        {"project": "ops", "meeting": "kickoff", "auto": True},
+    )
+    # Assert the service's own wording, not a copy: MCP does not own this string.
+    assert "'medium' is not in the models directory" in message
+    assert "never downloads one" in message
 
 
 def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:

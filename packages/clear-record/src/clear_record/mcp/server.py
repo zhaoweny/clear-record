@@ -32,16 +32,19 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from clear_record.core import PipelineOptions, resolve_options
+from clear_record.core import PipelineOptions
 from clear_record.service import (
     TERM_STATUSES,
     GlossaryTerm,
     Meeting,
+    ModelNotOnDisk,
+    NoBackendAvailable,
     Project,
     Registry,
     RunManager,
     RunState,
     read_transcript as _read_transcript,
+    resolve_run,
 )
 
 SERVER_NAME = "clear-record"
@@ -50,8 +53,9 @@ INSTRUCTIONS = (
     "clear-record is a local-first transcription console. Use these tools to read "
     "and edit a project's glossary, manage its meetings and tape sets, keep the "
     "story in project and meeting notes, start and watch pipeline runs (with "
-    "explicit profile/backend/model/language), read the transcript text and list "
-    "the artifacts a run produced. Recordings and model weights are local files; "
+    "explicit profile/backend/model/language, or the opt-in auto / backend auto "
+    "resolvers), read the transcript text and list the artifacts a run produced. "
+    "Recordings and model weights are local files; "
     "this server is a thin adapter over the same service the web console uses. "
     "For the glossary ↔ transcript tuning loop the agent orchestrates: read the "
     "transcript, refine the terms, then re-run with intent."
@@ -293,17 +297,33 @@ class ServiceTools:
         model: str | None = None,
         language: str | None = None,
         glossary: str | None = None,
+        auto: bool = False,
     ) -> dict[str, Any]:
         """Start the pipeline for a meeting's latest tape set, with intent.
 
         The run executes in the background; read it with ``run_status`` and
         ``run_events``. Any of ``profile``, ``backend``, ``model``, ``language``
         and ``glossary`` (a glossary file path) may be set to re-run
-        deliberately; they are resolved by
-        ``clear_record.core.options.resolve_options`` (explicit value →
-        ``CR_*`` environment → profile → built-in default). Refused (with a
-        reason) when the meeting has no workspace, no tape set, or a run
-        already in flight.
+        deliberately. They are resolved by the service's explainable resolvers
+        (``clear_record.service.resolve_run``, the same code the console uses),
+        so the reported result is what actually runs:
+
+        - an explicit value, then the ``CR_*`` environment, then the profile,
+          then the built-in default (``clear_record.core.resolve_options``);
+        - ``backend='auto'`` replaces the sentinel with the first available ASR
+          backend;
+        - ``auto=True`` (the opt-in ``--auto``) fills the profile, model and
+          per-speaker attribution **only where left unset**, never downloading a
+          model.
+
+        The returned dict carries the resolved run plus an ``explanations`` list
+        — the resolvers' own words (also recorded in the run meta under
+        ``options.auto`` / ``options.backend_auto``) — so the caller sees what
+        ``auto`` decided instead of guessing.
+
+        Refused (with a reason) when the meeting has no workspace, no tape set,
+        a run is already in flight, no ASR backend is available for
+        ``backend='auto'``, or ``auto`` recommends a model that is not on disk.
 
         **Glossary default.** Omit ``glossary`` to apply the **project's
         confirmed-term snapshot**: it is written to the meeting workspace's
@@ -324,16 +344,27 @@ class ServiceTools:
         if glossary is not None:
             explicit["glossary"] = glossary
         try:
-            options = resolve_options(PipelineOptions(**explicit), profile=profile)
+            resolved = resolve_run(
+                PipelineOptions(**explicit),
+                profile=profile,
+                auto=auto,
+                directory=found.workspace_path,
+            )
+        except ModelNotOnDisk as exc:
+            raise ToolError(str(exc)) from exc
+        except NoBackendAvailable as exc:
+            raise ToolError(str(exc)) from exc
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         try:
-            run = self.manager.start(found, options)
+            run = self.manager.start(found, resolved.options, auto=resolved.meta)
         except ValueError as exc:
             raise ToolError(
                 f"cannot start a run for {project}/{meeting}: {exc}"
             ) from exc
-        return _as_dict(run)
+        result = _as_dict(run)
+        result["explanations"] = list(resolved.explanations)
+        return result
 
     def list_runs(self, project: str, meeting: str) -> list[dict[str, Any]]:
         """List a meeting's pipeline runs, newest first."""

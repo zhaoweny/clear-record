@@ -124,9 +124,15 @@ Date: 2026-09-14
   real protocol layer with no ASR backend and no GPU.
 - The tool surface is reviewed as a whole (`TOOL_NAMES`): a rename is a visible
   diff, so an agent's tool names cannot change silently.
-- [OPEN] `start_run` uses the service's default run options; exposing
-  backend/model/language through the tools needs a service-level seam the
-  adapter may not reach (`mcp` cannot import the CLI's `PipelineOptions`).
+- [DECISION] `start_run` accepts the run's options — `profile`, `backend`
+  (including the `--backend auto` sentinel), `model`, `language`, `glossary` and
+  the opt-in `--auto` — and resolves them through the service's re-exported
+  resolver, `clear_record.service.resolve_run` (the same code the console
+  calls, so `mcp` still never imports the CLI). The resolved options are what
+  run; the resolver's explanation (the CLI's own words) is returned to the
+  caller and recorded in the run meta, so an agent sees what `--auto` decided.
+  No-backend-available and `--auto`'s model-not-on-disk come back as
+  `ToolError`s. Closes the earlier open question on run options.
 - [OPEN] Run **stop** is not exposed: `RunManager` has no stop operation yet.
 - [OPEN] Agent-task tools (create/list, fetch context, submit result) are not in
   this slice because the service's agent runner (ticket 07) and tasks (08–10)

@@ -44,7 +44,7 @@ from clear_record.core import (
     resolve_options,
 )
 from clear_record.core import i18n
-from clear_record.core.i18n import install_if_unset, tr, trn
+from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
     BACKEND_AUTO,
     BUNDLE_FILENAME,
@@ -61,6 +61,7 @@ from clear_record.service import (
     resolve_run,
     verify_archive,
 )
+from clear_record.service.auto import render_message as render_service_message
 from clear_record.service.webhooks import (
     WebhookEmitter,
     WebhookStatus,
@@ -319,16 +320,24 @@ def _auto_view(meta: dict | None) -> dict:
 
     ``profile`` / ``knobs`` are the **resolved** values the run meta recorded;
     ``explanations`` is the CLI's own wording, reused verbatim, for whichever of
-    ``--backend auto`` / ``--auto`` ran (backend first, the CLI's order). Every
-    key is empty when the meta predates this (or the run has none), so a run
-    without auto renders unchanged.
+    ``--backend auto`` / ``--auto`` ran (backend first, the CLI's order). The
+    meta records that wording as a stable ID+parameters (``message``); the
+    console renders it with ``tr`` here, so the explanation is translated even
+    though the CLI composed it. A run recorded before ``message`` existed falls
+    back to the English ``explanation``. Every key is empty when the meta has
+    neither, so a run without auto renders unchanged.
     """
     meta = meta or {}
-    explanations = [
-        section["explanation"]
-        for key in ("backend_auto", "auto")
-        if (section := meta.get(key)) and section.get("explanation")
-    ]
+    explanations = []
+    for key in ("backend_auto", "auto"):
+        section = meta.get(key)
+        if not section:
+            continue
+        message = section.get("message")
+        if message is not None:
+            explanations.append(render_service_message(message, tr))
+        elif section.get("explanation"):
+            explanations.append(section["explanation"])
     return {
         "profile": meta.get("profile"),
         "knobs": meta.get("decoder_knobs") or {},
@@ -680,11 +689,13 @@ def create_app(
 
     def refusal(exc: managed.UploadRejected, label: str) -> dict:
         """A guard failure as the panel shows it: a translated label + the
-        service's message. The message goes through ``tr`` like every other
-        user-facing string; it is composed at run time (a filename, a size), so
-        it is not itself a catalog message ID yet — see the report's follow-up.
+        service's message.
+
+        The reason is the service's own message ID, rendered here with ``tr`` at
+        the presentation boundary — one rule, one home: the guard that enforces
+        the rule supplies the ID and its facts, and the console only translates.
         """
-        return {"label": label, "reason": tr(str(exc))}
+        return {"label": label, "reason": tr(exc.msgid, **exc.params)}
 
     def upload_refusal(meeting) -> dict | None:
         """Why this meeting cannot take an upload, in the service's own words.
@@ -924,12 +935,12 @@ def create_app(
                 form = await request.form()
             except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
                 raise managed.UploadRejected(
-                    tr("could not read the multipart upload: {error}", error=exc)
+                    deferred("could not read the multipart upload: {error}"), error=exc
                 ) from exc
             upload = form.get("file")
             if not isinstance(upload, UploadFile) or not upload.filename:
                 raise managed.UploadRejected(
-                    tr("attach the tape as a multipart file part named 'file'")
+                    deferred("attach the tape as a multipart file part named 'file'")
                 )
             await run_in_threadpool(
                 managed.upload_tape,
@@ -1051,16 +1062,12 @@ def create_app(
                 directory=meeting.workspace_path,
             )
         except ModelNotOnDisk as exc:
-            return render_run_error(
-                request,
-                meeting_id,
-                tr(
-                    "the recommended model {model!r} is not on disk, and --auto "
-                    "never downloads one; pre-fetch it or pass an explicit model",
-                    model=exc.model,
-                ),
-            )
-        except (NoBackendAvailable, ValueError) as exc:
+            # The service's own message ID, rendered at this boundary — the rule
+            # lives in the exception, not restated here.
+            return render_run_error(request, meeting_id, exc.message.render(tr))
+        except NoBackendAvailable as exc:
+            return render_run_error(request, meeting_id, exc.message.render(tr))
+        except ValueError as exc:
             return render_run_error(request, meeting_id, tr(str(exc)))
         try:
             run = runs.start(meeting, resolved.options, auto=resolved.meta)
@@ -1070,7 +1077,7 @@ def create_app(
             active = runs.active_state(meeting_id)
             if active is not None:
                 return render_run(request, active)
-            return render_run_error(request, meeting_id, str(exc))
+            return render_run_error(request, meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
     @app.get("/ui/runs/{run_id}", response_class=HTMLResponse)

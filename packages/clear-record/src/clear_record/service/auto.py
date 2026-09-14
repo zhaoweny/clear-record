@@ -20,6 +20,7 @@ from pathlib import Path
 
 from clear_record.cli import auto as _auto
 from clear_record.core import PipelineOptions, resolve_options
+from clear_record.core.i18n import deferred
 
 #: The ``--backend`` sentinel ``--backend auto`` accepts (re-exported so ``web``
 #: can name it without importing ``cli`` or ``providers``).
@@ -43,17 +44,22 @@ class ModelNotOnDisk(RuntimeError):
     """``--auto`` chose a model that is not on disk, and it never downloads one.
 
     The structured choice rides on the exception so a caller can render the
-    CLI's no-download message with the facts it names.
+    CLI's no-download message with the facts it names; ``message`` is the stable
+    ID plus parameters (render it with ``tr`` at the boundary).
     """
 
     def __init__(self, choice: AutoChoice, models_dir: str | None) -> None:
         self.choice = choice
         self.model = choice.model
         self.models_dir = models_dir
-        super().__init__(
-            f"the recommended model {choice.model!r} is not in the models "
-            "directory, and --auto never downloads one"
+        self.message = _auto.Message(
+            deferred(
+                "the recommended model {model!r} is not on disk, and --auto never "
+                "downloads one; pre-fetch it or pass an explicit model"
+            ),
+            (("model", choice.model),),
         )
+        super().__init__(str(self.message))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,6 +113,9 @@ def resolve_run(
         backend_meta = {
             "backend": backend_choice.backend,
             "explanation": backend_choice.explanation,
+            # The stable ID+parameters the console renders with ``tr``; the
+            # English ``explanation`` stays for the terminal and machine readers.
+            "message": backend_choice.message.as_json(),
         }
         options = dataclasses.replace(options, backend=backend_choice.backend)
 
@@ -122,7 +131,9 @@ def resolve_run(
 
     if directory is None:
         raise ValueError(
-            "a run needs a workspace directory before --auto can probe the tape"
+            deferred(
+                "a run needs a workspace directory before --auto can probe the tape"
+            )
         )
 
     choice = resolve_auto(
@@ -145,8 +156,19 @@ def resolve_run(
     resolved = resolve_options(
         options, profile=profile if profile is not None else choice.profile
     )
-    auto_meta = {"auto": {"explanation": choice.explanation, "chose": sorted(chose)}}
+    auto_meta = {
+        "auto": {
+            "explanation": choice.explanation,
+            "message": choice.message.as_json(),
+            "chose": sorted(chose),
+        }
+    }
     return AutoRun(resolved, _with_backend(auto_meta), tuple(explanations))
+
+
+#: Re-exported so the console (which may not import ``cli``) can render a stored
+#: explanation node with its own ``tr`` — the boundary owns the translation.
+render_message = _auto.render_message
 
 
 __all__ = [
@@ -159,6 +181,7 @@ __all__ = [
     "NoBackendAvailable",
     "available_backend_ids",
     "probe_auto",
+    "render_message",
     "resolve_auto",
     "resolve_backend",
     "resolve_run",

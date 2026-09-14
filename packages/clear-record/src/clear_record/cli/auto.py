@@ -41,6 +41,7 @@ from clear_record.providers import (
 
 from clear_record.cli.transcription import auto_jobs, detect_vram_gb, model_vram_gb
 from clear_record.cli.workspace import discover_audio
+from clear_record.core.i18n import deferred
 
 #: The sentinel ``--backend`` accepts for capability-driven selection.
 BACKEND_AUTO = "auto"
@@ -95,8 +96,96 @@ _ROOMY_CPUS = 8
 _MULTICHANNEL_MIN = 3
 
 
+# --------------------------------------------------------------------------- #
+# translatable explanations: a message ID plus parameters, rendered at a boundary
+# --------------------------------------------------------------------------- #
+#: The English renderer: the identity message ID, placeholders filled. It is what
+#: ``str(Message)`` uses so the terminal and machine surfaces stay English.
+def _english(msgid: str, **params: object) -> str:
+    return msgid.format(**params) if params else msgid
+
+
+@dataclasses.dataclass(frozen=True)
+class Message:
+    """A stable message ID plus its parameters — an explanation a boundary renders.
+
+    The ID **is the English source string** (the i18n rule), and every ID is
+    marked with :func:`clear_record.core.i18n.deferred` so ``pybabel`` extracts
+    it. ``render(translate)`` fills it in the caller's locale; ``str(message)``
+    is the English form, so the terminal's own print and the run meta a machine
+    reads are unchanged. A parameter may itself be a :class:`Message` (or a
+    :class:`Joined` of them), so a composed explanation translates as a tree
+    rather than a half-English sentence.
+
+    A boundary — the console — renders it with ``tr``; the resolver never calls
+    ``tr`` itself, which keeps it pure and keeps the English default byte-for-byte
+    identical.
+    """
+
+    msgid: str
+    params: tuple[tuple[str, object], ...] = ()
+
+    def render(self, translate) -> str:
+        """Render in a locale, using ``translate`` (the boundary's ``tr``)."""
+        return render_message(self.as_json(), translate)
+
+    def as_json(self) -> dict:
+        """The JSON-safe form recorded in run meta (machine-read, untranslated)."""
+        return {
+            "id": self.msgid,
+            "params": {name: _json_value(value) for name, value in self.params},
+        }
+
+    def __str__(self) -> str:
+        return render_message(self.as_json(), _english)
+
+
+@dataclasses.dataclass(frozen=True)
+class Joined:
+    """A locale-aware join of message parts (the "chose a, b and c" clause)."""
+
+    separator: str
+    parts: tuple[Message, ...]
+
+
+def _json_value(value: object) -> object:
+    if isinstance(value, Message):
+        return value.as_json()
+    if isinstance(value, Joined):
+        return {
+            "join": value.separator,
+            "parts": [part.as_json() for part in value.parts],
+        }
+    return value
+
+
+def render_message(node: object, translate) -> str:
+    """Render a :meth:`Message.as_json` node (or a scalar) in a locale.
+
+    Recursive so a nested explanation translates whole: a plain value passes
+    through, a ``{"join": …}`` node joins its rendered parts, and a message node
+    is the message ID translated with its rendered parameters. The console calls
+    this with ``tr`` — the service never translates.
+    """
+    if not isinstance(node, dict):
+        return node  # type: ignore[return-value]
+    if "join" in node:
+        return node["join"].join(
+            render_message(part, translate) for part in node["parts"]
+        )
+    params = {
+        name: render_message(value, translate) if isinstance(value, dict) else value
+        for name, value in node["params"].items()
+    }
+    return translate(node["id"], **params)
+
+
 class NoBackendAvailable(RuntimeError):
     """No known ASR backend is available on this machine for ``--backend auto``."""
+
+    def __init__(self, message: Message) -> None:
+        self.message = message
+        super().__init__(str(message))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -104,7 +193,12 @@ class BackendChoice:
     """The backend ``--backend auto`` resolved, and why."""
 
     backend: str
-    explanation: str
+    message: Message
+
+    @property
+    def explanation(self) -> str:
+        """The English one-liner the terminal prints (unchanged default)."""
+        return str(self.message)
 
 
 def resolve_backend(available: Iterable[str]) -> BackendChoice:
@@ -122,19 +216,31 @@ def resolve_backend(available: Iterable[str]) -> BackendChoice:
             here = ", ".join(sorted(present)) or "none"
             return BackendChoice(
                 backend=backend_id,
-                explanation=(
-                    f"--backend auto: chose {backend_id!r} — first available in "
-                    f"the native-first preference order ({candidates}); "
-                    f"available here: {here}."
+                message=Message(
+                    deferred(
+                        "--backend auto: chose {backend!r} — first available in "
+                        "the native-first preference order ({candidates}); "
+                        "available here: {here}."
+                    ),
+                    (
+                        ("backend", backend_id),
+                        ("candidates", candidates),
+                        ("here", here),
+                    ),
                 ),
             )
     raise NoBackendAvailable(
-        "no ASR backend is available on this machine; `--backend auto` found "
-        f"none of: {', '.join(BACKEND_PREFERENCE)}.\n"
-        "  Install a system `whisper-cli` + a ggml GPU plugin (on macOS, "
-        "`brew install whisper-cpp`; on Linux, e.g. a distro `whisper-cpp` plus "
-        "`ggml-cuda`/`ggml-vulkan`; see docs/adr/0005), or pass an explicit "
-        "`--backend <id>`."
+        Message(
+            deferred(
+                "no ASR backend is available on this machine; `--backend auto` found "
+                "none of: {backends}.\n"
+                "  Install a system `whisper-cli` + a ggml GPU plugin (on macOS, "
+                "`brew install whisper-cpp`; on Linux, e.g. a distro `whisper-cpp` plus "
+                "`ggml-cuda`/`ggml-vulkan`; see docs/adr/0005), or pass an explicit "
+                "`--backend <id>`."
+            ),
+            (("backends", ", ".join(BACKEND_PREFERENCE)),),
+        )
     )
 
 
@@ -173,7 +279,12 @@ class AutoChoice:
     preferred_model: str
     jobs: int
     diarize: bool
-    explanation: str
+    message: Message
+
+    @property
+    def explanation(self) -> str:
+        """The English one-liner the terminal prints (unchanged default)."""
+        return str(self.message)
 
 
 def _roomy(vram_gb: float | None, cpu_count: int) -> bool:
@@ -192,21 +303,25 @@ def _fits(model: str, vram_gb: float | None, cpu_count: int) -> bool:
 
 def _choose_profile(
     duration_s: float, vram_gb: float | None, cpu_count: int
-) -> tuple[str, str]:
+) -> tuple[str, Message]:
     """Profile by tape length and machine headroom, with a reason."""
     if duration_s <= 0:
-        return "balanced", "the tape length is unknown"
+        return "balanced", Message(deferred("the tape length is unknown"))
     roomy = _roomy(vram_gb, cpu_count)
     if duration_s >= _LONG_TAPE_S:
         if roomy:
-            return "balanced", "a long tape on a roomy machine"
-        return "fast", "a long tape on a modest machine (quick first pass)"
+            return "balanced", Message(deferred("a long tape on a roomy machine"))
+        return "fast", Message(
+            deferred("a long tape on a modest machine (quick first pass)")
+        )
     if duration_s <= _SHORT_TAPE_S and roomy:
-        return "accurate", "a short tape on a machine that can afford it"
-    return "balanced", "a middle-of-the-road tape"
+        return "accurate", Message(
+            deferred("a short tape on a machine that can afford it")
+        )
+    return "balanced", Message(deferred("a middle-of-the-road tape"))
 
 
-def _choose_model(probe: AutoProbe) -> tuple[str, bool, str, str]:
+def _choose_model(probe: AutoProbe) -> tuple[str, bool, str, Message]:
     """The model to use, whether it is on disk, the VRAM-preferred model, why.
 
     ``preferred`` is the largest ladder model the VRAM/CPU budget affords. A
@@ -224,11 +339,14 @@ def _choose_model(probe: AutoProbe) -> tuple[str, bool, str, str]:
     if present_fitting:
         model = present_fitting[-1]
         if model == preferred:
-            why = "largest checkpoint that fits the VRAM/CPU budget"
+            why = Message(deferred("largest checkpoint that fits the VRAM/CPU budget"))
         else:
-            why = (
-                f"already on disk; the preferred {preferred!r} is absent and "
-                "--auto does not download"
+            why = Message(
+                deferred(
+                    "already on disk; the preferred {preferred!r} is absent and "
+                    "--auto does not download"
+                ),
+                (("preferred", preferred),),
             )
         return model, True, preferred, why
     if present:
@@ -237,29 +355,38 @@ def _choose_model(probe: AutoProbe) -> tuple[str, bool, str, str]:
             model,
             True,
             preferred,
-            f"the only checkpoint(s) on disk; the preferred {preferred!r} is "
-            "absent and --auto does not download",
+            Message(
+                deferred(
+                    "the only checkpoint(s) on disk; the preferred {preferred!r} is "
+                    "absent and --auto does not download"
+                ),
+                (("preferred", preferred),),
+            ),
         )
     return (
         preferred,
         False,
         preferred,
-        "the largest checkpoint that fits this machine, but none is on disk",
+        Message(
+            deferred(
+                "the largest checkpoint that fits this machine, but none is on disk"
+            )
+        ),
     )
 
 
-def _fmt_duration(seconds: float) -> str:
+def _fmt_duration(seconds: float) -> Message:
     if seconds <= 0:
-        return "unknown"
+        return Message(deferred("unknown"))
     if seconds >= 3600:
-        return f"{seconds / 3600:.1f} h"
-    return f"{seconds / 60:.0f} min"
+        return Message(deferred("{hours:.1f} h"), (("hours", seconds / 3600),))
+    return Message(deferred("{minutes:.0f} min"), (("minutes", seconds / 60),))
 
 
-def _fmt_vram(vram_gb: float | None) -> str:
+def _fmt_vram(vram_gb: float | None) -> Message:
     if vram_gb is None or vram_gb <= 0:
-        return "unprobed (8 GB floor)"
-    return f"{vram_gb:g} GB"
+        return Message(deferred("unprobed (8 GB floor)"))
+    return Message(deferred("{vram:g} GB"), (("vram", vram_gb),))
 
 
 def resolve_auto(probe: AutoProbe) -> AutoChoice:
@@ -277,21 +404,45 @@ def resolve_auto(probe: AutoProbe) -> AutoChoice:
     diarize = probe.channels >= _MULTICHANNEL_MIN
 
     decisions = [
-        f"profile {profile!r} ({profile_why})",
-        f"model {model!r} ({model_why}; ~{model_vram_gb(model):g} GB per worker)",
-        f"up to {jobs} worker(s)",
+        Message(
+            deferred("profile {profile!r} ({why})"),
+            (("profile", profile), ("why", profile_why)),
+        ),
+        Message(
+            deferred("model {model!r} ({why}; ~{vram:g} GB per worker)"),
+            (("model", model), ("why", model_why), ("vram", model_vram_gb(model))),
+        ),
+        Message(deferred("up to {jobs} worker(s)"), (("jobs", jobs),)),
     ]
     if diarize:
-        decisions.append(f"per-speaker attribution on ({probe.channels}-channel tape)")
+        decisions.append(
+            Message(
+                deferred("per-speaker attribution on ({channels}-channel tape)"),
+                (("channels", probe.channels),),
+            )
+        )
     disk = ", ".join(sorted(probe.models_on_disk)) or "none"
     backends = ", ".join(probe.available_backends) or "none"
-    inputs = (
-        f"tape {_fmt_duration(probe.duration_s)}, {probe.channels} channel(s), "
-        f"language {probe.language or 'auto'}, VRAM {_fmt_vram(probe.vram_gb)}, "
-        f"{probe.cpu_count} CPU(s), models on disk: {disk}, "
-        f"backends available: {backends}"
+    inputs = Message(
+        deferred(
+            "tape {duration}, {channels} channel(s), language {language}, VRAM "
+            "{vram}, {cpus} CPU(s), models on disk: {disk}, backends available: "
+            "{backends}"
+        ),
+        (
+            ("duration", _fmt_duration(probe.duration_s)),
+            ("channels", probe.channels),
+            ("language", probe.language or "auto"),
+            ("vram", _fmt_vram(probe.vram_gb)),
+            ("cpus", probe.cpu_count),
+            ("disk", disk),
+            ("backends", backends),
+        ),
     )
-    explanation = f"--auto: chose {', '.join(decisions)}; inputs: {inputs}."
+    message = Message(
+        deferred("--auto: chose {decisions}; inputs: {inputs}."),
+        (("decisions", Joined(", ", tuple(decisions))), ("inputs", inputs)),
+    )
 
     return AutoChoice(
         profile=profile,
@@ -300,7 +451,7 @@ def resolve_auto(probe: AutoProbe) -> AutoChoice:
         preferred_model=preferred,
         jobs=jobs,
         diarize=diarize,
-        explanation=explanation,
+        message=message,
     )
 
 
@@ -390,10 +541,12 @@ __all__ = [
     "AutoChoice",
     "AutoProbe",
     "BackendChoice",
+    "Message",
     "NoBackendAvailable",
     "max_channels",
     "models_on_disk",
     "probe_auto",
+    "render_message",
     "resolve_auto",
     "resolve_backend",
     "tape_duration_s",

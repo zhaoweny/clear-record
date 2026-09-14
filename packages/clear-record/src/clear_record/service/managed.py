@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from clear_record.cli.workspace import AUDIO_SUFFIXES, is_audio
+from clear_record.core.i18n import deferred
 from clear_record.service.models import Meeting, Tape
 from clear_record.service.paths import resolve_workspace_root
 from clear_record.service.store import Registry
@@ -72,7 +73,18 @@ _READ_BLOCK = 1 << 20
 
 
 class UploadRejected(ValueError):
-    """An upload the guards refused. ``str(exc)`` is safe to show the user."""
+    """An upload the guards refused. ``str(exc)`` is the English message.
+
+    The message is a **stable ID plus parameters** — :func:`deferred` marks the
+    ID for the catalog — so a presentation boundary can render it in the user's
+    locale with ``tr(exc.msgid, **exc.params)``. ``str(exc)`` stays the English
+    form, which is what machine surfaces (the JSON API, logs) keep.
+    """
+
+    def __init__(self, msgid: str, **params: object) -> None:
+        self.msgid = msgid
+        self.params = params
+        super().__init__(msgid.format(**params) if params else msgid)
 
 
 class UnsafeFilename(UploadRejected):
@@ -149,7 +161,7 @@ def precheck_upload(
     if declared_bytes is None:
         return meeting
     if declared_bytes > cap + _FORM_OVERHEAD_BYTES:
-        raise UploadTooLarge(_too_large_message(declared_bytes, cap))
+        raise _too_large(declared_bytes, cap)
     resolved_root = managed_root(root)
     # The root is operator-chosen, so a symlink there is allowed (it is not a
     # component the upload creates); the *destination* dirs are what is checked.
@@ -157,7 +169,7 @@ def precheck_upload(
     free = shutil.disk_usage(resolved_root).free
     needed = declared_bytes + DISK_HEADROOM_BYTES
     if free < needed:
-        raise InsufficientSpace(_no_space_message(free, needed, resolved_root))
+        raise _no_space(free, needed, resolved_root)
     return meeting
 
 
@@ -183,8 +195,9 @@ def upload_tape(
     name = sanitize_filename(filename)
     if not is_audio(Path(name)):
         raise DisallowedExtension(
-            f"{name!r} is not an audio tape; allowed extensions: "
-            + ", ".join(sorted(AUDIO_SUFFIXES))
+            deferred("{name!r} is not an audio tape; allowed extensions: {extensions}"),
+            name=name,
+            extensions=", ".join(sorted(AUDIO_SUFFIXES)),
         )
 
     resolved_root = managed_root(root)
@@ -193,7 +206,9 @@ def upload_tape(
     tapes_dir = _safe_mkdir(workspace / TAPES_DIRNAME, root=resolved_root)
     target = _unique_target(tapes_dir, name)
     if target.is_symlink():
-        raise UploadRejected(f"refusing to write to the symlink {target}")
+        raise UploadRejected(
+            deferred("refusing to write to the symlink {path}"), path=str(target)
+        )
 
     cap = max_upload_bytes()
     # A short, random scratch name (not the tape name, which may be near the
@@ -213,7 +228,7 @@ def upload_tape(
                     break
                 written += len(block)
                 if written > cap:
-                    raise UploadTooLarge(_too_large_message(written, cap))
+                    raise _too_large(written, cap)
                 digest.update(block)
                 handle.write(block)
             handle.flush()
@@ -232,8 +247,10 @@ def upload_tape(
             # The disk filled between the precheck and now (a race, or a body
             # whose size was not declared). Still a clear refusal, not a 500.
             raise InsufficientSpace(
-                "the disk filled while writing the upload; free space or point "
-                "CR_WORKSPACE_ROOT at a larger disk"
+                deferred(
+                    "the disk filled while writing the upload; free space or point "
+                    "CR_WORKSPACE_ROOT at a larger disk"
+                )
             ) from exc
         raise
     except BaseException:
@@ -304,8 +321,10 @@ def delete_tape(
     resolved_root = managed_root(root)
     if not is_managed(meeting, resolved_root):
         raise UploadRejected(
-            "this meeting uses a user-chosen workspace; only a managed tape can "
-            "be deleted here"
+            deferred(
+                "this meeting uses a user-chosen workspace; only a managed tape can "
+                "be deleted here"
+            )
         )
     path = Path(tape.path)
     _require_within(path, resolved_root)
@@ -323,12 +342,15 @@ def sanitize_filename(filename: str | None) -> str:
     name = (filename or "").strip()
     if not name:
         raise UnsafeFilename(
-            "the upload has no filename; attach the tape as a file part named "
-            "'file' with a name ending in an audio extension"
+            deferred(
+                "the upload has no filename; attach the tape as a file part named "
+                "'file' with a name ending in an audio extension"
+            )
         )
     if name in {".", ".."} or ".." in Path(name).parts:
         raise UnsafeFilename(
-            f"refusing the filename {name!r}: it contains a path traversal"
+            deferred("refusing the filename {name!r}: it contains a path traversal"),
+            name=name,
         )
     if (
         "/" in name
@@ -337,16 +359,23 @@ def sanitize_filename(filename: str | None) -> str:
         or (os.altsep is not None and os.altsep in name)
     ):
         raise UnsafeFilename(
-            f"refusing the filename {name!r}: a tape name must be a bare "
-            "filename, with no directory or path separator"
+            deferred(
+                "refusing the filename {name!r}: a tape name must be a bare "
+                "filename, with no directory or path separator"
+            ),
+            name=name,
         )
     if any(ord(char) < 32 for char in name):
         raise UnsafeFilename(
-            f"refusing the filename {name!r}: it contains a control character"
+            deferred("refusing the filename {name!r}: it contains a control character"),
+            name=name,
         )
     if len(name) > 255:
         raise UnsafeFilename(
-            f"refusing the filename {name!r}: it is longer than 255 characters"
+            deferred(
+                "refusing the filename {name!r}: it is longer than 255 characters"
+            ),
+            name=name,
         )
     return name
 
@@ -383,9 +412,11 @@ def _upload_workspace(
         return ensure_managed_workspace(registry, meeting, root)
     if not is_managed(meeting, root):
         raise UploadRejected(
-            "this meeting uses a user-chosen workspace, which has no managed "
-            "place to upload to; create a managed meeting, or set the tapes by "
-            "path instead"
+            deferred(
+                "this meeting uses a user-chosen workspace, which has no managed "
+                "place to upload to; create a managed meeting, or set the tapes by "
+                "path instead"
+            )
         )
     _safe_mkdir(Path(meeting.workspace_path), root=managed_root(root))
     return meeting
@@ -401,8 +432,12 @@ def _within(path: Path, root: Path) -> bool:
 def _require_within(path: Path, root: Path) -> None:
     if not _within(path, root):
         raise UploadRejected(
-            f"refusing to use {path}: it resolves outside the managed root "
-            f"{root} (a symlink?)"
+            deferred(
+                "refusing to use {path}: it resolves outside the managed root "
+                "{root} (a symlink?)"
+            ),
+            path=str(path),
+            root=str(root),
         )
 
 
@@ -410,7 +445,9 @@ def _safe_mkdir(path: Path, *, root: Path | None = None) -> Path:
     """``mkdir -p`` that refuses to use (or follow) a symlink at ``path``."""
     path.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
-        raise UploadRejected(f"refusing to use {path}: it is a symlink")
+        raise UploadRejected(
+            deferred("refusing to use {path}: it is a symlink"), path=str(path)
+        )
     if root is not None:
         _require_within(path, root)
     return path
@@ -454,18 +491,27 @@ def _human_bytes(count: int) -> str:
     return f"{count} B"  # pragma: no cover - unreachable
 
 
-def _too_large_message(size: int, cap: int) -> str:
-    return (
-        f"the upload is {_human_bytes(size)}, over the {_human_bytes(cap)} limit; "
-        "raise CR_MAX_UPLOAD_BYTES to allow it"
+def _too_large(size: int, cap: int) -> UploadTooLarge:
+    return UploadTooLarge(
+        deferred(
+            "the upload is {size}, over the {limit} limit; raise "
+            "CR_MAX_UPLOAD_BYTES to allow it"
+        ),
+        size=_human_bytes(size),
+        limit=_human_bytes(cap),
     )
 
 
-def _no_space_message(free: int, needed: int, root: Path) -> str:
-    return (
-        f"not enough free space on the managed workspace disk {root}: "
-        f"{_human_bytes(free)} free, about {_human_bytes(needed)} needed for this "
-        "upload; free space or point CR_WORKSPACE_ROOT at a larger disk"
+def _no_space(free: int, needed: int, root: Path) -> InsufficientSpace:
+    return InsufficientSpace(
+        deferred(
+            "not enough free space on the managed workspace disk {root}: "
+            "{free} free, about {needed} needed for this upload; free space or "
+            "point CR_WORKSPACE_ROOT at a larger disk"
+        ),
+        root=str(root),
+        free=_human_bytes(free),
+        needed=_human_bytes(needed),
     )
 
 

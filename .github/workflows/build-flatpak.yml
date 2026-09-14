@@ -1,0 +1,71 @@
+name: build-flatpak
+
+# Scaffold lane (ADR-0015): builds a Flatpak bundle on manual dispatch and on
+# v* tags and keeps it as a workflow artifact. It signs nothing and publishes
+# nowhere — Flathub submission is a deliberate, later, owner-gated step.
+#
+# The manifest is a scaffold: `python3-modules.json` and the clear-record wheel
+# are generated here (the "heavy lifting"), and the whisper.cpp pin / Vulkan
+# build deps / icon / ffmpeg codecs are [OPEN] in packaging/flatpak/README.md.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: flatpak (x86_64)
+    runs-on: ubuntu-latest
+    # The official flathub-published builder image for the Freedesktop SDK the
+    # manifest targets; `--privileged` is required by flatpak-builder.
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Build the wheel to install inside the sandbox
+        run: just build
+
+      - name: Generate the Python module list (flatpak-pip-generator)
+        # [OPEN] pin flatpak-builder-tools to a commit rather than master.
+        run: |
+          python3 -m pip install --user --break-system-packages requirements-parser
+          curl -fsSL -o /tmp/flatpak-pip-generator \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/pip/flatpak-pip-generator
+          chmod +x /tmp/flatpak-pip-generator
+          # numpy/soundfile/cffi/pydantic-core ship platform wheels; prefer them
+          # over rebuilding from sdist inside the SDK.
+          python3 /tmp/flatpak-pip-generator \
+            --runtime org.freedesktop.Sdk//25.08 \
+            --pyproject-file packages/clear-record/pyproject.toml \
+            --optdep-groups web \
+            --prefer-wheels numpy,soundfile,cffi,pydantic-core \
+            --output packaging/flatpak/python3-modules
+
+      - name: Build the Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: io.github.zhaoweny.clear-record.flatpak
+          manifest-path: packaging/flatpak/io.github.zhaoweny.clear-record.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          # Artifact upload is done explicitly below so the name and path match
+          # the rest of this repo's CI.
+          upload-artifact: false
+
+      - name: Upload the Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: clear-record-flatpak
+          path: io.github.zhaoweny.clear-record.flatpak
+          if-no-files-found: error

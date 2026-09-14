@@ -1,0 +1,114 @@
+# Flatpak manifest scaffold for clear-record.
+#
+# STATUS: scaffold. The app-id, SDK, finish-args and module shape are meant to be
+# real; two inputs are deliberately NOT committed and must exist before a build:
+#   1. `python3-modules.json` — the PyPI dependency list, generated in CI by
+#      `flatpak-pip-generator` (see .github/workflows/build-flatpak.yml).
+#   2. `dist/clear-record-*.whl` — built by `just build` / `uv build` before
+#      flatpak-builder runs (the manifest installs the wheel, it does not freeze
+#      the interpreter — see packaging/flatpak/README.md §5).
+# See packaging/flatpak/README.md for the story and docs/adr/0015.
+#
+# The hyphen is only legal in the last app-id component (Flathub rule); this ID
+# satisfies that, so no rename is needed.
+
+app-id: io.github.zhaoweny.clear-record
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+command: clear-record
+
+# `flatpak run io.github.zhaoweny.clear-record` runs the CLI; the console is the
+# app-menu / double-click surface (ADR-0014) and is reachable with:
+#   flatpak run --command=clear-record-web io.github.zhaoweny.clear-record
+finish-args:
+  # GUI-capable, GPU-accelerated. On Linux the GPU path is Vulkan (see README §2);
+  # Metal is macOS-only and CUDA/ROCm are out of scope inside the sandbox.
+  - --device=dri
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # The tool's whole job is reading the user's tapes and writing archives to
+  # directories they choose. The CLI takes a path, so it cannot use the document
+  # portal today; `home` is the narrowest grant that keeps "point it at ~/Music"
+  # working (README §3).
+  - --filesystem=home
+  # First-use ggml model download (huggingface.co) plus the console's local
+  # server. Processing is offline once the model is present, so this grant is
+  # provisioning-only (README §4/§6).
+  - --share=network
+  # The provider's `available()` probe searches fixed system dirs that do NOT
+  # include `/app/lib`, so the bundled plugin must be pointed at explicitly.
+  # (The whisper-cli process gets its own copy of this path baked in at build
+  # time via -DGGML_BACKEND_DIR below.)
+  - --env=CR_GGML_BACKEND_DIRS=/app/lib
+
+modules:
+  # whisper.cpp + its Vulkan backend, bundled in the sandbox because a Flatpak
+  # cannot see the host's `whisper-cli` or its ggml plugin (README §1). Vulkan is
+  # the one plausible Linux backend inside the sandbox.
+  - name: whisper-cpp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DGGML_VULKAN=ON
+      # Dynamic backend loading, pointed at the sandbox's /app/lib, so the
+      # installed whisper-cli finds libggml-vulkan.so at runtime.
+      - -DGGML_BACKEND_DL=ON
+      - -DGGML_BACKEND_DIR=/app/lib
+      - -DWHISPER_BUILD_TESTS=OFF
+      - -DWHISPER_BUILD_SERVER=OFF
+    sources:
+      - type: git
+        url: https://github.com/ggml-org/whisper.cpp.git
+        # [OPEN] verify and pin the intended release before the first real build.
+        tag: v1.7.6
+    # [OPEN] ggml-vulkan compiles shaders with `glslc` (shaderc) and needs the
+    # Vulkan headers at build time. Confirm the Freedesktop SDK 25.08 provides
+    # them; if not, add `vulkan-headers` + `shaderc` modules here.
+    #
+    # A build-time-only Vulkan enablement is fine: the runtime already ships
+    # libvulkan.so.1 and the host's ICD (Mesa/RADV) arrives via `--device=dri`.
+
+  # PyPI dependencies: numpy + soundfile (runtime) and fastapi + uvicorn (the
+  # `web` console extra). Generated, not committed — see the header.
+  - python3-modules.json
+
+  # clear-record itself, installed from the wheel built by `just build`.
+  - name: clear-record
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-deps --find-links=file://${PWD}/dist --prefix=${FLATPAK_DEST} clear-record
+      - install -Dm644 packaging/flatpak/io.github.zhaoweny.clear-record.metainfo.xml ${FLATPAK_DEST}/share/metainfo/io.github.zhaoweny.clear-record.metainfo.xml
+      # The console's double-click launcher. It pins the models dir into the
+      # app's persistent data area so the first-use download survives upgrades
+      # (README §4) and does not try to open a browser inside the sandbox.
+      - |
+        install -d ${FLATPAK_DEST}/bin
+        cat > ${FLATPAK_DEST}/bin/clear-record-web <<'EOF'
+        #!/bin/sh
+        : "${CR_MODELS_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/clear-record/models}"
+        export CR_MODELS_DIR
+        exec clear-record web --no-browser "$@"
+        EOF
+        chmod +x ${FLATPAK_DEST}/bin/clear-record-web
+      # The desktop entry the metainfo's <launchable> points at. [OPEN] an icon
+      # is not shipped yet, so `Icon=` is a forward reference (Flathub needs one).
+      - |
+        install -d ${FLATPAK_DEST}/share/applications
+        cat > ${FLATPAK_DEST}/share/applications/io.github.zhaoweny.clear-record.desktop <<'EOF'
+        [Desktop Entry]
+        Name=clear-record
+        Comment=Local-first multitrack transcription and record reconstruction
+        Exec=clear-record-web
+        Icon=io.github.zhaoweny.clear-record
+        Terminal=false
+        Type=Application
+        Categories=AudioVideo;Audio;Utility;
+        EOF
+    sources:
+      # A local dir source keeps this scaffold buildable from a checkout. A real
+      # Flathub submission replaces it with pinned `git` + wheel `file` sources.
+      - type: dir
+        path: ../..

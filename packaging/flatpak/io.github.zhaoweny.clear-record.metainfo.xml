@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 zhaoweny -->
+<component type="desktop-application">
+  <id>io.github.zhaoweny.clear-record</id>
+
+  <!-- The metainfo file itself is CC BY 4.0, matching the repo's content licence
+       (ADR-0008). Flathub normally prefers a permissive metadata licence
+       (FSFAP/CC0) — see the [OPEN] note in packaging/flatpak/README.md. -->
+  <metadata_license>CC-BY-4.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>clear-record</name>
+  <summary>Reconstruct one clear record from many recordings</summary>
+
+  <description>
+    <p>
+      clear-record is a local-first, open-source multitrack transcription and
+      record-reconstruction tool. It takes several recordings of the same event
+      (a laptop mic, a field recorder, wireless transmitters), normalizes and
+      aligns them, transcribes them with a local model, reconciles the result
+      into an attributable timeline, and exports Markdown, SRT, VTT or JSON.
+    </p>
+    <p>
+      It is a post-processing tool: the pipeline starts at ingest and does not
+      capture. Processing runs offline once models are provisioned — no cloud
+      processing and no subscription. Recordings and transcripts stay on the
+      machine; model weights are downloaded on first use and never bundled.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Normalize and align heterogeneous audio sources onto one clock.</li>
+      <li>Offline speech recognition with a local GGML model.</li>
+      <li>Chunked, resumable transcription of long tapes.</li>
+      <li>Baseline multi-speaker attribution and a glossary initial prompt.</li>
+      <li>Export to Markdown, SRT, VTT and JSON, with quality metrics.</li>
+      <li>A local web console for managing projects and glossary tables.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.zhaoweny.clear-record.desktop</launchable>
+
+  <url type="homepage">https://github.com/zhaoweny/clear-record</url>
+  <url type="bugtracker">https://github.com/zhaoweny/clear-record/issues</url>
+  <url type="vcs">https://github.com/zhaoweny/clear-record</url>
+
+  <developer id="io.github.zhaoweny">
+    <name>zhaoweny</name>
+  </developer>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>transcription</keyword>
+    <keyword>speech-to-text</keyword>
+    <keyword>audio</keyword>
+    <keyword>alignment</keyword>
+  </keywords>
+
+  <provides>
+    <binary>clear-record</binary>
+    <binary>clear-record-web</binary>
+  </provides>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.1" date="2026-09-14">
+      <description>
+        <p>
+          First scaffolded Flatpak packaging: Vulkan whisper.cpp bundled, web
+          console launcher, AppStream metadata.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>

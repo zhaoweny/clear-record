@@ -37,8 +37,10 @@ from clear_record.core import (
     PROFILE_CUSTOM,
     PROFILES,
     PipelineOptions,
+    ScopeError,
     Step,
     log_event,
+    parse_time_range,
     pipeline_spec,
     resolve_options,
     set_level,
@@ -240,6 +242,22 @@ def _do_diarize(diarize: bool, no_diarize: bool) -> bool | None:
     if no_diarize:
         return False
     return None
+
+
+def _rerun_range(ctx: click.Context, param: click.Parameter, value: str | None):
+    """Validate ``--rerun-range`` at parse time, so a typo is a usage error.
+
+    Validating here (rather than in the stage) makes a malformed range fail
+    before any backend is resolved or any chunk planned — and it can never be
+    silently dropped into an unscoped full re-decode.
+    """
+    if not value:
+        return None
+    try:
+        parse_time_range(value)
+    except ScopeError as exc:
+        raise click.BadParameter(str(exc), ctx=ctx, param=param) from exc
+    return value
 
 
 _DIRECTORY = _with_options(click.argument("directory"))
@@ -463,6 +481,23 @@ _BACKEND = _with_options(
         "flag overrides it (default custom = set nothing). None (unset) "
         "lets --auto choose the profile",
     ),
+    click.option(
+        "--rerun-source",
+        "rerun_sources",
+        multiple=True,
+        help="re-run scope: re-decode only this source's chunks, reusing every "
+        "other chunk from the cache; repeat for several sources (default: every "
+        "source)",
+    ),
+    click.option(
+        "--rerun-range",
+        "rerun_range",
+        default=None,
+        callback=_rerun_range,
+        help="re-run scope: re-decode only the chunks overlapping START-END "
+        "(H:MM or H:MM:SS, or seconds; e.g. 12:30-18:00); chunks outside keep "
+        "their cached decode",
+    ),
     # The decoder knobs. All default to unset (None) and declare their CR_* var.
     click.option(
         "--beam-size",
@@ -539,6 +574,8 @@ def _backend_option_kwargs(args: Any) -> dict:
         "resume": args.resume,
         "jobs": args.jobs,
         "check_plugin": args.check_plugin,
+        "rerun_sources": tuple(args.rerun_sources) or None,
+        "rerun_range": args.rerun_range,
         # The parser leaves `--profile` as `None` when unset (a real sentinel,
         # like the other resolver-managed knobs), so `--auto` can tell "choose
         # for me" from an explicit `--profile custom`.
@@ -696,6 +733,8 @@ def _cmd_transcribe(**kwargs: Any) -> int:
         resume=options.resume,
         jobs=options.jobs,
         check_plugin=options.check_plugin,
+        rerun_sources=options.rerun_sources,
+        rerun_range=options.rerun_range,
         beam_size=options.beam_size,
         best_of=options.best_of,
         temperature=options.temperature,

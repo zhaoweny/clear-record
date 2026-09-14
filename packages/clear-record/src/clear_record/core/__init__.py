@@ -48,9 +48,16 @@ from clear_record.core.options import (
     resolve_options,
 )
 from clear_record.core.pipeline import PipelineSpec, PipelineStage, Step, pipeline_spec
+from clear_record.core.scope import (
+    ChunkScope,
+    ScopeError,
+    format_seconds,
+    parse_time_range,
+)
 
 __all__ = [
     "Alignment",
+    "ChunkScope",
     "DECODER_KNOB_FIELDS",
     "DEFAULT_CHUNK_S",
     "DEFAULT_LEVEL",
@@ -69,6 +76,7 @@ __all__ = [
     "PipelineStage",
     "Progress",
     "RecordDocument",
+    "ScopeError",
     "Segment",
     "Source",
     "Step",
@@ -76,10 +84,12 @@ __all__ = [
     "alignment_from_dict",
     "effective_level",
     "emit",
+    "format_seconds",
     "load_json",
     "log_event",
     "log_path",
     "logs_dir",
+    "parse_time_range",
     "pipeline_spec",
     "profile_values",
     "read_recent",

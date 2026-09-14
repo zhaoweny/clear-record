@@ -135,11 +135,26 @@ def chunk_cache_key(
 ) -> dict:
     """The run-meta that keys one source's chunk cache.
 
-    The cache is invalidated whenever any field here changes — backend, model,
-    language, glossary prompt, the chunk plan or a decoder knob — which is what
-    lets a first pass run in the background and then be corrected with a finished
-    glossary. An unset decoder knob adds nothing, so a run that does not set any
-    keeps the cache key it had before tunable decoding existed.
+    The key is split into two parts with **different** invalidation semantics,
+    and the split is the whole point of this function's contract:
+
+    - **The plan** — everything except ``glossary``: ``backend``, ``model``,
+      ``language``, the chunk plan (``chunk_seconds``/``overlap_seconds``/
+      ``n_chunks``) and any set decoder knob. A change to any of these makes the
+      cached chunk *bodies* meaningless in place (different decoder, different
+      window boundaries), so it still invalidates **every chunk of the source**.
+    - **The glossary** — the decoder's initial prompt. One edit here still
+      invalidates every chunk of an **unscoped** run, exactly as before: the
+      prompt participates in decoding, so any chunk's output *can* change and
+      nothing narrower is sound on its own. It is no longer the unit of
+      invalidation, though: a **scoped** re-run
+      (:class:`clear_record.core.ChunkScope`) re-decodes only the chunks its
+      scope selects, and each cached body records the glossary digest it was
+      actually decoded under (see :func:`chunk_glossary`). A later unscoped run
+      therefore still re-decodes the chunks a scope carried over.
+
+    An unset decoder knob adds nothing, so a run that does not set any keeps the
+    cache key it had before tunable decoding existed.
     """
     key = {
         "backend": backend,
@@ -155,16 +170,75 @@ def chunk_cache_key(
     return key
 
 
+#: Meta key holding ``{chunk index: glossary digest}`` — the glossary each cached
+#: body was actually decoded under. Absent on a cache written before scoped
+#: re-runs existed; such a cache is treated as having no known provenance and is
+#: re-decoded once (the conservative migration).
+CHUNK_GLOSSARY = "chunk_glossary"
+
+
+def glossary_digest(glossary: str) -> str:
+    """A short stable digest of a glossary prompt, for per-chunk provenance."""
+    return hashlib.sha1((glossary or "").encode("utf-8")).hexdigest()[:16]
+
+
+def cache_plan(run_meta: Mapping) -> dict:
+    """The part of :func:`chunk_cache_key`'s output that is *not* per-chunk.
+
+    ``glossary`` is excluded because it is tracked per chunk (see
+    :data:`CHUNK_GLOSSARY`); the same field is excluded from a *stored* meta
+    alongside the overlay itself, so the two compare equal regardless of which
+    glossary each body was decoded under.
+    """
+    return {
+        key: value
+        for key, value in run_meta.items()
+        if key not in {"glossary", CHUNK_GLOSSARY}
+    }
+
+
+def plan_matches(stored: Mapping | None, run_meta: Mapping) -> bool:
+    """True when a stored run-meta describes the same chunk plan and decoders."""
+    if not stored:
+        return False
+    return cache_plan(stored) == cache_plan(run_meta)
+
+
+def chunk_glossary(stored: Mapping | None) -> dict[int, str]:
+    """The per-chunk glossary digests a stored meta records (``{}`` if none).
+
+    A body with no recorded digest has unknown provenance and is never reused by
+    digest; the caller treats it as absent.
+    """
+    raw = (stored or {}).get(CHUNK_GLOSSARY) or {}
+    out: dict[int, str] = {}
+    if not isinstance(raw, Mapping):
+        return out
+    for key, value in raw.items():
+        try:
+            out[int(key)] = str(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 @dataclasses.dataclass(frozen=True)
 class ChunkCache:
     """One source's resumable chunk cache; owns its files and atomic publish.
 
     Layout under the source's cache directory::
 
-        <source>/_meta.json    run-meta (the cache key)
+        <source>/_meta.json    run-meta (the cache key + per-chunk glossary digests)
         <source>/NNNN.json     cached chunk segments (published atomically)
         <source>/NNNN.wav      transient decode; regenerable, never trusted
         <source>/*.tmp         atomic-publish scratch; never read
+
+    ``_meta.json`` is :func:`chunk_cache_key`'s flat plan key, the run's full
+    ``glossary`` text, and a ``chunk_glossary`` map of the glossary digest each
+    body was decoded under. The digest map is what lets a scoped re-run keep an
+    out-of-scope chunk *and stay honest about it*: the chunk's provenance is the
+    old glossary, not the new one, and an unscoped run re-decodes it (see
+    :func:`chunk_glossary` / :func:`plan_matches`).
 
     ADR-0007/ADR-0025 place the chunks root in the app-owned cache directory;
     because every chunk path is derived here, that location has one owner
@@ -194,12 +268,23 @@ class ChunkCache:
         except (OSError, ValueError):
             return None
 
-    def matches(self, run_meta: dict) -> bool:
-        """True when the cached run-meta equals ``run_meta`` (cache is reusable)."""
-        return self.meta_path.exists() and self.read_meta() == run_meta
+    def write_meta(
+        self,
+        run_meta: Mapping,
+        chunk_glossary: Mapping[int, str] | None = None,
+    ) -> None:
+        """Publish the run-meta, plus the glossary digest each chunk now carries.
 
-    def write_meta(self, run_meta: dict) -> None:
-        _publish_json(self.meta_path, run_meta)
+        Written **before** decoding so a cancelled pass stays resumable: a body
+        that does not exist yet is re-decoded on the next pass, while the bodies
+        already published carry the digest recorded here.
+        """
+        payload = dict(run_meta)
+        if chunk_glossary is not None:
+            payload[CHUNK_GLOSSARY] = {
+                str(index): digest for index, digest in sorted(chunk_glossary.items())
+            }
+        _publish_json(self.meta_path, payload)
 
     def invalidate(self) -> None:
         """Drop chunk results, transient WAVs and any half-written scratch file.
@@ -373,9 +458,14 @@ class Workspace:
 
 __all__ = [
     "AUDIO_SUFFIXES",
+    "CHUNK_GLOSSARY",
     "ChunkCache",
     "Workspace",
+    "cache_plan",
     "chunk_cache_key",
+    "chunk_glossary",
     "discover_audio",
+    "glossary_digest",
     "is_audio",
+    "plan_matches",
 ]

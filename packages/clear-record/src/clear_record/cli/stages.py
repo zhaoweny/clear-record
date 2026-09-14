@@ -19,10 +19,12 @@ import soundfile as sf
 from clear_record.core import (
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    ChunkScope,
     EventSink,
     PipelineOptions,
     Progress,
     RecordDocument,
+    ScopeError,
     Segment,
     Source,
     Step,
@@ -187,6 +189,8 @@ def transcribe(
     resume: bool = True,
     jobs: int = 0,
     check_plugin: bool = False,
+    rerun_sources: tuple[str, ...] | None = None,
+    rerun_range: str | None = None,
     *,
     beam_size: int | None = None,
     best_of: int | None = None,
@@ -204,6 +208,11 @@ def transcribe(
     backend only when set; unset means "add no flag", so the built command is
     unchanged for a caller that does not ask for tuning.
 
+    ``rerun_sources``/``rerun_range`` are an explicit **re-run scope**: only the
+    chunks they select are re-decoded, and every other chunk is reused from the
+    cache. A scope that names an unknown source, has an unreadable range, or
+    selects no chunk is an actionable ``SystemExit`` — never a silent full pass.
+
     This stage is only wiring: the resumable chunking, cache key/invalidation,
     worker pool, cancellation and chunk merge live in
     :mod:`clear_record.cli.transcription`. Here we load the manifest, gate on
@@ -211,6 +220,10 @@ def transcribe(
     (single-threaded, before the pool), then persist and print the result.
     """
     w = Workspace.at(directory)
+    try:
+        scope = ChunkScope.parse(rerun_sources, rerun_range)
+    except ScopeError as exc:
+        raise SystemExit(f"[transcribe] {exc}") from exc
     sources, _ = w.load_manifest()
     backend = get_backend(backend_id)
     status = backend.availability()
@@ -284,29 +297,35 @@ def transcribe(
     if prompt:
         w.log(f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
 
-    result = transcription.transcribe(
-        sources,
-        backend,
-        transcription.TranscriptionOptions(
-            model=model,
-            language=language,
-            model_dir=model_dir,
-            initial_prompt=prompt,
-            chunk_seconds=chunk_seconds,
-            overlap_seconds=overlap_seconds,
-            resume=resume,
-            jobs=jobs,
-            beam_size=beam_size,
-            best_of=best_of,
-            temperature=temperature,
-            entropy_thold=entropy_thold,
-            no_speech_thold=no_speech_thold,
-            max_context=max_context,
-            threads=threads,
-        ),
-        workspace=w,
-        on_event=on_event,
-    )
+    try:
+        result = transcription.transcribe(
+            sources,
+            backend,
+            transcription.TranscriptionOptions(
+                model=model,
+                language=language,
+                model_dir=model_dir,
+                initial_prompt=prompt,
+                chunk_seconds=chunk_seconds,
+                overlap_seconds=overlap_seconds,
+                resume=resume,
+                jobs=jobs,
+                scope=scope,
+                beam_size=beam_size,
+                best_of=best_of,
+                temperature=temperature,
+                entropy_thold=entropy_thold,
+                no_speech_thold=no_speech_thold,
+                max_context=max_context,
+                threads=threads,
+            ),
+            workspace=w,
+            on_event=on_event,
+        )
+    except ScopeError as exc:
+        # A scope that cannot be honoured is a usage problem, not a crash: name
+        # it and stop, rather than falling back to an unscoped full pass.
+        raise SystemExit(str(exc)) from exc
 
     meta: dict = {
         "backend": backend_id,
@@ -318,6 +337,10 @@ def transcribe(
         "overlap_seconds": overlap_seconds,
         "jobs": result.jobs,
         "sources": result.source_meta,
+        # What the run cost: re-decoded vs reused chunks (and, for a scoped
+        # re-run, how many reused chunks still carry an earlier glossary). This
+        # is the loop's economics, recorded so a later pass can show it.
+        "chunk_report": dataclasses.asdict(result.chunk_report),
     }
     w.write_segments(result.per_source, meta)
     log_event(
@@ -644,6 +667,8 @@ def _run_transcribe(
         resume=options.resume,
         jobs=options.jobs,
         check_plugin=options.check_plugin,
+        rerun_sources=options.rerun_sources,
+        rerun_range=options.rerun_range,
         beam_size=options.beam_size,
         best_of=options.best_of,
         temperature=options.temperature,

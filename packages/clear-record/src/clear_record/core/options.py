@@ -22,6 +22,8 @@ import dataclasses
 import os
 from collections.abc import Callable, Mapping
 
+from clear_record.core.scope import ChunkScope
+
 # Canonical chunking defaults (seconds). ``core`` is their single owner;
 # ``clear_record.engine`` re-exports them for its timeline math (``engine → core``
 # is an allowed edge), so there is only one literal to keep right.
@@ -108,6 +110,11 @@ class PipelineOptions:
     window_s: float | None = None
     jobs: int | None = 0
     check_plugin: bool = False
+    #: An explicit re-run scope (ADR-0018): re-decode only these sources and/or
+    #: this time range, reuse every other chunk from the cache. Raw inputs, so
+    #: :meth:`chunk_scope` is the one place that parses/validates them.
+    rerun_sources: tuple[str, ...] | None = None
+    rerun_range: str | None = None
     #: The profile this configuration was resolved from (informational).
     profile: str = PROFILE_CUSTOM
     # --- decoder knobs (``None`` = unset) ---------------------------------- #
@@ -131,6 +138,15 @@ class PipelineOptions:
             if value is not None:
                 out[name] = value
         return out
+
+    def chunk_scope(self) -> ChunkScope | None:
+        """The parsed re-run scope, or ``None`` when the run is unscoped.
+
+        Raises :class:`clear_record.core.ScopeError` on a malformed range; the
+        scope is never quietly dropped, because "unscoped" re-decodes everything
+        and a typo must not silently cost a full pass.
+        """
+        return ChunkScope.parse(self.rerun_sources, self.rerun_range)
 
 
 def profile_values(profile: str) -> dict[str, object]:

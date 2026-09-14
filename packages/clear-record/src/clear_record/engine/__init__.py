@@ -34,7 +34,14 @@ from clear_record.engine.synth import (
     mix_crosstalk,
     record,
 )
-from clear_record.engine.text import clean_segments, collapse_repetitions, is_non_speech
+from clear_record.engine.text import (
+    changed_terms,
+    clean_segments,
+    collapse_repetitions,
+    glossary_terms,
+    is_non_speech,
+    term_could_affect,
+)
 
 __all__ = [
     "ASR_SAMPLE_RATE",
@@ -47,12 +54,14 @@ __all__ = [
     "attribute_by_source",
     "attribute_segments",
     "attribute_segments_windowed",
+    "changed_terms",
     "channel_count",
     "clean_segments",
     "collapse_repetitions",
     "cross_correlate",
     "diarize",
     "estimate_offset",
+    "glossary_terms",
     "is_non_speech",
     "logmel_stats",
     "make_crosstalk_scene",
@@ -65,5 +74,6 @@ __all__ = [
     "reconcile",
     "record",
     "rms",
+    "term_could_affect",
     "write_chunk",
 ]

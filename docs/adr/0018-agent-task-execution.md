@@ -141,10 +141,10 @@ mcp service and let the agent to do the heavy lifting"*.
   "only the affected chunks" (an earlier claim in this ADR that was wrong and is
   corrected here). On multi-hour tapes one tuning iteration is therefore minutes
   of GPU time, not seconds. That is exactly why scoped re-runs matter:
-- [OPEN] **Scoped re-runs are now a real concern, not polish.** To make iteration
-  cheap on a multi-hour tape, a re-run should be scoped — one source, or a time
-  range — or the invalidation should be narrowed. Until then the loop works but
-  costs a full re-decode per glossary edit.
+- [FACT] **Scoped re-runs were a real blocker on iteration, not polish.** To make
+  iteration cheap on a multi-hour tape, a re-run has to be scoped — one source, or
+  a time range — or the invalidation narrowed. Until the 2026-09-15 update below,
+  the loop worked but cost a full re-decode per glossary edit.
 - [FACT] The shipped MCP surface (ADR-0017, 14 tools) is **not yet sufficient** for
   the loop:
   - **no transcript-read tool** — `list_artifacts` returns paths and metadata, so
@@ -156,8 +156,8 @@ mcp service and let the agent to do the heavy lifting"*.
 - [DESIGN] "A simple MCP service" here means **small but complete for the loop**:
   read the transcript, write the story and the terms, re-run with intent. Ticket
   21 closes exactly those three gaps.
-- [OPEN] Whether a re-run should be **scoped** (one source, or a time range) to
-  keep the loop cheap on multi-hour tapes, or always whole-meeting.
+- [FACT] A re-run is **scoped** (one source, or a time range) when the caller asks
+  for it, and whole-meeting otherwise — see the 2026-09-15 update below.
 
 ## Update (2026-09-14, late) — pi-agent is the default agent to *point at or download*
 
@@ -181,3 +181,55 @@ we'd expose the necessary tools"*.
   no orchestration in the adapter.
 - [FACT] **Reversibility holds:** pi-agent is a *choice the setup offers*, not a
   dependency — any MCP-capable harness works equally.
+
+## Update (2026-09-15) — scoped re-runs land; the glossary is tracked per chunk
+
+Scoped in the local tracker's `project-console` lane. The two `[OPEN]`s above
+are answered here.
+
+- [FACT] **The cache key is split.** `cli.workspace.chunk_cache_key` still
+  returns the same run-meta, but the cache reads it as two parts: the **plan**
+  (backend, model, language, the chunk plan, decoder knobs) and the **glossary**.
+  A plan change still makes a source's chunk bodies meaningless in place and
+  invalidates **every chunk of that source**, exactly as before. What no longer
+  invalidates at source level is the glossary: each cached body records the
+  glossary **digest** it was actually decoded under.
+- [DECISION] **A re-run may be explicitly scoped** (`core.ChunkScope`): one or
+  more sources and/or a time range (`--rerun-source`, `--rerun-range
+  12:30-18:00`). The chunks the scope selects are re-decoded; every other chunk
+  is reused from the cache, whatever glossary it was decoded under.
+- [FACT] **An unscoped glossary edit still re-decodes every chunk of every
+  source.** That has not changed and is not claimed to have changed: the glossary
+  is the decoder's initial prompt, so any chunk's output *can* move. The change is
+  that the caller can now state which part to re-decode instead of paying for all
+  of it.
+- [DECISION] **Carried chunks stay honest.** A reused chunk that was decoded under
+  an earlier glossary keeps its old digest, is reported as carried over, and is
+  re-decoded by the next unscoped run. A scoped run never claims the current
+  glossary was applied to a chunk it did not decode.
+- [DECISION] **The conservative near-match guard only ever widens.** A changed
+  term — added *or removed* — that plausibly matches a cached transcript pulls
+  that chunk back into the re-decode set even when the scope excluded it. It can
+  add decodes and cannot remove one, so its failure mode is cost, never a skipped
+  chunk. Its limit is stated in `engine.text.term_could_affect`: a term the
+  decoder never wrote at all will not be found by it, which is why scope, not the
+  guard, decides reuse.
+- [DECISION] **Scoping refuses to guess.** An unreadable or empty range, a source
+  not in the manifest, a scope that selects no chunk of any selected source, or a
+  scope combined with `--no-resume` is an actionable error. The range is validated
+  when the command is parsed and the selection before the cache is touched, so a
+  typo cannot silently become a full re-decode, a no-op, or a cache wipe.
+- [FACT] **The cost is reported, not assumed.** A run logs
+  `N re-decoded, M reused` (plus how many reused chunks still carry an earlier
+  glossary), records a `chunk_report` in `segments.json`, and returns it on the
+  transcription result. The motivating case is pinned by a test: with two sources
+  of four chunks each, an unscoped glossary edit re-decodes all 8 chunks and a
+  scoped edit (one source, one time range) re-decodes 1.
+- [FACT] **What is *not* narrowed: the term.** A scope selects by source and time,
+  not by term. A term-subset scope was considered and dropped: mapping a term to
+  chunks needs the transcript-matching heuristic above, which is unsound as the
+  sole mechanism — the edit that motivates the loop is usually a term the decoder
+  never wrote, so the matching chunk is exactly the one a literal match misses.
+- [FACT] Exposing the scope through the MCP surface and the console is separate,
+  later work; the CLI and the run-options value (`PipelineOptions.rerun_sources` /
+  `rerun_range`) carry it today.

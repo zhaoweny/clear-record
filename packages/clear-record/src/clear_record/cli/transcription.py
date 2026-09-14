@@ -5,6 +5,12 @@ cache key and invalidation (through the ``Workspace``/``ChunkCache`` seam), the
 bounded worker pool, prompt cancellation via an injected
 :class:`CancellableProcessRunner`, and the overlap-aware chunk merge.
 
+It also owns the **scoped re-run** decision: which cached chunks a run reuses and
+which it re-decodes, and the tally that reports it. A
+:class:`clear_record.core.ChunkScope` (or no scope) plus a conservative
+near-match guard decide per chunk; see :func:`transcribe` and
+:class:`ChunkReport`.
+
 ``clear_record.cli.stages.transcribe`` is only wiring: it loads the manifest,
 resolves the backend and model, then calls :func:`transcribe` here. Everything
 the tests need
@@ -29,20 +35,31 @@ from clear_record.core import (
     DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    ChunkScope,
     EventSink,
     Progress,
+    ScopeError,
     Segment,
     Source,
 )
 from clear_record.engine import (
+    changed_terms,
     clean_segments,
     plan_chunks,
+    term_could_affect,
     write_chunk,
 )
 from clear_record.engine.audio import read_audio
 from clear_record.providers import CancellableProcessRunner
 
-from clear_record.cli.workspace import ChunkCache, Workspace, chunk_cache_key
+from clear_record.cli.workspace import (
+    ChunkCache,
+    Workspace,
+    chunk_cache_key,
+    chunk_glossary,
+    glossary_digest,
+    plan_matches,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,6 +69,10 @@ class TranscriptionOptions:
     ``model`` is passed through to the backend as written (the backend resolves
     its own default when it is ``None``); the effective model used for the cache
     key and the record meta is ``model or backend.info.default_model``.
+
+    ``scope`` is a re-run scope, not part of the cache key: it decides which
+    chunks this run is allowed to re-decode, while the cache key decides which
+    chunks *may* be reused at all.
     """
 
     model: str | None = None
@@ -62,6 +83,7 @@ class TranscriptionOptions:
     overlap_seconds: float = DEFAULT_OVERLAP_S
     resume: bool = True
     jobs: int = 0
+    scope: ChunkScope | None = None
     # Decoder knobs; ``None`` = unset (the backend's own default applies).
     beam_size: int | None = None
     best_of: int | None = None
@@ -82,6 +104,24 @@ class TranscriptionOptions:
 
 
 @dataclasses.dataclass(frozen=True)
+class ChunkReport:
+    """What a transcription run cost, in re-decoded vs reused chunks.
+
+    Reported rather than inferred: the whole point of a scoped re-run is that it
+    is cheaper, and a run that does not say how much is cheaper has to be
+    believed. ``carried_over`` is the honest part — chunks that were reused while
+    they still carry an earlier glossary, which only an explicit scope permits.
+    """
+
+    scoped: bool = False
+    scope: str = ""
+    reused: int = 0
+    redecoded: int = 0
+    carried_over: int = 0
+    guard_redecoded: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
 class Transcription:
     """The result of a resumable transcription run."""
 
@@ -89,6 +129,7 @@ class Transcription:
     source_meta: dict[str, dict]
     jobs: int
     model: str
+    chunk_report: ChunkReport = dataclasses.field(default_factory=ChunkReport)
 
 
 def _duration(path: str | Path) -> float:
@@ -436,6 +477,60 @@ class _SourcePlan:
     segments: list[list[Segment] | None]
 
 
+# What to do with one cached chunk. ``_REUSE`` and ``_CARRY`` both reuse a body
+# and differ only in the provenance they record; ``_REDECODE`` and ``_GUARD``
+# both re-decode one and differ only in *why* (the guard is the conservative
+# widening of an explicit scope).
+_REUSE = "reuse"
+_CARRY = "carry"
+_REDECODE = "redecode"
+_GUARD = "guard"
+
+
+def _validate_scope(
+    scope: ChunkScope, sources: Sequence[Source], *, resume: bool
+) -> None:
+    """Refuse a scope that cannot be honoured before any work is planned.
+
+    A scope is an assertion about *reusing* chunks, so it is meaningless with
+    resume off; and a source name that is not in the manifest is a typo, not an
+    instruction to re-decode everything.
+    """
+    if not resume:
+        raise ScopeError(
+            "[transcribe] a re-run scope only means something when cached chunks "
+            "may be reused, but resume is off; drop one of the two."
+        )
+    known = {src.id for src in sources}
+    unknown = [name for name in scope.sources if name not in known]
+    if unknown:
+        available = ", ".join(sorted(known)) or "none"
+        raise ScopeError(
+            "[transcribe] re-run scope names source(s) not in the manifest: "
+            f"{', '.join(unknown)} (available: {available})."
+        )
+
+
+def _empty_scope_message(scope: ChunkScope, durations: dict[str, float]) -> str:
+    """The actionable error for a scope that selects no chunk at all.
+
+    Silence here would mean either a full re-decode (scope ignored) or a no-op
+    (scope treated as "nothing to do"); both are worse than saying so.
+    """
+    looked_at = (
+        ", ".join(
+            f"{sid}={seconds:.1f}s"
+            for sid, seconds in durations.items()
+            if scope.selects_source(sid)
+        )
+        or "no source"
+    )
+    return (
+        f"[transcribe] re-run scope ({scope.describe()}) selects no chunk of "
+        f"{looked_at}; it would re-decode nothing. Widen the range or drop the scope."
+    )
+
+
 def transcribe(
     sources: Sequence[Source],
     backend,
@@ -457,6 +552,13 @@ def transcribe(
     A backend that declares ``chunked=False`` — a whole-file OS service — is
     handed each source as a single window; the cache and the worker pool are
     otherwise unchanged (ADR-0019).
+
+    With an ``options.scope``, only the chunks the scope selects are re-decoded;
+    every other chunk is reused from the cache. A reused chunk whose body was
+    decoded under an earlier glossary is *reported* as carried over and its old
+    digest is kept, so an unscoped run still re-decodes it — the scope is an
+    explicit, one-way assertion, never a silent claim that the glossary applied.
+    The near-match guard can only add chunks to the re-decode set.
     """
     backend_id = backend.info.id
     chosen_model = options.model or backend.info.default_model
@@ -465,6 +567,7 @@ def transcribe(
     prompt = options.initial_prompt
     chunk_seconds = options.chunk_seconds
     overlap_seconds = options.overlap_seconds
+    scope = options.scope
     log = workspace.log
 
     # Decoder knobs are passed to the backend only when set. A backend that does
@@ -479,11 +582,13 @@ def transcribe(
             f"{', '.join(supported) or 'none'}."
         )
 
-    # Plan every source first (cheap I/O), then run the uncached chunks through
-    # one bounded pool so the GPU stays fed across source boundaries too.
-    plans: list[_SourcePlan] = []
-    pending: list[_ChunkTask] = []
-    cached_hits: list[str] = []
+    if scope is not None:
+        _validate_scope(scope, sources, resume=options.resume)
+
+    # Plan every source first (cheap I/O, and no cache writes yet). A scope that
+    # selects nothing must fail *before* the cache is touched: a typo must not
+    # invalidate a good cache on its way to an error.
+    planned: list[tuple[Source, float, list[tuple[float, float]]]] = []
     for src in sources:
         duration = _duration(src.path)
         if backend.info.chunked:
@@ -493,6 +598,26 @@ def transcribe(
             # source once; the per-source chunk cache still provides coarse
             # progress and resume (ADR-0019).
             chunks = [(0.0, duration)] if duration > 0 else []
+        planned.append((src, duration, chunks))
+
+    if scope is not None:
+        durations = {src.id: duration for src, duration, _ in planned}
+        selected_n = sum(
+            1
+            for src, _duration, chunks in planned
+            for start_s, end_s in chunks
+            if scope.selects(src.id, start_s, end_s)
+        )
+        if selected_n == 0:
+            raise ScopeError(_empty_scope_message(scope, durations))
+
+    # Then run the uncached chunks through one bounded pool so the GPU stays fed
+    # across source boundaries too.
+    plans: list[_SourcePlan] = []
+    pending: list[_ChunkTask] = []
+    cached_hits: list[str] = []
+    reused_n = redecoded_n = carried_n = guard_n = 0
+    for src, duration, chunks in planned:
         cache = workspace.chunk_cache(src.id).ensure()
         run_meta = chunk_cache_key(
             backend=backend_id,
@@ -504,29 +629,88 @@ def transcribe(
             n_chunks=len(chunks),
             decoders=decoders,
         )
+        current_digest = glossary_digest(prompt)
 
-        reuse = options.resume and cache.matches(run_meta)
-        if not reuse:
+        stored = cache.read_meta() if options.resume else None
+        if options.resume and plan_matches(stored, run_meta):
+            digests = chunk_glossary(stored)
+            # Terms added *or removed* since the cached run: either direction can
+            # change how a chunk that resembles the term was decoded.
+            affected = changed_terms(
+                str(stored.get("glossary", "")), str(run_meta["glossary"])
+            )
+        else:
             # Drop chunk results, transient WAVs and any half-written cache file
             # from a previous interrupted pass: a stale body must never be read.
+            # A meta with no per-chunk digests (written before scoped re-runs)
+            # also lands here, so its bodies are re-decoded once rather than
+            # trusted at unknown provenance.
             cache.invalidate()
-            cache.write_meta(run_meta)
+            stored, digests, affected = None, {}, ()
 
         log(
             f"[transcribe] {src.id}: {len(chunks)} chunk(s), {duration:.1f}s, "
             f"{backend.info.description} ({chosen_model})"
         )
         segs: list[list[Segment] | None] = [None] * len(chunks)
+        # The glossary digest every chunk will carry once this run finishes;
+        # written up front so a cancelled pass stays resumable.
+        final: dict[int, str] = {}
         for i, (start_s, end_s) in enumerate(chunks):
-            if reuse and cache.has_segments(i):
-                segs[i] = cache.read_segments(i)
+            selected = scope is None or scope.selects(src.id, start_s, end_s)
+            cached = (
+                cache.read_segments(i) if digests and cache.has_segments(i) else None
+            )
+            if cached is None:
+                decision = _REDECODE
+            elif digests.get(i) == current_digest:
+                decision = _REUSE
+            elif selected:
+                decision = _REDECODE
+            elif affected and any(
+                term_could_affect(term, " ".join(seg.text for seg in cached))
+                for term in affected
+            ):
+                # Out of scope, but a changed term could be in this chunk: the
+                # guard only ever *adds* work, so being wrong here is slow, not
+                # stale.
+                decision = _GUARD
+            else:
+                decision = _CARRY
+
+            if decision in (_REUSE, _CARRY):
+                segs[i] = cached
                 cached_hits.append(src.id)
-                log(f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached")
+                reused_n += 1
+                if decision == _CARRY:
+                    carried_n += 1
+                    final[i] = digests[i]
+                    log(
+                        f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} "
+                        "kept (decoded under an earlier glossary)"
+                    )
+                else:
+                    final[i] = current_digest
+                    log(f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached")
             else:
                 pending.append(
                     _ChunkTask(src.id, i, src.path, start_s, end_s, cache, len(chunks))
                 )
+                redecoded_n += 1
+                if decision == _GUARD:
+                    guard_n += 1
+                final[i] = current_digest
+        cache.write_meta(run_meta, final)
         plans.append(_SourcePlan(src, duration, chunks, segs))
+
+    report = ChunkReport(
+        scoped=scope is not None,
+        scope=scope.describe() if scope is not None else "",
+        reused=reused_n,
+        redecoded=redecoded_n,
+        carried_over=carried_n,
+        guard_redecoded=guard_n,
+    )
 
     # One stage-level progress bar over **chunks across all sources**: cached
     # chunks count as already done, pending ones advance as the pool finishes
@@ -590,6 +774,26 @@ def transcribe(
     if total_chunks == 0:
         progress.finish("no chunks to transcribe")
 
+    # Report the cost, so the loop's economics are visible rather than inferred.
+    log(
+        f"[transcribe] chunks: {report.redecoded} re-decoded, {report.reused} reused"
+        + (
+            f" ({report.carried_over} of the reused under an earlier glossary)"
+            if report.carried_over
+            else ""
+        )
+        + (
+            f", {report.guard_redecoded} pulled back by the near-match guard"
+            if report.guard_redecoded
+            else ""
+        )
+    )
+    if report.carried_over:
+        log(
+            f"[transcribe] note: {report.carried_over} reused chunk(s) still carry "
+            "an earlier glossary; re-run without a scope to apply the current one."
+        )
+
     per_source: dict[str, list[Segment]] = {}
     source_meta: dict[str, dict] = {}
     for plan in plans:
@@ -606,10 +810,12 @@ def transcribe(
         source_meta=source_meta,
         jobs=workers,
         model=chosen_model,
+        chunk_report=report,
     )
 
 
 __all__ = [
+    "ChunkReport",
     "Transcription",
     "TranscriptionOptions",
     "auto_jobs",

@@ -403,6 +403,13 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   decision closes a gap the investigation exposed — a browser-accessible
   localhost service still needs an `Origin`/`Host` guard against CSRF and DNS
   rebinding — so the app now owes the operator a proxy recipe **and** that guard.
+- [VOICE: owner, 2026-09-15] CLI framework suggestion, verbatim: *"perhaps we may
+  adopt click for cli interfaces"*. Recorded as an evaluation, not a decision
+  (`.scratch/cli-framework/spec.md`). Grounding it surfaced the real defect — the
+  CLI is argparse but the **`CR_*` environment surface has grown to 21 variables**
+  with precedence re-implemented in several modules — so the recommended order is
+  to unify the env layer first and treat the Click port as a later, deliberate
+  prefactor.
 
 ## Agent task execution: no bundled harness (2026-09-14)
 

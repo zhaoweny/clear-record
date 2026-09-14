@@ -432,6 +432,19 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
     says so, and it matters more in a managed workspace: keeping derived cache
     inside the content directory means deleting tapes does not reclaim the cache,
     and a cache sweep would walk the user's data.
+- [VOICE: owner, 2026-09-15] platformdirs request, verbatim: *"and feature request:
+  adopt https://pypi.org/project/platformdirs/"*.
+  - [FACT] Shown that this **reverses ADR-0007's one-layout rule** (macOS moves
+    from `~/.local/share/clear-record` to `~/Library/Application Support/…`) and
+    that existing macOS data would need migrating, the owner chose **"Adopt
+    platformdirs native — reverse the one-layout rule"**.
+  - [DECISION] **ADR-0025**: adopt `platformdirs` (MIT, zero deps) with
+    **platform-native** paths; this **supersedes ADR-0007 in part** and **resolves
+    its macOS/Windows `[OPEN]`**. ADR-0007's surviving half stands — the workspace
+    is still not app-owned. The kind-split (data / config / cache / state+logs) is
+    kept, `CR_*` overrides and precedence survive, `core` stays third-party-free by
+    **receiving** its directory, and **migration is part of the change**: an
+    existing XDG install is adopted, never orphaned.
 - [FACT] Both touch the local-first/privacy stance: logs are where private
   material leaks by accident (file names, glossary terms, transcripts), and a
   *service* exposed beyond localhost collides with ADR-0013's "localhost only, no

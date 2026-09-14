@@ -3,6 +3,13 @@
 Status: active
 Date: 2026-09-14
 
+- Superseded **in part** by [ADR-0023](0023-frontend-toolchain.md) (2026-09-15):
+  the front-end now has a real toolchain (Tailwind v4 + a bundler) and **ships
+  compiled assets**, so this ADR's *"no build step"* property is superseded. Its
+  reasoning survives in a different form — offline, with no runtime toolchain —
+  and its **htmx/Alpine over server-rendered Jinja** choice, the tray, and the
+  pi-agent boundary all stand.
+
 ## Context
 
 - [VOICE: owner, 2026-09-14] The owner settled the whole application shape in

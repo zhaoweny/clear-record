@@ -151,3 +151,31 @@ Date: 2026-09-15
 - Revisit the single-user assumption if the node ever serves more than one
   person: quotas and per-user roots would change this ADR's shape (ADR-0021's
   "revisit if the product grows multi-user").
+
+## Update (2026-09-15) — the upload id lands; resume is still unbuilt
+
+The Decision bullet above ("Simple upload only, this slice … a resume token is
+**out of scope**") is **amended**, not superseded: the endpoint now carries the
+id that bullet ruled out, while the limitation it describes is unchanged. The
+original text is kept for the record.
+
+- [DECISION] **The upload endpoints take an optional `upload_id`.** It is a bare,
+  bounded token (`[A-Za-z0-9][A-Za-z0-9._-]*`, at most 64 characters) — never a
+  path — validated **before** the body is read, and it names the transfer's
+  `.part` scratch file. The owner's answer on dropped connections (2026-09-15)
+  was *"simple now, but shape the endpoint for resumability"*, so the shape lands
+  now and the layer can follow without a breaking request change.
+- [DECISION] **Nothing resumes yet, and a refusal says so.** A fresh id still
+  starts at zero. An id whose scratch file already exists — an interrupted or
+  in-flight transfer — is refused as unsupported (501) rather than overwritten or
+  silently restarted: an id names one transfer, and destroying the partial file
+  would remove the only thing a resume layer could have used. A malformed id is a
+  400. See `docs/service-deployment.md` §4.
+- [DESIGN] **Storage reports the root's free space** (`free_bytes`), from the
+  same `root_free_bytes` the upload guard checks. The console's panel previously
+  called `shutil.disk_usage` itself — two implementations of one fact, which is
+  how a panel comes to say there is room while the guard refuses at 64 MiB of
+  headroom.
+- Revisit hook unchanged: this is the shape, not the layer. Chunked/resumable
+  upload is still the next decision, taken when a real tape over a bad link
+  earns it.

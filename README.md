@@ -369,8 +369,9 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 > meetings and tape sets, running tapes with progress and a live run view, tape
 > upload into a managed workspace, and the archive view; the MCP surface carries
 > the glossary ↔ transcript tuning loop. The **agent tasks** (glossary
-> collection, transcript check, minutes) and the guided agent setup are the next
-> slices (ADR-0018).
+> collection, transcript check, minutes) run on the landed runner seam and land
+> as reviewable drafts (ADR-0018); wiring them into the console and the MCP
+> surface, and the guided agent setup, are the next slices.
 
 ### Desktop app (macOS · Windows)
 

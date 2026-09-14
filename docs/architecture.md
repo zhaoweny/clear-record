@@ -356,8 +356,9 @@ background runs and the **archive** (copy + sha256 manifest); the **web UI**
 renders projects, the glossary table, meetings and tape sets, the **live run
 view**, **tape upload** into a managed workspace, and the **archive view**, and
 the **MCP surface** now carries the **tuning loop** (ADR-0017, ADR-0018). The
-**agent tasks** (their prompts and console wiring) and **guided agent setup**
-are **specified but unbuilt** — see ADR-0018 and the trackers below.
+**agent tasks**' runner seam, prompts, drafts and accept/reject states have
+landed; their **console wiring** and **guided agent setup** are **specified but
+unbuilt** — see ADR-0018 and the trackers below.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
@@ -418,9 +419,10 @@ which is not published):
 - **Windows-native** (`Microsoft.Windows.AI.Speech`) — deferred for its
   MSIX/`systemAIModels` packaging requirement. Apple-native has left this list:
   it landed as the `apple-speech` backend (ADR-0019);
-- the **three agent tasks** — glossary collection, transcript check and minutes.
-  Their runner seam has landed (ADR-0018); the task prompts and their console
-  wiring have not;
+- the **agent tasks' console surface** — glossary collection, transcript check
+  and minutes. Their runner seam, prompts, drafts and accept/reject states have
+  landed (ADR-0018); launching a task and reviewing a draft from the console or
+  MCP has not, so accepting a draft still only records its review state;
 - **meeting review + minutes** and **guided agent setup** in the console, and
   deeper **diarization** behind the same seam.
 

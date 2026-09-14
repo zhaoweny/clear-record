@@ -411,6 +411,8 @@ an actionable message, not a traceback:
 | size cap (`CR_MAX_UPLOAD_BYTES`, default 8 GiB) | a body over the cap — checked before the transfer, again while streaming | 413 |
 | disk-space precheck | less free space than the declared body + headroom, checked **before** the body is read | 507 |
 | no symlink following | a destination directory or file that resolves outside the managed root | 400 |
+| upload-id format (`?upload_id=`) | an id that is not a bare `[A-Za-z0-9][A-Za-z0-9._-]*` token of at most 64 characters, checked **before** the body is read | 400 |
+| upload-id reuse (`?upload_id=`) | an id whose scratch file is already on disk — an interrupted or in-flight transfer this node cannot resume | 501 |
 
 An upload streams to a `.part` file beside its destination, `fsync`-es and
 atomically renames it, then records the tape with its **sha256** and size. A
@@ -418,10 +420,12 @@ partial or dropped upload leaves **no** tape behind.
 
 ### Storage visibility and deleting tapes
 
-[FACT] `GET /api/meetings/{id}/storage` reports the workspace size and the
-uploaded tapes (path, sha256, size); `DELETE /api/meetings/{id}/tapes/{tape_id}`
-deletes a **managed** tape. A tape in a user-chosen workspace cannot be deleted
-here — it is your document.
+[FACT] `GET /api/meetings/{id}/storage` reports the workspace size, the managed
+root's **free space** (`free_bytes`, `null` when the meeting is not managed or
+the filesystem cannot report it — the same accounting the upload guard checks),
+and the uploaded tapes (path, sha256, size);
+`DELETE /api/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
+a user-chosen workspace cannot be deleted here — it is your document.
 
 > **The archive is the durable copy.** Deleting workspace tapes frees the node;
 > archive the meeting first (`POST /api/meetings/{id}/archives`) if you need to
@@ -443,6 +447,14 @@ upload, they do not make a public port safe.
 [OPEN] Upload is a **single streaming POST**. A dropped multi-GB upload restarts
 from zero. Chunked/resumable upload (tus or a resume token) is deliberately out
 of scope until a real tape over a bad link makes it worth building.
+
+[DESIGN] The endpoint does accept an optional **upload id** (`?upload_id=`),
+validated and read before the body so a refusal costs no transfer. It names the
+transfer's scratch file — the identity a resume layer would need — so
+resumability can be added later without changing the request's shape. **Nothing
+resumes today**: a fresh id still starts at zero, and an id whose scratch file is
+already on disk is refused as unsupported (501) with the existing file left
+untouched.
 
 ## 5. Run state, the queue, and restarts
 

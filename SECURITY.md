@@ -26,17 +26,20 @@ that generates test material) or a file you are free to share.
 
 ## Supported versions
 
-This project is **pre-1.0**. There are no tagged releases yet; the only
-supported version is the current `main` (the `0.1.x` line).
+This project is **pre-1.0**. The `0.1` line is tagged — `v0.1.1` is the current
+stable release, and `v0.1.0` was a source-only tag. Development continues on
+`main`, the `0.2` trunk.
 
 | Version | Supported |
 | --- | --- |
-| `main` (the `0.1.x` line) | ✅ |
-| Older commits and pre-release builds | ❌ |
+| `main` (the `0.2.x` development trunk) | ✅ |
+| `releases/v0.1.x` (the `0.1` maintenance line) | ✅ |
+| Older releases, older commits and pre-release builds | ❌ |
 
-Fixes land on `main`, and the first `v0.1.x` release will be tagged from it.
-There are no backports to older commits. Because the project is pre-1.0, a fix
-may also change or document behaviour without a deprecation period.
+Fixes land on `main`, and a `0.1.x` patch release is cut from
+`releases/v0.1.x`. There are no backports to older commits. Because the project
+is pre-1.0, a fix may also change or document behaviour without a deprecation
+period.
 
 ## Scope
 

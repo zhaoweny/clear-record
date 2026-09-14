@@ -1,19 +1,25 @@
-# German translations for clear-record.
-# This catalog is an initial, machine-assisted translation pending native
-# review.
-# Strings left empty fall back to the English source (message IDs are
-# English).
+# Simplified Chinese (zh_CN) translations for clear-record.
 #
+# Prepared by the implementing agent (2026-09-15); AWAITING NATIVE REVIEW.
+# Nothing here is reviewed copy: it is a careful draft, not a native
+# speaker's sign-off.
+# Translated: the web console's user-facing text (buttons, headings, empty
+# states, status words, inline help), user-facing CLI errors and usage
+# errors, and the tailscale status lines.
+# Deliberately left English (empty msgstr): per-option `--help` text; the
+# terminal is not the interface (owner, 2026-09-15). Message IDs are the
+# English source strings, so an empty msgstr falls back to English.
 msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-15 06:26+0800\n"
-"PO-Revision-Date: 2026-09-15 06:25+0800\n"
-"Last-Translator: clear-record contributors\n"
-"Language: de\n"
-"Language-Team: de <LL@li.org>\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"POT-Creation-Date: 2026-09-15 06:42+0800\n"
+"PO-Revision-Date: 2026-09-15 06:45+0800\n"
+"Last-Translator: clear-record implementing agent (awaiting native review)"
+"\n"
+"Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -21,31 +27,27 @@ msgstr ""
 
 #: packages/clear-record/src/clear_record/cli/cli.py:73
 msgid "clear-record: from many recordings to one clear record."
-msgstr "clear-record: aus vielen Aufnahmen ein klares Protokoll."
+msgstr "clear-record：从众多录音到一份清晰的记录。"
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/cli/cli.py:76
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
-"Diagnoseprotokoll ausführlicher (die Flag-Form von CR_LOG_LEVEL=debug); "
-"das Protokoll wird im App-Zustandsverzeichnis geschrieben, nie auf stdout"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:218
+#: packages/clear-record/src/clear_record/cli/cli.py:219
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
-msgstr ""
-"--split-channels und --mix-down schließen sich gegenseitig aus; gib eines"
-" oder keines an."
+msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:233
+#: packages/clear-record/src/clear_record/cli/cli.py:235
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
-msgstr ""
-"--diarize und --no-diarize schließen sich gegenseitig aus; gib eines oder"
-" keines an."
+msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:593
+#: packages/clear-record/src/clear_record/cli/cli.py:596
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -53,45 +55,37 @@ msgid ""
 "  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp ggml-{model}.bin "
 "--local-dir {models_dir}`, or pass an explicit `--model`."
 msgstr ""
-"[auto] das empfohlene Modell {model!r} ist nicht im Modellverzeichnis, "
-"und --auto lädt keines herunter.\n"
-"  Lade es vorab, z. B. `hf download ggerganov/whisper.cpp "
-"ggml-{model}.bin --local-dir {models_dir}`, oder gib ein explizites "
-"`--model` an."
+"[auto] 推荐模型 {model!r} 不在模型目录中，而 --auto 从不下载模型。\n"
+"  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
+"dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:777
+#: packages/clear-record/src/clear_record/cli/cli.py:780
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
-msgstr ""
-"führt die Pipeline aus und meldet die Transkriptqualität gegen eine "
-"Referenz, falls angegeben"
+msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:792
+#: packages/clear-record/src/clear_record/cli/cli.py:795
 msgid "assign speaker labels to already-transcribed segments"
-msgstr "weist bereits transkribierten Segmenten Sprecherbezeichnungen zu"
+msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:799
+#: packages/clear-record/src/clear_record/cli/cli.py:802
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
-msgstr ""
-"weist Sprecher anhand der relativen Quellenenergie neu zu "
-"(Nahbesprechung/Übersprechen)"
+msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:806
+#: packages/clear-record/src/clear_record/cli/cli.py:809
 msgid "show or append to the workspace glossary (ASR initial prompt)"
-msgstr "zeigt das Workspace-Glossar an oder hängt daran an (ASR-Anfangsprompt)"
+msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:813
+#: packages/clear-record/src/clear_record/cli/cli.py:816
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
-msgstr ""
-"erzeugt eine saubere Szene + degradierte Aufnahmen je Gerät mit exakter "
-"Ground Truth"
+msgstr "生成干净场景 + 各设备的退化录音，并提供精确的真值"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:820
+#: packages/clear-record/src/clear_record/cli/cli.py:823
 msgid "list which ASR backends are currently available"
-msgstr "listet auf, welche ASR-Backends derzeit verfügbar sind"
+msgstr "列出当前可用的 ASR 后端"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:36
 #, python-brace-format
@@ -102,32 +96,40 @@ msgid ""
 "  Or run without installing:   uvx --from 'clear-record[web]' clear-"
 "record web"
 msgstr ""
-"[web] die Web-Konsole benötigt das optionale 'web'-Extra ({missing} nicht"
-" gefunden).\n"
-"  Installiere es mit:   pip install 'clear-record[web]'\n"
-"  Oder führe sie ohne Installation aus:   uvx --from 'clear-record[web]' "
-"clear-record web"
+"[web] Web 控制台需要可选的 'web' 附加组件（未找到 {missing}）。\n"
+"  请安装：   pip install 'clear-record[web]'\n"
+"  或无需安装直接运行：   uvx --from 'clear-record[web]' clear-record web"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:63
 msgid "start the local web console (projects, glossary) in a browser"
-msgstr "startet die lokale Web-Konsole (Projekte, Glossar) im Browser"
+msgstr "在浏览器中启动本地 Web 控制台（项目、术语表）"
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:68
 msgid "bind address (default localhost)"
-msgstr "Bind-Adresse (Standard localhost)"
+msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:71
 msgid "port (default 8765)"
-msgstr "Port (Standard 8765)"
+msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:73
 msgid "do not open a browser window"
-msgstr "kein Browserfenster öffnen"
+msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:79
 msgid "override the app data directory (default: CR_DATA_DIR / XDG)"
-msgstr "App-Datenverzeichnis überschreiben (Standard: CR_DATA_DIR / XDG)"
+msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:85
 msgid ""
 "set up Tailscale Serve for this port, trust this machine's tailnet name, "
@@ -135,40 +137,35 @@ msgid ""
 "console and stops with it. The tailnet is the authentication: anyone on "
 "your tailnet can reach the console."
 msgstr ""
-"richtet Tailscale Serve für diesen Port ein, vertraut dem Tailnet-Namen "
-"dieser Maschine und gibt dessen https-URL aus. Serve läuft im Vordergrund"
-" neben der Konsole und endet mit ihr. Das Tailnet ist die "
-"Authentifizierung: Jeder in deinem Tailnet kann die Konsole erreichen."
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:96
 msgid ""
 "trust NAME instead of the machine's resolved tailnet name (requires "
 "--tailscale)"
 msgstr ""
-"vertraut NAME statt des aufgelösten Tailnet-Namens der Maschine "
-"(erfordert --tailscale)"
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:106
 msgid ""
 "the tailnet HTTPS port Serve exposes (default: the same as --port); "
 "requires --tailscale"
 msgstr ""
-"der Tailnet-HTTPS-Port, den Serve bereitstellt (Standard: derselbe wie "
-"--port); erfordert --tailscale"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:144
 msgid ""
 "--tailscale-host / --tailscale-port configure Serve; pass --tailscale too"
 " (or set CR_TRUSTED_HOSTS to trust a hostname without Serve)."
 msgstr ""
-"--tailscale-host / --tailscale-port konfigurieren Serve; gib auch "
-"--tailscale an (oder setze CR_TRUSTED_HOSTS, um einem Hostnamen ohne "
-"Serve zu vertrauen)."
+"--tailscale-host / --tailscale-port 用于配置 Serve；请同时传入 --tailscale（或设置 "
+"CR_TRUSTED_HOSTS 以在不使用 Serve 的情况下信任某个主机名）。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:152
 #, python-brace-format
 msgid "--tailscale-port {port} is not a port number (1-65535)."
-msgstr "--tailscale-port {port} ist keine Portnummer (1-65535)."
+msgstr "--tailscale-port {port} 不是有效的端口号（1–65535）。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:237
 #, python-brace-format
@@ -180,12 +177,10 @@ msgid ""
 "--tailscale and front the loopback console with your own proxy "
 "(ADR-0021)."
 msgstr ""
-"--tailscale richtet Tailscale Serve gegen http://127.0.0.1:<port> ein, "
-"aber --host {host!r} ist keine Loopback-Adresse, sodass Serve die Konsole"
-" nicht erreichen könnte.\n"
-"  Lass --host weg (die Konsole bindet standardmäßig 127.0.0.1), oder lass"
-" --tailscale weg und stelle deinen eigenen Proxy vor die Loopback-Konsole"
-" (ADR-0021)."
+"--tailscale 会针对 http://127.0.0.1:<port> 配置 Tailscale Serve，但 --host "
+"{host!r} 不是回环地址，Serve 无法访问该控制台。\n"
+"  请去掉 --host（控制台默认绑定 127.0.0.1），或去掉 "
+"--tailscale，改用自己的代理置于回环控制台之前（ADR-0021）。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:268
 #, python-brace-format
@@ -193,9 +188,8 @@ msgid ""
 "--tailscale-host {override!r} is not a bare hostname.\n"
 "    Fix: pass the name Tailscale gives you, e.g. machine.tailnet.ts.net."
 msgstr ""
-"--tailscale-host {override!r} ist kein bloßer Hostname.\n"
-"    Korrektur: Gib den Namen an, den Tailscale dir gibt, z. B. "
-"machine.tailnet.ts.net."
+"--tailscale-host {override!r} 不是裸主机名。\n"
+"    修正：传入 Tailscale 分配给你的名称，例如 machine.tailnet.ts.net。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:282
 #, python-brace-format
@@ -205,8 +199,7 @@ msgid ""
 " tailnet."
 msgstr ""
 "[tailscale] {error}\n"
-"    Die Konsole startet trotzdem, ist aber über das Tailnet nicht "
-"erreichbar."
+"    控制台仍会启动，但无法通过 tailnet 访问。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:294
 #, python-brace-format
@@ -216,10 +209,8 @@ msgid ""
 "    If it does not point at this console, pass --tailscale-port <port> to"
 " expose a different tailnet port."
 msgstr ""
-"[tailscale] Port {port} wird bereits von Tailscale bedient; diese "
-"Zuordnung bleibt unangetastet.\n"
-"    Wenn sie nicht auf diese Konsole zeigt, gib --tailscale-port <port> "
-"an, um einen anderen Tailnet-Port bereitzustellen."
+"[tailscale] 端口 {port} 已由 Tailscale 提供服务；保留该映射不变。\n"
+"    如果它并未指向此控制台，请传入 --tailscale-port <port> 以暴露另一个 tailnet 端口。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:304
 #, python-brace-format
@@ -230,208 +221,206 @@ msgid ""
 "this console.\n"
 "    Serve runs in the foreground and stops with this console."
 msgstr ""
-"[tailscale] Die Konsole ist jetzt in deinem Tailnet freigegeben:\n"
+"[tailscale] 控制台现已在你的 tailnet 上共享：\n"
 "    {url}\n"
-"    Das Tailnet ist die Authentifizierung: Jeder in deinem Tailnet kann "
-"diese Konsole erreichen.\n"
-"    Serve läuft im Vordergrund und endet mit dieser Konsole."
+"    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
+"    Serve 在前台运行，并随此控制台一起停止。"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:20
 msgid "missing"
-msgstr "fehlt"
+msgstr "缺失"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:6
 msgid "no manifest"
-msgstr "kein Manifest"
+msgstr "无清单"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:8
 msgid "ok"
-msgstr "ok"
+msgstr "正常"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:10
 #, python-brace-format
 msgid "{count} file verified"
 msgid_plural "{count} files verified"
-msgstr[0] "{count} Datei verifiziert"
-msgstr[1] "{count} Dateien verifiziert"
+msgstr[0] "已校验 {count} 个文件"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:13
 msgid "failed"
-msgstr "fehlgeschlagen"
+msgstr "失败"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:16
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:25
 msgid "mismatched"
-msgstr "abweichend"
+msgstr "不匹配"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:1
 msgid "Archives"
-msgstr "Archive"
+msgstr "归档"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 msgid "Created"
-msgstr "Erstellt"
+msgstr "创建时间"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 msgid "Meeting"
-msgstr "Besprechung"
+msgstr "会议"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 msgid "Path"
-msgstr "Pfad"
+msgstr "路径"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:97
 msgid "Status"
-msgstr "Status"
+msgstr "状态"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:19
 msgid "checking…"
-msgstr "prüfe…"
+msgstr "检查中…"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:24
 msgid "Verify"
-msgstr "Prüfen"
+msgstr "校验"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:31
 msgid "No archives yet."
-msgstr "Noch keine Archive."
+msgstr "暂无归档。"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:2
 msgid "No notes."
-msgstr "Keine Notizen."
+msgstr "无备注。"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:5
 msgid "Meetings"
-msgstr "Besprechungen"
+msgstr "会议"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:12
 msgid "no workspace"
-msgstr "kein Workspace"
+msgstr "无工作区"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:19
 msgid "One tape path per line"
-msgstr "Ein Aufnahmepfad pro Zeile"
+msgstr "每行一个录音文件路径"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:20
 msgid "Save tapes"
-msgstr "Aufnahmen speichern"
+msgstr "保存录音"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:31
 msgid "model (optional)"
-msgstr "Modell (optional)"
+msgstr "模型（可选）"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:32
 msgid "language (optional)"
-msgstr "Sprache (optional)"
+msgstr "语言（可选）"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:34
 msgid "transcription profile"
-msgstr "Transkriptionsprofil"
+msgstr "转写预设"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:44
 msgid "Run"
-msgstr "Starten"
+msgstr "运行"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:52
 msgid "No run yet."
-msgstr "Noch kein Lauf."
+msgstr "尚未运行。"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:58
 msgid "Archive root (optional)"
-msgstr "Archiv-Wurzel (optional)"
+msgstr "归档根目录（可选）"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:59
 msgid "Archive"
-msgstr "Archivieren"
+msgstr "归档"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:64
 msgid "No meetings yet."
-msgstr "Noch keine Besprechungen."
+msgstr "暂无会议。"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:69
 msgid "Add a meeting"
-msgstr "Besprechung hinzufügen"
+msgstr "添加会议"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:76
 msgid "Meeting title"
-msgstr "Titel der Besprechung"
+msgstr "会议标题"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:77
 msgid "Workspace path"
-msgstr "Workspace-Pfad"
+msgstr "工作区路径"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:79
 msgid "Add meeting"
-msgstr "Besprechung hinzufügen"
+msgstr "添加会议"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:83
 msgid "Glossary"
-msgstr "Glossar"
+msgstr "术语表"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:85
 msgid "Filter"
-msgstr "Filter"
+msgstr "筛选"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:87
 msgid "all"
-msgstr "alle"
+msgstr "全部"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:97
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:143
 msgid "Term"
-msgstr "Begriff"
+msgstr "术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:97
 msgid "Aliases"
-msgstr "Aliasse"
+msgstr "别名"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:97
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:147
 msgid "Definition"
-msgstr "Definition"
+msgstr "释义"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:115
 msgid "Term status"
-msgstr "Begriffsstatus"
+msgstr "术语状态"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:122
 msgid "delete"
-msgstr "löschen"
+msgstr "删除"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:123
 msgid "Delete term"
-msgstr "Begriff löschen"
+msgstr "删除术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:132
 msgid "No glossary terms yet."
-msgstr "Noch keine Glossarbegriffe."
+msgstr "暂无术语。"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:136
 msgid "Add a term"
-msgstr "Begriff hinzufügen"
+msgstr "添加术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:144
 msgid "Reading / pronunciation"
-msgstr "Lesung / Aussprache"
+msgstr "读音 / 发音"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:146
 msgid "Aliases (comma separated)"
-msgstr "Aliasse (durch Kommas getrennt)"
+msgstr "别名（以逗号分隔）"
 
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:148
 msgid "Add term"
-msgstr "Begriff hinzufügen"
+msgstr "添加术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:7
 msgid "resolved knobs"
-msgstr "aufgelöste Regler"
+msgstr "已解析参数"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:16
 msgid "no preset — every knob stays as you set it."
-msgstr "kein Preset — jeder Regler bleibt, wie du ihn gesetzt hast."
+msgstr "无预设 — 各项参数保持你设定的值。"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:20
 msgid ""
@@ -439,61 +428,61 @@ msgid ""
 "chosen. Switching profile re-transcribes: the chunk cache is keyed on the"
 " decoder knobs, the model and the glossary, so a different profile "
 "decodes again."
-msgstr ""
-"Ein Profil stimmt nur die Decoder-Regler ab; Modell und Backend bleiben "
-"wie gewählt. Ein Profilwechsel transkribiert neu: Der Chunk-Cache ist an "
-"den Decoder-Reglern, dem Modell und dem Glossar aufgehängt, daher "
-"dekodiert ein anderes Profil erneut."
+msgstr "预设只调整解码器参数；模型和后端保持你所选的值。切换预设会重新转写：分块缓存以解码器参数、模型和术语表为键，因此不同的预设会重新解码。"
 
 #: packages/clear-record/src/clear_record/web/templates/_projects.html:14
 msgid "No projects yet."
-msgstr "Noch keine Projekte."
+msgstr "暂无项目。"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:7
 msgid "ETA"
-msgstr "Restzeit"
+msgstr "预计剩余"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:9
 msgid "Transcription progress"
-msgstr "Transkriptionsfortschritt"
+msgstr "转写进度"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:20
+#: packages/clear-record/src/clear_record/web/templates/base.html:22
 msgid "project console"
-msgstr "Projektkonsole"
+msgstr "项目控制台"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:21
+#: packages/clear-record/src/clear_record/web/templates/base.html:23
 msgid "ready"
-msgstr "bereit"
+msgstr "就绪"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:23
+#: packages/clear-record/src/clear_record/web/templates/base.html:29
+msgid "Language"
+msgstr "语言"
+
+#: packages/clear-record/src/clear_record/web/templates/base.html:39
 msgid "Download a redacted diagnostics bundle (not telemetry)"
-msgstr "Ein geschwärztes Diagnose-Bundle herunterladen (keine Telemetrie)"
+msgstr "下载已脱敏的诊断信息包（非遥测）"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:23
+#: packages/clear-record/src/clear_record/web/templates/base.html:39
 msgid "Diagnostics"
-msgstr "Diagnose"
+msgstr "诊断"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:26
+#: packages/clear-record/src/clear_record/web/templates/base.html:42
 msgid "stopping…"
-msgstr "wird beendet…"
+msgstr "正在停止…"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:26
+#: packages/clear-record/src/clear_record/web/templates/base.html:42
 msgid "Quit"
-msgstr "Beenden"
+msgstr "退出"
 
 #: packages/clear-record/src/clear_record/web/templates/index.html:5
 msgid "Projects"
-msgstr "Projekte"
+msgstr "项目"
 
 #: packages/clear-record/src/clear_record/web/templates/index.html:13
 msgid "New project name"
-msgstr "Name des neuen Projekts"
+msgstr "新项目名称"
 
 #: packages/clear-record/src/clear_record/web/templates/index.html:14
 msgid "Add project"
-msgstr "Projekt hinzufügen"
+msgstr "添加项目"
 
 #: packages/clear-record/src/clear_record/web/templates/index.html:19
 msgid "Select or create a project."
-msgstr "Wähle ein Projekt aus oder erstelle eines."
+msgstr "请选择或新建一个项目。"
 

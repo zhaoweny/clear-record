@@ -440,6 +440,33 @@ button.primary:hover,
   border-color: var(--danger-line);
 }
 
+/* --- Language switcher --------------------------------------------------- */
+/* The header's language control: the two endonyms as a segmented pill. The
+   endonyms are not translated on purpose — a picker must be legible to a
+   speaker of *either* language — and the current one is filled in, so the
+   choice reads by shape and colour and is marked `aria-current` in the markup. */
+.lang-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+}
+
+.lang-switch .btn {
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+}
+
+.lang-switch .is-active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: transparent;
+  cursor: default;
+}
+
 /* --- Forms --------------------------------------------------------------- */
 input,
 select,

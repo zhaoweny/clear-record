@@ -63,24 +63,30 @@ def test_unknown_locale_falls_back_to_english() -> None:
     assert i18n.tr("Add project") == "Add project"
 
 
-def test_shipped_german_catalog_translates_and_falls_back() -> None:
+def test_shipped_chinese_catalog_translates_and_falls_back() -> None:
     """The one shipped catalog proves the mechanism end to end."""
-    assert "de" in i18n.available_locales()
-    i18n.install("de")
-    assert i18n.tr("Add project") == "Projekt hinzufügen"
-    # An untranslated ID stays the English source (incremental adoption).
+    assert i18n.available_locales() == ["zh_CN"]
+    i18n.install("zh_CN")
+    assert i18n.tr("Add project") == "添加项目"
+    # An untranslated ID stays the English source (incremental adoption): the
+    # per-option help is deliberately untranslated, and any new ID falls back.
+    assert (
+        i18n.tr("bind address (default localhost)")
+        == "bind address (default localhost)"
+    )
     assert i18n.tr("Not in any catalog.") == "Not in any catalog."
 
 
-def test_german_plural_uses_the_catalog_rule() -> None:
-    i18n.install("de")
+def test_chinese_plural_uses_the_catalog_rule() -> None:
+    """Chinese has one plural form; both counts render the same string."""
+    i18n.install("zh_CN")
     assert (
         i18n.trn("{count} file verified", "{count} files verified", 1, count=1)
-        == "1 Datei verifiziert"
+        == "已校验 1 个文件"
     )
     assert (
         i18n.trn("{count} file verified", "{count} files verified", 3, count=3)
-        == "3 Dateien verifiziert"
+        == "已校验 3 个文件"
     )
 
 
@@ -98,12 +104,12 @@ def test_deferred_marks_without_translating() -> None:
 
 
 def test_install_if_unset_does_not_override_an_explicit_choice() -> None:
-    i18n.install("de")
+    i18n.install("zh_CN")
     i18n.install_if_unset("fr", environ={})
-    assert i18n.current_locale() == "de"
+    assert i18n.current_locale() == "zh_CN"
 
 
 def test_install_if_unset_honours_the_environment_when_unset() -> None:
     i18n.reset()
-    i18n.install_if_unset(environ={"CR_LANG": "de"})
-    assert i18n.current_locale() == "de"
+    i18n.install_if_unset(environ={"CR_LANG": "zh_CN"})
+    assert i18n.current_locale() == "zh_CN"

@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="en">
+{# The rendered locale, as a BCP-47 tag (``zh_CN`` -> ``zh-CN``); English, the
+   source locale, stays ``en``. #}
+<html lang="{{ request.state.locale | replace('_', '-') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,6 +21,20 @@
     </svg>
     <h1>clear-record</h1><span class="tag">{{ tr("project console") }}</span>
     <span class="badge" id="status">{% block status %}{{ tr("ready") }}{% endblock %}</span>
+    {# The language switcher, beside the header's other controls: a plain form
+       POST and a page reload — no client-side i18n framework. Each option is
+       its own endonym so the control is legible in either locale; the current
+       one is filled in and marked `aria-current`. #}
+    <form class="lang-switch" method="post" action="/ui/language"
+          aria-label="{{ tr('Language') }}">
+      {% for code, name in language_choices %}
+      {% if request.state.locale == code %}
+      <span class="btn btn-sm is-active" aria-current="true">{{ name }}</span>
+      {% else %}
+      <button class="btn btn-sm btn-ghost" type="submit" name="lang" value="{{ code }}">{{ name }}</button>
+      {% endif %}
+      {% endfor %}
+    </form>
     <a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
        title="{{ tr("Download a redacted diagnostics bundle (not telemetry)") }}">{{ tr("Diagnostics") }}</a>
     <button class="btn btn-ghost btn-danger-ghost"

@@ -25,11 +25,11 @@ from __future__ import annotations
 import dataclasses
 import threading
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -42,6 +42,7 @@ from clear_record.core import (
     profile_values,
     resolve_options,
 )
+from clear_record.core import i18n
 from clear_record.core.i18n import install_if_unset, tr, trn
 from clear_record.service import (
     BUNDLE_FILENAME,
@@ -62,11 +63,101 @@ TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
 #: One lookup point: the same ``tr``/``trn`` a Python module imports, exposed to
 #: Jinja, so a template and a module cannot diverge. They read whatever catalog
-#: the process installed (``--lang``/``CR_LANG``/``LANG``; see
-#: :mod:`clear_record.core.i18n`). With none installed they return the English
-#: source verbatim.
+#: the process installed — the request's own cookie/``Accept-Language`` choice
+#: (see :func:`resolve_web_locale` and the middleware in :func:`create_app`), or
+#: the startup ``CR_LANG``/``LANG`` default. With none installed they return the
+#: English source verbatim.
 TEMPLATES.env.globals["tr"] = tr
 TEMPLATES.env.globals["trn"] = trn
+
+#: The cookie that persists the console's explicit language choice: the one new
+#: piece of state the switcher adds, and it carries a language tag and **nothing
+#: else** — no session, no identity.
+LANG_COOKIE = "cr_lang"
+
+#: The console's language choices as ``(catalog tag, endonym)``. The names are
+#: deliberately **not** run through ``tr``: a language picker that renamed a
+#: language would stop being legible to the people who read it, so each option
+#: stays in its own language. ``en`` is the source locale (no catalog) and is
+#: therefore always offered.
+LANGUAGE_CHOICES = (("en", "English"), ("zh_CN", "简体中文"))
+TEMPLATES.env.globals["language_choices"] = LANGUAGE_CHOICES
+
+
+def _accept_language_tags(header: str | None) -> list[str]:
+    """The language tags in an ``Accept-Language`` header, highest ``q`` first.
+
+    ``q=0`` means "not acceptable" and is dropped; ties keep the header's order.
+    Malformed quantities are treated as ``0`` rather than raising — the header
+    comes from the network and must not be able to break a page render.
+    """
+    if not header:
+        return []
+    ranked: list[tuple[float, int, str]] = []
+    for position, item in enumerate(header.split(",")):
+        item = item.strip()
+        if not item:
+            continue
+        tag, _, params = item.partition(";")
+        quality = 1.0
+        for param in params.split(";"):
+            name, _, value = param.partition("=")
+            if name.strip().lower() == "q":
+                try:
+                    quality = float(value.strip())
+                except ValueError:
+                    quality = 0.0
+        if quality > 0:
+            ranked.append((-quality, position, tag.strip()))
+    ranked.sort()
+    return [tag for _, _, tag in ranked]
+
+
+def _shipped_locale(tag: str | None) -> str | None:
+    """The shipped locale ``tag`` names, or ``None`` when nothing matches.
+
+    Handles the browser spellings a region/language may arrive as: ``zh-CN`` and
+    ``zh`` both resolve to the ``zh_CN`` catalog, and ``en``/``en-US`` to the
+    source locale. Matching ignores case and the ``-``/``_`` separator.
+    """
+    code = i18n.normalize_locale(tag)
+    if code is None:
+        return None
+    base = code.lower().replace("-", "_")
+    shipped = i18n.available_locales()
+    for name in shipped:
+        if name.lower() == base:
+            return name
+    language = base.split("_")[0]
+    if language == i18n.SOURCE_LOCALE:
+        return i18n.SOURCE_LOCALE
+    return next(
+        (name for name in shipped if name.lower().split("_")[0] == language), None
+    )
+
+
+def resolve_web_locale(
+    cookie: str | None,
+    accept_language: str | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """The console's locale: cookie > ``Accept-Language`` > ``CR_LANG`` > env > English.
+
+    The CLI chain (``--lang`` > ``CR_LANG`` > ``LC_ALL`` > ``LANG`` > English)
+    stays on :func:`clear_record.core.i18n.resolve_locale`; the web adds the two
+    request-borne layers on top and delegates the environment tail to it. A
+    candidate that names no shipped catalog is skipped (a stale cookie or an
+    unsupported browser preference falls through), never guessed.
+    """
+    for candidate in (cookie, *_accept_language_tags(accept_language)):
+        if candidate == "*":
+            continue
+        shipped = _shipped_locale(candidate)
+        if shipped is not None:
+            return shipped
+    return i18n.resolve_locale(environ=environ)
+
 
 #: The ASR backend ids the run form offers, in catalog order. A literal, not an
 #: import of ``clear_record.providers``: the web layer may import only
@@ -259,6 +350,32 @@ def create_app(
     )
 
     @app.middleware("http")
+    async def request_locale(request: Request, call_next):
+        """Pick this request's locale and install its catalog.
+
+        A cookie or an ``Accept-Language`` header is a preference the *request*
+        carries, so its catalog is installed here (cookie > header > the
+        environment tail). With neither, the catalog chosen at startup
+        (``CR_LANG``/``LANG``, an explicit ``install``, or a test's ``use``) is
+        left untouched — which is also what keeps the pseudo-locale boundary
+        tests honest.
+
+        ``gettext``'s catalog is process-wide, not per-request; that is fine for
+        a local single-user console (ADR-0013) whose browser sends
+        ``Accept-Language`` on every request, and it is the same global seam
+        ``install_if_unset`` already used.
+        """
+        cookie = request.cookies.get(LANG_COOKIE)
+        accept_language = request.headers.get("accept-language")
+        if cookie is not None or accept_language is not None:
+            locale = resolve_web_locale(cookie, accept_language)
+            i18n.install(locale)
+        else:
+            locale = i18n.current_locale() or i18n.SOURCE_LOCALE
+        request.state.locale = locale
+        return await call_next(request)
+
+    @app.middleware("http")
     async def request_guard(request: Request, call_next):
         """Reject a hostile page's rebound or cross-origin requests (ADR-0021).
 
@@ -376,6 +493,28 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(request, "index.html", {})
+
+    @app.post("/ui/language")
+    def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
+        """Persist the console's explicit language choice, then reload.
+
+        The cookie is the whole state: a language tag, no session, no identity.
+        An unknown value sets nothing rather than being stored and guessed at
+        later; the redirect is always to the console root, so no request input
+        ever becomes a redirect target.
+        """
+        response = RedirectResponse("/", status_code=303)
+        chosen = _shipped_locale(lang)
+        if chosen is not None:
+            response.set_cookie(
+                LANG_COOKIE,
+                chosen,
+                max_age=60 * 60 * 24 * 365,
+                path="/",
+                httponly=True,
+                samesite="lax",
+            )
+        return response
 
     @app.get("/ui/projects", response_class=HTMLResponse)
     def ui_projects(request: Request) -> HTMLResponse:

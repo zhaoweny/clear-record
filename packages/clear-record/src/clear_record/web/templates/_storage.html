@@ -1,0 +1,104 @@
+{# One meeting's storage panel (ADR-0024). `_detail.html` fetches it per meeting
+   (htmx `load`), so a project render never walks a workspace. Every fact is the
+   service's own accounting (`managed.meeting_storage`): the resolved workspace
+   path, the workspace and tape sizes, the managed root and the tapes.
+
+   Retention is **manual only** (owner, 2026-09-15): nothing here suggests the
+   node will clean up on its own, and every delete names the archive as the
+   durable copy. #}
+<div class="storage">
+  <div class="row storage-head">
+    {% if storage.managed %}
+    <span class="badge status-managed">{{ tr("managed workspace") }}</span>
+    {% elif storage.workspace_path %}
+    <span class="badge status-neutral">{{ tr("user-chosen workspace") }}</span>
+    {% else %}
+    <span class="badge status-neutral">{{ tr("no workspace yet") }}</span>
+    {% endif %}
+    {% if storage.workspace_path %}
+    <code class="storage-path">{{ storage.workspace_path }}</code>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div class="run-error" role="alert">
+    <div>
+      <strong>{{ error.label }}</strong>
+      <div class="muted">{{ error.reason }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if storage.workspace_path %}
+  <p class="muted storage-usage">
+    {{ tr("Workspace size: {size}", size=storage.meeting_size) }}
+    &middot;
+    {{ tr("Uploaded tapes: {size}", size=storage.tapes_size) }}
+    {% if storage.free_size %}
+    &middot;
+    {{ tr("Free on the managed disk: {free}", free=storage.free_size) }}
+    {% endif %}
+  </p>
+  {% endif %}
+  {% if storage.managed %}
+  <p class="muted storage-root">{{ tr("Managed root") }}:
+    <code>{{ storage.managed_root }}</code></p>
+  <p class="muted storage-note">{{ tr("clear-record never deletes tapes on its own; deleting here is manual, and the archive is the durable copy.") }}</p>
+  {% endif %}
+
+  {% if storage.tapes %}
+  <table class="table-tapes">
+    <thead>
+      <tr>
+        <th>{{ tr("Tape") }}</th>
+        <th>{{ tr("Size") }}</th>
+        <th>{{ tr("SHA-256") }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tape in storage.tapes %}
+      <tr>
+        <td>
+          <strong>{{ tape.name }}</strong>
+          <div class="muted tape-path">{{ tape.path }}</div>
+        </td>
+        <td>{{ tape.size }}</td>
+        <td><code title="{{ tape.sha256 }}">{{ tape.sha256_short }}</code></td>
+        <td>
+          {% if storage.managed %}
+          <button class="btn btn-sm btn-danger-ghost" type="button"
+                  hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes/{{ tape.id }}"
+                  hx-target="#storage-{{ storage.meeting_id }}"
+                  hx-swap="innerHTML"
+                  hx-confirm="{{ tr('Delete this tape? The archive is the durable copy.') }}"
+                  title="{{ tr('Delete tape') }}"
+                  aria-label="{{ tr('Delete tape') }}">&#10005;</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">{{ tr("No tapes uploaded yet.") }}</div>
+  {% endif %}
+
+  {% if storage.can_upload %}
+  {% include "_upload.html" %}
+  {% endif %}
+  {% if storage.upload_refusal %}
+  <div class="storage-refusal" role="note">
+    <strong>{{ storage.upload_refusal.label }}</strong>
+    <div class="muted">{{ storage.upload_refusal.reason }}</div>
+  </div>
+  {% endif %}
+
+  {% if storage.managed and storage.tapes %}
+  <button class="btn btn-sm btn-danger-ghost" type="button"
+          hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes"
+          hx-target="#storage-{{ storage.meeting_id }}"
+          hx-swap="innerHTML"
+          hx-confirm="{{ tr("Delete all of this meeting's tapes? The archive is the durable copy.") }}">{{ tr("Delete all tapes") }}</button>
+  {% endif %}
+</div>

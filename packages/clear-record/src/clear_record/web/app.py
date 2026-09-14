@@ -23,6 +23,7 @@ while remote access stays the operator's reverse proxy.
 from __future__ import annotations
 
 import dataclasses
+import shutil
 import threading
 import webbrowser
 from collections.abc import Mapping, Sequence
@@ -82,6 +83,14 @@ LANG_COOKIE = "cr_lang"
 #: therefore always offered.
 LANGUAGE_CHOICES = (("en", "English"), ("zh_CN", "简体中文"))
 TEMPLATES.env.globals["language_choices"] = LANGUAGE_CHOICES
+
+#: The browser file-picker's ``accept`` filter, built from the service's own
+#: audio allow-list (``managed.AUDIO_SUFFIXES`` — the exact list the upload guard
+#: checks) rather than restated here, so the picker and the guard cannot drift.
+#: The web layer may not import ``clear_record.cli.workspace`` directly (the
+#: layering guard), but ``managed`` already owns that list for uploads.
+AUDIO_ACCEPT = ",".join(sorted(managed.AUDIO_SUFFIXES))
+TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
 
 
 def _accept_language_tags(header: str | None) -> list[str]:
@@ -418,6 +427,7 @@ def create_app(
             rows.append(
                 {
                     "meeting": meeting,
+                    "managed": managed.is_managed(meeting),
                     "tapes": "\n".join(tape_set.paths) if tape_set else "",
                     "run": run,
                 }
@@ -488,6 +498,119 @@ def create_app(
                 "archives": archive_rows(slug),
                 "error": error,
             },
+        )
+
+    # --- HTML views: a meeting's managed storage (ADR-0024) ---------------- #
+    def human_bytes(count: int) -> str:
+        """Format a byte count for the storage panel.
+
+        Display only — every number is the service's ``meeting_storage``
+        accounting; this just renders it for a human. (The service has its own
+        formatter for the guard messages; the web layer keeps a display copy so
+        the service surface stays untouched.)
+        """
+        value = float(count)
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if value < 1024 or unit == "TiB":
+                return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{count} B"  # pragma: no cover - unreachable
+
+    def upload_error_label(exc: managed.UploadRejected) -> str:
+        """A short, translated label for one upload guard.
+
+        The *reason* is always the service's own message, rendered beside this,
+        so the web layer never restates a guard's rule or its facts.
+        """
+        if isinstance(exc, managed.UnsafeFilename):
+            return tr("Filename refused")
+        if isinstance(exc, managed.DisallowedExtension):
+            return tr("Not an audio tape")
+        if isinstance(exc, managed.UploadTooLarge):
+            return tr("Upload too large")
+        if isinstance(exc, managed.InsufficientSpace):
+            return tr("Not enough disk space")
+        return tr("Upload refused")
+
+    def refusal(exc: managed.UploadRejected, label: str) -> dict:
+        """A guard failure as the panel shows it: a translated label + the
+        service's message. The message goes through ``tr`` like every other
+        user-facing string; it is composed at run time (a filename, a size), so
+        it is not itself a catalog message ID yet — see the report's follow-up.
+        """
+        return {"label": label, "reason": tr(str(exc))}
+
+    def upload_refusal(meeting) -> dict | None:
+        """Why this meeting cannot take an upload, in the service's own words.
+
+        A user-chosen workspace has no managed place to upload to (ADR-0007).
+        Rather than restate the rule, ask the service's own guard: with
+        ``declared_bytes=0`` the size and disk guards cannot fire, leaving only
+        the workspace guard to speak. A meeting with no workspace at all gets
+        one provisioned on first upload, so it is not refused.
+        """
+        if managed.is_managed(meeting) or not meeting.workspace_path:
+            return None
+        try:
+            managed.precheck_upload(registry, meeting, declared_bytes=0)
+        except managed.UploadRejected as exc:
+            return refusal(exc, tr("This meeting cannot take an upload"))
+        return None  # pragma: no cover - is_managed / no-path are handled above
+
+    def storage_context(meeting) -> dict:
+        """The template context for one meeting's storage panel (ADR-0024).
+
+        Everything factual is the service's: the resolved workspace path, the
+        workspace and tape sizes, the managed root and the tapes. Free space on
+        the managed root is the one number the service reports only inside a
+        guard message, so the view reads it with the same stdlib call the guard
+        uses (a follow-up note asks the service to expose it — see the report).
+        """
+        usage = managed.meeting_storage(registry, meeting)
+        free_bytes: int | None = None
+        if usage["managed"]:
+            try:
+                free_bytes = shutil.disk_usage(Path(usage["managed_root"])).free
+            except OSError:  # pragma: no cover - a root that vanished
+                free_bytes = None
+        tapes = [
+            {
+                "id": tape["id"],
+                "name": tape["name"],
+                "path": tape["path"],
+                "sha256": tape["sha256"],
+                "sha256_short": tape["sha256"][:12],
+                "bytes": tape["bytes"],
+                "size": human_bytes(tape["bytes"]),
+            }
+            for tape in usage["tapes"]
+        ]
+        tapes_bytes = sum(tape["bytes"] for tape in tapes)
+        return {
+            "meeting_id": meeting.id,
+            "workspace_path": usage["workspace_path"],
+            "managed": usage["managed"],
+            # A managed meeting uploads; so does one with no workspace yet (the
+            # first upload provisions a managed one). A user-chosen one cannot.
+            "can_upload": usage["managed"] or not usage["workspace_path"],
+            "managed_root": usage["managed_root"],
+            "meeting_bytes": usage["bytes"],
+            "meeting_size": human_bytes(usage["bytes"]),
+            "tapes_bytes": tapes_bytes,
+            "tapes_size": human_bytes(tapes_bytes),
+            "free_bytes": free_bytes,
+            "free_size": None if free_bytes is None else human_bytes(free_bytes),
+            "tapes": tapes,
+            "upload_refusal": upload_refusal(meeting),
+        }
+
+    def render_storage(
+        request: Request, meeting, error: dict | None = None
+    ) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_storage.html",
+            {"storage": storage_context(meeting), "error": error},
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -588,15 +711,27 @@ def create_app(
         workspace_path: str = Form(""),
         recorded_at: str = Form(""),
     ) -> HTMLResponse:
+        """Create a meeting, managed by default (owner, 2026-09-15).
+
+        A blank path is the common case: the app provisions a managed workspace
+        under the root. A path is the override — a user-chosen workspace, kept
+        exactly as before (ADR-0007), and it can hold no uploads.
+        """
         try:
-            registry.create_meeting(
+            meeting = registry.create_meeting(
                 slug,
                 title,
                 workspace_path=workspace_path or None,
                 recorded_at=recorded_at or None,
             )
+            if not workspace_path:
+                managed.ensure_managed_workspace(registry, meeting)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
+        except managed.UploadRejected as exc:
+            # The meeting exists but its managed workspace could not be made:
+            # re-render the project with the service's message.
+            return detail(request, slug, error=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return detail(request, slug)
@@ -614,6 +749,94 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return detail(request, meeting.project_slug)
+
+    @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
+    def ui_meeting_storage(request: Request, meeting_id: int) -> HTMLResponse:
+        """One meeting's storage panel: resolved path, sizes, tapes, controls."""
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        return render_storage(request, meeting)
+
+    @app.post("/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
+    async def ui_upload_tape(request: Request, meeting_id: int) -> HTMLResponse:
+        """Receive one tape and re-render the panel (ADR-0024).
+
+        The service's guards are the same ones the JSON endpoint uses. A refusal
+        re-renders the panel with the guard's translated label and its own
+        message as a 200, so htmx swaps the error into place and the form stays
+        usable. The body is one stream: the endpoint takes no upload id, so
+        there is no resume to offer (see the report).
+        """
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        declared = _content_length(request)
+        try:
+            meeting = managed.precheck_upload(registry, meeting, declared)
+            try:
+                form = await request.form()
+            except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
+                raise managed.UploadRejected(
+                    tr("could not read the multipart upload: {error}", error=exc)
+                ) from exc
+            upload = form.get("file")
+            if not isinstance(upload, UploadFile) or not upload.filename:
+                raise managed.UploadRejected(
+                    tr("attach the tape as a multipart file part named 'file'")
+                )
+            await run_in_threadpool(
+                managed.upload_tape,
+                registry,
+                meeting,
+                upload.file,
+                filename=upload.filename,
+                declared_bytes=declared,
+            )
+        except managed.UploadRejected as exc:
+            return render_storage(
+                request, meeting, error=refusal(exc, upload_error_label(exc))
+            )
+        return render_storage(request, meeting)
+
+    @app.delete(
+        "/ui/meetings/{meeting_id}/tapes/{tape_id}", response_class=HTMLResponse
+    )
+    def ui_delete_tape(request: Request, meeting_id: int, tape_id: int) -> HTMLResponse:
+        """Delete one managed tape, re-rendering the panel."""
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        try:
+            managed.delete_tape(registry, meeting, tape_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"no tape {tape_id} for meeting {meeting_id}"
+            ) from exc
+        except managed.UploadRejected as exc:
+            return render_storage(
+                request, meeting, error=refusal(exc, tr("Delete refused"))
+            )
+        return render_storage(request, meeting)
+
+    @app.delete("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
+    def ui_delete_meeting_tapes(request: Request, meeting_id: int) -> HTMLResponse:
+        """Delete every uploaded tape of the meeting (the per-meeting control).
+
+        Still manual and still confirmed: the archive is the durable copy, and
+        nothing here deletes on the node's own initiative (owner, 2026-09-15).
+        """
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        try:
+            for tape in registry.list_tapes(meeting_id):
+                managed.delete_tape(registry, meeting, tape.id)
+        except managed.UploadRejected as exc:
+            return render_storage(
+                request, meeting, error=refusal(exc, tr("Delete refused"))
+            )
+        return render_storage(request, meeting)
 
     @app.post("/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
     def ui_archive_meeting(

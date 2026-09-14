@@ -167,6 +167,11 @@ code {
 
 /* One ring, everywhere, for keyboard users only. */
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Alpine's pre-init hide: an element marked `x-cloak` stays hidden until Alpine
+   removes the attribute, so e.g. an upload progress meter does not flash before
+   its component starts. */
+[x-cloak] { display: none !important; }
 }
 
 /* --- Components ---------------------------------------------------------- */
@@ -797,6 +802,95 @@ tbody tr:last-child td { border-bottom: none; }
 .table-archives td:last-child { text-align: right; white-space: nowrap; }
 
 .archive-status { vertical-align: middle; }
+
+/* --- Managed storage (upload, sizes, tapes) ------------------------------ */
+/* The panel sits inside a meeting card: an inset surface so it reads as the
+   meeting's own storage rather than another page section. */
+.storage {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.storage-head { gap: var(--space-3); }
+
+.storage-path { overflow-wrap: anywhere; }
+
+.storage-usage,
+.storage-root,
+.storage-note { margin: var(--space-2) 0 0; font-size: var(--text-xs); }
+
+.storage-refusal {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  color: var(--warn-ink);
+  font-size: var(--text-sm);
+}
+
+.storage-refusal .muted { color: inherit; }
+
+/* A managed workspace is app-owned (ADR-0024) and reads with the ok hue. */
+.status-managed {
+  --chip-bg: var(--ok-bg);
+  --chip-ink: var(--ok-ink);
+  --chip-line: var(--ok-line);
+  --chip-glyph: "\25CF\00a0"; /* ●  app-owned */
+}
+
+.table-tapes { margin-top: var(--space-3); }
+
+.table-tapes th:last-child,
+.table-tapes td:last-child {
+  width: 4rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tape-path {
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.upload { margin-top: var(--space-3); }
+
+/* The progress meter mirrors the run bar; only an upload transfer drives it. */
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.upload-progress progress {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.upload-progress progress::-webkit-progress-bar { background: var(--surface-3); }
+
+.upload-progress progress::-webkit-progress-value {
+  background-color: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 0.2s ease;
+}
+
+.upload-progress progress::-moz-progress-bar {
+  background-color: var(--accent);
+  border-radius: var(--radius-pill);
+}
 
 /* --- Empty and error states ---------------------------------------------- */
 .empty {

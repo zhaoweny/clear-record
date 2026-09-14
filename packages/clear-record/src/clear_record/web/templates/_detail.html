@@ -9,8 +9,19 @@
     <div class="row meeting-head">
       <strong>{{ row.meeting.title }}</strong>
       <span class="badge">{{ row.meeting.status }}</span>
+      {% if row.managed %}
+      <span class="badge status-managed">{{ tr("managed") }}</span>
+      {% elif row.meeting.workspace_path %}
+      <span class="badge status-neutral">{{ tr("user-chosen") }}</span>
+      {% endif %}
       <span class="muted meeting-path">{{ row.meeting.workspace_path or tr("no workspace") }}</span>
     </div>
+    {# The managed workspace's storage: resolved path, sizes, tapes, upload and
+       delete controls. Fetched per meeting so the project render stays cheap. #}
+    <div id="storage-{{ row.meeting.id }}"
+         hx-get="/ui/meetings/{{ row.meeting.id }}/storage"
+         hx-trigger="load"
+         hx-swap="innerHTML"></div>
     <form class="stack"
           hx-post="/ui/meetings/{{ row.meeting.id }}/tapes"
           hx-target="#detail"
@@ -74,8 +85,9 @@
       hx-on::after-request="if (event.detail.successful) this.reset()">
   <div class="row">
     <input name="title" placeholder="{{ tr("Meeting title") }}" required>
-    <input name="workspace_path" placeholder="{{ tr("Workspace path") }}" required>
+    <input name="workspace_path" placeholder="{{ tr("Workspace path") }}">
   </div>
+  <div class="muted">{{ tr("Leave the path empty to let clear-record manage the workspace; a path uses a folder you choose.") }}</div>
   <button class="primary" type="submit">{{ tr("Add meeting") }}</button>
 </form>
 

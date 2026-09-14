@@ -1,0 +1,26 @@
+{# The upload control for one upload-capable meeting (ADR-0024). htmx streams
+   the multipart body (`hx-encoding`) and `htmx:xhr:progress` drives the bar, so
+   a long tape shows progress instead of a frozen form. `accept` is the
+   service's own audio allow-list (`audio_accept`, from `managed.AUDIO_SUFFIXES`)
+   — the picker and the upload guard cannot drift. #}
+<div class="upload" x-data="{ pct: 0, busy: false }">
+  <form class="row upload-form"
+        x-on:htmx:xhr:progress="if ($event.detail.total) pct = Math.round($event.detail.loaded / $event.detail.total * 100)"
+        x-on:htmx:before-request="busy = true; pct = 0"
+        x-on:htmx:after-request="busy = false"
+        hx-post="/ui/meetings/{{ storage.meeting_id }}/tapes/upload"
+        hx-encoding="multipart/form-data"
+        hx-target="#storage-{{ storage.meeting_id }}"
+        hx-swap="innerHTML">
+    <input type="file" name="file" accept="{{ audio_accept }}" required
+           aria-label="{{ tr('Audio tape') }}">
+    <button class="primary" type="submit" :disabled="busy">
+      <span x-show="!busy">{{ tr("Upload tape") }}</span>
+      <span x-show="busy" x-cloak>{{ tr("Uploading…") }}</span>
+    </button>
+  </form>
+  <div class="upload-progress" x-show="busy" x-cloak>
+    <progress :value="pct" max="100" aria-label="{{ tr('Upload progress') }}"></progress>
+    <span class="muted" x-text="pct + '%'"></span>
+  </div>
+</div>

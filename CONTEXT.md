@@ -67,17 +67,20 @@ end-to-end:
 - `ingest` normalizes each source to 16 kHz mono WAV and **splits multi-channel
   files per channel**; `align` estimates source offsets via windowed
   cross-correlation; `transcribe` runs a real local ASR backend (Apple/macOS
-  via the system `whisper-cli` + `ggml-metal`, hot-tested end-to-end on Apple
-  M4; CLI-only, ggml model auto-downloaded) with **chunked, resumable**
-  processing and a **glossary** initial prompt; `diarize` does baseline
+  via the system `whisper-cli` + `ggml-metal`, or the preferred native
+  `apple-speech` on macOS 26+; CLI-only, ggml model auto-downloaded) with
+  **chunked, resumable** processing and a **glossary** initial prompt;
+  `diarize` does baseline
   multi-speaker attribution for a single mixed stream; `reconcile` produces a
   source/speaker-attributed timeline; `export` writes Markdown/SRT/VTT/JSON;
   `calibrate` reports coverage / WER / similarity against an optional reference.
 - **AMD is hot-tested** (RX 7900 XTX, RADV) via the system `whisper-cli` +
   `ggml-vulkan`; the `nvidia` backend shares that path but is not hot-tested
   here. The Apple `whisper-cli`/Metal path is hot-tested end-to-end on an M4
-  (164 segments, no wheel installed). Diarization is a baseline, not a
-  deep-embedding system; the exotic spatial-invention scope (§7) is out of scope.
+  (164 segments, no wheel installed), and the preferred native `apple-speech`
+  path is hot-verified on macOS 26.6 Apple Silicon (opt-in test). Diarization is
+  a baseline, not a deep-embedding system; the exotic spatial-invention scope
+  (§7) is out of scope.
 
 See `docs/architecture.md` §3–§8 for the pipeline and the ordered remaining
 slices.

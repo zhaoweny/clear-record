@@ -50,16 +50,16 @@ BACKEND_AUTO = "auto"
 #: fallback** (ADR-0005's 2026-09-14 Update). This is **data, not branching**, so
 #: the order evolves by editing one tuple.
 #:
-#: ``apple-speech`` (macOS 26+ ``SpeechTranscriber``) and ``windows-ai``
-#: (``Microsoft.Windows.AI.Speech``) are the intended native top of the order,
-#: scoped in the local tracker's ``system-speech-backends`` lane; they are **not
-#: registered backends yet** and become selectable with no change here once that
-#: work lands. Until then the tuple is honest today — no native id can be
-#: available — and already correct for later. The remaining ids are the shipped
-#: ``whisper-cli`` family and are the portable fallback.
+#: ``apple-speech`` (macOS 26+ ``SpeechTranscriber``) is a registered backend:
+#: the catalog in :data:`clear_record.providers.backends.BACKENDS` is the one
+#: list of which ids exist, and it sits first in this order. ``windows-ai``
+#: (``Microsoft.Windows.AI.Speech``) is **not registered** — ADR-0019 leaves it
+#: deferred (gated on the MSIX/``systemAIModels`` packaging decision), so its id
+#: is only a placeholder here until that work lands. The remaining ids are the
+#: shipped ``whisper-cli`` family and are the portable fallback.
 BACKEND_PREFERENCE: tuple[str, ...] = (
-    APPLE_SPEECH_BACKEND_ID,  # macOS 26+ SpeechTranscriber (unbuilt; native path)
-    WINDOWS_AI_BACKEND_ID,  # Windows AI Speech (unbuilt; native path)
+    APPLE_SPEECH_BACKEND_ID,  # macOS 26+ SpeechTranscriber (native path)
+    WINDOWS_AI_BACKEND_ID,  # Windows AI Speech (unregistered; deferred, ADR-0019)
     "apple",  # whisper-cli + ggml Metal
     "nvidia",  # whisper-cli + ggml CUDA/Vulkan
     "amd",  # whisper-cli + ggml Vulkan/ROCm

@@ -55,9 +55,9 @@ Homepage = "https://github.com/zhaoweny/clear-record"
 Repository = "https://github.com/zhaoweny/clear-record"
 Issues = "https://github.com/zhaoweny/clear-record/issues"
 
-# Backend extras are no-op markers (every path uses the system `whisper-cli` +
-# a ggml plugin); they exist so `--extra <backend>` stays a valid switch. See
-# ADR-0005.
+# The `apple`/`nvidia`/`amd` backend extras are no-op markers (each family
+# drives the system `whisper-cli` + a ggml plugin); they exist so
+# `--extra <backend>` stays a valid switch. See ADR-0005.
 #
 # `apple-speech` is the macOS 26+ native backend. It is also a no-op marker: the
 # bridge is a Swift helper compiled from source shipped in this wheel, so no
@@ -69,8 +69,9 @@ Issues = "https://github.com/zhaoweny/clear-record/issues"
 # NOT a base dependency: the web/service *code* ships inside this one wheel (so
 # there is no second dist to publish — ADR-0013), but a plain CLI install does
 # not pay for the stack. `web` is registered as a subcommand unconditionally and
-# gives an actionable hint when the extra is absent. The MCP SDK will get its own
-# `agents` extra when the MCP server lands (no speculative dependency now).
+# gives an actionable hint when the extra is absent. The MCP SDK's own `agents`
+# extra is below, behind the `clear-record mcp` server registered the same way
+# (ADR-0017).
 [project.optional-dependencies]
 apple = []
 nvidia = []

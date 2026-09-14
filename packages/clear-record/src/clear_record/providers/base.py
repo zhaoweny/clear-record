@@ -29,8 +29,8 @@ RUNTIME_SYSTEM = "system"
 # ``apple``/``nvidia``/``amd`` (all ``whisper-cli``), so the native family keeps
 # distinct, self-describing names to avoid a silent collision when it registers.
 # These are the single definition of the ids; ``cli.auto.BACKEND_PREFERENCE``
-# consumes them, and the Apple/Windows adapters will take them when they land
-# (ADR-0019; Apple first, Windows deferred).
+# consumes them. ``apple-speech`` now names the registered Apple adapter; the
+# Windows id is defined but unregistered (deferred, ADR-0019).
 APPLE_SPEECH_BACKEND_ID = "apple-speech"
 WINDOWS_AI_BACKEND_ID = "windows-ai"
 

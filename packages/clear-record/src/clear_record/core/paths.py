@@ -33,6 +33,13 @@ its data under the old XDG location. When the native location does not exist and
 the legacy one does, the legacy directory is *adopted* — used in place — and a
 one-line notice names the native location it can be moved to. Nothing is moved,
 so an interruption cannot lose a registry, a model or a multi-GB workspace.
+
+The **models** directory has a second legacy shape. Before the ADR-0007
+kind-split its default was ``<cwd>/models``. That location is adopted the same
+way, but only when it *positively looks like a ggml cache* (it holds a completed
+``ggml-*.bin``): ``<cwd>`` is wherever the user happened to run the command, so a
+directory merely *named* ``models`` is not evidence that any weights are there to
+lose.
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +59,10 @@ CONFIG_FILENAME = "config.toml"
 WORKSPACES_DIRNAME = "workspaces"
 #: Directory under the data dir that holds downloaded ggml model weights.
 MODELS_DIRNAME = "models"
+#: Every file ADR-0005's auto-download writes into a models directory. A legacy
+#: ``<cwd>/models`` must hold at least one to be adopted (see
+#: :func:`_looks_like_ggml_cache`).
+_GGML_CACHE_GLOB = "ggml-*.bin"
 #: Directory under the cache dir that holds the resumable per-source chunk cache.
 CHUNKS_DIRNAME = "chunks"
 
@@ -108,21 +120,60 @@ def _dirs() -> DefaultDirs:
     return _defaults
 
 
-def _adopt(native: Path, legacy: Path | None, label: str) -> Path:
+def _cwd() -> Path:
+    """The working directory — the base of the old ``<cwd>/models`` default.
+
+    A seam, not a bare ``Path.cwd()`` call, so the legacy candidate can be aimed
+    deliberately. The test suite points it away from the checkout, where a
+    developer's real, gitignored ``models/`` cache lives.
+    """
+    return Path.cwd()
+
+
+def _looks_like_ggml_cache(directory: Path) -> bool:
+    """True when *directory* holds at least one completed ``ggml-*.bin`` download.
+
+    ADR-0005's auto-download is the only writer of a models directory, and it
+    names every weight ``ggml-<size>.bin``. Requiring one makes the legacy
+    ``<cwd>/models`` adoption *positive*: a directory that merely shares the name
+    (a source tree's, a user's notes) is left alone. A stray ``.part`` does not
+    count, because only a completed download looks like a model to the resolver.
+    """
+    try:
+        return any(path.is_file() for path in directory.glob(_GGML_CACHE_GLOB))
+    except OSError:  # pragma: no cover - an unreadable directory is not a cache
+        return False
+
+
+def _adopt(
+    native: Path,
+    legacy: Path | None,
+    label: str,
+    *,
+    recognize: Callable[[Path], bool] | None = None,
+    hint: str = "",
+) -> Path:
     """Adopt the legacy location when only it exists; else return the native one.
 
     Used in place, never copied: an existing install must not appear to have
     lost its data, and an interrupted copy of a multi-GB workspace could. The
     notice says where the native location is, so the user can move it.
+
+    *recognize* is an optional positive identity check. When given, a legacy
+    directory that fails it is not adopted — necessary for ``<cwd>/models``,
+    where existence alone proves nothing because ``<cwd>`` is wherever the user
+    ran the command. *hint* appends one actionable sentence to the notice.
     """
     if legacy is None or native.exists() or not legacy.exists():
+        return native
+    if recognize is not None and not recognize(legacy):
         return native
     if label not in _notified:
         _notified.add(label)
         print(
             f"clear-record: adopting the existing pre-platformdirs {label} "
             f"directory at {legacy}; move it to {native} for the platform-native "
-            f"layout (ADR-0025).",
+            f"layout (ADR-0025).{hint}",
             file=sys.stderr,
         )
     return legacy
@@ -169,6 +220,8 @@ def _resolve_app_dir(
     native: Path,
     legacy: Path | None = None,
     label: str | None = None,
+    recognize: Callable[[Path], bool] | None = None,
+    hint: str = "",
 ) -> Path:
     """One resolver for every app-owned directory (ADR-0025).
 
@@ -176,6 +229,10 @@ def _resolve_app_dir(
     platformdirs default. Each resolver below names its variable/key/default, so
     the precedence lives here once instead of being restated (and potentially
     drifting) per directory.
+
+    An override returns before :func:`_adopt`, so adoption — and its notice —
+    never happens for an explicit flag, a ``CR_*`` variable or a config value: an
+    explicit choice needs no migration.
     """
     if explicit:
         return Path(explicit).expanduser()
@@ -185,7 +242,7 @@ def _resolve_app_dir(
     configured = _config_value(config_key)
     if configured:
         return Path(configured).expanduser()
-    return _adopt(native, legacy, label or config_key)
+    return _adopt(native, legacy, label or config_key, recognize=recognize, hint=hint)
 
 
 # --- the app-owned directories -------------------------------------------- #
@@ -258,13 +315,22 @@ def resolve_models_dir(explicit: str | os.PathLike | None = None) -> Path:
     Models are app-owned *data* (ADR-0007's kind-split, ADR-0025); the old
     ``<cwd>/models`` default is gone, and a source checkout points at its own
     directory through the config file instead.
+
+    A pre-move source checkout that still holds its weights in ``<cwd>/models``
+    is adopted rather than silently re-downloaded — but only when it *looks like*
+    a cache, because ``<cwd>`` is wherever the user happened to run the command
+    (:func:`_looks_like_ggml_cache`). An override is checked first, so a pinned
+    location neither adopts nor announces anything.
     """
     return _resolve_app_dir(
         explicit,
         env_var=ENV_MODELS_DIR,
         config_key="models_dir",
         native=resolve_data_dir() / MODELS_DIRNAME,
+        legacy=_cwd() / MODELS_DIRNAME,
         label="models",
+        recognize=_looks_like_ggml_cache,
+        hint=" Set CR_MODELS_DIR to pin a different models directory.",
     )
 
 

@@ -96,3 +96,16 @@ Date: 2026-09-14
   signing identities exist.
 - The frozen app inherits the console's localhost-only, no-auth posture; it must
   never be exposed beyond localhost.
+
+## Update (2026-09-15) — the desktop entry point moved to the tray
+
+Superseded in part by [ADR-0016](0016-app-shell-htmx-tray-pi-agent.md)'s tray
+decision (ticket 22): the bundle now builds a windowed **`clear-record-tray`** and
+sets `CFBundleExecutable = clear-record-tray`, so a double-click gives the service
+a **menu-bar home** rather than a browser tab. `clear-record-web` (browser
+launcher) and the CLI stay in the bundle — the tray is the default, not the only
+path. The bundle therefore also carries **PySide6**, the trade-off recorded in
+ticket 22 (hundreds of MB in exchange for a real entry point); reversing it is a
+one-line `CFBundleExecutable` change plus dropping the extra. The "two
+executables" decision above is the shape this supersedes; the rest of the ADR
+(onedir + `.app`, unsigned, no bundled models) stands.

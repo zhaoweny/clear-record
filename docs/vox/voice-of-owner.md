@@ -370,6 +370,16 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   workaround (no Apple Developer Program spend).
 - [DECISION] Flatpak keeps **`--share=network`** for first-use provisioning.
 
+## Webhook notifications (feature request, 2026-09-15)
+
+- Owner request, verbatim: *"also: do a web-hook as some user might want a
+  notification system to their, umm, knowledge and project management system"*.
+- [REQ] Recorded as a feature request. Scoped in
+  `.scratch/project-console/issues/24-webhooks.md`. An **ADR is owed when it is
+  built**, because outbound delivery is the first feature that pushes *data*
+  outward and therefore touches the local-first stance (VOICE §4) and ADR-0006's
+  privacy boundary.
+
 ## Agent task execution: no bundled harness (2026-09-14)
 
 - Owner answer to the last open question — *"should we build / bundle a genuine

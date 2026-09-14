@@ -133,10 +133,18 @@ mcp service and let the agent to do the heavy lifting"*.
 - [DECISION] For this use case clear-record stays a **simple MCP service** and the
   **agent drives the loop**. We do **not** build a bespoke tuning UI: the work is
   a conversation, and a conversation is the agent's job (ADR-0016's boundary).
-- [FACT] The enabling mechanism already exists: the transcription **chunk cache is
-  keyed on the glossary** (backend / model / language / glossary / chunk plan), so
-  editing the glossary and re-running **re-decodes** the affected chunks. That is
-  exactly the "iterate the terms, re-run, compare" loop, and it already ships.
+- [FACT] **Partial enabling mechanism, and an honest limit.** The chunk cache is
+  keyed on the glossary (backend / model / language / glossary / chunk plan), so a
+  glossary edit *does* invalidate the cache and force a re-decode — the loop is
+  real. But the key holds the **whole glossary string**, so the invalidation is
+  **global**: a single term change re-decodes **every chunk of every source**, not
+  "only the affected chunks" (an earlier claim in this ADR that was wrong and is
+  corrected here). On multi-hour tapes one tuning iteration is therefore minutes
+  of GPU time, not seconds. That is exactly why scoped re-runs matter:
+- [OPEN] **Scoped re-runs are now a real concern, not polish.** To make iteration
+  cheap on a multi-hour tape, a re-run should be scoped — one source, or a time
+  range — or the invalidation should be narrowed. Until then the loop works but
+  costs a full re-decode per glossary edit.
 - [FACT] The shipped MCP surface (ADR-0017, 14 tools) is **not yet sufficient** for
   the loop:
   - **no transcript-read tool** — `list_artifacts` returns paths and metadata, so

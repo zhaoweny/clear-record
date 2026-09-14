@@ -395,6 +395,14 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   material leaks by accident (file names, glossary terms, transcripts), and a
   *service* exposed beyond localhost collides with ADR-0013's "localhost only, no
   auth".
+- [DECISION] On the deployment question the owner chose, verbatim: *"do localhost
+  only and let user to do the reverse proxy part"* — **"(for now)"**. Recorded as
+  [ADR-0021](../adr/0021-localhost-only-deployment.md): the app stays on
+  `127.0.0.1` with no auth, the operator's reverse proxy owns remote access and
+  authentication, and **in-app LAN auth is deferred, not rejected**. The same
+  decision closes a gap the investigation exposed — a browser-accessible
+  localhost service still needs an `Origin`/`Host` guard against CSRF and DNS
+  rebinding — so the app now owes the operator a proxy recipe **and** that guard.
 
 ## Agent task execution: no bundled harness (2026-09-14)
 

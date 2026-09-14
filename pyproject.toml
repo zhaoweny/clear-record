@@ -59,6 +59,9 @@ dev = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
+    # The verify gate exercises the MCP server, so its optional SDK is a dev
+    # dependency too — end users get it via the `agents` extra instead.
+    "mcp>=2",
 ]
 
 # The desktop-app build toolchain (PyInstaller), kept out of `dev` so the
@@ -82,6 +85,7 @@ amd = ["clear-record[amd]"]
 all = ["clear-record[all]"]
 web = ["clear-record[web]"]
 tray = ["clear-record[tray]"]
+agents = ["clear-record[agents]"]
 
 [tool.ruff]
 target-version = "py312"

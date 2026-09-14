@@ -43,10 +43,12 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # while the web *code* still ships in this one wheel.
 RUNTIME_DEPS = {"numpy", "soundfile"}
 
-# The optional `web` extra's dependency set (ADR-0013). It must not leak into
-# the base dependencies; the MCP SDK gets its own extra when the MCP server lands.
+# The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
+# They must not leak into the base dependencies: a CLI-only install stays
+# audio-only, while the web/MCP *code* still ships in this one wheel.
 WEB_EXTRA_DEPS = {"fastapi", "uvicorn", "jinja2", "python-multipart"}
 TRAY_EXTRA_DEPS = {"pyside6"}
+AGENTS_EXTRA_DEPS = {"mcp"}
 
 
 def _load(path: Path) -> dict:
@@ -107,13 +109,13 @@ def test_single_dist_runtime_dependencies() -> None:
     assert names == RUNTIME_DEPS, f"unexpected runtime dependencies: {sorted(names)}"
 
 
-def test_web_surface_is_an_extra_not_a_base_dependency() -> None:
-    """The web console's stack is gated behind the `web` extra (ADR-0013).
+def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
+    """The web/tray/MCP stacks are extras, not base dependencies (ADR-0013/0016/0017).
 
-    The console ships inside this one wheel as `clear_record.web` (no second dist
-    to publish), but its dependencies must not: a CLI-only install stays
-    audio-only. `web` is still registered as a subcommand by an entry point, so
-    it is discoverable without the CLI importing the web module.
+    Each surface ships inside this one wheel (no second dist to publish), but its
+    dependencies must not: a CLI-only install stays audio-only. Every surface is
+    still registered as a subcommand by an entry point, so it is discoverable
+    without the CLI importing the surface module.
     """
     project = _load(MEMBER_PYPROJECTS[0])["project"]
     extras = project.get("optional-dependencies", {})
@@ -123,14 +125,16 @@ def test_web_surface_is_an_extra_not_a_base_dependency() -> None:
     }
     assert names.get("web") == WEB_EXTRA_DEPS, names.get("web")
     assert names.get("tray") == TRAY_EXTRA_DEPS, names.get("tray")
+    assert names.get("agents") == AGENTS_EXTRA_DEPS, names.get("agents")
 
     base = {_NAME_RE.match(spec).group() for spec in project.get("dependencies", [])}
-    leaked = (WEB_EXTRA_DEPS | TRAY_EXTRA_DEPS) & base
+    leaked = (WEB_EXTRA_DEPS | TRAY_EXTRA_DEPS | AGENTS_EXTRA_DEPS) & base
     assert not leaked, f"optional stack leaked into base dependencies: {sorted(leaked)}"
 
     declared = project.get("entry-points", {}).get("clear_record.commands", {})
     assert declared.get("web") == "clear_record.web:register", declared
     assert declared.get("tray") == "clear_record.tray:register", declared
+    assert declared.get("mcp") == "clear_record.mcp:register", declared
 
 
 def test_web_console_assets_ship_with_the_package() -> None:

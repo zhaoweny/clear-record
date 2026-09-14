@@ -77,6 +77,11 @@ web = [
 # `tray` is the native desktop entry point (PySide6). PySide2 is not an option:
 # its wheels stop at Python 3.10 and this project requires >= 3.12.
 tray = ["pyside6>=6.7"]
+# `agents` carries the MCP SDK behind the `clear-record mcp` server: the agent
+# boundary (ADR-0017). Like `web`/`tray` it is not a base dependency — the code
+# ships in this one wheel, a CLI-only install stays audio-only. BYOK: no model
+# or provider key is ever bundled or read here.
+agents = ["mcp>=2"]
 
 [project.scripts]
 clear-record = "clear_record.cli:main"
@@ -86,3 +91,4 @@ clear-record = "clear_record.cli:main"
 [project.entry-points."clear_record.commands"]
 web = "clear_record.web:register"
 tray = "clear_record.tray:register"
+mcp = "clear_record.mcp:register"

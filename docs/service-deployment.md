@@ -262,30 +262,66 @@ clear-record web --tailscale --no-browser    # for a service unit
 ```
 
 It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
-normalised), runs `tailscale serve --bg http://127.0.0.1:8765`, and prints
-`https://<machine>.<tailnet>.ts.net/`.
+normalised), runs
+`tailscale serve --https=<port> http://127.0.0.1:<console-port>`, and prints the
+URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
+port is not 443).
 
-`--host` must stay loopback (`127.0.0.1`, `::1`, `localhost`): Serve proxies
-**only** to `http://127.0.0.1:<port>`, so `--tailscale --host 0.0.0.0` is refused
-with a usage error rather than publishing a target that would 502 to the whole
-tailnet.
+[FACT] The Serve invocation is the **1.52+ CLI form**. Verified against the
+[Tailscale Serve command
+reference](https://tailscale.com/kb/1242/tailscale-serve): a port / partial URL
+/ full URL is a valid `<target>`; a reverse proxy accepts **only**
+`http://127.0.0.1`; the exposed HTTPS port is set with `--https=<port>` (443 is
+the flag's default); and `--bg` is what makes a mapping survive the invoking
+process. Older clients predate that form; upgrade Tailscale if the command is
+refused.
+
+#### The exposed port
+
+[DESIGN] Both ports default to the same number (8765), so a plain `--tailscale`
+publishes `https://<machine>.<tailnet>.ts.net:8765/`. Choose a different tailnet
+port with `--tailscale-port` (the console's own `--port` is unchanged):
+
+```sh
+clear-record web --tailscale --tailscale-port 443   # https://<machine>.<tailnet>.ts.net/
+```
+
+The Serve **target** is always `http://127.0.0.1:<--port>`: Serve proxies only
+to loopback, and `--host` must therefore stay loopback (`127.0.0.1`, `::1`,
+`localhost`). `--tailscale --host 0.0.0.0` is refused with a usage error rather
+than publishing a target that would 502 to the whole tailnet.
+
+#### The mapping lives and dies with the console
+
+[DESIGN] `--tailscale` runs Serve in its **foreground** form (no `--bg`), as a
+real child of the console. A foreground Serve serves until it is interrupted and
+registers its rule under an ephemeral `WatchIPNBus` session; Tailscale deletes
+that rule when the session closes — which is what happens when the process
+exits, graceful or not. So terminating the child **is** the cleanup: Ctrl-C
+(`SIGINT`), `SIGTERM` and a normal stop all take the mapping with them, and a
+crash cannot leave a stale rule behind (that ephemerality is exactly what
+`ipn.ServeConfig.Foreground` is for). No `tailscale serve off` is needed, and
+none is run.
+
+#### A rule that was already there is left alone
+
+Snapshotting first is what makes this safe. Before changing anything,
+`--tailscale` reads `tailscale serve status --json`. If the chosen tailnet port
+is already served — your own `--bg` mapping, or another foreground session — the
+flag creates nothing, leaves that mapping untouched, and says so. (tailscaled
+independently refuses a second listener on a busy port, so the snapshot is a
+courtesy on top of that safety net.) If the existing rule is not the console,
+pick a free port with `--tailscale-port`.
 
 > **The tailnet is the authentication.** The console still ships no accounts of
 > its own, so **anyone who can reach your tailnet can reach the console.** If
 > that is not what you want, use tailnet access controls and device approval —
 > there is no second password on this path (ADR-0021).
 
-The rule is deliberately **persistent** (`--bg`): the flag leaves it in place
-when the console exits, and prints how to remove it. Remove exactly the default
-HTTPS mapping it created with:
-
-```sh
-tailscale serve --https=443 off
-```
-
-`tailscale serve --https=443 off` and a bare `tailscale serve off` are the same
-on a default setup; naming the port is what makes it explicit (and avoids
-`tailscale serve reset`, which clears **every** Serve rule on the machine).
+[DESIGN] A **refused Serve is a warning, not a dead console**: the flag is a
+convenience, so if Serve cannot start the console starts anyway with the tailnet
+name trusted, and the message names the fix. A Tailscale problem never takes the
+local console down with it.
 
 If the machine's name is not the one to trust (a renamed or unusual tailnet),
 override the resolved name — `tailscale status` is then not consulted:
@@ -296,13 +332,6 @@ clear-record web --tailscale --tailscale-host machine.tailnet.ts.net
 
 `CR_TRUSTED_HOSTS` still composes: the tailnet name is **added** to whatever
 that variable names, so an existing public hostname keeps working.
-
-[FACT] The Serve invocation is the **1.52+ CLI form**, `tailscale serve --bg
-<target>`, verified against the [Tailscale Serve command
-reference](https://tailscale.com/kb/1242/tailscale-serve): `--bg` is documented
-as the background flag, a port / partial URL / full URL is a valid `<target>`,
-and a reverse proxy accepts **only** `http://127.0.0.1`. Older clients predate
-that form; upgrade Tailscale if the command is refused.
 
 Failures are actionable messages, never tracebacks: `tailscale` not on `PATH`;
 the daemon down or logged out (`tailscale up`); a refused `serve` (its own

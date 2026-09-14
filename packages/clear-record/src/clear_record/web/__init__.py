@@ -11,9 +11,17 @@ group (ADR-0013) so ``clear_record.cli`` never statically imports this module.
 
 from __future__ import annotations
 
+import atexit
 import importlib.util
+import os
+import signal
+import threading
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:
+    from clear_record.web.tailscale import ServeSession
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -65,9 +73,9 @@ def register(group: click.Group) -> None:
         is_flag=True,
         help=(
             "set up Tailscale Serve for this port, trust this machine's tailnet "
-            "name, and print its https URL. The tailnet is the authentication: "
-            "anyone on your tailnet can reach the console. Serve is left running "
-            "on purpose; turn it off with `tailscale serve off`."
+            "name, and print its https URL. Serve runs in the foreground "
+            "alongside the console and stops with it. The tailnet is the "
+            "authentication: anyone on your tailnet can reach the console."
         ),
     )
     @click.option(
@@ -79,6 +87,16 @@ def register(group: click.Group) -> None:
             "(requires --tailscale)"
         ),
     )
+    @click.option(
+        "--tailscale-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help=(
+            "the tailnet HTTPS port Serve exposes (default: the same as "
+            "--port); requires --tailscale"
+        ),
+    )
     def _web(
         host: str,
         port: int,
@@ -86,6 +104,7 @@ def register(group: click.Group) -> None:
         data_dir: str | None,
         tailscale: bool,
         tailscale_host: str | None,
+        tailscale_port: int | None,
     ) -> int:
         return _run(
             host=host,
@@ -94,6 +113,7 @@ def register(group: click.Group) -> None:
             data_dir=data_dir,
             tailscale=tailscale,
             tailscale_host=tailscale_host,
+            tailscale_port=tailscale_port,
         )
 
 
@@ -105,27 +125,84 @@ def _run(
     data_dir: str | None,
     tailscale: bool = False,
     tailscale_host: str | None = None,
+    tailscale_port: int | None = None,
 ) -> int:
     _require_web_stack()
-    trusted_hosts: list[str] | None = None
-    if tailscale_host and not tailscale:
+    if (tailscale_host is not None or tailscale_port is not None) and not tailscale:
         raise click.UsageError(
-            "--tailscale-host overrides the name --tailscale resolves; pass "
+            "--tailscale-host / --tailscale-port configure Serve; pass "
             "--tailscale too (or set CR_TRUSTED_HOSTS to trust a hostname "
             "without Serve)."
         )
+    if tailscale_port is not None and not 0 < tailscale_port < 65536:
+        raise click.UsageError(
+            f"--tailscale-port {tailscale_port} is not a port number (1-65535)."
+        )
+    trusted_hosts: list[str] | None = None
+    session: ServeSession | None = None
     if tailscale:
         _require_loopback_bind(host)
-        trusted_hosts = _tailscale_hosts(port=port, override=tailscale_host)
+        trusted_hosts, session = _tailscale_setup(
+            target_port=port,
+            serve_port=tailscale_port if tailscale_port is not None else port,
+            override=tailscale_host,
+        )
     from clear_record.web.app import serve
 
-    return serve(
-        host=host,
-        port=port,
-        open_browser=not no_browser,
-        data_dir=data_dir,
-        trusted_hosts=trusted_hosts,
-    )
+    if session is not None:
+        atexit.register(session.stop)
+    restore = _guard_termination(session)
+    try:
+        return serve(
+            host=host,
+            port=port,
+            open_browser=not no_browser,
+            data_dir=data_dir,
+            trusted_hosts=trusted_hosts,
+        )
+    finally:
+        if restore is not None:
+            restore()
+        if session is not None:
+            session.stop()
+
+
+def _guard_termination(session: ServeSession | None):
+    """Stop the Serve child on a signal that ends us without unwinding.
+
+    ``SIGINT`` arrives as ``KeyboardInterrupt`` and is handled by the ``finally``
+    around the console. ``SIGTERM``'s default action ends the process **without**
+    running it, so the child would be orphaned and its mapping would outlive the
+    console; a handler is the only way to stop it. uvicorn installs its own
+    handlers for the duration of the run and re-raises the signal afterwards
+    (restoring ours), so this fires whether or not uvicorn intercepts it.
+
+    Returns a function that puts the previous handlers back (for a normal run),
+    or ``None`` when nothing was installed — no session, no such signal, or a
+    non-main thread, where ``signal.signal`` is not allowed.
+    """
+    if session is None or threading.current_thread() is not threading.main_thread():
+        return None
+    signals = [
+        signum
+        for name in ("SIGTERM", "SIGHUP")
+        if (signum := getattr(signal, name, None)) is not None
+    ]
+    if not signals:
+        return None
+
+    def stop_and_terminate(number, _frame):
+        session.stop()
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
+
+    previous = {number: signal.signal(number, stop_and_terminate) for number in signals}
+
+    def restore() -> None:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+    return restore
 
 
 def _require_loopback_bind(host: str) -> None:
@@ -150,8 +227,14 @@ def _require_loopback_bind(host: str) -> None:
         )
 
 
-def _tailscale_hosts(*, port: int, override: str | None) -> list[str]:
-    """Set up Serve, echo the URL and turn-off hint, return the names to trust.
+def _tailscale_setup(
+    *, target_port: int, serve_port: int, override: str | None
+) -> tuple[list[str], ServeSession | None]:
+    """Set up Serve, echo what happened, return ``(trusted_hosts, session)``.
+
+    Name resolution is required — without it there is nothing to trust — so it
+    stays fatal. Starting Serve is not: the flag is a convenience, so a refusal
+    becomes an actionable warning and the console starts anyway.
 
     ``CR_TRUSTED_HOSTS`` still composes: the tailnet name is added to it, so a
     console already served on a public name keeps working. No environment
@@ -167,18 +250,36 @@ def _tailscale_hosts(*, port: int, override: str | None) -> list[str]:
                 "    Fix: pass the name Tailscale gives you, e.g. "
                 "machine.tailnet.ts.net."
             )
-        tailscale.serve(port)
     except tailscale.TailscaleError as exc:
         raise SystemExit(f"[tailscale] {exc}") from exc
 
-    click.echo(
-        "[tailscale] console is now shared on your tailnet:\n"
-        f"    {tailscale.console_url(name)}\n"
-        "    The tailnet is the authentication: anyone on your tailnet can "
-        "reach this console.\n"
-        f"    To stop sharing it, run:  {tailscale.disable_hint()}"
-    )
-    return sorted(guard.trusted_extra_hosts() | {name})
+    try:
+        session = tailscale.start_serve(serve_port=serve_port, target_port=target_port)
+    except tailscale.TailscaleError as exc:
+        click.echo(
+            f"[tailscale] {exc}\n"
+            "    The console is starting anyway, but it will not be reachable "
+            "over the tailnet.",
+            err=True,
+        )
+        session = None
+    else:
+        if session.reused:
+            click.echo(
+                f"[tailscale] port {serve_port} is already served by Tailscale; "
+                "leaving that mapping untouched.\n"
+                "    If it does not point at this console, pass "
+                "--tailscale-port <port> to expose a different tailnet port."
+            )
+        else:
+            click.echo(
+                "[tailscale] console is now shared on your tailnet:\n"
+                f"    {tailscale.console_url(name, serve_port)}\n"
+                "    The tailnet is the authentication: anyone on your tailnet "
+                "can reach this console.\n"
+                "    Serve runs in the foreground and stops with this console."
+            )
+    return sorted(guard.trusted_extra_hosts() | {name}), session
 
 
 __all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "register"]

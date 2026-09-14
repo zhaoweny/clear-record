@@ -317,10 +317,14 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 Running `clear-record web` without the extra prints the exact install command.
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
 server binds **localhost only** and needs no account. With `--tailscale` the
-console also resolves this machine's tailnet name, runs `tailscale serve --bg`,
-trusts that name, and prints the `https://<machine>.<tailnet>.ts.net/` URL
-(persistent; remove it with `tailscale serve --https=443 off`). **The tailnet is
-then the authentication — anyone on your tailnet can reach the console**
+console also resolves this machine's tailnet name, runs a **foreground**
+`tailscale serve --https=<port> http://127.0.0.1:<port>` (the tailnet port
+defaults to `--port`; choose another with `--tailscale-port`), trusts that name,
+and prints the URL. Serve is a child of the console, so the mapping stops with
+it — Ctrl-C included — and a mapping that already existed on that port is left
+untouched. If Serve cannot start, the console still starts and says why. **The
+tailnet is then the authentication — anyone on your tailnet can reach the
+console**
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
 [deployment guide](docs/service-deployment.md#tailscale)). The app-owned
 **project registry** (SQLite) lives under `$XDG_DATA_HOME/clear-record`,

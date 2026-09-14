@@ -1,6 +1,7 @@
 # clear-record — Architecture & Provenance
 
-Status: **runnable v0.1** (~v0.1.0) · Updated: 2026-09-11
+Status: **v0.2 development trunk** (`0.2.0.dev0`; `releases/v0.1.x` is the 0.1
+maintenance line — ADR-0011's 2026-09-14 Update) · Updated: 2026-09-14
 
 This document distills the original concept into an architecture + provenance
 document using the project's provenance labels (**FACT / VOICE / REQ / DESIGN /
@@ -280,12 +281,19 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd) behind the Backend interface
   src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
+  src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
+  src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)
+  src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
+  src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0016
+docs/adr/                     decision records 0001–0017
 docs/vox/voice-of-owner.md    owner voice
 ```
 
-**Current status: runnable v0.1 pipeline.**
+**Current status: v0.2 development trunk.** The pipeline below is landed and
+runnable; the **project console** — a headless service (projects, glossary,
+meetings, runs, archive), a local web UI, a tray supervisor and an MCP server —
+is built on top of it (ADR-0013/0016/0017).
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves

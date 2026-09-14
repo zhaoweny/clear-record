@@ -269,3 +269,18 @@ this repository. See `docs/architecture.md` §7.
   cannot work** on this project's Python (its wheels stop at 3.10, the project
   requires ≥3.12), so this is **PySide6** — noted to the owner at the time.
   It is an optional `tray` extra so the base install stays audio-only.
+
+## Release train cut: `releases/v0.1.x` + a 0.2.x trunk (2026-09-14)
+
+- Owner directive, verbatim: *"cut release track releases/v0.1.x and main is
+  current dev / trunk for v0.2.x"*.
+- Owner choice of cut point (agent-offered options): the maintenance branch is
+  cut from the **`v0.1.1` tag**, **not** from `main`'s then-HEAD, so a 0.1.x
+  patch release carries none of the unreleased console / run / archive / MCP
+  work. The literal ADR-0011 "cut at current `main`" reading was rejected by the
+  owner in favour of the cleaner released-line cut.
+- [DECISION] `main` becomes the **0.2.x development trunk** at `0.2.0.dev0`;
+  `releases/v0.1.x` is the 0.1 maintenance line. See
+  [ADR-0011](../adr/0011-versioning-and-release-train.md)'s 2026-09-14 Update and
+  [`docs/releasing.md`](../releasing.md). Nothing is pushed; the branch is local
+  until the owner chooses to publish it.

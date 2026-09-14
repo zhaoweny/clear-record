@@ -157,7 +157,7 @@ wheels = [
 
 [[package]]
 name = "clear-record"
-version = "0.1.1"
+version = "0.2.0.dev0"
 source = { editable = "packages/clear-record" }
 dependencies = [
     { name = "numpy" },
@@ -193,7 +193,7 @@ provides-extras = ["apple", "nvidia", "amd", "all", "web", "tray", "agents"]
 
 [[package]]
 name = "clear-record-workspace"
-version = "0.1.1"
+version = "0.2.0.dev0"
 source = { virtual = "." }
 
 [package.optional-dependencies]

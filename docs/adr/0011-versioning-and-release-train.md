@@ -206,3 +206,29 @@ Updates, are kept for the record; this section supersedes them.
   is now a small inline `case "$version" in *.dev*)` guard in both `publish.yml`
   and `publish-testpypi.yml`, and the `v<version>` ↔ tag guard is kept. The
   `"v[0-9]*"` / `"!v[0-9]*.dev*"` tag filters are unchanged.
+
+## Update (2026-09-14) — the release train is cut: `releases/v0.1.x` + a 0.2.x trunk
+
+Owner directive, verbatim: *"cut release track releases/v0.1.x and main is
+current dev / trunk for v0.2.x"* (recorded in
+[`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md)). This discharges the
+review hook in Consequences ("revisit when 0.2 development starts") and
+**supersedes** the Decision bullet *"The release train is lazy: `main` is the
+`releases/v0.1.x` train while 0.1 is the only supported line."*
+
+- [DECISION] `releases/v0.1.x` is cut from the **`v0.1.1` tag** (commit
+  `f30ba1a`), not from `main`'s then-HEAD. Rationale: everything on `main` after
+  `v0.1.1` is unreleased new-minor work (the console, the run path, archive, the
+  MCP server, the tray), so cutting at the tag means a 0.1.x **patch release
+  carries no unreleased feature work**. The owner selected this cut point over
+  the literal "cut at current `main`" reading.
+- [DECISION] **`main` is the 0.2.x development trunk**, carrying
+  **`0.2.0.dev0`**. The dev segment advances per snapshot exactly as above, and
+  the three publishing tiers (dev artifact / rc → PyPI / stable → PyPI) are
+  unchanged.
+- [DESIGN] A 0.1.x patch release is made **from the branch**: `just set-version
+  0.1.<next>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
+  automatically from `releases/v0.1.x`.
+- [OPEN] The branch is **local only**. Nothing in this repository has been
+  pushed, so publishing the branch (`git push -u origin releases/v0.1.x`) is a
+  deliberate owner step.

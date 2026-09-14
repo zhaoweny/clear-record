@@ -105,6 +105,23 @@ the `testpypi` environment.
 > (ADR-0012), and its four layers are internal subpackages. Claim one pending
 > publisher per index.
 
+## Release tracks
+
+Two lines exist as of 2026-09-14 (ADR-0011's Update "the release train is cut"):
+
+| Line | Branch | Version | What it carries |
+|---|---|---|---|
+| 0.1 maintenance | `releases/v0.1.x`, cut from the `v0.1.1` tag | `0.1.1` | the released 0.1.x code — patches only |
+| 0.2 development | `main` | `0.2.0.dev0` | the current work (console, runs, archive, MCP, tray) |
+
+A **0.1.x patch release** is made from `releases/v0.1.x`: `just set-version
+0.1.<next>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
+automatically from the branch, and the branch is **local-only** until pushed
+(`git push -u origin releases/v0.1.x`) — as with everything else here, nothing
+has been pushed yet.
+
+`main` is the **0.2.x trunk**; the dev / rc / stable tiers below are unchanged.
+
 ## Versioning: one dev snapshot on `main`
 
 The root and the single member carry one **static** version (ADR-0011) —

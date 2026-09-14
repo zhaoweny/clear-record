@@ -1,0 +1,12 @@
+<ul class="projects">
+  {% for row in projects %}
+  <li hx-get="/ui/projects/{{ row.project.slug }}"
+      hx-target="#detail"
+      hx-swap="innerHTML">
+    <span>{{ row.project.name }}</span>
+    <span class="count">{{ row.term_count }}</span>
+  </li>
+  {% else %}
+  <li class="muted">No projects yet.</li>
+  {% endfor %}
+</ul>

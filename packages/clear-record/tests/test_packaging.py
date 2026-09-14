@@ -45,7 +45,7 @@ RUNTIME_DEPS = {"numpy", "soundfile"}
 
 # The optional `web` extra's dependency set (ADR-0013). It must not leak into
 # the base dependencies; the MCP SDK gets its own extra when the MCP server lands.
-WEB_EXTRA_DEPS = {"fastapi", "uvicorn"}
+WEB_EXTRA_DEPS = {"fastapi", "uvicorn", "jinja2", "python-multipart"}
 
 
 def _load(path: Path) -> dict:
@@ -128,6 +128,26 @@ def test_web_surface_is_an_extra_not_a_base_dependency() -> None:
 
     declared = project.get("entry-points", {}).get("clear_record.commands", {})
     assert declared.get("web") == "clear_record.web:register", declared
+
+
+def test_web_console_assets_ship_with_the_package() -> None:
+    """The console's templates and vendored libraries are package data.
+
+    They must exist on disk (the wheel ships them; the frozen build collects
+    them), so a rename that orphans the UI fails here rather than at runtime.
+    """
+    web = PACKAGE_DIRS[0] / "src" / "clear_record" / "web"
+    required = (
+        "templates/base.html",
+        "templates/index.html",
+        "templates/_projects.html",
+        "templates/_detail.html",
+        "static/app.css",
+        "static/htmx.min.js",
+        "static/alpine.min.js",
+    )
+    missing = [rel for rel in required if not (web / rel).is_file()]
+    assert not missing, f"missing web console assets: {missing}"
 
 
 def test_declares_the_clear_record_script() -> None:

@@ -1,0 +1,68 @@
+<h2>{{ project.name }}</h2>
+<div class="muted">{{ project.notes or "No notes." }} &middot; slug <code>{{ project.slug }}</code></div>
+
+<div x-data="{ filter: 'all' }">
+  <h3>Glossary</h3>
+  <div class="filters">
+    <span class="muted">Filter</span>
+    <select x-model="filter">
+      <option value="all">all</option>
+      {% for status in statuses %}
+      <option value="{{ status }}">{{ status }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {% if terms %}
+  <table>
+    <thead>
+      <tr><th>Term</th><th>Aliases</th><th>Definition</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for term in terms %}
+      <tr x-show="filter === 'all' || filter === '{{ term.status }}'">
+        <td>
+          <strong>{{ term.term }}</strong>
+          {% if term.reading %}<div class="muted">{{ term.reading }}</div>{% endif %}
+        </td>
+        <td>{{ term.aliases or "" }}</td>
+        <td>{{ term.definition or "" }}</td>
+        <td>
+          <span class="badge">{{ term.status }}</span>
+          <div class="muted" style="font-size:12px">{{ term.added_by }}</div>
+        </td>
+        <td>
+          <form hx-post="/ui/glossary/{{ term.id }}/status" hx-target="#detail"
+                hx-swap="innerHTML" style="display:inline">
+            <select name="status" onchange="this.form.requestSubmit()">
+              {% for status in statuses %}
+              <option value="{{ status }}" {% if status == term.status %}selected{% endif %}>{{ status }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          <button class="icon" title="delete" hx-delete="/ui/glossary/{{ term.id }}"
+                  hx-target="#detail" hx-swap="innerHTML">&#10005;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No glossary terms yet.</div>
+  {% endif %}
+</div>
+
+<h3>Add a term</h3>
+<form class="stack"
+      hx-post="/ui/projects/{{ project.slug }}/glossary"
+      hx-target="#detail"
+      hx-swap="innerHTML"
+      hx-on::after-request="if (event.detail.successful) this.reset()">
+  <div class="row">
+    <input name="term" placeholder="Term" required>
+    <input name="reading" placeholder="Reading / pronunciation">
+  </div>
+  <input name="aliases" placeholder="Aliases (comma separated)">
+  <input name="definition" placeholder="Definition">
+  <button class="primary" type="submit">Add term</button>
+</form>

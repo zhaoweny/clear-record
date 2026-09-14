@@ -8,12 +8,12 @@ Produces, from one analysis:
     dist/clear-record/clear-record       the full console CLI
     dist/clear-record.app                (macOS only) the above as an app bundle
 
-The web console's frontend is embedded as Python strings, so there are no UI
-data files to collect; the collections below cover the audio stack and the web
-stack. The web/service modules are imported only *dynamically* (through the
-`clear_record.commands` entry point and a lazy import), so they are listed as
-hidden imports; `copy_metadata("clear-record")` keeps the entry point resolvable
-inside the frozen app, which is what makes `clear-record web` work there too.
+The web console's frontend is package data — Jinja templates plus vendored
+htmx/Alpine — so it is collected explicitly. The web/service modules are imported
+only *dynamically* (through the `clear_record.commands` entry point and a lazy
+import), so they are listed as hidden imports; `copy_metadata("clear-record")`
+keeps the entry point resolvable inside the frozen app, which is what makes
+`clear-record web` work there too.
 
 Unsigned: see packaging/pyinstaller/README.md for the macOS Gatekeeper and
 Windows SmartScreen notes. See docs/adr/0014-desktop-app-distribution.md.
@@ -43,9 +43,10 @@ with (ROOT / "packages" / "clear-record" / "pyproject.toml").open("rb") as _fh:
 # them; name them explicitly or the frozen app loses `web`.
 hiddenimports = [
     "clear_record.service",
+    "clear_record.service.runs",
     "clear_record.web",
     "clear_record.web.app",
-    "clear_record.web.assets",
+    "jinja2",
     *collect_submodules("uvicorn"),
     "anyio._backends._asyncio",
     "soundfile",
@@ -54,6 +55,9 @@ hiddenimports = [
 
 datas = [
     *collect_data_files("soundfile"),
+    # The console's frontend (Jinja templates + vendored htmx/Alpine) is package
+    # data; without this the frozen app serves a blank page.
+    *collect_data_files("clear_record"),
     # Dist metadata so `importlib.metadata.entry_points(group="clear_record.commands")`
     # still finds the bundled `web` provider after freezing.
     *copy_metadata("clear-record"),

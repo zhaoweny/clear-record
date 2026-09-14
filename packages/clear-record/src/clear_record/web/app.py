@@ -1,8 +1,15 @@
 """The FastAPI app for the clear-record web console.
 
-A **thin** adapter over :mod:`clear_record.service`: every route is a small
-translation of a service call into HTTP/JSON. No domain logic lives here, which
-is what lets the GUI, the MCP server and scripts share one tested service seam.
+Two surfaces over the same **thin** service adapter:
+
+- ``/api/*`` returns JSON — the machine surface the GUI, scripts and (later) the
+  MCP server share. Every route is a small translation of a service call.
+- ``/ui/*`` returns HTML fragments for the browser, driven by **htmx** (partial
+  updates) and **Alpine.js** (local UI state). Server-rendered, no build step:
+  the two libraries are vendored under ``static/`` so the console works offline.
+
+No domain logic lives here, which is what lets the GUI, the MCP server and
+scripts share one tested service seam.
 
 The app binds localhost by default and has no authentication —
 it is a local-first tool, not a hosted service (ADR-0013).
@@ -13,13 +20,18 @@ from __future__ import annotations
 import dataclasses
 import threading
 import webbrowser
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from clear_record.service import Registry
-from clear_record.web.assets import INDEX_HTML
+from clear_record.service import TERM_STATUSES, Registry
+
+WEB_DIR = Path(__file__).parent
+TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
 
 class ProjectCreate(BaseModel):
@@ -66,16 +78,103 @@ def create_app(registry: Registry) -> FastAPI:
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+    app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+
+    # --- HTML views (htmx + Alpine) ---------------------------------------- #
+    def project_rows() -> list[dict]:
+        counts = registry.term_counts()
+        return [
+            {"project": project, "term_count": counts.get(project.slug, 0)}
+            for project in registry.list_projects()
+        ]
+
+    def detail(request: Request, slug: str) -> HTMLResponse:
+        try:
+            project = registry.require_project(slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_detail.html",
+            {
+                "project": project,
+                "terms": registry.list_terms(slug),
+                "statuses": TERM_STATUSES,
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return INDEX_HTML
+    def index(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(request, "index.html", {})
 
+    @app.get("/ui/projects", response_class=HTMLResponse)
+    def ui_projects(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request, "_projects.html", {"projects": project_rows()}
+        )
+
+    @app.post("/ui/projects", response_class=HTMLResponse)
+    def ui_create_project(request: Request, name: str = Form(...)) -> HTMLResponse:
+        try:
+            registry.create_project(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return TEMPLATES.TemplateResponse(
+            request, "_projects.html", {"projects": project_rows()}
+        )
+
+    @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
+    def ui_project(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug)
+
+    @app.post("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    def ui_add_term(
+        request: Request,
+        slug: str,
+        term: str = Form(...),
+        reading: str = Form(""),
+        aliases: str = Form(""),
+        definition: str = Form(""),
+    ) -> HTMLResponse:
+        try:
+            registry.add_term(
+                slug,
+                term,
+                reading=reading or None,
+                aliases=aliases or None,
+                definition=definition or None,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return detail(request, slug)
+
+    @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
+    def ui_set_status(
+        request: Request, term_id: int, status: str = Form(...)
+    ) -> HTMLResponse:
+        try:
+            term = registry.update_term(term_id, status=status)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return detail(request, term.project_slug)
+
+    @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
+    def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
+        term = registry.get_term(term_id)
+        if term is None:
+            raise HTTPException(status_code=404, detail=f"no term {term_id}")
+        registry.delete_term(term_id)
+        return detail(request, term.project_slug)
+
+    # --- JSON API (machines, scripts, later MCP) ---------------------------- #
     @app.get("/api/health")
     def health() -> dict:
         return {"status": "ok", "registry": str(registry.db_path)}
 
-    # --- projects ---------------------------------------------------------- #
     @app.get("/api/projects")
     def list_projects() -> list[dict]:
         counts = registry.term_counts()
@@ -121,7 +220,6 @@ def create_app(registry: Registry) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _out(project)
 
-    # --- glossary ---------------------------------------------------------- #
     @app.get("/api/projects/{slug}/glossary")
     def list_terms(slug: str, status: str | None = None) -> list[dict]:
         try:

@@ -20,7 +20,7 @@ DEFAULT_PORT = 8765
 
 #: Everything the console needs at run time. `clear_record.web` itself is always
 #: importable (it ships in the one wheel); these are the optional `web` extra.
-_WEB_STACK = ("fastapi", "uvicorn")
+_WEB_STACK = ("fastapi", "uvicorn", "jinja2", "python_multipart")
 
 _MISSING_EXTRA_HINT = (
     "[web] the web console needs the optional 'web' extra ({missing} not found).\n"

@@ -1,7 +1,8 @@
 """HTTP behaviour of the bundled console, through the service seam.
 
-A temp registry and FastAPI's test client — no network, no browser. Assertions
-are on status codes and payload shape, not on HTML internals.
+Two surfaces: the JSON API (``/api/*``) for machines and the server-rendered
+htmx/Alpine fragments (``/ui/*``) for the browser. A temp registry and FastAPI's
+test client — no network, no browser.
 """
 
 from __future__ import annotations
@@ -19,13 +20,68 @@ def client(tmp_path) -> TestClient:
     return TestClient(app)
 
 
-def test_index_serves_the_console(client) -> None:
+def _make_project(client, name: str = "Weekly Ops") -> dict:
+    res = client.post("/api/projects", json={"name": name})
+    assert res.status_code == 201
+    return res.json()
+
+
+# --- HTML surface (htmx + Alpine, server-rendered) ------------------------ #
+def test_index_is_served_with_the_vendored_libraries(client) -> None:
     res = client.get("/")
     assert res.status_code == 200
-    assert "clear-record" in res.text
-    assert "Glossary" in res.text
+    assert "/static/htmx.min.js" in res.text
+    assert "/static/alpine.min.js" in res.text
+    assert "project console" in res.text
 
 
+def test_vendored_assets_are_served(client) -> None:
+    for path in ("/static/htmx.min.js", "/static/alpine.min.js", "/static/app.css"):
+        res = client.get(path)
+        assert res.status_code == 200, path
+        assert res.content
+
+
+def test_ui_project_list_and_create(client) -> None:
+    assert "No projects yet." in client.get("/ui/projects").text
+
+    created = client.post("/ui/projects", data={"name": "Weekly Ops"})
+    assert created.status_code == 200
+    assert "Weekly Ops" in created.text
+    assert "Weekly Ops" in client.get("/ui/projects").text
+
+
+def test_ui_detail_and_glossary_roundtrip(client) -> None:
+    _make_project(client)
+
+    detail = client.get("/ui/projects/weekly-ops")
+    assert detail.status_code == 200
+    assert "No glossary terms yet." in detail.text
+
+    added = client.post(
+        "/ui/projects/weekly-ops/glossary",
+        data={"term": "Falcon", "definition": "the project"},
+    )
+    assert added.status_code == 200
+    assert "Falcon" in added.text
+
+    term_id = client.get("/api/projects/weekly-ops/glossary").json()[0]["id"]
+    promoted = client.post(
+        f"/ui/glossary/{term_id}/status", data={"status": "confirmed"}
+    )
+    assert promoted.status_code == 200
+    assert "confirmed" in promoted.text
+
+    removed = client.delete(f"/ui/glossary/{term_id}")
+    assert removed.status_code == 200
+    assert "No glossary terms yet." in removed.text
+
+
+def test_ui_unknown_project_is_404(client) -> None:
+    assert client.get("/ui/projects/nope").status_code == 404
+
+
+# --- JSON API ------------------------------------------------------------- #
 def test_health_reports_the_registry(client) -> None:
     body = client.get("/api/health").json()
     assert body["status"] == "ok"

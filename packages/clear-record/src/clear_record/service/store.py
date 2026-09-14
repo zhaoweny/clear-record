@@ -406,6 +406,15 @@ class Registry:
             if cur.rowcount == 0:
                 raise KeyError(term_id)
 
+    def get_term(self, term_id: int) -> GlossaryTerm | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT t.*, p.slug AS project_slug FROM glossary_term t"
+                " JOIN project p ON p.id = t.project_id WHERE t.id = ?",
+                (term_id,),
+            ).fetchone()
+        return self._term(row) if row else None
+
     # --- meetings ---------------------------------------------------------- #
     def _unique_meeting_slug(
         self, conn: sqlite3.Connection, project_id: int, title: str

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}clear-record{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/alpine.min.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>clear-record</h1><span class="tag">project console</span>
+    <span class="tag" id="status">{% block status %}ready{% endblock %}</span>
+    <button class="icon"
+            hx-post="/api/shutdown" hx-swap="none"
+            onclick="this.disabled=true;this.textContent='stopping…'">Quit</button>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

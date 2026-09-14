@@ -24,6 +24,9 @@ import os
 import tomllib
 from pathlib import Path
 
+from clear_record.core.diagnostics import logs_dir as _core_logs_dir
+from clear_record.core.diagnostics import xdg_state_home as _core_xdg_state_home
+
 APP = "clear-record"
 REGISTRY_FILENAME = "registry.sqlite3"
 
@@ -36,6 +39,16 @@ def xdg_config_home() -> Path:
 def xdg_data_home() -> Path:
     """``$XDG_DATA_HOME`` or its spec default."""
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+def xdg_state_home() -> Path:
+    """``$XDG_STATE_HOME`` or its spec default.
+
+    The XDG *state* default is owned by ``core.diagnostics`` (the sink resolves
+    it too, and ``core`` may not import ``service``); this is the service-facing
+    name for the same one implementation.
+    """
+    return _core_xdg_state_home()
 
 
 def config_path() -> Path:
@@ -78,12 +91,45 @@ def registry_path(explicit_data_dir: str | os.PathLike | None = None) -> Path:
     return resolve_data_dir(explicit_data_dir) / REGISTRY_FILENAME
 
 
+def resolve_state_dir(explicit: str | os.PathLike | None = None) -> Path:
+    """Resolve the app-owned *state* directory by the ADR-0007 precedence.
+
+    Same shape as :func:`resolve_data_dir`: explicit argument > ``CR_STATE_DIR``
+    > the config file's ``state_dir`` > the XDG state default. ADR-0007 assigns
+    logs and resume state to *state*, so this is where the rotating log sink
+    lives — not under data or cache.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    env = os.environ.get("CR_STATE_DIR")
+    if env:
+        return Path(env).expanduser()
+    configured = _config_value("state_dir")
+    if configured:
+        return Path(configured).expanduser()
+    return xdg_state_home() / APP
+
+
+def logs_dir(explicit: str | os.PathLike | None = None) -> Path:
+    """Resolve the rotating diagnostics log directory.
+
+    Delegates to the sink's one resolver in ``core.diagnostics`` (explicit
+    argument > ``CR_LOG_DIR`` > ``<state>/logs``), so a writer and a reader can
+    never disagree about where the log lives. It is the sink's location, not a
+    general app path, which is why the config file does not carry it.
+    """
+    return _core_logs_dir(explicit)
+
+
 __all__ = [
     "APP",
     "REGISTRY_FILENAME",
     "config_path",
+    "logs_dir",
     "registry_path",
     "resolve_data_dir",
+    "resolve_state_dir",
     "xdg_config_home",
     "xdg_data_home",
+    "xdg_state_home",
 ]

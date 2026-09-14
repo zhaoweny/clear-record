@@ -350,6 +350,14 @@ console in the background under a **system-tray icon** (open / status / quit).
 It is an optional extra — `pip install 'clear-record[tray]'` — so the base
 install stays small.
 
+## Diagnostics (not telemetry)
+
+Structured logs rotate under `$XDG_STATE_HOME/clear-record/logs`
+(`CR_LOG_LEVEL`, or `-v`, raises detail). `clear-record diagnose` — or the
+console's **Diagnostics** link — writes a **redacted** bundle you can attach to a
+bug report. **This is not telemetry:** nothing is ever transmitted; you create the
+file, read it, and choose whether to send it.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) (workspace tooling) and

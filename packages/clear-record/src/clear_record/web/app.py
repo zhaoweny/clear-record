@@ -23,7 +23,7 @@ import webbrowser
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -35,12 +35,14 @@ from clear_record.core import (
     resolve_options,
 )
 from clear_record.service import (
+    BUNDLE_FILENAME,
     TERM_STATUSES,
     PipelineOptions,
     Registry,
     RunManager,
     RunState,
     archive_meeting,
+    collect_bundle,
     verify_archive,
 )
 
@@ -458,6 +460,22 @@ def create_app(registry: Registry, runs: RunManager | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no run {run_id}") from exc
         return render_run(request, state)
+
+    @app.get("/ui/diagnostics")
+    def ui_diagnostics() -> Response:
+        """The same redacted bundle `clear-record diagnose` writes, as a download.
+
+        A plain link target (``<a download>``): no build step, no new JS. The
+        bundle states what it withholds and that nothing is transmitted.
+        """
+        bundle = collect_bundle(registry=registry)
+        return Response(
+            bundle,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": f'attachment; filename="{BUNDLE_FILENAME}"'
+            },
+        )
 
     # --- JSON API (machines, scripts, later MCP) ---------------------------- #
     @app.get("/api/health")

@@ -26,6 +26,7 @@ from clear_record.core import (
     Segment,
     Source,
     Step,
+    log_event,
     pipeline_spec,
     write_json,
 )
@@ -221,6 +222,13 @@ def transcribe(
         else:
             hint = "a system `whisper-cli` + a ggml GPU plugin (see README)"
         reason = f" — {status.reason}" if status.reason else ""
+        log_event(
+            "error",
+            "transcribe",
+            "backend.unavailable",
+            backend=backend_id,
+            reason=status.reason,
+        )
         raise SystemExit(
             f"[transcribe] backend '{backend_id}' is not available on this machine"
             f"{reason}.\n"
@@ -243,6 +251,13 @@ def transcribe(
         if probe.loaded is True:
             w.log(f"[transcribe] plugin load probe OK: {probe.detail}")
         elif probe.loaded is False:
+            log_event(
+                "error",
+                "transcribe",
+                "plugin.load_failed",
+                backend=backend_id,
+                detail=probe.detail,
+            )
             raise SystemExit(
                 f"[transcribe] backend '{backend_id}' ggml plugin did not load: "
                 f"{probe.detail}.\n  The plugin file is present but whisper-cli "
@@ -256,6 +271,15 @@ def transcribe(
     # ``apple`` is parallelizable, so workers must never race the first-use
     # download the provider would otherwise trigger per chunk.
     backend.prepare(model, model_dir)
+    log_event(
+        "info",
+        "transcribe",
+        "backend.selected",
+        backend=backend_id,
+        model=model or backend.info.default_model,
+        language=language or "auto",
+        jobs=jobs,
+    )
     prompt, prompt_src = _load_glossary(w, glossary)
     if prompt:
         w.log(f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
@@ -296,6 +320,14 @@ def transcribe(
         "sources": result.source_meta,
     }
     w.write_segments(result.per_source, meta)
+    log_event(
+        "info",
+        "transcribe",
+        "transcribe.finished",
+        backend=backend_id,
+        model=result.model,
+        sources=len(result.per_source),
+    )
     _print_transcription(result.per_source, meta)
     return result.per_source
 
@@ -679,8 +711,30 @@ def run(
     ``on_event`` is threaded to every stage so a caller can follow progress.
     """
     options = options or PipelineOptions()
-    for stage in pipeline_spec().stages:
-        _STAGE_RUNNERS[stage.step](directory, options, on_event)
+    log_event(
+        "info",
+        "cli",
+        "cli.run.started",
+        backend=options.backend,
+        model=options.model,
+        language=options.language,
+        jobs=options.jobs,
+    )
+    try:
+        for stage in pipeline_spec().stages:
+            name = stage.step.value
+            log_event("info", "stage", "stage.started", stage=name)
+            _STAGE_RUNNERS[stage.step](directory, options, on_event)
+            log_event("info", "stage", "stage.finished", stage=name)
+    except (Exception, SystemExit) as exc:  # the error path already raises
+        log_event(
+            "error",
+            "cli",
+            "cli.run.failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    log_event("info", "cli", "cli.run.finished")
 
 
 def calibrate_report(directory: str, reference: str | None = None) -> dict:

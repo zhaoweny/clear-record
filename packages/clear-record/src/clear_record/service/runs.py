@@ -23,6 +23,7 @@ from pathlib import Path
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
 from clear_record.core import EventSink, JobEvent, PipelineOptions
+from clear_record.core.diagnostics import log_event
 from clear_record.service.glossary import (
     project_snapshot,
     snapshot_from_text,
@@ -167,11 +168,14 @@ class RunManager:
         self, meeting: Meeting, options: PipelineOptions | None = None
     ) -> PipelineRun:
         if not meeting.workspace_path:
+            self._refuse(meeting, "meeting has no workspace path")
             raise ValueError("meeting has no workspace path; set one before running")
         tape_set = self._registry.latest_recording_set(meeting.id)
         if tape_set is None:
+            self._refuse(meeting, "meeting has no tape set")
             raise ValueError("meeting has no tape set; select tapes before running")
         if self.active_state(meeting.id) is not None:
+            self._refuse(meeting, "a run is already in flight")
             raise ValueError("a run is already in flight for this meeting")
 
         options = dataclasses.replace(
@@ -252,6 +256,16 @@ class RunManager:
             {"glossary": str(path), "glossary_sha256": snapshot.sha256},
         )
 
+    def _refuse(self, meeting: Meeting, reason: str) -> None:
+        """Log a start refusal (an expected user error, not a crash)."""
+        log_event(
+            "warning",
+            "runs",
+            "run.refused",
+            meeting_id=meeting.id,
+            reason=reason,
+        )
+
     def _record(self, state: RunState, event: JobEvent) -> None:
         with self._lock:
             state.events.append(event)
@@ -266,6 +280,16 @@ class RunManager:
         state.status = "running"
         self._registry.update_run(run_id, status="running", started_at=_now())
         self._registry.set_meeting_status(meeting.id, "running")
+        log_event(
+            "info",
+            "runs",
+            "run.started",
+            run_id=run_id,
+            meeting_id=meeting.id,
+            backend=options.backend,
+            model=options.model,
+            language=options.language,
+        )
         self._webhooks.emit(
             RUN_STARTED,
             project_id=meeting.project_id,
@@ -289,6 +313,14 @@ class RunManager:
                 progress=state.summary(),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
+            log_event(
+                "error",
+                "runs",
+                "run.failed",
+                run_id=run_id,
+                meeting_id=meeting.id,
+                error=state.error,
+            )
             self._webhooks.emit(
                 RUN_FAILED,
                 project_id=meeting.project_id,
@@ -303,6 +335,14 @@ class RunManager:
             run_id, status="done", ended_at=_now(), progress=state.summary()
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
+        log_event(
+            "info",
+            "runs",
+            "run.finished",
+            run_id=run_id,
+            meeting_id=meeting.id,
+            artifacts=len(artifacts),
+        )
         self._webhooks.emit(
             RUN_FINISHED,
             project_id=meeting.project_id,

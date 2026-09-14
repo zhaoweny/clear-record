@@ -87,8 +87,11 @@ agents = ["mcp>=2"]
 clear-record = "clear_record.cli:main"
 
 # Optional surfaces register their subcommands here so the CLI never imports
-# them (ADR-0013). The bundled web console is the first provider.
+# them (ADR-0013). The bundled web console is the first provider. `diagnose` is
+# not optional (the diagnostics code ships in the base dist), but it registers
+# the same way so `clear_record.cli` never imports the service surface either.
 [project.entry-points."clear_record.commands"]
+diagnose = "clear_record.service.diagnostics:register"
 web = "clear_record.web:register"
 tray = "clear_record.tray:register"
 mcp = "clear_record.mcp:register"

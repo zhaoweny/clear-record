@@ -12,7 +12,14 @@ metadata, never audio blobs.
 
 from __future__ import annotations
 
+from clear_record.core.diagnostics import log_event, logs_dir, read_recent
 from clear_record.service.archive import archive_meeting, verify_archive
+from clear_record.service.diagnostics import (
+    BUNDLE_FILENAME,
+    BundleFacts,
+    build_bundle,
+    collect_bundle,
+)
 from clear_record.service.glossary import (
     CONFIRMED,
     GlossarySnapshot,
@@ -77,6 +84,8 @@ __all__ = [
     "ARCHIVE_CREATED",
     "Archive",
     "Artifact",
+    "BUNDLE_FILENAME",
+    "BundleFacts",
     "CONFIRMED",
     "Delivery",
     "EMITTED_EVENTS",
@@ -108,12 +117,17 @@ __all__ = [
     "WebhookEndpoint",
     "WebhookEvent",
     "archive_meeting",
+    "build_bundle",
     "build_snapshot",
     "canonical_terms",
     "collect_artifacts",
+    "collect_bundle",
     "config_path",
     "load_webhook_config",
+    "log_event",
+    "logs_dir",
     "project_snapshot",
+    "read_recent",
     "read_transcript",
     "registry_path",
     "resolve_data_dir",

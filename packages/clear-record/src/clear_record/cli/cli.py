@@ -21,8 +21,10 @@ from clear_record.core import (
     PROFILES,
     PipelineOptions,
     Step,
+    log_event,
     pipeline_spec,
     resolve_options,
+    set_level,
 )
 from clear_record.providers import (
     BACKENDS,
@@ -38,6 +40,11 @@ from clear_record.cli import stages
 #: registers here (ADR-0013) so this module never imports it, keeping the
 #: dependency arrow acyclic and a plain CLI run cheap.
 COMMAND_ENTRY_POINT_GROUP = "clear_record.commands"
+
+_VERBOSE_HELP = (
+    "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
+    "log is written to the app state directory, never to stdout"
+)
 
 
 def _external_commands():
@@ -61,6 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="clear-record",
         description="clear-record: from many recordings to one clear record.",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help=_VERBOSE_HELP)
     sub = parser.add_subparsers(dest="command", required=True)
 
     def _paths(p: argparse.ArgumentParser) -> None:
@@ -391,6 +399,19 @@ def _build_parser() -> argparse.ArgumentParser:
     # through an entry point instead of being imported here (ADR-0013).
     _register_external_subcommands(sub)
 
+    # `-v` is accepted before *and* after the subcommand, so both
+    # `clear-record -v run …` and `clear-record run … -v` raise detail. The
+    # per-subcommand action uses SUPPRESS so that, when it is absent, it does
+    # not overwrite a `-v` given before the subcommand with its own default.
+    for subparser in sub.choices.values():
+        subparser.add_argument(
+            "-v",
+            "--verbose",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help=_VERBOSE_HELP,
+        )
+
     return parser
 
 
@@ -434,6 +455,7 @@ def _apply_auto(args: argparse.Namespace, options: PipelineOptions) -> PipelineO
         try:
             backend_choice = auto.resolve_backend(available_backend_ids())
         except auto.NoBackendAvailable as exc:
+            log_event("error", "cli", "cli.auto.failed", reason=str(exc))
             raise SystemExit(str(exc)) from exc
         print(backend_choice.explanation)
         options = dataclasses.replace(options, backend=backend_choice.backend)
@@ -452,6 +474,12 @@ def _apply_auto(args: argparse.Namespace, options: PipelineOptions) -> PipelineO
 
     if options.model is None:
         if not choice.model_on_disk:
+            log_event(
+                "error",
+                "cli",
+                "cli.auto.failed",
+                reason=f"recommended model {choice.model!r} is not on disk",
+            )
             raise SystemExit(
                 f"[auto] the recommended model {choice.model!r} is not in the "
                 "models directory, and --auto never downloads one.\n"
@@ -588,6 +616,12 @@ def _main(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    # `--verbose` is the flag form of the documented `CR_LOG_LEVEL=debug`. The
+    # sink lives in `core`, which the CLI may import, so the level is set
+    # directly (no environment side effect). Clearing it when the flag is absent
+    # keeps repeated programmatic `main()` calls honest. At the default level
+    # nothing is added, so existing stdout is unchanged.
+    set_level("debug" if getattr(args, "verbose", False) else None)
     return _main(args)
 
 

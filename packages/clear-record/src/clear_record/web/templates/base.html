@@ -12,6 +12,8 @@
   <header>
     <h1>clear-record</h1><span class="tag">project console</span>
     <span class="tag" id="status">{% block status %}ready{% endblock %}</span>
+    <a class="tag" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
+       title="Download a redacted diagnostics bundle (not telemetry)">Diagnostics</a>
     <button class="icon"
             hx-post="/api/shutdown" hx-swap="none"
             onclick="this.disabled=true;this.textContent='stopping…'">Quit</button>

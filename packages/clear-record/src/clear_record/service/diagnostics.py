@@ -28,6 +28,7 @@ import dataclasses
 import datetime as _dt
 import hashlib
 import json
+import logging
 import os
 import platform as _platform
 import re
@@ -37,6 +38,7 @@ from types import SimpleNamespace
 
 import click
 
+from clear_record.core.diagnostics import effective_level, log_event
 from clear_record.service import paths
 
 # --- bundle --------------------------------------------------------------- #
@@ -459,6 +461,65 @@ def collect_bundle(
     return build_bundle(facts)
 
 
+# --- console (uvicorn) logging into the same sink -------------------------- #
+
+#: ``logging`` level names mapped to the sink's four levels.
+_CONSOLE_LEVELS = {
+    "CRITICAL": "error",
+    "ERROR": "error",
+    "WARNING": "warning",
+    "WARN": "warning",
+    "INFO": "info",
+    "DEBUG": "debug",
+    "NOTSET": "info",
+}
+
+
+class DiagnosticsHandler(logging.Handler):
+    """A ``logging`` handler that writes records into the diagnostics sink.
+
+    The console's own logs (uvicorn's startup/error/access records) belong in
+    the same rotating file ``clear-record diagnose`` reads, not only on stderr,
+    so a service node's log trail survives a reboot. Records are stored as the
+    sink's usual structured lines (a short ``message`` scalar), so the bundle's
+    redaction applies to them unchanged.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a log line must never raise
+            message = str(record.msg)
+        log_event(
+            _CONSOLE_LEVELS.get(record.levelname.upper(), "info"),
+            "console",
+            "console.log",
+            logger=record.name,
+            message=message,
+        )
+
+
+def console_log_config(level: str | None = None) -> dict:
+    """A uvicorn ``log_config`` that routes the console's logs to the sink.
+
+    Used by ``clear-record serve`` (the headless, service-facing entry point) so
+    a systemd/launchd unit's logs land beside every other clear-record record
+    instead of only in the journal. ``level`` defaults to the configured sink
+    level (``CR_LOG_LEVEL`` / the programmatic override).
+    """
+    chosen = (level or effective_level()).upper()
+    loggers = {
+        name: {"handlers": ["diagnostics"], "level": chosen, "propagate": False}
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access")
+    }
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {"diagnostics": {"()": DiagnosticsHandler}},
+        "loggers": loggers,
+    }
+
+
 # --- the `clear-record diagnose` subcommand ------------------------------- #
 
 _PRIVATE_NOTE = (
@@ -572,9 +633,11 @@ __all__ = [
     "BUNDLE_FORMAT_VERSION",
     "DEFAULT_LOG_LINES",
     "BundleFacts",
+    "DiagnosticsHandler",
     "backend_status",
     "build_bundle",
     "collect_bundle",
+    "console_log_config",
     "hash_component",
     "redact_log_line",
     "redact_path",

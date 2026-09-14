@@ -17,8 +17,9 @@ this page does not repeat it. Read that for the *why*; read this for the *how*.
 
 ## The shape, in one paragraph
 
-[FACT, repo] `clear-record web` starts a uvicorn server that **binds
-`127.0.0.1:8765` by default and ships no authentication** (ADR-0013/ADR-0014).
+[FACT, repo] `clear-record web` / `clear-record serve` start a uvicorn server that
+**binds `127.0.0.1:8765` by default and ships no authentication**
+(ADR-0013/ADR-0014).
 [DESIGN] It is a **backend**. Your reverse proxy is the **only ingress**: it
 terminates TLS, authenticates you, and forwards to `127.0.0.1:8765`. Nothing
 else should be able to reach that port — if another device can open
@@ -35,12 +36,18 @@ a naive "it's localhost-only, so it's safe" story omits.
 All three shapes run the same command:
 
 ```sh
-clear-record web --no-browser --host 127.0.0.1 --port 8765
+clear-record serve --host 127.0.0.1 --port 8765
 ```
 
-[FACT, repo] There is **no `serve` subcommand** — `web` is the registered
-command, and `--no-browser` keeps a daemon from trying to open a desktop
-browser. Keep the bind on `127.0.0.1`; the proxy is what faces the network.
+[FACT, repo] `serve` is the **node** entry point: it never opens a browser, it
+writes the console's own logs to the **diagnostics sink** (the rotating file
+`clear-record diagnose` reads, under the platform log directory or
+`CR_LOG_DIR`), and it drives the run queue and startup reconciliation. Use it
+for a systemd/launchd unit or a container. `clear-record web` is the
+**interactive** entry point — the same console, but it opens a browser by
+default and logs to the terminal — for a person at the machine. They are two
+postures of one console, not two implementations. Keep the bind on `127.0.0.1`;
+the proxy is what faces the network.
 
 Set the data/model locations explicitly if you want them off the platform default
 (the Linux default is the XDG data dir, ADR-0025):
@@ -69,7 +76,7 @@ Description=clear-record console (headless)
 
 [Service]
 Type=exec
-ExecStart=%h/.local/bin/clear-record web --no-browser --host 127.0.0.1 --port 8765
+ExecStart=%h/.local/bin/clear-record serve --host 127.0.0.1 --port 8765
 WorkingDirectory=%h
 Environment=CR_DATA_DIR=%h/.local/share/clear-record
 Environment=CR_MODELS_DIR=%h/.local/share/clear-record/models
@@ -112,8 +119,7 @@ account. Save as `~/Library/LaunchAgents/com.clear-record.web.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/Users/you/.local/bin/clear-record</string>
-    <string>web</string>
-    <string>--no-browser</string>
+    <string>serve</string>
     <string>--host</string><string>127.0.0.1</string>
     <string>--port</string><string>8765</string>
   </array>
@@ -158,7 +164,7 @@ docker run --detach --name clear-record \
   --volume /path/to/workspace:/workspace \
   -e CR_DATA_DIR=/data -e CR_MODELS_DIR=/models \
   clear-record-web:local \
-  clear-record web --no-browser --host 0.0.0.0 --port 8765
+  clear-record serve --host 0.0.0.0 --port 8765
 ```
 
 Two honest notes. `--host 0.0.0.0` is **inside** the container only — the
@@ -255,12 +261,13 @@ Caddy passes the original `Host` through, so set
 only to a loopback target; the tailnet is itself authenticated by Tailscale, so
 there is no separate password.
 
-`clear-record web --tailscale` does the whole setup — resolve this machine's
-tailnet name, run Serve, trust that name in the guard, and print the URL:
+`clear-record serve --tailscale` (or `web --tailscale` interactively) does the
+whole setup — resolve this machine's tailnet name, run Serve, trust that name in
+the guard, and print the URL:
 
 ```sh
-clear-record web --tailscale                 # interactive: opens the console too
-clear-record web --tailscale --no-browser    # for a service unit
+clear-record web --tailscale        # interactive: opens the console too
+clear-record serve --tailscale      # for a service unit (no browser)
 ```
 
 It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
@@ -438,11 +445,37 @@ upload, they do not make a public port safe.
 from zero. Chunked/resumable upload (tus or a resume token) is deliberately out
 of scope until a real tape over a bad link makes it worth building.
 
-## 5. What this does not cover
+## 5. Run state, the queue, and restarts
+
+[FACT, repo] The registry (SQLite) is the **source of truth** for runs, not the
+console process's memory:
+
+- **The event stream is persisted** per run as it arrives, so the live view
+  replays after a restart instead of 404ing.
+- **Startup reconciliation** moves any run left `running` by a dead process to
+  **`interrupted`** (distinct from `failed`: the node died, the work did not
+  necessarily fail) and records the reason on the run. The meeting follows.
+  After a restart you see the run as interrupted with its progress still
+  readable, and you can start a new run.
+- **The active-run guard is read from the registry**, so a stale `running` row
+  can no longer be silently doubled by a second start.
+
+[DESIGN] The node runs **one pipeline run at a time** — a persisted FIFO queue
+in the registry. Starting a run while another is executing **enqueues** it and
+reports its position (position 1 is next) instead of refusing the different
+meeting, so two meetings no longer fight over one GPU. Queued work survives a
+restart and is picked back up. This is deliberately minimal: no priorities, no
+cancellation, no per-meeting concurrency.
+
+[FACT] `clear-record serve` stops draining the queue when it exits (a clean
+`SIGTERM` included); a run still executing is left for startup reconciliation on
+the next boot, and the resumable chunk cache means resuming it is cheap
+(`docs/architecture.md` §8).
+
+## 6. What this does not cover
 
 - **In-app authentication.** There is none, by design, for now (ADR-0021
   defers, not rejects, LAN auth). The proxy is the auth.
-- **A `serve` subcommand.** Not built; use `web --no-browser`.
 - **A published container image.** You build it, whisper.cpp and all.
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
@@ -454,7 +487,7 @@ of scope until a real tape over a bad link makes it worth building.
 - **The upload UI.** The upload endpoint, storage report and delete endpoint are
   built; the console's upload control is a follow-up slice.
 
-## 6. Read more
+## 7. Read more
 
 - [ADR-0024](adr/0024-managed-workspace-tape-upload.md) — the managed workspace.
 - [ADR-0021](adr/0021-localhost-only-deployment.md) — the decision.

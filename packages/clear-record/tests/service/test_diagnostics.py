@@ -228,6 +228,61 @@ def test_a_refused_start_is_logged(tmp_path) -> None:
     assert "run.refused" in events
 
 
+def test_startup_reconciliation_is_logged(tmp_path) -> None:
+    """A run left running by a dead process is logged as interrupted."""
+    from clear_record.service import RESTART_REASON
+
+    registry = _registry(tmp_path)
+    meeting = _meeting_with_tapes(registry, tmp_path)
+    orphan = registry.create_run(meeting.id, backend="apple")
+    registry.update_run(orphan.id, status="running", started_at="now")
+
+    RunManager(registry, pipeline=lambda *args: None)
+
+    events = [json.loads(line) for line in read_recent(100)]
+    interrupted = next(event for event in events if event["event"] == "run.interrupted")
+    assert interrupted["run_id"] == orphan.id
+    assert interrupted["reason"] == RESTART_REASON
+
+
+# --- console (uvicorn) logging into the sink ------------------------------ #
+
+
+def test_console_log_config_routes_uvicorn_to_the_sink(tmp_path) -> None:
+    """`serve`'s log config carries uvicorn's records into the diagnostics sink."""
+    import logging
+
+    config = diagnostics.console_log_config()
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        assert config["loggers"][name]["handlers"] == ["diagnostics"]
+        assert config["loggers"][name]["propagate"] is False
+
+    handler = diagnostics.DiagnosticsHandler()
+    handler.handle(
+        logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            __file__,
+            1,
+            '127.0.0.1 - "GET /api/health HTTP/1.1" 200',
+            None,
+            None,
+        )
+    )
+    handler.handle(
+        logging.LogRecord(
+            "uvicorn.error", logging.WARNING, __file__, 2, "a warning", None, None
+        )
+    )
+
+    records = [json.loads(line) for line in read_recent(100)]
+    console_records = [record for record in records if record["event"] == "console.log"]
+    assert [record["component"] for record in console_records] == ["console", "console"]
+    assert console_records[0]["level"] == "info"
+    assert "GET /api/health" in console_records[0]["message"]
+    assert console_records[1]["level"] == "warning"
+
+
 # --- the CLI handler ------------------------------------------------------ #
 
 

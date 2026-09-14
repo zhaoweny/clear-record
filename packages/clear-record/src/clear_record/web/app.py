@@ -350,6 +350,10 @@ def create_app(
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+    # The manager is the app's own run queue; exposing it lets the process
+    # supervisor stop draining cleanly on shutdown (``serve``), and lets an
+    # embedder reach the same seam.
+    app.state.runs = runs
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -1291,18 +1295,25 @@ def serve(
     open_browser: bool,
     data_dir: str | None = None,
     trusted_hosts: Sequence[str] | None = None,
+    log_config: dict | None = None,
 ) -> int:
-    """Run the console; called by the ``clear-record web`` handler.
+    """Run the console; called by the ``clear-record web`` and ``serve`` handlers.
 
     ``trusted_hosts`` is forwarded to :func:`create_app` so ``web --tailscale``
     can trust the resolved tailnet name in-process, with no environment variable
     handed to a child (the design decision in ticket 01). ``None`` keeps the
     ``CR_TRUSTED_HOSTS`` default.
+
+    ``log_config`` is forwarded to uvicorn: ``serve`` passes the diagnostics-sink
+    config so a headless node's logs land beside every other clear-record record;
+    ``None`` keeps uvicorn's own (stderr) logging, which is right for the
+    interactive console.
     """
     import uvicorn
 
     app = create_app(Registry.open(data_dir=data_dir), trusted_hosts=trusted_hosts)
-    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    extra = {} if log_config is None else {"log_config": log_config}
+    config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
     server = uvicorn.Server(config)
     # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
     # build has no terminal to interrupt.
@@ -1310,7 +1321,12 @@ def serve(
     if open_browser:
         url = f"http://{host}:{port}/"
         threading.Timer(0.8, webbrowser.open, args=(url,)).start()
-    server.run()
+    try:
+        server.run()
+    finally:
+        # A clean SIGTERM/stop stops the queue draining; a run still executing
+        # is left for startup reconciliation on the next boot (one run per node).
+        app.state.runs.shutdown()
     return 0
 
 

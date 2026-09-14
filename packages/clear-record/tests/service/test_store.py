@@ -260,7 +260,7 @@ def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
     conn.close()
 
     reg = Registry(db)
-    assert SCHEMA_VERSION == 5
+    assert SCHEMA_VERSION == 6
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
@@ -268,3 +268,7 @@ def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
     tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
+    # v6: a run carries its durable options and its persisted event stream.
+    run = reg.create_run(meeting.id, run_options={"backend": "apple"})
+    assert reg.get_run(run.id).run_options == {"backend": "apple"}
+    assert reg.count_run_events(run.id) == 0

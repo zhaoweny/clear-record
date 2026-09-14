@@ -53,10 +53,16 @@ class GlossaryTerm:
 
 #: A meeting's lifecycle. ``new`` has no tapes yet; ``ready`` has a tape set;
 #: ``running`` has a live pipeline run; ``recorded`` has a reconciled record.
-MEETING_STATUSES = ("new", "ready", "running", "recorded", "failed")
+#: ``interrupted`` is a run the node died in the middle of (startup
+#: reconciliation), which is honest about the node, not the work: see
+#: :data:`RUN_STATUSES`.
+MEETING_STATUSES = ("new", "ready", "running", "recorded", "failed", "interrupted")
 
-#: A pipeline run's lifecycle.
-RUN_STATUSES = ("queued", "running", "done", "failed", "stopped")
+#: A pipeline run's lifecycle. ``interrupted`` is distinct from ``failed``: the
+#: node (the console process) died while the run was live, so the work did not
+#: necessarily fail. A run left ``running`` by a dead process is moved here at
+#: startup, and its event stream stays readable.
+RUN_STATUSES = ("queued", "running", "done", "failed", "stopped", "interrupted")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -106,7 +112,14 @@ class Tape:
 
 @dataclasses.dataclass(frozen=True)
 class PipelineRun:
-    """One execution of the pipeline against a meeting's tape set."""
+    """One execution of the pipeline against a meeting's tape set.
+
+    ``status`` moves ``queued → running → done|failed|interrupted``: a run is
+    **enqueued** first (the FIFO the node drains one at a time), and only one run
+    per node is ``running`` at once. ``interrupted`` means the console process
+    died while the run was live (startup reconciliation), which is not the same
+    as the pipeline failing.
+    """
 
     id: int
     meeting_id: int
@@ -122,6 +135,11 @@ class PipelineRun:
     ended_at: str | None
     error: str | None
     created_at: str
+    #: The resolved :class:`~clear_record.core.PipelineOptions` a **queued** run
+    #: will execute with, serialized at enqueue time. It is what lets a restart
+    #: pick a queued run back up with the knobs the user chose (audio files are
+    #: re-read from the meeting's latest tape set at execution time).
+    run_options: dict | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -24,12 +24,15 @@ def test_group_prog_is_clear_record() -> None:
     assert _build_group().name == "clear-record"
 
 
-def test_subcommands_match_pipeline() -> None:
+def test_subcommands_match_pipeline(monkeypatch) -> None:
     """Built-ins are exactly the pipeline stages plus conveniences.
 
     Anything beyond that must be an installed entry-point provider (e.g. the
     bundled `web` console), so the built-in surface cannot drift while optional
-    surfaces stay free to register themselves (ADR-0013).
+    surfaces stay free to register themselves (ADR-0013). A provider may
+    contribute more than one command — the `web` provider adds the interactive
+    `web` and the headless `serve` — so the external set is what the providers
+    actually add, not their entry-point *names*.
     """
     group = _build_group()
     builtin = set(pipeline_spec().cli_commands()) | {
@@ -42,9 +45,12 @@ def test_subcommands_match_pipeline() -> None:
         "glossary",
     }
     choices = set(group.commands)
-    external = {entry_point.name for entry_point in cli._external_commands()}
     assert builtin <= choices
-    assert choices - builtin == external
+
+    monkeypatch.setattr(cli, "_external_commands", lambda: [])
+    without_providers = set(_build_group().commands)
+    contributed = choices - without_providers
+    assert choices - builtin == contributed
 
 
 def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:

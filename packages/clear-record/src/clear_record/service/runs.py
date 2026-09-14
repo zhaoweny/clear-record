@@ -1,4 +1,4 @@
-"""Background pipeline runs with a live progress stream.
+"""Background pipeline runs with a durable progress stream and a node queue.
 
 A multi-hour tape must not block the web console, so a run executes on a worker
 thread and its :class:`~clear_record.core.JobEvent` stream is retained for the
@@ -9,6 +9,17 @@ event stream, artifact registration — with no ASR backend and no GPU.
 The service drives the same stage wiring the CLI does
 (``clear_record.cli.stages.run``), in-process: there is one pipeline
 implementation, not two.
+
+Two properties make the node trustworthy across restarts:
+
+* **The registry is the truth, not process memory.** A run's status and its
+  event stream live in SQLite, so after the console restarts the run view still
+  replays and the "one run per meeting" guard still holds. A run the process
+  died in the middle of is reconciled to ``interrupted`` at startup (distinct
+  from ``failed`` — the node died, the work did not necessarily fail).
+* **One run per node.** :meth:`RunManager.start` **enqueues** a run (``queued``);
+  a single scheduler drains the FIFO, so two meetings can no longer fight over
+  one GPU. The queue is the registry's, so a restart does not lose queued work.
 """
 
 from __future__ import annotations
@@ -17,6 +28,7 @@ import dataclasses
 import datetime as _dt
 import hashlib
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -43,10 +55,13 @@ from clear_record.service.webhooks import (
 #: What the manager calls to run a pipeline: the CLI's stage wiring by default.
 PipelineCallable = Callable[[str, PipelineOptions, EventSink | None], None]
 
-#: The pipeline run configuration. Owned by ``clear_record.core`` (dependency-free)
-#: and re-exported here for the service's callers (web, MCP, scripts), so they can
-#: set options without importing the CLI's stage module themselves. It is the same
-#: object as ``clear_record.cli.stages.PipelineOptions``.
+#: A status that no later transition follows.
+TERMINAL_STATUSES = ("done", "failed", "stopped", "interrupted")
+
+#: The reason startup reconciliation records on a run left ``running`` by a dead
+#: process. It is stored in the run's ``error`` column so the console (and a
+#: diagnostics bundle) can show *why* the run is interrupted, not just that it is.
+RESTART_REASON = "the console restarted while this run was in flight"
 
 
 def _now() -> str:
@@ -90,13 +105,15 @@ def _default_pipeline(
 
 @dataclasses.dataclass
 class RunState:
-    """The live state of one run: its status and its event stream."""
+    """The state of one run: its status, its event stream and its queue place."""
 
     run_id: int
     meeting_id: int
     status: str = "queued"
     events: list[JobEvent] = dataclasses.field(default_factory=list)
     error: str | None = None
+    #: 1-based FIFO position while ``queued`` (``1`` is next); ``0`` otherwise.
+    position: int = 0
 
     def events_since(self, index: int) -> list[JobEvent]:
         """Events after ``index`` (the SSE cursor)."""
@@ -117,14 +134,16 @@ class RunState:
             "total": last.total if last else 0,
             "eta_s": last.eta_s if last else None,
             "error": self.error,
+            "position": self.position,
         }
 
 
 class RunManager:
-    """Owns the background runs of one registry.
+    """Owns the background runs of one registry and the node's FIFO.
 
-    One active run per meeting: starting a second while the first is in flight
-    is refused, so a tape set is never transcribed twice concurrently.
+    One run **executing** per node (the queue), and no more than one
+    **enqueued or running** run per meeting (the dedupe). Both are read from the
+    registry, so a restart cannot break either invariant.
     """
 
     def __init__(
@@ -139,13 +158,78 @@ class RunManager:
         # a webhook can never fail or stall a run.
         self._webhooks = webhooks if webhooks is not None else default_emitter()
         self._lock = threading.Lock()
-        self._states: dict[int, RunState] = {}
-        self._threads: dict[int, threading.Thread] = {}
+        #: Serializes event appends from a run's worker threads (a chunk pool
+        #: reports from several at once), so the persisted stream has one order.
+        self._events_lock = threading.Lock()
+        #: Runs this process is executing, so startup reconciliation never
+        #: interrupts a run that is alive (relevant when a second manager is
+        #: opened over the same registry in-process).
+        self._live: set[int] = set()
+        #: Meeting + options for runs enqueued in this process, so a live run
+        #: does not pay to re-read what it just wrote.
+        self._pending: dict[int, tuple[Meeting, PipelineOptions]] = {}
+        self._wake = threading.Condition()
+        self._scheduler: threading.Thread | None = None
+        self._stopping = False
+        # A run the process died in the middle of is not running any more. Do
+        # this before anything can drain the queue.
+        self.reconcile()
+
+    # --- startup reconciliation -------------------------------------------- #
+    def reconcile(self) -> list[int]:
+        """Move every ``running`` run this process did not start to ``interrupted``.
+
+        Returns the reconciled run ids. The reason is recorded on the run (its
+        ``error``) and logged; a meeting left ``running`` follows its run. Then
+        the queue is drained, so **queued** work from a previous process is not
+        lost by the restart.
+        """
+        interrupted: list[int] = []
+        for run in self._registry.runs_with_status("running"):
+            if run.id in self._live:
+                continue
+            self._registry.update_run(
+                run.id, status="interrupted", ended_at=_now(), error=RESTART_REASON
+            )
+            meeting = self._registry.meeting_by_id(run.meeting_id)
+            if meeting is not None and meeting.status == "running":
+                self._registry.set_meeting_status(run.meeting_id, "interrupted")
+            log_event(
+                "warning",
+                "runs",
+                "run.interrupted",
+                run_id=run.id,
+                meeting_id=run.meeting_id,
+                reason=RESTART_REASON,
+            )
+            interrupted.append(run.id)
+        if interrupted:
+            log_event(
+                "warning",
+                "runs",
+                "run.reconciled",
+                count=len(interrupted),
+                run_ids=",".join(str(run_id) for run_id in interrupted),
+            )
+        self._ensure_scheduler()
+        return interrupted
 
     # --- reading ----------------------------------------------------------- #
     def state(self, run_id: int) -> RunState | None:
-        with self._lock:
-            return self._states.get(run_id)
+        """The run's state read from the registry (events replay after a restart)."""
+        row = self._registry.get_run(run_id)
+        if row is None:
+            return None
+        return RunState(
+            run_id=row.id,
+            meeting_id=row.meeting_id,
+            status=row.status,
+            events=self._registry.list_run_events(run_id),
+            error=row.error,
+            position=(
+                self._registry.queue_position(run_id) if row.status == "queued" else 0
+            ),
+        )
 
     def require_state(self, run_id: int) -> RunState:
         state = self.state(run_id)
@@ -154,19 +238,22 @@ class RunManager:
         return state
 
     def active_state(self, meeting_id: int) -> RunState | None:
-        with self._lock:
-            for state in self._states.values():
-                if state.meeting_id == meeting_id and state.status in (
-                    "queued",
-                    "running",
-                ):
-                    return state
-        return None
+        """The meeting's live run, derived from the registry (guard, not memory)."""
+        run = self._registry.active_run_for_meeting(meeting_id)
+        return self.state(run.id) if run is not None else None
 
-    # --- running ------------------------------------------------------------ #
+    # --- enqueuing ---------------------------------------------------------- #
     def start(
         self, meeting: Meeting, options: PipelineOptions | None = None
     ) -> PipelineRun:
+        """Enqueue a run at the back of the node's FIFO and return its row.
+
+        The run is durable immediately (``queued``): if it cannot execute yet it
+        keeps its place, and a restart still has it. The per-meeting dedupe is
+        read from the registry, so the same tape set is never enqueued twice
+        concurrently — but a *different* meeting now waits honestly instead of
+        fighting for the one GPU.
+        """
         if not meeting.workspace_path:
             self._refuse(meeting, "meeting has no workspace path")
             raise ValueError("meeting has no workspace path; set one before running")
@@ -174,7 +261,7 @@ class RunManager:
         if tape_set is None:
             self._refuse(meeting, "meeting has no tape set")
             raise ValueError("meeting has no tape set; select tapes before running")
-        if self.active_state(meeting.id) is not None:
+        if self._registry.active_run_for_meeting(meeting.id) is not None:
             self._refuse(meeting, "a run is already in flight")
             raise ValueError("a run is already in flight for this meeting")
 
@@ -188,18 +275,21 @@ class RunManager:
             model=options.model,
             language=options.language,
             options=run_meta,
+            run_options=dataclasses.asdict(options),
         )
-        state = RunState(run_id=run.id, meeting_id=meeting.id, status="queued")
         with self._lock:
-            self._states[run.id] = state
-        thread = threading.Thread(
-            target=self._execute,
-            args=(meeting, options, run.id, state),
-            name=f"cr-run-{run.id}",
-            daemon=True,
+            self._pending[run.id] = (meeting, options)
+        log_event(
+            "info",
+            "runs",
+            "run.enqueued",
+            run_id=run.id,
+            meeting_id=meeting.id,
+            backend=options.backend,
+            model=options.model,
+            language=options.language,
         )
-        self._threads[run.id] = thread
-        thread.start()
+        self._ensure_scheduler()
         return run
 
     @staticmethod
@@ -266,25 +356,106 @@ class RunManager:
             reason=reason,
         )
 
-    def _record(self, state: RunState, event: JobEvent) -> None:
-        with self._lock:
-            state.events.append(event)
+    # --- the scheduler ------------------------------------------------------ #
+    def _ensure_scheduler(self) -> None:
+        """Start (or wake) the one thread that drains the queue."""
+        with self._wake:
+            self._stopping = False
+            if self._scheduler is not None and self._scheduler.is_alive():
+                self._wake.notify_all()
+                return
+            self._scheduler = threading.Thread(
+                target=self._drain, name="cr-run-queue", daemon=True
+            )
+            self._scheduler.start()
 
-    def _execute(
-        self,
-        meeting: Meeting,
-        options: PipelineOptions,
-        run_id: int,
-        state: RunState,
+    def _drain(self) -> None:
+        """Run queued runs one at a time, FIFO, until asked to stop.
+
+        The wait has a timeout so a run enqueued *outside* this manager (another
+        writer of the same registry) is still noticed; the normal path wakes the
+        thread immediately.
+        """
+        while True:
+            with self._wake:
+                while True:
+                    if self._stopping:
+                        return
+                    if not self._registry.runs_with_status("running"):
+                        run = self._registry.oldest_queued_run()
+                        if run is not None:
+                            break
+                    self._wake.wait(timeout=1.0)
+            self._execute_run(run)
+
+    def _execute_run(self, run: PipelineRun) -> None:
+        with self._lock:
+            pending = self._pending.pop(run.id, None)
+            self._live.add(run.id)
+        try:
+            meeting = (
+                pending[0]
+                if pending is not None
+                else self._registry.meeting_by_id(run.meeting_id)
+            )
+            options = pending[1] if pending is not None else self._options_from_row(run)
+            tape_set = self._registry.latest_recording_set(run.meeting_id)
+            if meeting is None or options is None or tape_set is None:
+                self._fail_unrunnable(
+                    run,
+                    meeting,
+                    "the queued run has no meeting, options or tape set",
+                )
+                return
+            # The tape set is re-read at execution time, not at enqueue time.
+            options = dataclasses.replace(options, audio_files=tuple(tape_set.paths))
+            self._run_pipeline(run, meeting, options)
+        except Exception as exc:  # noqa: BLE001 - a run must not strand; the queue lives on
+            error = f"{type(exc).__name__}: {exc}"
+            try:
+                self._registry.update_run(
+                    run.id,
+                    status="failed",
+                    ended_at=_now(),
+                    error=error,
+                    progress=self._progress(run.id, "failed", error),
+                )
+            except Exception:  # noqa: BLE001 - the registry is the last resort
+                pass
+            log_event(
+                "error",
+                "runs",
+                "run.failed",
+                run_id=run.id,
+                meeting_id=run.meeting_id,
+                error=error,
+            )
+        finally:
+            with self._lock:
+                self._live.discard(run.id)
+
+    def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
+        """Rebuild the queued run's options from the registry (after a restart)."""
+        if not run.run_options:
+            return None
+        known = {field.name for field in dataclasses.fields(PipelineOptions)}
+        values = {key: value for key, value in run.run_options.items() if key in known}
+        for name in ("audio_files", "formats"):
+            if values.get(name) is not None:
+                values[name] = tuple(values[name])
+        return PipelineOptions(**values)
+
+    def _run_pipeline(
+        self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
     ) -> None:
-        state.status = "running"
-        self._registry.update_run(run_id, status="running", started_at=_now())
+        assert meeting.workspace_path is not None
+        self._registry.update_run(run.id, status="running", started_at=_now())
         self._registry.set_meeting_status(meeting.id, "running")
         log_event(
             "info",
             "runs",
             "run.started",
-            run_id=run_id,
+            run_id=run.id,
             meeting_id=meeting.id,
             backend=options.backend,
             model=options.model,
@@ -294,52 +465,54 @@ class RunManager:
             RUN_STARTED,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
-            run_id=run_id,
+            run_id=run.id,
         )
 
         def sink(event: JobEvent) -> None:
-            self._record(state, event)
+            with self._events_lock:
+                self._registry.add_run_event(run.id, event)
 
         try:
             self._pipeline(meeting.workspace_path, options, sink)
         except Exception as exc:  # noqa: BLE001 - recorded for the console, not hidden
-            state.status = "failed"
-            state.error = f"{type(exc).__name__}: {exc}"
+            error = f"{type(exc).__name__}: {exc}"
             self._registry.update_run(
-                run_id,
+                run.id,
                 status="failed",
                 ended_at=_now(),
-                error=state.error,
-                progress=state.summary(),
+                error=error,
+                progress=self._progress(run.id, "failed", error),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
             log_event(
                 "error",
                 "runs",
                 "run.failed",
-                run_id=run_id,
+                run_id=run.id,
                 meeting_id=meeting.id,
-                error=state.error,
+                error=error,
             )
             self._webhooks.emit(
                 RUN_FAILED,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
-                run_id=run_id,
+                run_id=run.id,
             )
             return
 
-        artifacts = self._register_artifacts(meeting, run_id)
-        state.status = "done"
+        artifacts = self._register_artifacts(meeting, run.id)
         self._registry.update_run(
-            run_id, status="done", ended_at=_now(), progress=state.summary()
+            run.id,
+            status="done",
+            ended_at=_now(),
+            progress=self._progress(run.id, "done"),
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
         log_event(
             "info",
             "runs",
             "run.finished",
-            run_id=run_id,
+            run_id=run.id,
             meeting_id=meeting.id,
             artifacts=len(artifacts),
         )
@@ -347,15 +520,58 @@ class RunManager:
             RUN_FINISHED,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
-            run_id=run_id,
+            run_id=run.id,
         )
         if any(kind == "transcript" for kind, _ in artifacts):
             self._webhooks.emit(
                 TRANSCRIPT_READY,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
-                run_id=run_id,
+                run_id=run.id,
             )
+
+    def _fail_unrunnable(
+        self, run: PipelineRun, meeting: Meeting | None, error: str
+    ) -> None:
+        """Fail a queued run that cannot execute at all (e.g. its tape set is gone)."""
+        self._registry.update_run(
+            run.id,
+            status="failed",
+            ended_at=_now(),
+            error=error,
+            progress=self._progress(run.id, "failed", error),
+        )
+        if meeting is not None:
+            self._registry.set_meeting_status(meeting.id, "failed")
+            self._webhooks.emit(
+                RUN_FAILED,
+                project_id=meeting.project_id,
+                meeting_id=meeting.id,
+                run_id=run.id,
+            )
+        log_event(
+            "error",
+            "runs",
+            "run.failed",
+            run_id=run.id,
+            meeting_id=run.meeting_id,
+            error=error,
+        )
+
+    def _progress(self, run_id: int, status: str, error: str | None = None) -> dict:
+        """The recorded progress summary for a terminal transition."""
+        events = self._registry.list_run_events(run_id)
+        last = events[-1] if events else None
+        return {
+            "run_id": run_id,
+            "status": status,
+            "events": len(events),
+            "stage": last.stage if last else None,
+            "index": last.index if last else 0,
+            "total": last.total if last else 0,
+            "eta_s": last.eta_s if last else None,
+            "error": error,
+        }
 
     def _register_artifacts(
         self, meeting: Meeting, run_id: int
@@ -377,18 +593,43 @@ class RunManager:
             )
         return artifacts
 
+    # --- lifecycle ---------------------------------------------------------- #
     def wait(self, run_id: int, timeout: float | None = None) -> RunState:
-        """Block until the run's thread finishes (tests; bounded by timeout)."""
-        thread = self._threads.get(run_id)
-        if thread is not None:
-            thread.join(timeout)
-        return self.require_state(run_id)
+        """Block until the run reaches a terminal status (tests; bounded by timeout)."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            state = self.require_state(run_id)
+            if state.status in TERMINAL_STATUSES:
+                return state
+            if deadline is not None and time.monotonic() >= deadline:
+                return state
+            time.sleep(0.01)
+
+    def shutdown(self, timeout: float | None = 0.0) -> None:
+        """Ask the queue to stop draining (a clean console shutdown).
+
+        Best-effort and **bounded**: an executing run has no cancellation
+        contract, so this signals the scheduler and returns without waiting for
+        a multi-hour pipeline. Pass a real ``timeout`` to wait for the scheduler
+        thread itself (it exits promptly when no run is executing).
+        """
+        with self._wake:
+            self._stopping = True
+            self._wake.notify_all()
+            scheduler = self._scheduler
+        if scheduler is not None:
+            scheduler.join(timeout)
+        with self._wake:
+            if self._scheduler is scheduler and not scheduler.is_alive():
+                self._scheduler = None
 
 
 __all__ = [
     "PipelineCallable",
     "PipelineOptions",
+    "RESTART_REASON",
     "RunManager",
     "RunState",
+    "TERMINAL_STATUSES",
     "collect_artifacts",
 ]

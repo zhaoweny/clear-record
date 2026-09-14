@@ -46,12 +46,87 @@ def _require_web_stack() -> None:
         raise SystemExit(tr(_MISSING_EXTRA_HINT, missing=", ".join(missing)))
 
 
+#: The bind/data/Tailscale options both console commands share. A helper keeps
+#: `web` and `serve` from drifting: they differ only in browser/logging posture.
+_COMMON_CONSOLE_OPTIONS = (
+    click.option(
+        "--host",
+        default=DEFAULT_HOST,
+        help=tr("bind address (default localhost)"),
+    ),
+    click.option(
+        "--port", type=int, default=DEFAULT_PORT, help=tr("port (default 8765)")
+    ),
+    click.option(
+        "--data-dir",
+        default=None,
+        envvar="CR_DATA_DIR",
+        show_envvar=True,
+        help=tr("override the app data directory (default: CR_DATA_DIR / XDG)"),
+    ),
+    click.option(
+        "--tailscale",
+        is_flag=True,
+        help=tr(
+            "set up Tailscale Serve for this port, trust this machine's tailnet "
+            "name, and print its https URL. Serve runs in the foreground "
+            "alongside the console and stops with it. The tailnet is the "
+            "authentication: anyone on your tailnet can reach the console."
+        ),
+    ),
+    click.option(
+        "--tailscale-host",
+        default=None,
+        metavar="NAME",
+        help=tr(
+            "trust NAME instead of the machine's resolved tailnet name "
+            "(requires --tailscale)"
+        ),
+    ),
+    click.option(
+        "--tailscale-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help=tr(
+            "the tailnet HTTPS port Serve exposes (default: the same as "
+            "--port); requires --tailscale"
+        ),
+    ),
+)
+
+
+def _console_options(*extra):
+    """Compose the shared console options plus any command-specific ones.
+
+    Click decorators apply bottom-up; composing them here keeps `web` and
+    `serve` on one option table (ADR-0013's "one dist, one console"), so the two
+    commands cannot drift into two behaviours.
+    """
+
+    def apply(fn):
+        for decorator in reversed(extra + _COMMON_CONSOLE_OPTIONS):
+            fn = decorator(fn)
+        return fn
+
+    return apply
+
+
 def register(group: click.Group) -> None:
-    """Add the ``web`` subcommand (called by the CLI's entry-point discovery).
+    """Add the ``web`` and ``serve`` subcommands (CLI entry-point discovery).
 
     ``group`` is the CLI's Click group (ADR-0022). Registered unconditionally:
-    the subcommand is visible in ``--help`` even without the extra, and running
-    it explains how to install the extra.
+    the subcommands are visible in ``--help`` even without the extra, and running
+    one explains how to install the extra.
+
+    They are **two postures of one console, not two names for one behaviour**:
+
+    * ``web`` is the *interactive* entry point — it opens a browser by default and
+      logs to the terminal, for a person at the machine.
+    * ``serve`` is the *node* entry point ADR-0013 promised — headless (no
+      browser), its logs go to the diagnostics sink, and it is what a
+      systemd/launchd unit runs. The queue and startup reconciliation it drives
+      are the service's, not a second implementation.
 
     ``tr`` runs here, at group-build time, not at import: the catalog is
     installed before the group is assembled (``--lang``/``CR_LANG``/``LANG``),
@@ -62,49 +137,9 @@ def register(group: click.Group) -> None:
         name="web",
         help=tr("start the local web console (projects, glossary) in a browser"),
     )
-    @click.option(
-        "--host",
-        default=DEFAULT_HOST,
-        help=tr("bind address (default localhost)"),
-    )
-    @click.option(
-        "--port", type=int, default=DEFAULT_PORT, help=tr("port (default 8765)")
-    )
-    @click.option("--no-browser", is_flag=True, help=tr("do not open a browser window"))
-    @click.option(
-        "--data-dir",
-        default=None,
-        envvar="CR_DATA_DIR",
-        show_envvar=True,
-        help=tr("override the app data directory (default: CR_DATA_DIR / XDG)"),
-    )
-    @click.option(
-        "--tailscale",
-        is_flag=True,
-        help=tr(
-            "set up Tailscale Serve for this port, trust this machine's tailnet "
-            "name, and print its https URL. Serve runs in the foreground "
-            "alongside the console and stops with it. The tailnet is the "
-            "authentication: anyone on your tailnet can reach the console."
-        ),
-    )
-    @click.option(
-        "--tailscale-host",
-        default=None,
-        metavar="NAME",
-        help=tr(
-            "trust NAME instead of the machine's resolved tailnet name "
-            "(requires --tailscale)"
-        ),
-    )
-    @click.option(
-        "--tailscale-port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help=tr(
-            "the tailnet HTTPS port Serve exposes (default: the same as "
-            "--port); requires --tailscale"
+    @_console_options(
+        click.option(
+            "--no-browser", is_flag=True, help=tr("do not open a browser window")
         ),
     )
     def _web(
@@ -126,6 +161,33 @@ def register(group: click.Group) -> None:
             tailscale_port=tailscale_port,
         )
 
+    @group.command(
+        name="serve",
+        help=tr(
+            "run the headless console for a service supervisor: no browser, "
+            "logs to the diagnostics sink, one run per node"
+        ),
+    )
+    @_console_options()
+    def _serve(
+        host: str,
+        port: int,
+        data_dir: str | None,
+        tailscale: bool,
+        tailscale_host: str | None,
+        tailscale_port: int | None,
+    ) -> int:
+        return _run(
+            host=host,
+            port=port,
+            no_browser=True,
+            data_dir=data_dir,
+            tailscale=tailscale,
+            tailscale_host=tailscale_host,
+            tailscale_port=tailscale_port,
+            service=True,
+        )
+
 
 def _run(
     *,
@@ -136,6 +198,7 @@ def _run(
     tailscale: bool = False,
     tailscale_host: str | None = None,
     tailscale_port: int | None = None,
+    service: bool = False,
 ) -> int:
     _require_web_stack()
     if (tailscale_host is not None or tailscale_port is not None) and not tailscale:
@@ -167,6 +230,22 @@ def _run(
     if session is not None:
         atexit.register(session.stop)
     restore = _guard_termination(session)
+    # `serve` (the node entry point) routes the console's logs to the diagnostics
+    # sink; `web` (interactive) keeps uvicorn's terminal logging.
+    serve_kwargs: dict = {}
+    if service:
+        from clear_record.core.diagnostics import log_event
+        from clear_record.service.diagnostics import console_log_config
+
+        serve_kwargs["log_config"] = console_log_config()
+        log_event(
+            "info",
+            "console",
+            "console.serving",
+            host=host,
+            port=port,
+            data_dir=data_dir or "",
+        )
     try:
         return serve(
             host=host,
@@ -174,6 +253,7 @@ def _run(
             open_browser=not no_browser,
             data_dir=data_dir,
             trusted_hosts=trusted_hosts,
+            **serve_kwargs,
         )
     finally:
         if restore is not None:

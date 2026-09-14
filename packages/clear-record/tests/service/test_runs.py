@@ -6,7 +6,9 @@ events, artifact checksums — is exercised with no ASR backend and no GPU.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -294,3 +296,202 @@ def test_event_cursor_supports_streaming(tmp_path) -> None:
     assert state.events_since(4) == []
     assert state.summary()["total"] == 3
     assert state.summary()["status"] == "done"
+
+
+# --- durability across a restart ------------------------------------------- #
+
+
+def test_events_persist_and_replay(tmp_path) -> None:
+    """A run's event stream is durable: a later manager replays it."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        progress = Progress("transcribe", 2, on_event)
+        progress.start("transcribing")
+        progress.advance(source="a")
+        progress.advance(source="b")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    run = manager.start(meeting)
+    manager.wait(run.id, timeout=10)
+
+    # A *new* manager over the same registry has no process memory of the run...
+    restarted = RunManager(registry, pipeline=lambda *args: None)
+    state = restarted.require_state(run.id)
+    assert state.status == "done"
+    assert [event.index for event in state.events] == [0, 1, 2]
+
+
+def test_a_running_run_from_a_dead_process_becomes_interrupted(tmp_path) -> None:
+    """Startup reconciliation is honest: running -> interrupted, with the reason."""
+    from clear_record.core import JobEvent
+    from clear_record.service import RESTART_REASON
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    # A run left mid-flight by a process that died.
+    orphan = registry.create_run(meeting.id, backend="apple")
+    registry.update_run(
+        orphan.id, status="running", started_at="2026-01-01T00:00:00+00:00"
+    )
+    registry.set_meeting_status(meeting.id, "running")
+    registry.add_run_event(orphan.id, JobEvent(stage="ingest", index=1, total=3))
+    registry.add_run_event(orphan.id, JobEvent(stage="transcribe", index=0, total=2))
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    reconciled = registry.get_run(orphan.id)
+    assert reconciled.status == "interrupted"
+    assert reconciled.error == RESTART_REASON
+    assert registry.meeting_by_id(meeting.id).status == "interrupted"
+
+    state = manager.require_state(orphan.id)
+    assert state.status == "interrupted"
+    assert [event.stage for event in state.events] == ["ingest", "transcribe"]
+
+    # The honesty requirement: a new run is startable after the restart.
+    fresh = manager.start(meeting)
+    assert manager.wait(fresh.id, timeout=10).status == "done"
+    assert registry.meeting_by_id(meeting.id).status == "recorded"
+
+
+def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
+    """Queued work is persisted, with its options, and picked back up."""
+    import dataclasses
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    queued = registry.create_run(
+        meeting.id,
+        backend="apple",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    seen: dict = {}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen["options"] = options
+
+    # A restart: a fresh manager over the same registry drains the queue.
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    state = manager.wait(queued.id, timeout=10)
+
+    assert state.status == "done"
+    assert seen["options"].audio_files == (str(tape),)
+
+
+# --- the node queue: one run at a time ------------------------------------- #
+
+
+def test_two_meetings_queue_instead_of_fighting_for_the_node(tmp_path) -> None:
+    """Later meetings wait their turn; only one executes at a time (FIFO)."""
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    tapes = [tmp_path / f"{name}.wav" for name in ("first", "second", "third")]
+    for tape in tapes:
+        tape.write_bytes(b"RIFFfake")
+    meetings = []
+    for tape, name in zip(tapes, ("First", "Second", "Third")):
+        meeting = registry.create_meeting("ops", name, workspace_path=str(tmp_path))
+        registry.set_recording_set(meeting.id, [str(tape)])
+        meetings.append(meeting)
+
+    release = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+    order: list[str] = []
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            order.append(options.audio_files[0])
+        release.wait(10)
+        with lock:
+            active -= 1
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    runs = [manager.start(meeting) for meeting in meetings]
+
+    # Wait until the first is actually executing; the rest must be queued, in
+    # FIFO order, reporting their place in the wait line (1 = next).
+    for _ in range(1000):
+        if order:
+            break
+        time.sleep(0.005)
+
+    assert registry.get_run(runs[0].id).status == "running"
+    assert manager.require_state(runs[1].id).status == "queued"
+    assert manager.require_state(runs[1].id).position == 1
+    assert manager.require_state(runs[2].id).position == 2
+
+    release.set()
+    for run in runs:
+        assert manager.wait(run.id, timeout=10).status == "done"
+
+    assert peak == 1  # one run per node
+    assert order == [str(tape) for tape in tapes]  # FIFO
+
+
+def test_shutdown_is_bounded_and_does_not_cancel_a_run(tmp_path) -> None:
+    """A clean stop signals the queue and returns; it never blocks on the run."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    release = threading.Event()
+    manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
+    run = manager.start(meeting)
+    for _ in range(1000):
+        if manager.require_state(run.id).status == "running":
+            break
+        time.sleep(0.005)
+
+    started = time.monotonic()
+    manager.shutdown(timeout=0.0)
+    assert time.monotonic() - started < 1.0  # did not wait for the pipeline
+
+    release.set()
+    assert manager.wait(run.id, timeout=10).status == "done"
+
+
+def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
+    """A run persisted by another process still blocks a second for the meeting."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    # A run row the manager did not see start (its own earlier process), already
+    # terminal? No — running, so reconciliation moves it and frees the meeting.
+    orphan = registry.create_run(meeting.id, backend="apple")
+    registry.update_run(orphan.id, status="running", started_at="now")
+    release = threading.Event()
+    manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
+    assert manager.active_state(meeting.id) is None  # reconciled to interrupted
+
+    # A queued run the registry holds (no manager.start) is still the guard.
+    fresh = registry.create_run(
+        meeting.id,
+        backend="apple",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    state = manager.active_state(meeting.id)
+    assert state is not None and state.run_id == fresh.id
+    with pytest.raises(ValueError):
+        manager.start(meeting)
+
+    release.set()
+    assert manager.wait(fresh.id, timeout=10).status == "done"

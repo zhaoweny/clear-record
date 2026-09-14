@@ -18,6 +18,7 @@ Design notes:
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import re
@@ -26,6 +27,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from clear_record.core.events import JobEvent
 from clear_record.service.models import (
     MEETING_STATUSES,
     RUN_STATUSES,
@@ -42,7 +44,7 @@ from clear_record.service.models import (
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -172,6 +174,25 @@ CREATE TABLE IF NOT EXISTS tape (
 CREATE INDEX IF NOT EXISTS tape_meeting ON tape (meeting_id);
 """
 
+# v6 — durable run state and the node queue: the live event stream is persisted
+# per run (so the run view replays after a restart), and a run records the
+# resolved options it will execute with (so a queued run survives a restart and
+# is picked back up). Runs are ordered by id as the node's FIFO.
+_SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS run_event (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     INTEGER NOT NULL REFERENCES pipeline_run(id) ON DELETE CASCADE,
+    seq        INTEGER NOT NULL,
+    payload    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (run_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS run_event_run ON run_event (run_id);
+
+ALTER TABLE pipeline_run ADD COLUMN run_options TEXT;
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -180,6 +201,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (3, _SCHEMA_V3),
     (4, _SCHEMA_V4),
     (5, _SCHEMA_V5),
+    (6, _SCHEMA_V6),
 )
 
 
@@ -717,22 +739,29 @@ class Registry:
         model: str | None = None,
         language: str | None = None,
         options: dict | None = None,
+        run_options: dict | None = None,
     ) -> PipelineRun:
-        """Create a queued run. ``options`` is run meta (e.g. the glossary
-        snapshot identity) recorded so a re-run can be explained later."""
+        """Create a **queued** run at the back of the node's FIFO.
+
+        ``options`` is run meta (e.g. the glossary snapshot identity) recorded so
+        a re-run can be explained later. ``run_options`` is the resolved
+        :class:`~clear_record.core.PipelineOptions` the run will execute with,
+        recorded so a queued run is picked back up after a restart.
+        """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO pipeline_run"
-                " (meeting_id, status, backend, model, language, options, created_at)"
-                " VALUES (?, 'queued', ?, ?, ?, ?, ?)",
+                " (meeting_id, status, backend, model, language, options, run_options, created_at)"
+                " VALUES (?, 'queued', ?, ?, ?, ?, ?, ?)",
                 (
                     meeting_id,
                     backend,
                     model,
                     language,
                     json.dumps(options) if options else None,
+                    json.dumps(run_options) if run_options else None,
                     _now(),
                 ),
             )
@@ -788,6 +817,100 @@ class Registry:
                 (meeting_id,),
             ).fetchall()
         return [self._run(row) for row in rows]
+
+    # --- the node queue (one run at a time) -------------------------------- #
+    def active_run_for_meeting(self, meeting_id: int) -> PipelineRun | None:
+        """The meeting's newest run that is ``queued`` or ``running``, if any.
+
+        This is the persisted form of the "one run per meeting" dedupe: it is
+        derived from the registry, so it survives a restart where the in-memory
+        guard did not.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM pipeline_run WHERE meeting_id = ?"
+                " AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1",
+                (meeting_id,),
+            ).fetchone()
+        return self._run(row) if row else None
+
+    def runs_with_status(self, *statuses: str) -> list[PipelineRun]:
+        """Every run in one of ``statuses``, oldest first (the FIFO order)."""
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pipeline_run"
+                f" WHERE status IN ({placeholders}) ORDER BY id",
+                tuple(statuses),
+            ).fetchall()
+        return [self._run(row) for row in rows]
+
+    def oldest_queued_run(self) -> PipelineRun | None:
+        """The head of the node's FIFO: the oldest run still ``queued``."""
+        runs = self.runs_with_status("queued")
+        return runs[0] if runs else None
+
+    def queue_position(self, run_id: int) -> int:
+        """A queued run's 1-based place in the FIFO (``0`` when not queued).
+
+        Position ``1`` is next: nothing queued before it. The count is the
+        registry's, so it is stable across a restart.
+        """
+        run = self.get_run(run_id)
+        if run is None or run.status != "queued":
+            return 0
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS ahead FROM pipeline_run"
+                " WHERE status = 'queued' AND id < ?",
+                (run_id,),
+            ).fetchone()
+        return int(row["ahead"]) + 1
+
+    # --- the persisted event stream ---------------------------------------- #
+    def add_run_event(self, run_id: int, event: JobEvent) -> int:
+        """Append one progress event to a run's durable stream; return its seq.
+
+        The sequence is assigned atomically by the insert, so a run's chunk
+        workers can report concurrently and the stream still has one order.
+        """
+        payload = json.dumps(dataclasses.asdict(event), ensure_ascii=False)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO run_event (run_id, seq, payload, created_at)"
+                " SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ? FROM run_event WHERE run_id = ?",
+                (run_id, payload, _now(), run_id),
+            )
+            row = conn.execute(
+                "SELECT seq FROM run_event WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+        return int(row["seq"])
+
+    def list_run_events(self, run_id: int, after: int = 0) -> list[JobEvent]:
+        """A run's persisted events with ``seq`` greater than ``after``, in order."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM run_event WHERE run_id = ? AND seq > ? ORDER BY seq",
+                (run_id, after),
+            ).fetchall()
+        return [self._event(json.loads(row["payload"])) for row in rows]
+
+    def count_run_events(self, run_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM run_event WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return int(row["n"])
+
+    @staticmethod
+    def _event(payload: dict) -> JobEvent:
+        """Rebuild a :class:`JobEvent`, ignoring any field a newer build added."""
+        known = {field.name for field in dataclasses.fields(JobEvent)}
+        return JobEvent(
+            **{key: value for key, value in payload.items() if key in known}
+        )
 
     # --- artifacts --------------------------------------------------------- #
     def add_artifact(
@@ -1001,6 +1124,7 @@ class Registry:
             ended_at=row["ended_at"],
             error=row["error"],
             created_at=row["created_at"],
+            run_options=json.loads(row["run_options"]) if row["run_options"] else None,
         )
 
     def _run_row(self, conn: sqlite3.Connection, run_id: int) -> PipelineRun:

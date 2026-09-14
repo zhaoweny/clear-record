@@ -19,6 +19,7 @@ from clear_record.service.diagnostics import (
     BundleFacts,
     build_bundle,
     collect_bundle,
+    console_log_config,
 )
 from clear_record.service.glossary import (
     CONFIRMED,
@@ -73,6 +74,7 @@ from clear_record.service.paths import (
 )
 from clear_record.service.runs import (
     PipelineOptions,
+    RESTART_REASON,
     RunManager,
     RunState,
     collect_artifacts,
@@ -122,6 +124,7 @@ __all__ = [
     "PipelineRun",
     "Project",
     "REGISTRY_FILENAME",
+    "RESTART_REASON",
     "RUN_FAILED",
     "RUN_FINISHED",
     "RUN_STARTED",
@@ -152,6 +155,7 @@ __all__ = [
     "collect_artifacts",
     "collect_bundle",
     "config_path",
+    "console_log_config",
     "delete_tape",
     "ensure_managed_workspace",
     "is_managed",

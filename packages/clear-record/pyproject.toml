@@ -56,11 +56,27 @@ Issues = "https://github.com/zhaoweny/clear-record/issues"
 # Backend extras are no-op markers (every path uses the system `whisper-cli` +
 # a ggml plugin); they exist so `--extra <backend>` stays a valid switch. See
 # ADR-0005.
+#
+# `web` carries the web console's stack (FastAPI + uvicorn). It is deliberately
+# NOT a base dependency: the web/service *code* ships inside this one wheel (so
+# there is no second dist to publish — ADR-0013), but a plain CLI install does
+# not pay for the stack. `web` is registered as a subcommand unconditionally and
+# gives an actionable hint when the extra is absent. The MCP SDK will get its own
+# `agents` extra when the MCP server lands (no speculative dependency now).
 [project.optional-dependencies]
 apple = []
 nvidia = []
 amd = []
 all = []
+web = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
 
 [project.scripts]
 clear-record = "clear_record.cli:main"
+
+# Optional surfaces register their subcommands here so the CLI never imports
+# them (ADR-0013). The bundled web console is the first provider.
+[project.entry-points."clear_record.commands"]
+web = "clear_record.web:register"

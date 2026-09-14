@@ -1,10 +1,10 @@
 """Import-boundary guard: the ``clear_record`` layer DAG and the vendor-free core.
 
-The single ``clear-record`` distribution ships four internal layers as
-subpackages (``clear_record.{core,engine,providers,cli}``). One distribution
-means there is no per-dist dependency graph left to enforce the layering or the
-vendor-free core, so this test enforces both with two independent passes (no
-third-party imports):
+The single ``clear-record`` distribution ships six internal layers as
+subpackages (``clear_record.{core,engine,providers,cli,service,web}``). One
+distribution means there is no per-dist dependency graph left to enforce the
+layering or the vendor-free core, so this test enforces both with two independent
+passes (no third-party imports):
 
 - **Static** — parse every layer source with the stdlib :mod:`ast` module and
   resolve every import to an absolute target, *including relative imports*:
@@ -24,7 +24,12 @@ Rules:
 - ``engine`` may import ``core`` (and third-party audio libraries).
 - ``providers`` may import ``core``.
 - ``cli`` may import any internal layer (``core``, ``engine``, ``providers``).
-- No internal layer imports ``clear_record.cli``.
+- ``service`` may import ``core`` (and will import ``cli`` once runs land); it
+  owns the app registry and must not reach the web layer.
+- ``web`` may import ``core`` and ``service``; it is the outermost layer.
+- ``core``/``engine``/``providers`` never import ``cli``, ``service`` or
+  ``web``; the CLI reaches ``web`` only through an entry point, never an import
+  (ADR-0013).
 
 If a real edge does not fit this DAG, that is a deliberate design change: update
 the layer DAG here and in the ADRs (ADR-0004 / ADR-0012) — do not silently widen
@@ -44,7 +49,7 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src" / "clear_record"
 
 # Internal layers, leaf-first: each layer may only import layers to its left
 # (plus its own submodules).
-LAYERS = ("core", "engine", "providers", "cli")
+LAYERS = ("core", "engine", "providers", "cli", "service", "web")
 
 # The exact internal edges derived from the code. ``layer -> layers it imports``.
 ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
@@ -52,6 +57,8 @@ ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
     "engine": frozenset({"core"}),
     "providers": frozenset({"core"}),
     "cli": frozenset({"core", "engine", "providers"}),
+    "service": frozenset({"core"}),
+    "web": frozenset({"core", "service"}),
 }
 
 _ROOT = "clear_record"
@@ -63,9 +70,11 @@ BLOCKED_THIRD_PARTY = ("numpy", "soundfile", "torch", "tensorflow", "onnxruntime
 # (layer under test, internal layers it must not reach, block third-party?) —
 # each runs in its own subprocess so a failure names the offending layer.
 ISOLATION_CASES = (
-    ("core", ("engine", "providers", "cli"), True),
-    ("engine", ("providers", "cli"), False),
-    ("providers", ("cli",), False),
+    ("core", ("engine", "providers", "cli", "service", "web"), True),
+    ("engine", ("providers", "cli", "service", "web"), False),
+    ("providers", ("cli", "service", "web"), False),
+    ("service", ("engine", "providers", "cli", "web"), False),
+    ("web", ("engine", "providers", "cli"), False),
 )
 
 
@@ -248,10 +257,12 @@ def test_core_imports_no_third_party() -> None:
 
 
 def test_no_layer_imports_the_cli() -> None:
-    """The CLI is the outermost layer: nothing internal may import it.
+    """No domain layer imports the command surface.
 
-    Keeping ``core``/``engine``/``providers`` free of ``clear_record.cli`` is
-    what stops the vendor-free/domain layers depending on the command surface.
+    Keeping ``core``/``engine``/``providers`` free of ``clear_record.cli`` stops
+    the vendor-free/domain layers depending on the command surface. The service
+    layer may later reach the CLI's stage wiring, and ``web`` sits above both
+    (ADR-0013), so only the three domain layers are checked here.
     """
     violations: list[str] = []
     for layer in ("core", "engine", "providers"):

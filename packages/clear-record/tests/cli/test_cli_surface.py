@@ -7,7 +7,7 @@ import argparse
 import pytest
 
 from clear_record.core import pipeline_spec
-from clear_record.cli import stages
+from clear_record.cli import cli, stages
 from clear_record.cli.cli import _build_parser
 
 
@@ -17,8 +17,14 @@ def test_parser_prog_is_clear_record() -> None:
 
 
 def test_subcommands_match_pipeline() -> None:
+    """Built-ins are exactly the pipeline stages plus conveniences.
+
+    Anything beyond that must be an installed entry-point provider (e.g. the
+    bundled `web` console), so the built-in surface cannot drift while optional
+    surfaces stay free to register themselves (ADR-0013).
+    """
     parser = _build_parser()
-    expected = set(pipeline_spec().cli_commands()) | {
+    builtin = set(pipeline_spec().cli_commands()) | {
         "backends",
         "run",
         "calibrate",
@@ -30,7 +36,10 @@ def test_subcommands_match_pipeline() -> None:
     subparsers_action = next(
         a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
     )
-    assert set(subparsers_action.choices) == expected
+    choices = set(subparsers_action.choices)
+    external = {entry_point.name for entry_point in cli._external_commands()}
+    assert builtin <= choices
+    assert choices - builtin == external
 
 
 def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:

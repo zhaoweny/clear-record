@@ -19,6 +19,27 @@ from clear_record.engine import DEFAULT_CHUNK_S, DEFAULT_OVERLAP_S
 
 from clear_record.cli import stages
 
+#: Entry-point group for optional subcommand providers. The bundled web console
+#: registers here (ADR-0013) so this module never imports it, keeping the
+#: dependency arrow acyclic and a plain CLI run cheap.
+COMMAND_ENTRY_POINT_GROUP = "clear_record.commands"
+
+
+def _external_commands():
+    """Installed subcommand providers, ordered by entry-point name.
+
+    Imported lazily so the base CLI carries no dependency on any provider.
+    """
+    from importlib.metadata import entry_points
+
+    return sorted(entry_points(group=COMMAND_ENTRY_POINT_GROUP), key=lambda ep: ep.name)
+
+
+def _register_external_subcommands(sub) -> None:
+    """Let each installed provider add its subcommand to the parser."""
+    for entry_point in _external_commands():
+        entry_point.load()(sub)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -284,6 +305,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="list all known backends, not only available ones",
     )
 
+    # Optional surfaces (e.g. the bundled `web` console) add their subcommands
+    # through an entry point instead of being imported here (ADR-0013).
+    _register_external_subcommands(sub)
+
     return parser
 
 
@@ -389,6 +414,11 @@ def _main(args: argparse.Namespace) -> int:
         stages.run(args.directory, _pipeline_options(args))
         stages.calibrate_report(args.directory, reference=args.reference_transcript)
         return 0
+
+    # An externally registered subcommand (e.g. `web`) carries its own handler.
+    handler = getattr(args, "handler", None)
+    if handler is not None:
+        return handler(args)
 
     return 2
 

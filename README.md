@@ -273,6 +273,31 @@ clear-record transcribe <dir> --backend apple --model medium   # picks up glossa
 > **Privacy:** recordings and derived artifacts are environment-local data.
 > They are gitignored and never enter the repository ([ADR-0006](docs/adr/0006-private-data-boundary.md)).
 
+## Web console (optional)
+
+A local web console for managing **projects** and their **glossary tables**. The
+console ships in this wheel, but its web stack is an optional extra so a
+CLI-only install stays audio-only:
+
+```sh
+uv tool install 'clear-record[web]'    # or:  pip install 'clear-record[web]'
+clear-record web                       # serves http://127.0.0.1:8765 and opens it
+```
+
+Running `clear-record web` without the extra prints the exact install command.
+`--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
+server binds **localhost only** and needs no account. The app-owned **project
+registry** (SQLite) lives under `$XDG_DATA_HOME/clear-record`, overridable with
+`CR_DATA_DIR` or a `[paths] data_dir` entry in
+`$XDG_CONFIG_HOME/clear-record/config.toml`; recordings and archives stay in
+your own directories ([ADR-0006](docs/adr/0006-private-data-boundary.md),
+[ADR-0007](docs/adr/0007-deployment-directories-xdg.md),
+[ADR-0013](docs/adr/0013-bundled-web-and-service-surface.md)).
+
+> **Status:** the console currently covers projects and the multi-project
+> glossary table. Running tapes with progress, archiving, and the agent tasks
+> (glossary collection, transcript check, minutes) are the next slices.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) (workspace tooling) and
@@ -307,7 +332,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/providers  per-vendor ASR adapters (apple / nvidia / amd)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0012)
+docs/adr/                     (decision records 0001–0013)
 ```
 
 ## License

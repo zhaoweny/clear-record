@@ -37,8 +37,15 @@ _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+((?:a|b|rc)\d+)?(?:\.dev\d+)?$")
 # A PEP 508 dependency string starts with the distribution name; split it off.
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 
-# Third-party runtime dependencies of the single dist.
+# Third-party runtime dependencies of the single dist. ADR-0013 kept this
+# audio-only set: the web console's stack (fastapi/uvicorn) lives in the `web`
+# extra, not the base install, so `clear-record` stays cheap for CLI-only users
+# while the web *code* still ships in this one wheel.
 RUNTIME_DEPS = {"numpy", "soundfile"}
+
+# The optional `web` extra's dependency set (ADR-0013). It must not leak into
+# the base dependencies; the MCP SDK gets its own extra when the MCP server lands.
+WEB_EXTRA_DEPS = {"fastapi", "uvicorn"}
 
 
 def _load(path: Path) -> dict:
@@ -97,6 +104,30 @@ def test_single_dist_runtime_dependencies() -> None:
     project = _load(MEMBER_PYPROJECTS[0])["project"]
     names = {_NAME_RE.match(spec).group() for spec in project.get("dependencies", [])}
     assert names == RUNTIME_DEPS, f"unexpected runtime dependencies: {sorted(names)}"
+
+
+def test_web_surface_is_an_extra_not_a_base_dependency() -> None:
+    """The web console's stack is gated behind the `web` extra (ADR-0013).
+
+    The console ships inside this one wheel as `clear_record.web` (no second dist
+    to publish), but its dependencies must not: a CLI-only install stays
+    audio-only. `web` is still registered as a subcommand by an entry point, so
+    it is discoverable without the CLI importing the web module.
+    """
+    project = _load(MEMBER_PYPROJECTS[0])["project"]
+    extras = project.get("optional-dependencies", {})
+    names = {
+        extra: {_NAME_RE.match(spec).group() for spec in specs}
+        for extra, specs in extras.items()
+    }
+    assert names.get("web") == WEB_EXTRA_DEPS, names.get("web")
+
+    base = {_NAME_RE.match(spec).group() for spec in project.get("dependencies", [])}
+    leaked = WEB_EXTRA_DEPS & base
+    assert not leaked, f"optional stack leaked into base dependencies: {sorted(leaked)}"
+
+    declared = project.get("entry-points", {}).get("clear_record.commands", {})
+    assert declared.get("web") == "clear_record.web:register", declared
 
 
 def test_declares_the_clear_record_script() -> None:

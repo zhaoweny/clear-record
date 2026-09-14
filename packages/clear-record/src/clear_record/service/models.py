@@ -116,7 +116,27 @@ class Artifact:
     created_at: str
 
 
+@dataclasses.dataclass(frozen=True)
+class Archive:
+    """An immutable, checksummed copy of a meeting's tapes and record.
+
+    ``root_path`` names the timestamped archive **directory** (the copy), and
+    ``manifest_path`` the ``archive.json`` inside it; ``manifest_sha256`` seals
+    the manifest so the registry can detect a later edit. The original files
+    stay in the user's workspace — an archive is a copy, never a move.
+    """
+
+    id: int
+    meeting_id: int
+    project_id: int
+    root_path: str
+    manifest_path: str
+    manifest_sha256: str
+    created_at: str
+
+
 __all__ = [
+    "Archive",
     "Artifact",
     "GlossaryTerm",
     "Meeting",

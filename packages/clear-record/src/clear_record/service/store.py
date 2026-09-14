@@ -31,6 +31,7 @@ from clear_record.service.models import (
     RUN_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
+    Archive,
     Artifact,
     GlossaryTerm,
     Meeting,
@@ -40,7 +41,7 @@ from clear_record.service.models import (
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -128,9 +129,30 @@ CREATE INDEX IF NOT EXISTS pipeline_run_meeting ON pipeline_run (meeting_id);
 CREATE INDEX IF NOT EXISTS artifact_meeting ON artifact (meeting_id);
 """
 
+# v3 — the archive spine: each immutable, checksummed copy of a meeting's tapes
+# and record. The files live in the user's archive root; the registry stores the
+# copy's paths and the manifest's checksum (ADR-0006/ADR-0007).
+_SCHEMA_V3 = """
+CREATE TABLE IF NOT EXISTS archive (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id      INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+    project_id      INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    root_path       TEXT NOT NULL,
+    manifest_path   TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS archive_meeting ON archive (meeting_id);
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
-_MIGRATIONS: tuple[tuple[int, str], ...] = ((1, _SCHEMA_V1), (2, _SCHEMA_V2))
+_MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, _SCHEMA_V1),
+    (2, _SCHEMA_V2),
+    (3, _SCHEMA_V3),
+)
 
 
 def _now() -> str:
@@ -666,6 +688,55 @@ class Registry:
             ).fetchall()
         return [self._artifact(row) for row in rows]
 
+    # --- archives ---------------------------------------------------------- #
+    def add_archive(
+        self,
+        meeting_id: int,
+        project_id: int,
+        *,
+        root_path: str,
+        manifest_path: str,
+        manifest_sha256: str,
+    ) -> Archive:
+        """Record an already-written archive directory.
+
+        The files are the caller's job (see
+        :func:`clear_record.service.archive.archive_meeting`); the registry only
+        remembers where the copy is and how to seal it.
+        """
+        if self.meeting_by_id(meeting_id) is None:
+            raise KeyError(meeting_id)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO archive"
+                " (meeting_id, project_id, root_path, manifest_path, manifest_sha256, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    meeting_id,
+                    project_id,
+                    root_path,
+                    manifest_path,
+                    manifest_sha256,
+                    _now(),
+                ),
+            )
+            return self._archive_row(conn, cur.lastrowid)
+
+    def list_archives(self, meeting_id: int) -> list[Archive]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM archive WHERE meeting_id = ? ORDER BY id DESC",
+                (meeting_id,),
+            ).fetchall()
+        return [self._archive(row) for row in rows]
+
+    def get_archive(self, archive_id: int) -> Archive | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM archive WHERE id = ?", (archive_id,)
+            ).fetchone()
+        return self._archive(row) if row else None
+
     # --- row mapping ------------------------------------------------------- #
     @staticmethod
     def _project(row: sqlite3.Row) -> Project:
@@ -802,6 +873,26 @@ class Registry:
         if row is None:
             raise KeyError(artifact_id)
         return self._artifact(row)
+
+    @staticmethod
+    def _archive(row: sqlite3.Row) -> Archive:
+        return Archive(
+            id=int(row["id"]),
+            meeting_id=int(row["meeting_id"]),
+            project_id=int(row["project_id"]),
+            root_path=row["root_path"],
+            manifest_path=row["manifest_path"],
+            manifest_sha256=row["manifest_sha256"],
+            created_at=row["created_at"],
+        )
+
+    def _archive_row(self, conn: sqlite3.Connection, archive_id: int) -> Archive:
+        row = conn.execute(
+            "SELECT * FROM archive WHERE id = ?", (archive_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(archive_id)
+        return self._archive(row)
 
 
 __all__ = ["SCHEMA_VERSION", "Registry"]

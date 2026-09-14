@@ -12,11 +12,13 @@ metadata, never audio blobs.
 
 from __future__ import annotations
 
+from clear_record.service.archive import archive_meeting, verify_archive
 from clear_record.service.models import (
     MEETING_STATUSES,
     RUN_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
+    Archive,
     Artifact,
     GlossaryTerm,
     Meeting,
@@ -36,6 +38,7 @@ from clear_record.service.store import SCHEMA_VERSION, Registry
 
 __all__ = [
     "APP",
+    "Archive",
     "Artifact",
     "GlossaryTerm",
     "MEETING_STATUSES",
@@ -51,8 +54,10 @@ __all__ = [
     "SCHEMA_VERSION",
     "TERM_AUTHORS",
     "TERM_STATUSES",
+    "archive_meeting",
     "collect_artifacts",
     "config_path",
     "registry_path",
     "resolve_data_dir",
+    "verify_archive",
 ]

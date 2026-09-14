@@ -49,7 +49,9 @@ def test_profile_and_decoder_flags_default_to_unset_on_every_backend_command() -
     parser = _build_parser()
     for command in ("transcribe", "run", "calibrate"):
         ns = parser.parse_args([command, "dir"])
-        assert ns.profile == "custom"
+        # `None` is "unset": it lets `--auto` choose the profile, and still
+        # resolves to `custom` (set nothing) when no auto mode is asked for.
+        assert ns.profile is None
         # The resolver-managed knobs default to None (unset), not to the concrete
         # built-in value, so an explicit `--jobs 0` stays explicit.
         for field in ("chunk_seconds", "overlap_seconds", "jobs", *DECODER_FLAGS):

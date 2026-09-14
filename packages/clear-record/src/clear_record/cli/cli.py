@@ -11,11 +11,13 @@ See docs/architecture.md §6 and ADR-0006.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from typing import Sequence
 
 from clear_record.core import (
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    PROFILE_CUSTOM,
     PROFILES,
     PipelineOptions,
     Step,
@@ -24,6 +26,7 @@ from clear_record.core import (
 )
 from clear_record.providers import BACKENDS, available_backend_ids, resolve_models_dir
 
+from clear_record.cli import auto
 from clear_record.cli import stages
 
 #: Entry-point group for optional subcommand providers. The bundled web console
@@ -115,8 +118,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "--backend",
             "-b",
             default=default_backend,
-            choices=tuple(BACKENDS),
-            help=f"ASR backend (default {default_backend})",
+            choices=(*BACKENDS, auto.BACKEND_AUTO),
+            help=f"ASR backend (default {default_backend}); "
+            f"{auto.BACKEND_AUTO!r} picks the best available backend "
+            "(native first, whisper-cli fallback)",
+        )
+        p.add_argument(
+            "--auto",
+            dest="auto",
+            action="store_true",
+            help="recommended default: inspect the machine and the tape, choose "
+            "a profile and model, and explain the choice (never downloads a "
+            "model; explicit flags still win)",
         )
         p.add_argument(
             "--model",
@@ -174,9 +187,10 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--profile",
             choices=tuple(PROFILES),
-            default="custom",
+            default=None,
             help="a preset trading decoder effort at a fixed model; any explicit "
-            "flag overrides it (default custom = set nothing)",
+            "flag overrides it (default custom = set nothing). None (unset) "
+            "lets --auto choose the profile",
         )
         _decoder_args(p)
 
@@ -388,7 +402,10 @@ def _backend_option_kwargs(args: argparse.Namespace) -> dict:
         "resume": args.resume,
         "jobs": args.jobs,
         "check_plugin": args.check_plugin,
-        "profile": args.profile,
+        # The parser leaves `--profile` as `None` when unset (a real sentinel,
+        # like the other resolver-managed knobs), so `--auto` can tell "choose
+        # for me" from an explicit `--profile custom`.
+        "profile": args.profile or PROFILE_CUSTOM,
         "beam_size": args.beam_size,
         "best_of": args.best_of,
         "temperature": args.temperature,
@@ -399,23 +416,73 @@ def _backend_option_kwargs(args: argparse.Namespace) -> dict:
     }
 
 
+def _apply_auto(args: argparse.Namespace, options: PipelineOptions) -> PipelineOptions:
+    """Resolve ``--backend auto`` and ``--auto`` on top of the explicit options.
+
+    ``--backend auto`` is a capability choice, separate from the profile: it is
+    replaced by the best *available* backend (printed for the operator).
+    ``--auto`` fills a profile + model only where the user left them unset, and
+    refuses to run when the recommended model is absent rather than downloading
+    it. An explicit ``--backend``/``--profile``/``--model`` still wins.
+    """
+    if args.backend == auto.BACKEND_AUTO:
+        try:
+            backend_choice = auto.resolve_backend(available_backend_ids())
+        except auto.NoBackendAvailable as exc:
+            raise SystemExit(str(exc)) from exc
+        print(backend_choice.explanation)
+        options = dataclasses.replace(options, backend=backend_choice.backend)
+
+    if not args.auto:
+        return resolve_options(options, profile=args.profile)
+
+    choice = auto.resolve_auto(
+        auto.probe_auto(
+            args.directory,
+            model_dir=args.models_dir,
+            language=args.language,
+        )
+    )
+    print(choice.explanation)
+
+    if options.model is None:
+        if not choice.model_on_disk:
+            raise SystemExit(
+                f"[auto] the recommended model {choice.model!r} is not in the "
+                "models directory, and --auto never downloads one.\n"
+                f"  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp "
+                f"ggml-{choice.model}.bin --local-dir {args.models_dir}`, or pass "
+                "an explicit `--model`."
+            )
+        options = dataclasses.replace(options, model=choice.model)
+
+    if choice.diarize and options.do_diarize is None:
+        options = dataclasses.replace(options, do_diarize=True)
+
+    # `--auto` supplies the profile only when the user did not name one; the
+    # environment still beats it, and every explicit knob beats both.
+    profile = args.profile if args.profile is not None else choice.profile
+    return resolve_options(options, profile=profile)
+
+
 def _pipeline_options(args: argparse.Namespace) -> PipelineOptions:
     """Fill the one run-options value from the parsed CLI arguments and resolve it.
 
     The environment and the profile fill any knob the user left at its default;
-    an explicit flag wins (see :func:`clear_record.core.resolve_options`).
+    an explicit flag wins (see :func:`clear_record.core.resolve_options`), and
+    the opt-in ``--auto`` / ``--backend auto`` resolvers fill in last.
     """
     kwargs = _backend_option_kwargs(args)
     kwargs.update(
-        split=args.split,
-        do_diarize=args.diarize,
-        speakers=args.speakers,
-        reference=args.reference,
-        attribute_energy=args.attribute_energy,
-        mixed_source=args.mixed_source,
-        window_s=args.window_s,
+        split=getattr(args, "split", "auto"),
+        do_diarize=getattr(args, "diarize", None),
+        speakers=getattr(args, "speakers", None),
+        reference=getattr(args, "reference", None),
+        attribute_energy=getattr(args, "attribute_energy", False),
+        mixed_source=getattr(args, "mixed_source", None),
+        window_s=getattr(args, "window_s", None),
     )
-    return resolve_options(PipelineOptions(**kwargs))
+    return _apply_auto(args, PipelineOptions(**kwargs))
 
 
 def _main(args: argparse.Namespace) -> int:
@@ -450,7 +517,7 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if command == "transcribe":
-        options = resolve_options(PipelineOptions(**_backend_option_kwargs(args)))
+        options = _pipeline_options(args)
         stages.transcribe(
             args.directory,
             options.backend,

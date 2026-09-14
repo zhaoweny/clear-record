@@ -64,6 +64,7 @@ def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
 def test_backend_choices_come_from_the_catalog() -> None:
     """The `--backend` choices and default follow the provider catalog, so a new
     backend is offered without a CLI edit (no literal tuple)."""
+    from clear_record.cli.auto import BACKEND_AUTO
     from clear_record.providers import BACKENDS
 
     parser = _build_parser()
@@ -71,7 +72,8 @@ def test_backend_choices_come_from_the_catalog() -> None:
     backend_action = next(
         a for a in sub.choices["transcribe"]._actions if a.dest == "backend"
     )
-    assert tuple(backend_action.choices) == tuple(BACKENDS)
+    # The catalog plus the `auto` sentinel (capability-driven selection).
+    assert tuple(backend_action.choices) == (*BACKENDS, BACKEND_AUTO)
     assert backend_action.default == next(iter(BACKENDS))
 
 

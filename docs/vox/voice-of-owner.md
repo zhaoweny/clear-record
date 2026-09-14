@@ -284,3 +284,17 @@ this repository. See `docs/architecture.md` §7.
   [ADR-0011](../adr/0011-versioning-and-release-train.md)'s 2026-09-14 Update and
   [`docs/releasing.md`](../releasing.md). Nothing is pushed; the branch is local
   until the owner chooses to publish it.
+
+## System-native transcription backends (feature request, 2026-09-14)
+
+- Owner request, verbatim: *"note 2 new feature requests. we'd like to system
+  default transcription services, like apple SpeechTranscriber and Windows
+  Microsoft.Windows.AI.Speech"*.
+- [REQ] Recorded as a **feature request**, not a decision. The scoped design,
+  the platform `[FACT]`s and the `[OPEN]` items live in the local tracker
+  (`.scratch/system-speech-backends/`); tickets 01–03 cover the backend seam, the
+  Apple `SpeechTranscriber` backend and the Windows `Microsoft.Windows.AI.Speech`
+  backend.
+- [FACT] This **changes an ADR-0005 property**: today every backend drives the
+  system `whisper-cli` + a ggml plugin. A system-native backend does not, so the
+  work needs a fresh ADR (tracked as ticket 01) rather than a silent extension.

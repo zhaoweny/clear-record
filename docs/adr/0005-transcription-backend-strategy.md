@@ -4,6 +4,12 @@ Status: active
 Date: 2026-09-09
 
 - Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
+- [OPEN] A **system-native backend family** — Apple `SpeechTranscriber` (macOS
+  26+) and Windows `Microsoft.Windows.AI.Speech` — is a requested, unbuilt
+  feature (owner, 2026-09-14). Neither drives `whisper-cli`, so adding them
+  **changes the property this ADR fixes** ("every backend drives the system
+  `whisper-cli` + a ggml plugin") and needs its own ADR. Scoped in the local
+  tracker `.scratch/system-speech-backends/`.
 
 ## Context
 

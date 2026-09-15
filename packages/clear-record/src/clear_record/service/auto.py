@@ -40,6 +40,7 @@ AutoProbe = _auto.AutoProbe
 BackendChoice = _auto.BackendChoice
 NoBackendAvailable = _auto.NoBackendAvailable
 available_backend_ids = _auto.available_backend_ids
+model_paths_on_disk = _auto.model_paths_on_disk
 models_on_disk = _auto.models_on_disk
 probe_auto = _auto.probe_auto
 resolve_auto = _auto.resolve_auto
@@ -187,6 +188,7 @@ __all__ = [
     "ModelNotOnDisk",
     "NoBackendAvailable",
     "available_backend_ids",
+    "model_paths_on_disk",
     "models_on_disk",
     "probe_auto",
     "render_message",

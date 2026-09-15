@@ -39,7 +39,7 @@
     <h3 class="media-label">{{ tr("Transcript") }}</h3>
     {% if row.transcript %}
     <div class="muted transcript-meta">
-      {{ tr("{count} segments", count=row.transcript.segments) }} &middot; {{ row.transcript.source }}
+      {{ trn("{count} segment", "{count} segments", row.transcript.segments, count=row.transcript.segments) }} &middot; {{ row.transcript.source }}
       &middot; <a href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open the review") }}</a>
     </div>
     {% else %}

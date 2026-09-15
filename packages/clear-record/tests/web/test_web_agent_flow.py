@@ -106,7 +106,7 @@ def test_the_setup_wizard_agent_step_embeds_the_flow(tmp_path) -> None:
     assert 'hx-get="/ui/agent-setup"' in page
     # The First record step points at the acceptance test, not a second copy.
     assert 'href="/settings/status"' in page
-    assert "Hello World check" in page
+    assert "hello-world check" in page
 
 
 # --- the standalone MCP section is unchanged --------------------------------- #

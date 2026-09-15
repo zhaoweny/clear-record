@@ -218,7 +218,7 @@ def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
     assert "2.0 KiB" in media.text
     assert ("a" * 12) in media.text  # the short sha256
     assert "record" in media.text  # the transcript's source
-    assert "segments" in media.text
+    assert "1 segment" in media.text  # the singular form for one segment (trn)
     assert 'href="/projects/ops/meetings/kickoff"' in media.text
 
 

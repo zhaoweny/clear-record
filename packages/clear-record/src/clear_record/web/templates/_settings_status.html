@@ -29,26 +29,12 @@
 {% endif %}
 
 <h3>{{ tr("Backend availability") }}</h3>
-<ul class="backend-list">
-  {% for backend in backends %}
-  <li class="backend">
-    <div class="row">
-      <code class="backend-id">{{ backend.id }}</code>
-      {% if backend.available %}
-      <span class="badge status-ok">{{ tr("available") }}</span>
-      {% else %}
-      <span class="badge status-missing">{{ tr("unavailable") }}</span>
-      {% endif %}
-    </div>
-    {% if backend.reason %}<div class="muted backend-reason">{{ backend.reason }}</div>{% endif %}
-  </li>
-  {% endfor %}
-</ul>
+{% include "_backend_list.html" %}
 
 <h3>{{ tr("Diagnostics") }}</h3>
 <p><a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
 
-<h3>{{ tr("Hello World check") }}</h3>
+<h3>{{ tr("hello-world check") }}</h3>
 {# The permanent diagnostic (ticket 05): the SAME check the agent flow's Try it
    stage runs, rendered and re-run from here. #}
 <div id="hello-check" class="hello-check">

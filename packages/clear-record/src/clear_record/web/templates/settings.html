@@ -7,53 +7,19 @@
    URL, read often and configured occasionally. The sidebar is section
    navigation; the content pane is #detail, the same in-page swap target the
    project fragments use. Only Agent and MCP write; every other section shows
-   the value plus the config path a user would edit. #}
+   the value plus the config path a user would edit. The slug -> template
+   mapping lives once, in SETTINGS_SECTIONS (web/app.py); this page includes the
+   active section's partial rather than switching on the slug again. #}
 <aside class="sidebar">
   <h2 class="sidebar-title">{{ tr("Settings") }}</h2>
   <ul class="settings-nav">
-    {% for slug, label in settings_sections %}
+    {% for slug, label, _template in settings_sections %}
     <li><a href="/settings/{{ slug }}"{% if section == slug %} aria-current="page"{% endif %}>{{ tr(label) }}</a></li>
     {% endfor %}
   </ul>
 </aside>
 <section id="detail" class="content">
-  {% if section == "models" %}
-  <h2>{{ tr("Models") }}</h2>
-  {% include "_settings_models.html" %}
-
-  {% elif section == "backends" %}
-  <h2>{{ tr("Backends") }}</h2>
-  {% include "_settings_backends.html" %}
-
-  {% elif section == "agent" %}
-  <h2>{{ tr("Agent") }}</h2>
-  {# The one guided agent flow, reached again from Setup; /setup/agent and
-     /settings/agent render the same panel, so there is no second copy. #}
-  <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
-    <div class="muted">{{ tr("Loading agent setup…") }}</div>
-  </div>
-
-  {% elif section == "mcp" %}
-  <h2>{{ tr("MCP") }}</h2>
-  {# The MCP rung alone, from the same panel the agent flow uses. #}
-  <div id="mcp-setup" hx-get="/ui/agent-setup?part=mcp" hx-trigger="load" hx-swap="innerHTML">
-    <div class="muted">{{ tr("Loading MCP setup…") }}</div>
-  </div>
-
-  {% elif section == "webhooks" %}
-  <h2>{{ tr("Webhooks") }}</h2>
-  <div id="webhooks" hx-get="/ui/webhooks" hx-trigger="load, every 20s" hx-swap="innerHTML">
-    <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
-  </div>
-  <p class="muted settings-note">{{ tr("Endpoints are read from the config file at {path}; edit it to add or change one.", path=config_path) }}</p>
-
-  {% elif section == "storage" %}
-  <h2>{{ tr("Storage") }}</h2>
-  {% include "_settings_storage.html" %}
-
-  {% elif section == "status" %}
-  <h2>{{ tr("Status") }}</h2>
-  {% include "_settings_status.html" %}
-  {% endif %}
+  <h2>{{ tr(section_label) }}</h2>
+  {% include section_template %}
 </section>
 {% endblock %}

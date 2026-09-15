@@ -5,7 +5,7 @@
 {% set standalone = mcp_context == "mcp" %}
 {% set target = "#mcp-setup" if standalone else "#agent-setup" %}
 <div class="mcp-harness">
-  <p class="muted">{{ tr("clear-record exposes its tools over MCP as the command {command} with args {args}. Point an MCP-capable harness at it, then register it in that harness's client config.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
+  <p class="muted">{{ tr("clear-record exposes its tools over MCP as the command {command} with arguments {args}. Point an MCP-capable harness at it, then register it in that harness's client config.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
 
   <h3>{{ tr("Agent harness (MCP)") }}</h3>
 

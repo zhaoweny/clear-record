@@ -481,6 +481,19 @@ def _normalize_model_name(filename: str) -> str | None:
     return name or None
 
 
+def model_paths_on_disk(model_dir: str | None = None) -> tuple[Path, ...]:
+    """The ggml checkpoint paths already present in the models directory.
+
+    The one place the ``ggml-*.bin`` scan lives: :func:`models_on_disk` derives
+    the size names from it, and a caller that needs the concrete file (a
+    quantised name cannot be reconstructed from its normalized size) reads it
+    here. Uses the single models-directory resolver (``model_dir`` ->
+    ``CR_MODELS_DIR`` -> ``<data>/models``); a missing directory is empty.
+    """
+    base = resolve_models_dir(model_dir)
+    return tuple(sorted(Path(p) for p in glob.glob(os.path.join(base, "ggml-*.bin"))))
+
+
 def models_on_disk(model_dir: str | None = None) -> frozenset[str]:
     """The ggml size names already present in the models directory.
 
@@ -488,10 +501,9 @@ def models_on_disk(model_dir: str | None = None) -> frozenset[str]:
     -> ``<data>/models``) so it agrees with the backend's own lookup. Missing
     directory == nothing on disk; no download is ever attempted.
     """
-    base = resolve_models_dir(model_dir)
     names: set[str] = set()
-    for path in glob.glob(os.path.join(base, "ggml-*.bin")):
-        name = _normalize_model_name(path)
+    for path in model_paths_on_disk(model_dir):
+        name = _normalize_model_name(str(path))
         if name:
             names.add(name)
     return frozenset(names)
@@ -546,6 +558,7 @@ __all__ = [
     "Message",
     "NoBackendAvailable",
     "max_channels",
+    "model_paths_on_disk",
     "models_on_disk",
     "probe_auto",
     "render_message",

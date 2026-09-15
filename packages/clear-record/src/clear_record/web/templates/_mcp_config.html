@@ -22,5 +22,5 @@
     <input name="config" value="{{ setup.mcp_config or '' }}" placeholder="{{ tr('path to your MCP client config (.json)') }}">
     <button type="submit">{{ tr("Register clear-record here") }}</button>
   </form>
-  <p class="muted agent-setup-secret">{{ tr("The path is yours to choose: a client's config location is not something clear-record can know. clear-record adds one entry to that file and leaves the rest of it alone — the command {command} with args {args}.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
+  <p class="muted agent-setup-secret">{{ tr("Choose the path: clear-record cannot know where your client keeps its config. clear-record adds one entry to that file and leaves the rest of it alone — the command {command} with args {args}.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
 </div>

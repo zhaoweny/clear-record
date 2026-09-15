@@ -34,8 +34,6 @@ user's data.
 from __future__ import annotations
 
 import dataclasses
-import glob
-import os
 import shutil
 import threading
 from collections.abc import Callable, Mapping
@@ -45,7 +43,7 @@ from clear_record.cli import auto as _auto
 from clear_record.cli.auto import Message
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
-from clear_record.service.auto import available_backend_ids
+from clear_record.service.auto import available_backend_ids, model_paths_on_disk
 from clear_record.service.hello_tape import HelloTape, write_hello_tape
 from clear_record.service.models import Meeting
 from clear_record.service.paths import resolve_models_dir, resolve_state_dir
@@ -60,7 +58,6 @@ LEG_TTS = "tts"
 LEG_BACKEND = "backend"
 LEG_MODEL = "model"
 LEG_TRANSCRIBE = "transcribe"
-LEGS: tuple[str, ...] = (LEG_OK, LEG_TTS, LEG_BACKEND, LEG_MODEL, LEG_TRANSCRIBE)
 
 #: The MCP tool that returns a meeting's transcript text. It is what the
 #: "expose it over MCP" leg advertises, and a test pins it to the real MCP
@@ -138,14 +135,13 @@ def _on_disk_checkpoint() -> Path | None:
     download. The concrete path — not the size name — is returned, so a
     quantised file (``ggml-large-v3-q5_0.bin``) resolves as-is.
     """
-    base = resolve_models_dir()
-    candidates = sorted(glob.glob(os.path.join(base, "ggml-*.bin")))
+    candidates = model_paths_on_disk()
     if not candidates:
         return None
-    default = os.path.join(base, f"ggml-{_auto.DEFAULT_MODEL}.bin")
-    if os.path.isfile(default):
-        return Path(default)
-    return Path(candidates[0])
+    default = resolve_models_dir() / f"ggml-{_auto.DEFAULT_MODEL}.bin"
+    if default.is_file():
+        return default
+    return candidates[0]
 
 
 def _run_pipeline(
@@ -355,7 +351,6 @@ __all__ = [
     "LEG_OK",
     "LEG_TRANSCRIBE",
     "LEG_TTS",
-    "LEGS",
     "TRANSCRIPT_TOOL",
     "hello_check_workspace",
     "run_hello_check",

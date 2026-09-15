@@ -1,0 +1,19 @@
+{# One backend list: the shipped families and this machine's probe verdict for
+   each. The id and the reason are the service's own
+   (diagnostics.backend_status); the console only renders them. Shared by
+   Settings -> Backends and Settings -> Status so the two cannot drift. #}
+<ul class="backend-list">
+  {% for backend in backends %}
+  <li class="backend">
+    <div class="row">
+      <code class="backend-id">{{ backend.id }}</code>
+      {% if backend.available %}
+      <span class="badge status-ok">{{ tr("available") }}</span>
+      {% else %}
+      <span class="badge status-missing">{{ tr("unavailable") }}</span>
+      {% endif %}
+    </div>
+    {% if backend.reason %}<div class="muted backend-reason">{{ backend.reason }}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>

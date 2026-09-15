@@ -97,6 +97,7 @@ from clear_record.service.setup import (
     record_seen_version,
     remember_harness,
     resolve_harness,
+    seen_version,
     setup_incomplete,
     setup_view,
     verify_endpoint,
@@ -147,17 +148,26 @@ TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
 #: ``/settings/<slug>``. This is the control plane's spine, not the project
 #: navigation. The pinned sections (ticket 03): each is one job at a time.
 #: Only agent and MCP write; every other section shows its config path.
+#: Each entry is ``(slug, label, template)``; the template is the partial
+#: ``settings.html`` includes for that section, so the slug -> template mapping
+#: lives here once rather than as an if/elif in the page.
 #: The labels are ``deferred`` so Babel extracts them here while the template's
 #: ``tr`` picks the *request's* locale, not the import-time one.
-SETTINGS_SECTIONS: tuple[tuple[str, str], ...] = (
-    ("models", deferred("Models")),
-    ("backends", deferred("Backends")),
-    ("agent", deferred("Agent")),
-    ("mcp", deferred("MCP")),
-    ("webhooks", deferred("Webhooks")),
-    ("storage", deferred("Storage")),
-    ("status", deferred("Status")),
+SETTINGS_SECTIONS: tuple[tuple[str, str, str], ...] = (
+    ("models", deferred("Models"), "_settings_models.html"),
+    ("backends", deferred("Backends"), "_settings_backends.html"),
+    ("agent", deferred("Agent"), "_settings_agent.html"),
+    ("mcp", deferred("MCP"), "_settings_mcp.html"),
+    ("webhooks", deferred("Webhooks"), "_settings_webhooks.html"),
+    ("storage", deferred("Storage"), "_settings_storage.html"),
+    ("status", deferred("Status"), "_settings_status.html"),
 )
+
+
+def settings_section(slug: str) -> tuple[str, str, str] | None:
+    """The ``(slug, label, template)`` entry for ``slug``, or ``None``."""
+    return next((entry for entry in SETTINGS_SECTIONS if entry[0] == slug), None)
+
 
 #: How many of the newest meetings the Projects landing's activity line and a
 #: project's Overview show. Both are cheap registry reads; walking every
@@ -1158,9 +1168,13 @@ def create_app(
         what the operator is not looking at (agent, MCP and webhooks load their
         panels as htmx fragments).
         """
+        entry = settings_section(section)
+        assert entry is not None  # the route validates the slug before calling
         context: dict = {
             "section": section,
             "settings_sections": SETTINGS_SECTIONS,
+            "section_label": entry[1],
+            "section_template": entry[2],
         }
         if section == "models":
             context.update(models_context())
@@ -1185,7 +1199,7 @@ def create_app(
         """
         state = read_setup_state()
         current = current_version()
-        seen = state.get("seen_version")
+        seen = seen_version(state=state)
         return {
             "setup_incomplete": setup_incomplete(state=state, version=current),
             "setup_update": bool(seen) and seen != current,
@@ -1238,7 +1252,7 @@ def create_app(
         — starts at system readiness instead. Once either exists the workspace
         is never hijacked (ADR-0027); an update shows a notice, not a redirect.
         """
-        if not read_setup_state().get("seen_version") and not registry.list_projects():
+        if seen_version() is None and not registry.list_projects():
             return RedirectResponse("/setup", status_code=303)
         projects = project_rows()
         return page(
@@ -1340,7 +1354,7 @@ def create_app(
     @app.get("/settings/{section}", response_class=HTMLResponse)
     def page_settings_section(request: Request, section: str) -> HTMLResponse:
         """One Settings section, or the not-found page for an unknown slug."""
-        if section not in tuple(one for one, _ in SETTINGS_SECTIONS):
+        if settings_section(section) is None:
             return page(
                 request,
                 "404.html",

@@ -17,7 +17,7 @@ from clear_record.service.setup import MCP_SERVER_NAME
 from clear_record.web.app import SETTINGS_SECTIONS, create_app
 
 #: The slugs the pinned section list must expose, in order.
-SECTIONS = tuple(slug for slug, _ in SETTINGS_SECTIONS)
+SECTIONS = tuple(slug for slug, _label, _template in SETTINGS_SECTIONS)
 
 #: The two write surfaces, and the routes only they post to.
 WRITE_ROUTES = (

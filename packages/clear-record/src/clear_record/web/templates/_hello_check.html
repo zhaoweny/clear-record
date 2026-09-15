@@ -9,7 +9,7 @@
    voice, no ASR backend, no model, or a failed transcription -- which is the
    diagnostic's whole value. #}
 <div class="hello">
-  <p class="muted hello-intro">{{ tr("This creates a hello-world tape with the system voice, transcribes it, and reads it back the way an MCP agent would. A failure names the leg that stopped, so a re-run localises the fault.") }}</p>
+  <p class="muted hello-intro">{{ tr("This creates a hello-world tape with the system voice, transcribes it, and reads it back the way an MCP agent would. A failure names the leg that stopped, so a re-run localizes the fault.") }}</p>
   <form class="hello-run" hx-post="/ui/hello-check" hx-target="#hello-check"
         hx-swap="innerHTML">
     <button class="primary" type="submit">{{ tr("Run the check") }}</button>

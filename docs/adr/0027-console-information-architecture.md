@@ -91,3 +91,35 @@ Date: 2026-09-15
   a state, not an exception, and the wizard must say so plainly.
 - Revisit a lighter "what changed" variant if the full wizard proves noisy across
   frequent dev releases.
+
+## Update — 2026-09-15: four surfaces, four jobs (owner steering refinement)
+
+Owner-relayed refinement. The four surfaces are not navigation categories; they
+are four different jobs, and holding that line is what keeps the console from
+becoming a dashboard.
+
+- [DESIGN] **Projects is the daily workspace** (~90% of use): project list →
+  project detail → tapes, transcriptions and the project glossary. It must not
+  drift into an administration screen.
+- [DESIGN] **Settings is the control plane**: endpoints, MCP, webhooks, storage,
+  runtime knobs, status and diagnostics — configured occasionally, read often.
+- [DESIGN] **Setup is system readiness**: first launch and upgrades, the path from
+  installed to usable.
+- [DESIGN] **Agent setup is integration readiness, and it is one reusable flow,
+  not a subsystem.** The same flow is launched at first run and later from
+  Settings → Agent: one implementation, two entry points.
+- [DESIGN] **The hello-world tape is the onboarding acceptance test**, not
+  tutorial content: create the tape → transcribe it → show the transcript →
+  expose it over MCP → a connected agent answers something about the tape. The
+  wizard's last screen is then "the whole system has worked once", and the same
+  flow is a **permanent diagnostic**: re-running it localizes a fault to
+  transcription, clear-record itself, MCP transport, harness configuration, or
+  the model.
+- [DESIGN] **No dashboard.** Launching the console lands on a useful Projects
+  page; there is no summary-of-everything home. Structural navigation is enough
+  for the project counts this tool sees, and full-text search is deferred
+  (SQLite FTS is the future answer, not a navigation workaround).
+- [DESIGN] Optimize the console as a **desktop productivity application**, not a
+  marketing/SaaS dashboard: information hierarchy, workflow continuity, sensible
+  density, keyboard-friendly interaction and clear system state over decoration.
+

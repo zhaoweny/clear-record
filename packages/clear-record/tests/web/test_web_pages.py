@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.service import AgentConfig, Registry
 from clear_record.web.app import create_app
 
@@ -21,6 +22,13 @@ def _client(tmp_path, **kwargs) -> TestClient:
             **kwargs,
         )
     )
+
+
+def _seeded(tmp_path):
+    """A TestClient plus the registry it renders, for seeding real content."""
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
+    return registry, client
 
 
 def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
@@ -116,3 +124,111 @@ def test_project_rows_label_their_counts(tmp_path) -> None:
 
     assert "0 meetings" in home.text
     assert "0 terms" in home.text
+
+
+# --- the project page's sub-tabs (ticket 02) -------------------------------- #
+def test_every_project_sub_tab_is_its_own_url(tmp_path) -> None:
+    """Each tab is a real page with the active tab marked, not colour alone."""
+    _registry, client = _seeded(tmp_path)
+    client.post("/api/projects", json={"name": "Ops"})
+
+    for path, active in (
+        ("/projects/ops", "overview"),
+        ("/projects/ops/meetings", "meetings"),
+        ("/projects/ops/glossary", "glossary"),
+        ("/projects/ops/media", "media"),
+    ):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert 'id="detail"' in page.text
+        assert 'aria-label="Project sections"' in page.text
+        for tab, href in (
+            ("overview", "/projects/ops"),
+            ("meetings", "/projects/ops/meetings"),
+            ("glossary", "/projects/ops/glossary"),
+            ("media", "/projects/ops/media"),
+        ):
+            marker = ' aria-current="page"' if tab == active else ""
+            assert f'href="{href}"{marker}' in page.text
+
+
+def test_a_project_sub_tab_is_deep_linkable_and_refresh_safe(tmp_path) -> None:
+    _registry, client = _seeded(tmp_path)
+    client.post("/api/projects", json={"name": "Ops"})
+
+    first = client.get("/projects/ops/media")
+    second = client.get("/projects/ops/media")
+
+    assert first.status_code == second.status_code == 200
+    assert first.text == second.text
+
+
+def test_the_meeting_review_is_a_page_under_the_project(tmp_path) -> None:
+    registry, client = _seeded(tmp_path)
+    registry.create_project("Ops")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+
+    page = client.get("/projects/ops/meetings/kickoff")
+
+    assert page.status_code == 200
+    assert "Kickoff" in page.text
+    # The project tabs stay, with Meetings marked.
+    assert 'href="/projects/ops/meetings" aria-current="page"' in page.text
+
+    missing = client.get("/projects/ops/meetings/does-not-exist")
+    assert missing.status_code == 404
+    assert "Not found" in missing.text
+
+
+def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
+    """Media reuses the service's storage and transcript accounting."""
+    registry, client = _seeded(tmp_path)
+    registry.create_project("Ops")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    write_json(
+        workspace / "record.json",
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=0.0, end=1.0, text="hello", source="mic"),),
+        ),
+    )
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.register_tape(
+        meeting.id, path=str(workspace / "a.wav"), sha256="a" * 64, bytes=2048
+    )
+
+    media = client.get("/ui/projects/ops/media")
+
+    assert media.status_code == 200
+    assert "a.wav" in media.text
+    assert "2.0 KiB" in media.text
+    assert ("a" * 12) in media.text  # the short sha256
+    assert "record" in media.text  # the transcript's source
+    assert "segments" in media.text
+    assert 'href="/projects/ops/meetings/kickoff"' in media.text
+
+
+def test_the_landing_shows_the_newest_meetings_across_projects(tmp_path) -> None:
+    """One compact recent-activity line, from cheap registry reads only."""
+    registry, client = _seeded(tmp_path)
+    registry.create_project("Ops")
+    registry.create_project("Field interviews")
+    registry.create_meeting("ops", "Kickoff")
+    registry.create_meeting("field-interviews", "Interview")
+
+    home = client.get("/")
+
+    assert "recent-activity" in home.text
+    assert 'href="/projects/ops/meetings/kickoff"' in home.text
+    assert 'href="/projects/field-interviews/meetings/interview"' in home.text
+
+
+def test_the_landing_has_no_activity_line_without_meetings(tmp_path) -> None:
+    _registry, client = _seeded(tmp_path)
+    client.post("/api/projects", json={"name": "Ops"})
+
+    assert "recent-activity" not in client.get("/").text

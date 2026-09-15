@@ -35,15 +35,33 @@ for (const scheme of ["light", "dark"] as const) {
       await shoot(page, "projects", size, scheme);
     });
 
-    test(`project ${size.tag} ${scheme}`, async ({ page }) => {
+    // One capture per project tab: the split is the point of this ticket.
+    test(`project overview ${size.tag} ${scheme}`, async ({ page }) => {
       await page.goto("/projects/q3-sync");
+      await page.locator("#detail h2").waitFor();
+      await shoot(page, "project-overview", size, scheme);
+    });
+
+    test(`project meetings ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/projects/q3-sync/meetings");
       await page.locator("#detail .meeting").first().waitFor();
-      await shoot(page, "project", size, scheme);
+      await shoot(page, "project-meetings", size, scheme);
+    });
+
+    test(`project glossary ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/projects/q3-sync/glossary");
+      await page.locator(".table-glossary").waitFor();
+      await shoot(page, "project-glossary", size, scheme);
+    });
+
+    test(`project media ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/projects/q3-sync/media");
+      await page.locator(".media-meeting").first().waitFor();
+      await shoot(page, "project-media", size, scheme);
     });
 
     test(`meeting ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync");
-      await page.locator("#detail .meeting", { hasText: "Kickoff" }).getByText("Review", { exact: true }).click();
+      await page.goto("/projects/q3-sync/meetings/kickoff");
       await page.locator("pre.transcript").first().waitFor();
       await shoot(page, "meeting", size, scheme);
     });

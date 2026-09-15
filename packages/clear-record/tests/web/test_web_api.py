@@ -123,7 +123,7 @@ def test_ui_project_list_and_create(client) -> None:
 def test_ui_detail_and_glossary_roundtrip(client) -> None:
     _make_project(client)
 
-    detail = client.get("/ui/projects/weekly-ops")
+    detail = client.get("/ui/projects/weekly-ops/glossary")
     assert detail.status_code == 200
     assert "No glossary terms yet." in detail.text
 
@@ -403,8 +403,8 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert 'hx-trigger="every 1s"' in started.text
     assert f'hx-get="/ui/runs/{run_id}"' in started.text
 
-    # The project detail renders the same live fragment while the run is active.
-    detail = client.get("/ui/projects/ops")
+    # The Meetings tab renders the same live fragment while the run is active.
+    detail = client.get("/ui/projects/ops/meetings")
     assert f'hx-get="/ui/runs/{run_id}"' in detail.text
 
     console.gate.set()
@@ -428,7 +428,7 @@ def test_profile_picker_lists_the_shared_profiles(console, tmp_path) -> None:
     to the shared table shows up in the console with no web change.
     """
     _make_meeting(console, tmp_path)
-    detail = console.client.get("/ui/projects/ops")
+    detail = console.client.get("/ui/projects/ops/meetings")
     assert detail.status_code == 200
     for profile in PROFILES:
         assert f'<option value="{profile}"' in detail.text
@@ -535,7 +535,7 @@ def test_run_form_offers_the_opt_in_auto_and_backend_auto(console, tmp_path) -> 
     """`--auto` is a choice in the form, never the silent default; and the
     backend's own `auto` sentinel is offered beside the concrete ids."""
     _make_meeting(console, tmp_path)
-    detail = console.client.get("/ui/projects/ops").text
+    detail = console.client.get("/ui/projects/ops/meetings").text
 
     assert 'name="auto"' in detail
     assert 'name="auto" value="1" checked' not in detail  # opt-in, not default
@@ -699,7 +699,7 @@ def test_archive_api_verify_without_a_manifest_is_404(client, tmp_path) -> None:
 def test_ui_archive_a_meeting_and_list_it(client, tmp_path) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
     assert f'hx-post="/ui/meetings/{meeting["id"]}/archives"' in (
-        client.get("/ui/projects/ops").text
+        client.get("/ui/projects/ops/meetings").text
     )
 
     archived = client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
@@ -719,8 +719,8 @@ def test_ui_archive_a_meeting_and_list_it(client, tmp_path) -> None:
     assert '<span class="badge">ok</span>' in status.text
     assert "file verified" in status.text
 
-    # The project view renders the same archive (with the lazy wiring).
-    detail = client.get("/ui/projects/ops")
+    # The Meetings tab renders the same archive (with the lazy wiring).
+    detail = client.get("/ui/projects/ops/meetings")
     assert archive["root_path"] in detail.text
     assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text
 
@@ -734,7 +734,7 @@ def test_project_detail_does_not_hash_archives(client, tmp_path, monkeypatch) ->
         raise AssertionError("the detail render must not verify archives")
 
     monkeypatch.setattr("clear_record.web.app.verify_archive", boom)
-    detail = client.get("/ui/projects/ops")
+    detail = client.get("/ui/projects/ops/meetings")
     assert detail.status_code == 200
     assert archive["root_path"] in detail.text
     assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text

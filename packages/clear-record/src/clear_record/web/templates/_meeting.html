@@ -1,17 +1,16 @@
 {# One meeting's review surface: its transcript, the artifacts and their
    provenance, the three agent tasks with their drafts, and the meeting's
-   accepted minutes. Loaded into `#detail` by htmx (its link lives in
-   `_detail.html`), so every control here targets `#detail` and re-renders this
-   fragment in place — the same single-page shell the rest of the console uses.
+   accepted minutes. It is both a page (`/projects/<slug>/meetings/<meeting>`,
+   rendered into `#detail` by `meeting.html`) and a fragment: every control
+   here targets `#detail` and re-renders this fragment in place.
 
    The action forms are plain posts to the service-backed routes; a refused
    launch renders the service's own message in the `error` block rather than an
    error status htmx would refuse to swap. #}
 <div class="row meeting-head">
-  <button type="button" class="btn btn-sm btn-ghost"
-          hx-get="/ui/projects/{{ project.slug }}"
-          hx-target="#detail" hx-swap="innerHTML"
-          title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</button>
+  <a class="btn btn-sm btn-ghost"
+     href="/projects/{{ project.slug }}/meetings"
+     title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</a>
   <h2>{{ meeting.title }}</h2>
   <span class="badge status-neutral">{{ meeting.status }}</span>
   {% if minutes_artifact %}<span class="badge status-done">{{ tr("minutes") }}</span>{% endif %}

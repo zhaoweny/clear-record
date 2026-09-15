@@ -137,9 +137,9 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
 
 def test_the_project_view_links_to_the_meeting_review(tmp_path: Path) -> None:
     console = _console(tmp_path)
-    page = console.client.get("/ui/projects/ops")
+    page = console.client.get("/ui/projects/ops/meetings")
     assert "Review" in page.text
-    assert "/ui/projects/ops/meetings/kickoff" in page.text
+    assert 'href="/projects/ops/meetings/kickoff"' in page.text
 
 
 @pytest.mark.parametrize("kind", ("glossary_collection", "transcript_check", "minutes"))

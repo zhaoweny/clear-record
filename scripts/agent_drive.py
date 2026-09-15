@@ -24,7 +24,9 @@ The stories, in order, each reported:
 2. **Agent tasks** - over a seeded meeting, run glossary collection, transcript
    check and minutes; assert each produced a draft, and print a redacted summary.
 3. **Accept one draft** - promote it and assert the promoted artifact exists.
-4. **MCP round-trip** - a later story; reported as skipped here, not faked.
+4. **MCP round-trip** - launch the server exactly as the wizard's client
+   entry names it, list its tools over stdio, and have the model read the
+   transcript through a tool and answer from what it read.
 
 Key handling is BYOK (ADR-0018) and is a hard rule:
 
@@ -51,6 +53,7 @@ stay offline and deterministic.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -59,6 +62,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 import wave
 from pathlib import Path
 
@@ -72,7 +76,11 @@ from clear_record.service import (
     write_hello_tape,
 )
 from clear_record.service.managed import workspace_path_for
-from clear_record.service.setup import verify_endpoint
+from clear_record.service.setup import (
+    MCP_SERVER_ARGS,
+    MCP_SERVER_COMMAND,
+    verify_endpoint,
+)
 
 #: Where this script lives: <repo root>/scripts/agent_drive.py.
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -702,6 +710,174 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+#: The question story 4 asks. It can only be answered by reading the meeting's
+#: transcript through an MCP tool, which is what makes the round-trip a proof.
+MCP_QUESTION = (
+    "What was decided in this meeting? Answer from the transcript only, in one "
+    "or two sentences."
+)
+MCP_SYSTEM = (
+    "You are an MCP client agent with access to the clear-record tools. Call "
+    "read_transcript for the meeting you are given, then answer the user's "
+    "question from what the transcript says. Do not invent anything it does not."
+)
+
+
+def _chat_completion(
+    endpoint: str,
+    model: str,
+    key: str,
+    messages: list[dict],
+    tools: list[dict],
+    timeout: float,
+) -> dict:
+    """One OpenAI-compatible chat call, tools included. Stdlib HTTP only."""
+    request = urllib.request.Request(
+        endpoint.rstrip("/") + "/chat/completions",
+        data=json.dumps({"model": model, "messages": messages, "tools": tools}).encode(
+            "utf-8"
+        ),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+async def _mcp_round_trip(
+    project: str,
+    meeting: str,
+    data_dir: Path,
+    endpoint: str,
+    model: str,
+    key: str,
+    timeout: float,
+) -> tuple[int, str]:
+    """A real MCP client: list the tools, let the model call one, answer.
+
+    The server is launched exactly as the wizard's client entry names it
+    (``clear-record mcp``), so a pass here is a pass for the config the setup
+    flow writes, not a private harness invented for the test.
+    """
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    params = StdioServerParameters(
+        command=MCP_SERVER_COMMAND,
+        args=[*MCP_SERVER_ARGS, "--data-dir", str(data_dir)],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            listed = await session.list_tools()
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "parameters": tool.input_schema,
+                    },
+                }
+                for tool in listed.tools
+            ]
+            messages = [
+                {"role": "system", "content": MCP_SYSTEM},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Project {project!r}, meeting {meeting!r}. " + MCP_QUESTION
+                    ),
+                },
+            ]
+            called = 0
+            for _ in range(4):
+                reply = await asyncio.to_thread(
+                    _chat_completion, endpoint, model, key, messages, tools, timeout
+                )
+                message = reply["choices"][0]["message"]
+                messages.append(message)
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    return called, (message.get("content") or "").strip()
+                for call in calls:
+                    name = call["function"]["name"]
+                    arguments = json.loads(call["function"]["arguments"] or "{}")
+                    result = await session.call_tool(name, arguments)
+                    text = "\n".join(
+                        block.text
+                        for block in result.content
+                        if getattr(block, "type", "") == "text"
+                    )
+                    called += 1
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": text[:20000],
+                        }
+                    )
+            return called, "(the model kept calling tools; stopped)"
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """The innermost exception under the SDK's anyio task-group wrappers.
+
+    ``stdio_client``/``ClientSession`` re-raise an inner failure as a
+    ``BaseExceptionGroup`` whose message is only \"unhandled errors in a
+    TaskGroup\", which tells the operator nothing; the first leaf does.
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+def drive_mcp(
+    meeting,
+    data_dir: Path,
+    endpoint: str,
+    model: str,
+    key: str,
+    timeout: float,
+    report: Report,
+) -> None:
+    """Story 4: a real MCP client reads the transcript and answers about it."""
+    try:
+        called, answer = asyncio.run(
+            _mcp_round_trip(
+                meeting.project_slug,
+                meeting.slug,
+                data_dir,
+                endpoint,
+                model,
+                key,
+                timeout,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a round-trip failure is a leg
+        cause = _root_cause(exc)
+        report.add("4 MCP round-trip", "FAIL", f"{type(cause).__name__}: {cause}")
+        return
+    if called == 0:
+        report.add(
+            "4 MCP round-trip",
+            "FAIL",
+            "the agent answered without calling an MCP tool",
+        )
+        return
+    if not answer:
+        report.add("4 MCP round-trip", "FAIL", "the agent produced no answer")
+        return
+    report.add(
+        "4 MCP round-trip",
+        "PASS",
+        f"{called} tool call(s) over stdio; the agent answered {len(answer)} chars",
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     resolution = resolve_key(os.environ)
     if resolution.key is None:
@@ -746,10 +922,14 @@ def run(args: argparse.Namespace) -> int:
         _, accepted_kind = drive_accept(agent, drafts, report)
     if not drafts:
         report.add("3 accept", "SKIP", "no draft was produced, so nothing was accepted")
-    report.add(
-        "4 MCP round-trip",
-        "SKIP",
-        "the MCP round-trip is a later slice; this workflow drives clear-record's own agent tasks, not MCP",
+    drive_mcp(
+        meeting,
+        data_dir,
+        endpoint,
+        model,
+        resolution.key,
+        args.timeout,
+        report,
     )
 
     report.say()

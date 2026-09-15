@@ -129,6 +129,33 @@ def test_a_malformed_answer_names_the_exact_defect(
         contract_for(kind).parse(text)
 
 
+def test_a_wrapped_object_is_recovered_but_still_validated() -> None:
+    """A chat model wraps the object in prose; recover it, but keep the schema."""
+    document = {
+        "meeting": "m",
+        "project": "p",
+        "attendees": ["A"],
+        "decisions": [],
+        "actions": [],
+        "body": "# Minutes",
+    }
+    payload = json.dumps(document)
+
+    prose_then_json = contract_for("minutes").parse("Here are the minutes:\n" + payload)
+    json_then_prose = contract_for("minutes").parse(
+        payload + "\nLet me know if you want changes."
+    )
+    assert prose_then_json["body"] == "# Minutes"
+    assert json_then_prose["body"] == "# Minutes"
+
+    # Recovery must not weaken the contract: the same wrapping around an object
+    # that breaks the schema still fails.
+    with pytest.raises(OutputContractError, match="must be a list"):
+        contract_for("minutes").parse(
+            "Here you go:\n" + json.dumps({**document, "attendees": "nope"})
+        )
+
+
 def test_each_contract_returns_a_validated_json_shape() -> None:
     check = contract_for("transcript_check").parse(
         json.dumps(

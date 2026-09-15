@@ -75,18 +75,48 @@ def _strip_fence(text: str) -> str:
     return match.group("body").strip() if match else stripped
 
 
+def _first_json_object(text: str):
+    """The first JSON object in the text, ignoring any text around it.
+
+    A real endpoint sometimes answers with the contract object plus a sentence
+    before or after it, or with a loosely fenced block. Recovering the object is
+    not the same as accepting a bad answer: the schema checks below still run on
+    whatever object is found, so stray prose cannot turn a bad response into a
+    good draft. Returns None when no object parses.
+    """
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            value, _end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def _load_document(kind: str, text: str) -> dict:
-    """Parse a runner's response as a JSON object, or fail usefully."""
+    """Parse a runner's response as a JSON object, or fail usefully.
+
+    The response is tried as-is first, so a clean answer keeps the exact error
+    position when it is malformed. When that fails, the first well-formed JSON
+    object in the text is used instead -- the shape a chat model actually
+    returns when it wraps the object in a sentence or a loose fence.
+    """
     raw = _strip_fence(text)
     if not raw:
         raise OutputContractError(f"{kind}: the runner produced no output")
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise OutputContractError(
-            f"{kind}: output is not valid JSON "
-            f"({exc.msg} at line {exc.lineno} column {exc.colno})"
-        ) from exc
+        recovered = _first_json_object(raw)
+        if recovered is None:
+            raise OutputContractError(
+                f"{kind}: output is not valid JSON "
+                f"({exc.msg} at line {exc.lineno} column {exc.colno})"
+            ) from exc
+        value = recovered
     if not isinstance(value, dict):
         raise OutputContractError(
             f"{kind}: output must be a JSON object, got {type(value).__name__}"

@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 01:36+0800\n"
+"POT-Creation-Date: 2026-09-16 01:43+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -1392,7 +1392,7 @@ msgstr "已接受"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:195
 #, python-brace-format
-msgid "{added} term added as candidates; {skipped} already in the glossary."
+msgid "{added} term added as a candidate; {skipped} already in the glossary."
 msgid_plural "{added} terms added as candidates; {skipped} already in the glossary."
 msgstr[0] "已添加 {added} 个术语作为候选；{skipped} 个已在术语表中。"
 

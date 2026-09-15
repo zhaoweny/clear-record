@@ -192,7 +192,7 @@
       <span class="badge status-accepted">{{ tr("accepted") }}</span>
       <span class="muted">{{ draft.promotion['at'] }}</span>
       {% if draft.kind == 'glossary_collection' %}
-      <div>{{ trn("{added} term added as candidates; {skipped} already in the glossary.", "{added} terms added as candidates; {skipped} already in the glossary.", draft.promotion['summary']['added'] | length, added=draft.promotion['summary']['added'] | length, skipped=draft.promotion['summary']['skipped'] | length) }}</div>
+      <div>{{ trn("{added} term added as a candidate; {skipped} already in the glossary.", "{added} terms added as candidates; {skipped} already in the glossary.", draft.promotion['summary']['added'] | length, added=draft.promotion['summary']['added'] | length, skipped=draft.promotion['summary']['skipped'] | length) }}</div>
       {% elif draft.kind == 'transcript_check' %}
       <div>{{ trn("{count} correction recorded as a new revision.", "{count} corrections recorded as a new revision.", draft.promotion['summary']['changes'], count=draft.promotion['summary']['changes']) }}</div>
       <div class="muted"><code>{{ draft.promotion['summary']['revision_path'] }}</code></div>

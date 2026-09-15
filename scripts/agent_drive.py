@@ -511,11 +511,16 @@ def drive_tape(
         return "seeded"
 
     (workspace / "record.json").unlink(missing_ok=True)
-    report.add("tape", "PASS", f"{label}: transcribed {count} segment(s)")
+    report.add("tape", "PASS", f"{label}: transcribed {_plural(count, 'segment')}")
     return "tape"
 
 
 # --- the stories ------------------------------------------------------------ #
+
+
+def _plural(count: int, noun: str) -> str:
+    """A plain English count for the report: "1 segment" / "3 segments"."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def summarize_draft(draft) -> str:
@@ -524,20 +529,20 @@ def summarize_draft(draft) -> str:
     if draft.kind == "glossary_collection":
         terms = value.get("terms") or []
         names = ", ".join(str(item.get("term", "")) for item in terms if item)
-        body = f"{len(terms)} proposed term(s)"
+        body = f"{_plural(len(terms), 'term')} proposed"
         if names:
             body += f": {names}"
     elif draft.kind == "transcript_check":
         changes = value.get("changes") or []
         body = (
             f"revision {len(str(value.get('revision', '')))} chars, "
-            f"{len(changes)} change(s)"
+            f"{_plural(len(changes), 'change')}"
         )
     elif draft.kind == "minutes":
         body = (
             f"body {len(str(value.get('body', '')))} chars, "
-            f"{len(value.get('decisions') or [])} decision(s), "
-            f"{len(value.get('actions') or [])} action(s)"
+            f"{_plural(len(value.get('decisions') or []), 'decision')}, "
+            f"{_plural(len(value.get('actions') or []), 'action')}"
         )
     else:
         body = f"{len(draft.text)} bytes"
@@ -636,7 +641,7 @@ def drive_accept(agent: MeetingAgent, drafts: list, report: Report) -> tuple[boo
         ok = bool(added)
         names = ", ".join(str(name) for name in added)
         detail = (
-            f"accepted glossary_collection -> added {len(added)} candidate term(s)"
+            f"accepted glossary_collection -> added {_plural(len(added), 'candidate term')}"
             + (f": {names}" if names else "")
             if ok
             else "accepted glossary_collection, but no candidate term was added"

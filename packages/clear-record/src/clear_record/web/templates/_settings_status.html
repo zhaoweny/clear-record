@@ -1,0 +1,54 @@
+{# Status: version, the resolved directories, the run queue, backend
+   availability, the diagnostics download and the permanent Hello World check
+   (ticket 05). Read-only; the only action is the download link. #}
+<div class="settings-group">
+  <table class="table-settings">
+    <tbody>
+      <tr><th>{{ tr("Version") }}</th><td><code>{{ version }}</code></td></tr>
+      {% for entry in dirs %}
+      <tr><th>{{ entry.label }}</th><td><code>{{ entry.path }}</code></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3>{{ tr("Queue") }}</h3>
+{% if queue %}
+<ul class="settings-list">
+  {% for row in queue %}
+  <li class="row">
+    <span class="badge status-{{ row.run.status }}">{{ row.run.status }}</span>
+    {% if row.position %}<span class="muted">{{ tr("position {n}", n=row.position) }}</span>{% endif %}
+    <span>{{ row.meeting_title }}</span>
+    {% if row.project_slug %}<span class="muted">{{ row.project_slug }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">{{ tr("No runs queued or running.") }}</div>
+{% endif %}
+
+<h3>{{ tr("Backend availability") }}</h3>
+<ul class="backend-list">
+  {% for backend in backends %}
+  <li class="backend">
+    <div class="row">
+      <code class="backend-id">{{ backend.id }}</code>
+      {% if backend.available %}
+      <span class="badge status-ok">{{ tr("available") }}</span>
+      {% else %}
+      <span class="badge status-missing">{{ tr("unavailable") }}</span>
+      {% endif %}
+    </div>
+    {% if backend.reason %}<div class="muted backend-reason">{{ backend.reason }}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+<h3>{{ tr("Diagnostics") }}</h3>
+<p><a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
+
+<h3>{{ tr("Hello World check") }}</h3>
+<div id="hello-check" class="hello-check">
+  <p class="muted">{{ tr("Not available yet. This is the permanent end-to-end check — a hello-world tape through transcription and the MCP round-trip — that re-runs here to localize a fault.") }}</p>
+</div>

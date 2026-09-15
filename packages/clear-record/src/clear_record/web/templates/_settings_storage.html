@@ -1,0 +1,42 @@
+{# Storage: the managed root and its free space, each project's archive root, and
+   the retention rule. Retention is manual only (owner, 2026-09-15): nothing
+   here suggests the node cleans up on its own, and the config path names where
+   a user edits it. #}
+<div class="settings-group">
+  <table class="table-settings">
+    <tbody>
+      <tr>
+        <th>{{ tr("Managed root") }}</th>
+        <td><code>{{ managed_root }}</code></td>
+      </tr>
+      <tr>
+        <th>{{ tr("Free space") }}</th>
+        <td>{% if free_size %}{{ free_size }}{% else %}<span class="muted">{{ tr("unknown") }}</span>{% endif %}</td>
+      </tr>
+      <tr>
+        <th>{{ tr("Config file") }}</th>
+        <td><code>{{ config_path }}</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>{{ tr("Archive roots") }}</h3>
+{% if archive_roots %}
+<table class="table-settings">
+  <thead>
+    <tr><th>{{ tr("Project") }}</th><th>{{ tr("Archive root") }}</th></tr>
+  </thead>
+  <tbody>
+    {% for row in archive_roots %}
+    <tr>
+      <td>{{ row.project.name }}</td>
+      <td>{% if row.root %}<code>{{ row.root }}</code>{% else %}<span class="muted">{{ tr("not set") }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">{{ tr("No projects yet.") }}</div>
+{% endif %}
+<p class="muted settings-note">{{ tr("Retention is manual only: clear-record never deletes tapes on its own, and the archive is the durable copy. Set the managed root in {path}; a project's archive root is edited on the project.", path=config_path) }}</p>

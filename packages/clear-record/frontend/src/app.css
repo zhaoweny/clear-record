@@ -842,6 +842,80 @@ ul.projects .count {
   box-shadow: inset 2px 0 0 var(--primary);
 }
 
+/* Settings sections: the control plane reads one section at a time. A group is a
+   definition table of facts; every path is mono and selectable. Nothing here is
+   a dashboard -- one section, dense and scannable. */
+.table-settings {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.table-settings th,
+.table-settings td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  font-size: var(--text-sm);
+}
+.table-settings tr:last-child th,
+.table-settings tr:last-child td { border-bottom: 0; }
+.table-settings th {
+  width: 14rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.table-settings code { font-size: var(--text-xs); }
+.settings-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.backend-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.backend {
+  padding: var(--space-2) var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.backend-id { font-family: var(--font-mono); }
+.backend-reason { margin-top: var(--space-1); font-size: var(--text-xs); }
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-note { margin: var(--space-2) 0 0; font-size: var(--text-xs); line-height: 1.55; }
+.mcp-setup { display: grid; gap: var(--space-2); }
+.mcp-setup p { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
+.hello-check {
+  padding: var(--space-3);
+  background: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+.hello-check p { margin: 0; }
+
 /* The project's sub-tabs: the page's spine. Real links (the enclosing section
    carries `hx-boost`), with the current tab marked `aria-current` and an
    underline, never colour alone. */
@@ -1409,6 +1483,7 @@ tbody tr:last-child td { border-bottom: none; }
      wider than the screen and scroll, rather than mangle the data. */
   .table-artifacts,
   .table-archives,
+  .table-settings,
   .table-tapes,
   .table-draft,
   .table-minutes,

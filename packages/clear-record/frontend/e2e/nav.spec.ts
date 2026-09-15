@@ -10,7 +10,8 @@ test("the header nav reaches Settings and Setup", async ({ page }) => {
 
   await page.locator(".app-nav a", { hasText: "Settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.locator("#detail h2")).toHaveText("Agent");
+  // Settings lands on the first of its pinned sections (models).
+  await expect(page.locator("#detail h2")).toHaveText("Models");
 
   // Setup is in the nav exactly while setup is incomplete. The machine surface
   // is the source of truth, so a configured developer box does not flake this.

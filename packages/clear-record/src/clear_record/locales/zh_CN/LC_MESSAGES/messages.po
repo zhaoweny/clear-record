@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 00:21+0800\n"
+"POT-Creation-Date: 2026-09-16 00:46+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -25,7 +25,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:221
+#: packages/clear-record/src/clear_record/cli/auto.py:222
 #, python-brace-format
 msgid ""
 "--backend auto: chose {backend!r} — first available in the native-first "
@@ -34,7 +34,7 @@ msgstr ""
 "--backend auto：选择了 {backend!r} —— "
 "原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:235
+#: packages/clear-record/src/clear_record/cli/auto.py:236
 #, python-brace-format
 msgid ""
 "no ASR backend is available on this machine; `--backend auto` found none "
@@ -49,92 +49,93 @@ msgstr ""
 "cpp`；Linux 上例如发行版的 `whisper-cpp` 加 `ggml-cuda`/`ggml-vulkan`；参见 "
 "docs/adr/0005），或显式传入 `--backend <id>`。"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:309
+#: packages/clear-record/src/clear_record/cli/auto.py:310
 msgid "the tape length is unknown"
 msgstr "录音时长未知"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:313
+#: packages/clear-record/src/clear_record/cli/auto.py:314
 msgid "a long tape on a roomy machine"
 msgstr "宽裕机器上的长录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:315
+#: packages/clear-record/src/clear_record/cli/auto.py:316
 msgid "a long tape on a modest machine (quick first pass)"
 msgstr "普通机器上的长录音（先快速过一遍）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:319
+#: packages/clear-record/src/clear_record/cli/auto.py:320
 msgid "a short tape on a machine that can afford it"
 msgstr "性能足够的机器上的短录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:321
+#: packages/clear-record/src/clear_record/cli/auto.py:322
 msgid "a middle-of-the-road tape"
 msgstr "中等长度的录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:342
+#: packages/clear-record/src/clear_record/cli/auto.py:343
 msgid "largest checkpoint that fits the VRAM/CPU budget"
 msgstr "符合显存/CPU 预算的最大检查点"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:346
+#: packages/clear-record/src/clear_record/cli/auto.py:347
 #, python-brace-format
 msgid ""
 "already on disk; the preferred {preferred!r} is absent and --auto does "
 "not download"
 msgstr "已在磁盘上；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:360
+#: packages/clear-record/src/clear_record/cli/auto.py:361
 #, python-brace-format
 msgid ""
 "the only checkpoint(s) on disk; the preferred {preferred!r} is absent and"
 " --auto does not download"
 msgstr "磁盘上唯一的检查点；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:372
+#: packages/clear-record/src/clear_record/cli/auto.py:373
 msgid "the largest checkpoint that fits this machine, but none is on disk"
 msgstr "适合此机器的最大检查点，但磁盘上没有"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:380
+#: packages/clear-record/src/clear_record/cli/auto.py:381
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:14
 msgid "unknown"
 msgstr "未知"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:382
+#: packages/clear-record/src/clear_record/cli/auto.py:383
 #, python-brace-format
 msgid "{hours:.1f} h"
 msgstr "{hours:.1f} 小时"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:383
+#: packages/clear-record/src/clear_record/cli/auto.py:384
 #, python-brace-format
 msgid "{minutes:.0f} min"
 msgstr "{minutes:.0f} 分钟"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:388
+#: packages/clear-record/src/clear_record/cli/auto.py:389
 msgid "unprobed (8 GB floor)"
 msgstr "未探测（下限 8 GB）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:389
+#: packages/clear-record/src/clear_record/cli/auto.py:390
 #, python-brace-format
 msgid "{vram:g} GB"
 msgstr "{vram:g} GB"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:408
+#: packages/clear-record/src/clear_record/cli/auto.py:409
 #, python-brace-format
 msgid "profile {profile!r} ({why})"
 msgstr "配置 {profile!r}（{why}）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:412
+#: packages/clear-record/src/clear_record/cli/auto.py:413
 #, python-brace-format
 msgid "model {model!r} ({why}; ~{vram:g} GB per worker)"
 msgstr "模型 {model!r}（{why}；每个 worker 约 {vram:g} GB）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:415
+#: packages/clear-record/src/clear_record/cli/auto.py:416
 #, python-brace-format
 msgid "up to {jobs} worker(s)"
 msgstr "最多 {jobs} 个 worker"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:420
+#: packages/clear-record/src/clear_record/cli/auto.py:421
 #, python-brace-format
 msgid "per-speaker attribution on ({channels}-channel tape)"
 msgstr "开启按说话人归属（{channels} 声道录音）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:428
+#: packages/clear-record/src/clear_record/cli/auto.py:429
 #, python-brace-format
 msgid ""
 "tape {duration}, {channels} channel(s), language {language}, VRAM {vram},"
@@ -143,7 +144,7 @@ msgstr ""
 "录音 {duration}，{channels} 声道，语言 {language}，显存 {vram}，{cpus} 个 "
 "CPU，磁盘上的模型：{disk}，可用后端：{backends}"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:443
+#: packages/clear-record/src/clear_record/cli/auto.py:444
 #, python-brace-format
 msgid "--auto: chose {decisions}; inputs: {inputs}."
 msgstr "--auto：选择了 {decisions}；输入：{inputs}。"
@@ -240,14 +241,14 @@ msgstr "{project}/{meeting} 尚无转写文本：{detail}"
 msgid "no promotion is defined for task kind {kind}"
 msgstr "任务类型 {kind} 未定义采纳规则"
 
-#: packages/clear-record/src/clear_record/service/auto.py:57
+#: packages/clear-record/src/clear_record/service/auto.py:63
 #, python-brace-format
 msgid ""
 "the recommended model {model!r} is not on disk, and --auto never "
 "downloads one; pre-fetch it or pass an explicit model"
 msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型；请预先获取，或显式指定模型"
 
-#: packages/clear-record/src/clear_record/service/auto.py:135
+#: packages/clear-record/src/clear_record/service/auto.py:141
 msgid "a run needs a workspace directory before --auto can probe the tape"
 msgstr "在 --auto 探测录音之前，运行需要一个工作区目录"
 
@@ -601,149 +602,193 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:135
-#: packages/clear-record/src/clear_record/web/templates/settings.html:19
+#: packages/clear-record/src/clear_record/web/app.py:148
+#: packages/clear-record/src/clear_record/web/app.py:1139
+#: packages/clear-record/src/clear_record/web/templates/settings.html:21
+msgid "Models"
+msgstr "模型"
+
+#: packages/clear-record/src/clear_record/web/app.py:149
+#: packages/clear-record/src/clear_record/web/templates/settings.html:25
+msgid "Backends"
+msgstr "后端"
+
+#: packages/clear-record/src/clear_record/web/app.py:150
+#: packages/clear-record/src/clear_record/web/templates/settings.html:29
 msgid "Agent"
 msgstr "智能体"
 
-#: packages/clear-record/src/clear_record/web/app.py:136
-#: packages/clear-record/src/clear_record/web/templates/settings.html:26
+#: packages/clear-record/src/clear_record/web/app.py:151
+#: packages/clear-record/src/clear_record/web/templates/settings.html:37
+msgid "MCP"
+msgstr "MCP"
+
+#: packages/clear-record/src/clear_record/web/app.py:152
+#: packages/clear-record/src/clear_record/web/templates/settings.html:44
 msgid "Webhooks"
 msgstr "Webhook"
 
-#: packages/clear-record/src/clear_record/web/app.py:461
+#: packages/clear-record/src/clear_record/web/app.py:153
+#: packages/clear-record/src/clear_record/web/templates/settings.html:51
+msgid "Storage"
+msgstr "存储"
+
+#: packages/clear-record/src/clear_record/web/app.py:154
+#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
+#: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
+#: packages/clear-record/src/clear_record/web/templates/settings.html:55
+msgid "Status"
+msgstr "状态"
+
+#: packages/clear-record/src/clear_record/web/app.py:479
 msgid "Not configured"
 msgstr "未配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:463
+#: packages/clear-record/src/clear_record/web/app.py:481
 msgid "Configuration problem"
 msgstr "配置有问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:465
+#: packages/clear-record/src/clear_record/web/app.py:483
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:466
+#: packages/clear-record/src/clear_record/web/app.py:484
 msgid "Configured"
 msgstr "已配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:471
+#: packages/clear-record/src/clear_record/web/app.py:489
 msgid "Config problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:473
+#: packages/clear-record/src/clear_record/web/app.py:491
 msgid "Failing"
 msgstr "投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:475
-#: packages/clear-record/src/clear_record/web/app.py:511
+#: packages/clear-record/src/clear_record/web/app.py:493
+#: packages/clear-record/src/clear_record/web/app.py:529
 msgid "Delivered"
 msgstr "已投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:476
+#: packages/clear-record/src/clear_record/web/app.py:494
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
 msgid "No delivery yet"
 msgstr "尚未投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:513
+#: packages/clear-record/src/clear_record/web/app.py:531
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:849
+#: packages/clear-record/src/clear_record/web/app.py:867
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:851
+#: packages/clear-record/src/clear_record/web/app.py:869
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/app.py:853
+#: packages/clear-record/src/clear_record/web/app.py:871
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/app.py:855
+#: packages/clear-record/src/clear_record/web/app.py:873
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/app.py:857
+#: packages/clear-record/src/clear_record/web/app.py:875
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/app.py:859
+#: packages/clear-record/src/clear_record/web/app.py:877
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/app.py:860
+#: packages/clear-record/src/clear_record/web/app.py:878
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:886
+#: packages/clear-record/src/clear_record/web/app.py:904
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/app.py:988
+#: packages/clear-record/src/clear_record/web/app.py:1006
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1118
+#: packages/clear-record/src/clear_record/web/app.py:1135
+msgid "Data"
+msgstr "数据"
+
+#: packages/clear-record/src/clear_record/web/app.py:1136
+msgid "State"
+msgstr "状态"
+
+#: packages/clear-record/src/clear_record/web/app.py:1137
+msgid "Logs"
+msgstr "日志"
+
+#: packages/clear-record/src/clear_record/web/app.py:1138
+msgid "Config"
+msgstr "配置"
+
+#: packages/clear-record/src/clear_record/web/app.py:1237
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1169
+#: packages/clear-record/src/clear_record/web/app.py:1288
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1201
+#: packages/clear-record/src/clear_record/web/app.py:1319
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1320
+#: packages/clear-record/src/clear_record/web/app.py:1437
 #, python-brace-format
 msgid "No draft {run_id} for this meeting."
 msgstr "此会议没有草稿 {run_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1470
+#: packages/clear-record/src/clear_record/web/app.py:1587
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:1475
+#: packages/clear-record/src/clear_record/web/app.py:1592
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:1508
-#: packages/clear-record/src/clear_record/web/app.py:1527
+#: packages/clear-record/src/clear_record/web/app.py:1625
+#: packages/clear-record/src/clear_record/web/app.py:1644
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:1721
-#: packages/clear-record/src/clear_record/web/app.py:1766
+#: packages/clear-record/src/clear_record/web/app.py:1842
+#: packages/clear-record/src/clear_record/web/app.py:1887
 msgid "The endpoint did not answer a test call."
 msgstr "该端点未响应测试调用。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1734
+#: packages/clear-record/src/clear_record/web/app.py:1855
 #, python-brace-format
 msgid "Recorded {endpoint} in {path}."
 msgstr "已将 {endpoint} 记录到 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1758
+#: packages/clear-record/src/clear_record/web/app.py:1879
 msgid "The model could not be pulled."
 msgstr "无法拉取该模型。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1777
+#: packages/clear-record/src/clear_record/web/app.py:1898
 #, python-brace-format
 msgid "Pulled {model} and recorded it."
 msgstr "已拉取 {model} 并记录。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1802
+#: packages/clear-record/src/clear_record/web/app.py:1929
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1831
+#: packages/clear-record/src/clear_record/web/app.py:1964
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
@@ -887,72 +932,6 @@ msgid ""
 "variable that holds it, and a local endpoint needs none."
 msgstr "clear-record 从不存储密钥：托管端点只需指定保存密钥的环境变量名，本地端点则不需要。"
 
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:114
-msgid "Agent harness (MCP)"
-msgstr "智能体宿主（MCP）"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:117
-#, python-brace-format
-msgid "Client config: {path}"
-msgstr "客户端配置：{path}"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:119
-msgid ""
-"No MCP client config has been pointed at yet, so no agent can launch "
-"clear-record's tools."
-msgstr "尚未指定 MCP 客户端配置，因此没有智能体能启动 clear-record 的工具。"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:122
-#, python-brace-format
-msgid "Harness: {path}"
-msgstr "宿主：{path}"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:136
-msgid "Point at this"
-msgstr "指向它"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:139
-msgid "not on PATH"
-msgstr "不在 PATH 中"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:146
-msgid "path to pi-agent or another MCP-capable harness"
-msgstr "pi-agent 或其他支持 MCP 的智能体宿主的路径"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:147
-msgid "Point at this path"
-msgstr "指向此路径"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:152
-#, python-brace-format
-msgid ""
-"{name} is not bundled, and this setup will not download one for you: get "
-"{name} (or any other MCP-capable client) the way you get software "
-"yourself, then point at it above."
-msgstr "{name} 未随本工具附带，此设置也不会替你下载：请按你惯常的方式获取 {name}（或任何其他支持 MCP 的客户端），然后在上方指向它。"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:154
-msgid "MCP client config"
-msgstr "MCP 客户端配置"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:159
-msgid "path to your MCP client config (.json)"
-msgstr "你的 MCP 客户端配置路径（.json）"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:160
-msgid "Register clear-record here"
-msgstr "在此注册 clear-record"
-
-#: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:162
-#, python-brace-format
-msgid ""
-"The path is yours to choose: a client's config location is not something "
-"clear-record can know. clear-record adds one entry to that file and "
-"leaves the rest of it alone — the command {command} with args {args}."
-msgstr ""
-"路径由你自行选择：客户端的配置位置不是 clear-record 所能知道的。clear-record 只在该文件中添加一个条目，其余内容保持原样"
-" —— 命令 {command}，参数 {args}。"
-
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:20
@@ -1001,11 +980,6 @@ msgstr "会议"
 msgid "Path"
 msgstr "路径"
 
-#: packages/clear-record/src/clear_record/web/templates/_archives.html:5
-#: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
-msgid "Status"
-msgstr "状态"
-
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:19
 msgid "checking…"
 msgstr "检查中…"
@@ -1021,6 +995,82 @@ msgstr "暂无归档。"
 #: packages/clear-record/src/clear_record/web/templates/_detail.html:6
 msgid "No notes."
 msgstr "无备注。"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:8
+#, python-brace-format
+msgid ""
+"clear-record exposes its tools over MCP as the command {command} with "
+"args {args}. Point an MCP-capable harness at it, then register it in that"
+" harness's client config."
+msgstr ""
+"clear-record 通过 MCP 以命令 {command} 和参数 {args} 暴露其工具。将支持 MCP 的 harness "
+"指向它，然后在该 harness 的客户端配置中注册。"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:16
+#, python-brace-format
+msgid "Client config: {path}"
+msgstr "客户端配置：{path}"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:18
+msgid ""
+"No MCP client config has been pointed at yet, so no agent can launch "
+"clear-record's tools."
+msgstr "尚未指定 MCP 客户端配置，因此没有智能体能启动 clear-record 的工具。"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:21
+#, python-brace-format
+msgid "Harness: {path}"
+msgstr "宿主：{path}"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:24
+msgid "Agent harness (MCP)"
+msgstr "智能体宿主（MCP）"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:38
+msgid "Point at this"
+msgstr "指向它"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:41
+msgid "not on PATH"
+msgstr "不在 PATH 中"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:49
+msgid "path to pi-agent or another MCP-capable harness"
+msgstr "pi-agent 或其他支持 MCP 的智能体宿主的路径"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:50
+msgid "Point at this path"
+msgstr "指向此路径"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:55
+#, python-brace-format
+msgid ""
+"{name} is not bundled, and this setup will not download one for you: get "
+"{name} (or any other MCP-capable client) the way you get software "
+"yourself, then point at it above."
+msgstr "{name} 未随本工具附带，此设置也不会替你下载：请按你惯常的方式获取 {name}（或任何其他支持 MCP 的客户端），然后在上方指向它。"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:57
+msgid "MCP client config"
+msgstr "MCP 客户端配置"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:63
+msgid "path to your MCP client config (.json)"
+msgstr "你的 MCP 客户端配置路径（.json）"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:64
+msgid "Register clear-record here"
+msgstr "在此注册 clear-record"
+
+#: packages/clear-record/src/clear_record/web/templates/_mcp_setup.html:66
+#, python-brace-format
+msgid ""
+"The path is yours to choose: a client's config location is not something "
+"clear-record can know. clear-record adds one entry to that file and "
+"leaves the rest of it alone — the command {command} with args {args}."
+msgstr ""
+"路径由你自行选择：客户端的配置位置不是 clear-record 所能知道的。clear-record 只在该文件中添加一个条目，其余内容保持原样"
+" —— 命令 {command}，参数 {args}。"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:13
 msgid "Back to the project"
@@ -1226,6 +1276,7 @@ msgid "resolved knobs"
 msgstr "已解析参数"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:16
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:44
 msgid "no preset — every knob stays as you set it."
 msgstr "无预设 — 各项参数保持你设定的值。"
 
@@ -1273,6 +1324,7 @@ msgid_plural "{count} terms"
 msgstr[0] "{count} 个术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_projects.html:14
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:40
 msgid "No projects yet."
 msgstr "暂无项目。"
 
@@ -1283,6 +1335,149 @@ msgstr "预计剩余"
 #: packages/clear-record/src/clear_record/web/templates/_run.html:22
 msgid "Transcription progress"
 msgstr "转写进度"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_backends.html:5
+msgid ""
+"Availability is probed on this machine. The reason names the accelerator "
+"found, or the piece that is missing."
+msgstr "可用性在本机探测。原因会指出检测到的加速器，或缺失的部分。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_backends.html:12
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:38
+msgid "available"
+msgstr "可用"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_backends.html:14
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:40
+msgid "unavailable"
+msgstr "不可用"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_backends.html:21
+#, python-brace-format
+msgid ""
+"Backends are chosen per run; nothing here writes. The rest of the config "
+"lives in {path}."
+msgstr "后端按每次运行选择；此处不写入任何内容。其余配置位于 {path}。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:8
+msgid "Default model"
+msgstr "默认模型"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:9
+msgid "the built-in checkpoint"
+msgstr "内置检查点"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:12
+msgid "Default language"
+msgstr "默认语言"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:13
+msgid "detected from the tape"
+msgstr "从录音自动检测"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:16
+msgid "Model directory"
+msgstr "模型目录"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:20
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:17
+msgid "Config file"
+msgstr "配置文件"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:27
+msgid "Models present"
+msgstr "已有模型"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
+msgid "No ggml checkpoints in the models directory."
+msgstr "模型目录中没有 ggml 检查点。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:36
+msgid "Built-in profiles"
+msgstr "内置预设"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_models.html:49
+#, python-brace-format
+msgid ""
+"These are the defaults a run uses when it sets nothing. Edit {path} or "
+"set them per run to change them."
+msgstr "这些是运行时未指定任何设置时使用的默认值。编辑 {path}，或在每次运行时单独设置即可更改。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:7
+msgid "Version"
+msgstr "版本"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:15
+msgid "Queue"
+msgstr "队列"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:21
+#, python-brace-format
+msgid "position {n}"
+msgstr "第 {n} 位"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:28
+msgid "No runs queued or running."
+msgstr "没有排队或运行中的任务。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:31
+msgid "Backend availability"
+msgstr "后端可用性"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:48
+#: packages/clear-record/src/clear_record/web/templates/base.html:51
+msgid "Diagnostics"
+msgstr "诊断"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:49
+msgid "Download diagnostics"
+msgstr "下载诊断"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:51
+msgid "Hello World check"
+msgstr "Hello World 检查"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:53
+msgid ""
+"Not available yet. This is the permanent end-to-end check — a hello-world"
+" tape through transcription and the MCP round-trip — that re-runs here to"
+" localize a fault."
+msgstr "暂不可用。这是永久的端到端检查——一段 hello-world 录音经过转写和 MCP 往返——可在此重新运行以定位故障。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:9
+#: packages/clear-record/src/clear_record/web/templates/_storage.html:45
+msgid "Managed root"
+msgstr "受管根目录"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:13
+msgid "Free space"
+msgstr "可用空间"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:24
+msgid "Archive roots"
+msgstr "归档根目录"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
+msgid "Project"
+msgstr "项目"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
+msgid "Archive root"
+msgstr "归档根目录"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:34
+msgid "not set"
+msgstr "未设置"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:42
+#, python-brace-format
+msgid ""
+"Retention is manual only: clear-record never deletes tapes on its own, "
+"and the archive is the durable copy. Set the managed root in {path}; a "
+"project's archive root is edited on the project."
+msgstr ""
+"保留策略仅手动执行：clear-record 绝不自行删除录音，归档才是持久副本。在 {path} "
+"中设置托管根目录；项目的归档根目录在项目页中编辑。"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:13
 msgid "managed workspace"
@@ -1310,10 +1505,6 @@ msgstr "已上传录音：{size}"
 #, python-brace-format
 msgid "Free on the managed disk: {free}"
 msgstr "受管磁盘可用空间：{free}"
-
-#: packages/clear-record/src/clear_record/web/templates/_storage.html:45
-msgid "Managed root"
-msgstr "受管根目录"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:47
 msgid ""
@@ -1580,7 +1771,7 @@ msgstr "主导航"
 
 #: packages/clear-record/src/clear_record/web/templates/base.html:32
 #: packages/clear-record/src/clear_record/web/templates/settings.html:3
-#: packages/clear-record/src/clear_record/web/templates/settings.html:10
+#: packages/clear-record/src/clear_record/web/templates/settings.html:12
 msgid "Settings"
 msgstr "设置"
 
@@ -1602,10 +1793,6 @@ msgstr "语言"
 msgid "Download a redacted diagnostics bundle (not telemetry)"
 msgstr "下载已脱敏的诊断信息包（非遥测）"
 
-#: packages/clear-record/src/clear_record/web/templates/base.html:51
-msgid "Diagnostics"
-msgstr "诊断"
-
 #: packages/clear-record/src/clear_record/web/templates/base.html:54
 msgid "stopping…"
 msgstr "正在停止…"
@@ -1618,14 +1805,25 @@ msgstr "退出"
 msgid "Recent"
 msgstr "最近"
 
-#: packages/clear-record/src/clear_record/web/templates/settings.html:23
+#: packages/clear-record/src/clear_record/web/templates/settings.html:33
 #: packages/clear-record/src/clear_record/web/templates/setup.html:12
 msgid "Loading agent setup…"
 msgstr "正在加载智能体设置…"
 
-#: packages/clear-record/src/clear_record/web/templates/settings.html:28
+#: packages/clear-record/src/clear_record/web/templates/settings.html:40
+msgid "Loading MCP setup…"
+msgstr "正在加载 MCP 设置…"
+
+#: packages/clear-record/src/clear_record/web/templates/settings.html:46
 msgid "Loading webhook status…"
 msgstr "正在加载 Webhook 状态…"
+
+#: packages/clear-record/src/clear_record/web/templates/settings.html:48
+#, python-brace-format
+msgid ""
+"Endpoints are read from the config file at {path}; edit it to add or "
+"change one."
+msgstr "端点从配置文件 {path} 读取；编辑该文件即可添加或更改。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).

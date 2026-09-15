@@ -68,7 +68,20 @@ from clear_record.service import (
     resolve_run,
     verify_archive,
 )
-from clear_record.service.auto import render_message as render_service_message
+from clear_record.service.archive import tool_version
+from clear_record.service.auto import (
+    DEFAULT_MODEL,
+    models_on_disk,
+    render_message as render_service_message,
+)
+from clear_record.service.diagnostics import backend_status
+from clear_record.service.paths import (
+    config_path,
+    resolve_data_dir,
+    resolve_logs_dir,
+    resolve_models_dir,
+    resolve_state_dir,
+)
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
     Detection,
@@ -127,13 +140,18 @@ TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
 
 #: The Settings page's sections (ADR-0027): each is a real URL,
 #: ``/settings/<slug>``. This is the control plane's spine, not the project
-#: navigation. Ticket 03 grows the set; today it holds the two surfaces the
-#: console already has - the agent endpoint/MCP setup and the webhook panel.
+#: navigation. The pinned sections (ticket 03): each is one job at a time.
+#: Only agent and MCP write; every other section shows its config path.
 #: The labels are ``deferred`` so Babel extracts them here while the template's
 #: ``tr`` picks the *request's* locale, not the import-time one.
 SETTINGS_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("models", deferred("Models")),
+    ("backends", deferred("Backends")),
     ("agent", deferred("Agent")),
+    ("mcp", deferred("MCP")),
     ("webhooks", deferred("Webhooks")),
+    ("storage", deferred("Storage")),
+    ("status", deferred("Status")),
 )
 
 #: How many of the newest meetings the Projects landing's activity line and a
@@ -1048,6 +1066,107 @@ def create_app(
         rows.sort(key=lambda row: row["artifact"].id, reverse=True)
         return rows
 
+    # --- Settings: the control plane (ADR-0027) ----------------------------- #
+    def backend_rows() -> list[dict]:
+        """Each ASR backend's availability and its reason, in catalog order.
+
+        diagnostics.backend_status is the service's one probe (it reaches
+        providers through cli, which the web layer may not import); the console
+        only renders the verdict and the reason, never recomputes them.
+        """
+        return [
+            {
+                "id": backend_id,
+                "available": verdict["available"],
+                "reason": verdict["reason"],
+            }
+            for backend_id, verdict in backend_status().items()
+        ]
+
+    def models_context() -> dict:
+        """The transcription defaults: model, language, models dir, profiles.
+
+        models_on_disk and DEFAULT_MODEL are the service's own reads
+        (re-exported from cli.auto), and profile_preview is the same resolver
+        the run form previews, so the page cannot disagree with a run.
+        """
+        return {
+            "default_model": DEFAULT_MODEL,
+            "default_language": "auto",
+            "models_dir": str(resolve_models_dir()),
+            "models_present": sorted(models_on_disk()),
+            "profiles": [profile_preview(name) for name in PROFILE_CHOICES],
+            "config_path": str(config_path()),
+        }
+
+    def storage_settings_context() -> dict:
+        """The managed root, its free space and each project's archive root."""
+        root = managed.managed_root()
+        try:
+            free_size = human_bytes(managed.root_free_bytes(root))
+        except OSError:
+            free_size = None
+        return {
+            "managed_root": str(root),
+            "free_size": free_size,
+            "archive_roots": [
+                {"project": project, "root": project.default_archive_root}
+                for project in registry.list_projects()
+            ],
+            "config_path": str(config_path()),
+        }
+
+    def status_context() -> dict:
+        """Version, the resolved directories, the queue and backend availability."""
+        queue = []
+        for run in registry.runs_with_status("queued", "running"):
+            meeting = registry.meeting_by_id(run.meeting_id)
+            queue.append(
+                {
+                    "run": run,
+                    "project_slug": meeting.project_slug if meeting else "",
+                    "meeting_title": meeting.title if meeting else "",
+                    "position": registry.queue_position(run.id),
+                }
+            )
+        return {
+            "version": tool_version(),
+            "dirs": [
+                {"label": tr("Data"), "path": str(resolve_data_dir())},
+                {"label": tr("State"), "path": str(resolve_state_dir())},
+                {"label": tr("Logs"), "path": str(resolve_logs_dir())},
+                {"label": tr("Config"), "path": str(config_path())},
+                {"label": tr("Models"), "path": str(resolve_models_dir())},
+            ],
+            "queue": queue,
+            "backends": backend_rows(),
+            "config_path": str(config_path()),
+        }
+
+    def settings_context(section: str) -> dict:
+        """Everything one Settings section renders, from the service only.
+
+        Only the active section's reads run, so opening Settings never probes
+        what the operator is not looking at (agent, MCP and webhooks load their
+        panels as htmx fragments).
+        """
+        context: dict = {
+            "section": section,
+            "settings_sections": SETTINGS_SECTIONS,
+        }
+        if section == "models":
+            context.update(models_context())
+        elif section == "backends":
+            context["backends"] = backend_rows()
+            context["config_path"] = str(config_path())
+        elif section == "webhooks":
+            context["config_path"] = str(config_path())
+        elif section == "storage":
+            context.update(storage_settings_context())
+        elif section == "status":
+            context.update(status_context())
+        return context
+
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
     def page(
         request: Request,
@@ -1185,8 +1304,7 @@ def create_app(
             request,
             "settings.html",
             nav="settings",
-            section="agent",
-            settings_sections=SETTINGS_SECTIONS,
+            **settings_context(SETTINGS_SECTIONS[0][0]),
         )
 
     @app.get("/settings/{section}", response_class=HTMLResponse)
@@ -1204,8 +1322,7 @@ def create_app(
             request,
             "settings.html",
             nav="settings",
-            section=section,
-            settings_sections=SETTINGS_SECTIONS,
+            **settings_context(section),
         )
 
     @app.get("/setup", response_class=HTMLResponse)
@@ -1660,6 +1777,7 @@ def create_app(
         error: str | None = None,
         notice: str | None = None,
         status_code: int = 200,
+        part: str = "agent",
     ) -> HTMLResponse:
         """The setup panel: the service's state, plus whatever a step just did.
 
@@ -1668,9 +1786,11 @@ def create_app(
         endpoint from the one a task would call. This boundary only renders and
         translates (the same split ``refusal()`` uses for an upload guard).
         """
+        # part="mcp" renders the MCP rung alone; the default is the whole flow.
+        standalone = part == "mcp"
         return TEMPLATES.TemplateResponse(
             request,
-            "_agent_setup.html",
+            "_mcp_setup.html" if standalone else "_agent_setup.html",
             {
                 "setup": setup_view(detection=detection),
                 "default_model": DEFAULT_SMALL_MODEL,
@@ -1680,6 +1800,7 @@ def create_app(
                 "harnesses": find_harness(),
                 "pi_agent": PI_AGENT,
                 "mcp_entry": mcp_server_entry(),
+                "mcp_context": "mcp" if standalone else "agent",
                 "error": error,
                 "notice": notice,
             },
@@ -1687,9 +1808,9 @@ def create_app(
         )
 
     @app.get("/ui/agent-setup", response_class=HTMLResponse)
-    def ui_agent_setup(request: Request) -> HTMLResponse:
+    def ui_agent_setup(request: Request, part: str = "agent") -> HTMLResponse:
         """The setup state, with no probe on a plain render (so a page is instant)."""
-        return agent_setup_panel(request)
+        return agent_setup_panel(request, part="mcp" if part == "mcp" else "agent")
 
     @app.get("/ui/agent-setup/detect", response_class=HTMLResponse)
     def ui_agent_setup_detect(request: Request) -> HTMLResponse:
@@ -1781,6 +1902,7 @@ def create_app(
     def ui_agent_setup_mcp_harness(
         request: Request,
         harness: str = Form(...),
+        part: str = Form("agent"),
     ) -> HTMLResponse:
         """Point at an existing MCP-capable harness, and remember it.
 
@@ -1789,15 +1911,20 @@ def create_app(
         location, and the service's ``resolve_harness`` refuses anything it could
         not actually run, so a typo is reported rather than recorded.
         """
+        panel_part = "mcp" if part == "mcp" else "agent"
         try:
             pointed = resolve_harness(harness)
         except SetupError as exc:
             return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
+                request,
+                part=panel_part,
+                error=exc.message.render(tr),
+                status_code=400,
             )
         remember_harness(pointed)
         return agent_setup_panel(
             request,
+            part=panel_part,
             notice=tr(
                 "Pointed at the agent harness {path}.",
                 path=pointed.path or pointed.name,
@@ -1808,6 +1935,7 @@ def create_app(
     def ui_agent_setup_mcp_config(
         request: Request,
         config: str = Form(...),
+        part: str = Form("agent"),
     ) -> HTMLResponse:
         """Register clear-record's MCP server in the client config the user names.
 
@@ -1819,14 +1947,19 @@ def create_app(
         its args, with no environment block, because the MCP server needs no
         credential (the agent brings its own model).
         """
+        panel_part = "mcp" if part == "mcp" else "agent"
         try:
             path = write_mcp_config(config)
         except SetupError as exc:
             return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
+                request,
+                part=panel_part,
+                error=exc.message.render(tr),
+                status_code=400,
             )
         return agent_setup_panel(
             request,
+            part=panel_part,
             notice=tr(
                 "Registered the clear-record MCP server in {path}.",
                 path=str(path),

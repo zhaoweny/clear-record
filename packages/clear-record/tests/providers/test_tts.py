@@ -314,6 +314,9 @@ def test_a_header_only_wav_is_a_failure(monkeypatch, tmp_path) -> None:
 def test_the_pinned_synthesize_returns_the_path(monkeypatch, tmp_path) -> None:
     runner = FakeRunner()
     monkeypatch.setattr(tts, "_run", runner)
+    # The pinned synthesize() has no engines= parameter, so it detects. Stub the
+    # probe too, or a runner with no TTS engine (CI Linux) raises instead.
+    _which(monkeypatch, {"say": "/usr/bin/say"})
     out = tmp_path / "clip.wav"
 
     assert synthesize("hello", lang="en", out_path=out) == out

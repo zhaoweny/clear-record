@@ -59,6 +59,34 @@ def test_no_external_commands_leaves_the_surface_unchanged(monkeypatch) -> None:
     assert CliRunner().invoke(group, ["backends", "--all"]).exit_code == 0
 
 
+def test_a_provider_that_cannot_import_is_skipped_not_fatal(monkeypatch) -> None:
+    """A missing extra must not kill the CLI.
+
+    Entry points are declared whether or not the extra that supplies their
+    dependencies is installed, and the packaged macOS app shipped without
+    clear_record.mcp, so an unguarded load() made the frozen CLI die on
+    launch instead of exposing web and tray.
+    """
+
+    class _Unimportable:
+        name = "mcp"
+
+        def load(self):
+            raise ImportError("No module named 'clear_record.mcp'")
+
+    def register(group: click.Group) -> None:
+        @group.command(name="hello", help="say hello")
+        def hello() -> int:
+            return 0
+
+    monkeypatch.setattr(
+        cli, "_external_commands", lambda: [_Unimportable(), _FakeEntryPoint(register)]
+    )
+    group = cli._build_group()
+    assert "hello" in group.commands
+    assert "backends" in group.commands
+
+
 def test_web_entry_point_is_declared_in_the_installed_dist() -> None:
     declared = {
         ep.name: ep.value for ep in entry_points(group=cli.COMMAND_ENTRY_POINT_GROUP)

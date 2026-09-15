@@ -136,9 +136,22 @@ def _external_commands():
 
 
 def _register_external_subcommands(group: click.Group) -> None:
-    """Let each installed provider contribute its Click command to the group."""
+    """Let each installed provider contribute its Click command to the group.
+
+    A provider that cannot be imported is **skipped, not fatal**. Entry points
+    are declared by the distribution whether or not the extra supplying their
+    dependencies is installed, and a frozen bundle may not carry a provider
+    module at all, so a failed import must never take the whole CLI down --
+    that is what made the packaged macOS app die on launch with
+    "ModuleNotFoundError: clear_record.mcp". The provider command itself is
+    what names the missing extra.
+    """
     for entry_point in _external_commands():
-        entry_point.load()(group)
+        try:
+            register = entry_point.load()
+        except ImportError:
+            continue
+        register(group)
 
 
 # --------------------------------------------------------------------------- #

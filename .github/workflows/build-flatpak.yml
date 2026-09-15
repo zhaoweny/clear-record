@@ -1,16 +1,17 @@
 name: build-flatpak
 
-# Scaffold lane (ADR-0015): builds a Flatpak bundle on manual dispatch and on
-# v* tags and keeps it as a workflow artifact. It signs nothing and publishes
-# nowhere — Flathub submission is a deliberate, later, owner-gated step.
+# Scaffold lane (ADR-0015): builds a Flatpak bundle on MANUAL dispatch only and
+# keeps it as a workflow artifact. It signs nothing and publishes nowhere —
+# Flathub submission is a deliberate, later, owner-gated step.
 #
-# The manifest is a scaffold: `python3-modules.json` and the clear-record wheel
-# are generated here (the "heavy lifting"), and the whisper.cpp pin / Vulkan
-# build deps / icon / ffmpeg codecs are [OPEN] in packaging/flatpak/README.md.
+# Manual, not tag-triggered: the manifest is still a scaffold — `python3-modules.json`
+# and the clear-record wheel are generated here (the "heavy lifting"), while the
+# whisper.cpp pin / Vulkan build deps / icon / ffmpeg codecs are [OPEN] in
+# packaging/flatpak/README.md — so a release tag would fire a lane that cannot
+# yet succeed. Restore `push:
+#   tags: ["v[0-9]*"]` once those [OPEN] items close.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v[0-9]*"]
 
 permissions:
   contents: read

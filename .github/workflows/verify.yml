@@ -22,9 +22,9 @@ jobs:
     name: just verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
       - name: Install just
@@ -37,7 +37,7 @@ jobs:
         id: version
         run: echo "version=$(uv version --frozen --package clear-record --short)" >> "$GITHUB_OUTPUT"
       - name: Upload the built dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ steps.version.outputs.version }}
           path: dist/
@@ -50,9 +50,9 @@ jobs:
     # It is a SEPARATE job because the guard needs bun: `just verify` stays
     # Node-less, so a contributor who never touches the UI is not blocked.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
       - name: Install just
@@ -60,7 +60,7 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version: "1.4.2"
       - name: Guard — the committed assets match the front-end source
         run: just web-assets-check
 
@@ -74,9 +74,9 @@ jobs:
     # verify` stays Babel-free, so a contributor who never touches a translation
     # is not blocked. The runtime itself is stdlib `gettext`. See docs/i18n.md.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
       - name: Install just

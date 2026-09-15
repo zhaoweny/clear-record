@@ -43,9 +43,9 @@ jobs:
     name: build the dist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
       - name: Install just
@@ -61,7 +61,7 @@ jobs:
           uv pip install --python .smoke-venv --find-links dist "clear-record==${version}"
           .smoke-venv/bin/clear-record --help
       - name: Upload the dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -75,9 +75,9 @@ jobs:
       contents: read
       id-token: write # trusted publishing
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
       - name: Guard — refuse a dev version
@@ -100,7 +100,7 @@ jobs:
           fi
           echo "OK: tag ${ref} matches manifest version ${version}"
       - name: Download the dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/

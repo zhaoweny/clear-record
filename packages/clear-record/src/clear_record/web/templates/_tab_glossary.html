@@ -1,0 +1,71 @@
+{# The glossary table, its filters and the add-term form: unchanged from the
+   single-scroll page, ids and `#detail` targets kept so the `/ui/glossary/*`
+   fragments keep working. #}
+<div x-data="{ filter: 'all' }">
+  <h3>{{ tr("Glossary") }}</h3>
+  <div class="filters">
+    <span class="muted">{{ tr("Filter") }}</span>
+    <select x-model="filter">
+      <option value="all">{{ tr("all") }}</option>
+      {% for status in statuses %}
+      <option value="{{ status }}">{{ status }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {% if terms %}
+  <table class="table-glossary">
+    <thead>
+      <tr><th>{{ tr("Term") }}</th><th>{{ tr("Aliases") }}</th><th>{{ tr("Definition") }}</th><th>{{ tr("Status") }}</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for term in terms %}
+      <tr x-show="filter === 'all' || filter === '{{ term.status }}'">
+        <td>
+          <strong>{{ term.term }}</strong>
+          {% if term.reading %}<div class="muted">{{ term.reading }}</div>{% endif %}
+        </td>
+        <td>{{ term.aliases or "" }}</td>
+        <td>{{ term.definition or "" }}</td>
+        <td>
+          <span class="badge status-{{ term.status }}">{{ term.status }}</span>
+          <div class="muted term-by">{{ term.added_by }}</div>
+        </td>
+        <td>
+          <form hx-post="/ui/glossary/{{ term.id }}/status" hx-target="#detail"
+                hx-swap="innerHTML">
+            <select class="select-sm" name="status" aria-label="{{ tr("Term status") }}"
+                    onchange="this.form.requestSubmit()">
+              {% for status in statuses %}
+              <option value="{{ status }}" {% if status == term.status %}selected{% endif %}>{{ status }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          <button class="btn btn-icon btn-sm btn-danger-ghost" title="{{ tr("delete") }}"
+                  aria-label="{{ tr("Delete term") }}"
+                  hx-delete="/ui/glossary/{{ term.id }}"
+                  hx-target="#detail" hx-swap="innerHTML">&#10005;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">{{ tr("No glossary terms yet.") }}</div>
+  {% endif %}
+</div>
+
+<h3>{{ tr("Add a term") }}</h3>
+<form class="stack"
+      hx-post="/ui/projects/{{ project.slug }}/glossary"
+      hx-target="#detail"
+      hx-swap="innerHTML"
+      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
+  <div class="row">
+    <input name="term" placeholder="{{ tr("Term") }}" required>
+    <input name="reading" placeholder="{{ tr("Reading / pronunciation") }}">
+  </div>
+  <input name="aliases" placeholder="{{ tr("Aliases (comma separated)") }}">
+  <input name="definition" placeholder="{{ tr("Definition") }}">
+  <button class="primary" type="submit">{{ tr("Add term") }}</button>
+</form>

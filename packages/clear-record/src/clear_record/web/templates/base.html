@@ -24,6 +24,14 @@
       <circle cx="12" cy="12" r="4" fill="currentColor"/>
     </svg>
     <h1>clear-record</h1><span class="tag">{{ tr("project console") }}</span>
+    {# Top-level navigation. Real links, so a click works with no JavaScript;
+       `hx-boost` turns it into an in-place body swap with history when JS is
+       available. The current page is marked, never by colour alone. #}
+    <nav class="app-nav" hx-boost="true" aria-label="{{ tr('Main navigation') }}">
+      <a href="/"{% if nav == 'projects' %} aria-current="page"{% endif %}>{{ tr("Projects") }}</a>
+      <a href="/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>{{ tr("Settings") }}</a>
+      {% if setup_incomplete %}<a href="/setup"{% if nav == 'setup' %} aria-current="page"{% endif %}>{{ tr("Setup") }}</a>{% endif %}
+    </nav>
     <span class="badge" id="status">{% block status %}{{ tr("ready") }}{% endblock %}</span>
     {# The language switcher, beside the header's other controls: a plain form
        POST and a page reload — no client-side i18n framework. Each option is
@@ -45,6 +53,19 @@
             hx-post="/api/shutdown" hx-swap="none"
             onclick="this.disabled=true;this.textContent='{{ tr("stopping…") }}'">{{ tr("Quit") }}</button>
   </header>
+  {# The upgrade path is a notice, never a hijack: only a marker naming a
+     different version shows it, and Dismiss records the marker (ticket 04).
+     The Setup page carries its own update copy, so the notice is suppressed
+     there. #}
+  {% if setup_update and nav != 'setup' %}
+  <div class="setup-notice">
+    <span>{{ tr("clear-record was updated to {version}.", version=current_version) }}</span>
+    <a href="/setup?reason=update">{{ tr("Review setup") }}</a>
+    <form method="post" action="/setup/dismiss">
+      <button type="submit" class="btn btn-sm btn-ghost">{{ tr("Dismiss") }}</button>
+    </form>
+  </div>
+  {% endif %}
   <main>
     {% block body %}{% endblock %}
   </main>

@@ -1,0 +1,7 @@
+{# Backends: the shipped families and this machine's probe verdict for each. There
+   is nothing to write here; the list itself is shared with Settings -> Status. #}
+<div class="settings-group">
+  <p class="muted settings-note">{{ tr("Availability is probed on this machine. The reason names the accelerator found, or the piece that is missing.") }}</p>
+  {% include "_backend_list.html" %}
+  <p class="muted settings-note">{{ tr("Backends are chosen per run; nothing here writes. The rest of the config lives in {path}.", path=config_path) }}</p>
+</div>

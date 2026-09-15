@@ -1,0 +1,99 @@
+{# The Meetings tab: the operational surface. The add-meeting form, then one
+   card per meeting with its managed storage, tapes, run form and profiles, and
+   finally the archive table. The read-only tape/transcript inventory is the
+   Media tab; the minutes summary is on Overview. #}
+
+<h3>{{ tr("Add a meeting") }}</h3>
+<form class="stack"
+      hx-post="/ui/projects/{{ project.slug }}/meetings"
+      hx-target="#detail"
+      hx-swap="innerHTML"
+      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
+  <div class="row">
+    <input name="title" placeholder="{{ tr("Meeting title") }}" required>
+    <input name="workspace_path" placeholder="{{ tr("Workspace path") }}">
+  </div>
+  <div class="muted">{{ tr("Leave the path empty to let clear-record manage the workspace; a path uses a folder you choose.") }}</div>
+  <button class="primary" type="submit">{{ tr("Add meeting") }}</button>
+</form>
+
+{% if meetings %}
+  {% for row in meetings %}
+  <div class="meeting">
+    <div class="row meeting-head">
+      <strong>{{ row.meeting.title }}</strong>
+      <span class="badge">{{ row.meeting.status }}</span>
+      {% if row.managed %}
+      <span class="badge status-managed">{{ tr("managed") }}</span>
+      {% elif row.meeting.workspace_path %}
+      <span class="badge status-neutral">{{ tr("user-chosen") }}</span>
+      {% endif %}
+      <span class="muted meeting-path">{{ row.meeting.workspace_path or tr("no workspace") }}</span>
+      {# A real link to the review's own page: deep-linkable and refresh-safe. #}
+      <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
+    </div>
+    {# The managed workspace's storage: resolved path, sizes, tapes, upload and
+       delete controls. Fetched per meeting so the project render stays cheap. #}
+    <div id="storage-{{ row.meeting.id }}"
+         hx-get="/ui/meetings/{{ row.meeting.id }}/storage"
+         hx-trigger="load"
+         hx-swap="innerHTML"></div>
+    <form class="stack"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/tapes"
+          hx-target="#detail"
+          hx-swap="innerHTML">
+      <textarea name="paths" rows="3"
+                placeholder="{{ tr("One tape path per line") }}">{{ row.tapes }}</textarea>
+      <button type="submit">{{ tr("Save tapes") }}</button>
+    </form>
+    <form class="row run-form"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/runs"
+          hx-target="#run-{{ row.meeting.id }}"
+          hx-swap="outerHTML">
+      <select name="backend">
+        {% for backend in backends %}
+        <option value="{{ backend }}">{{ backend }}</option>
+        {% endfor %}
+      </select>
+      <input name="model" placeholder="{{ tr("model (optional)") }}">
+      <input name="language" placeholder="{{ tr("language (optional)") }}">
+      <select name="profile"
+              title="{{ tr("transcription profile") }}"
+              hx-get="/ui/profile-options"
+              hx-trigger="change"
+              hx-include="this"
+              hx-target="#profile-options-{{ row.meeting.id }}"
+              hx-swap="innerHTML">
+        {% for profile in profiles %}
+        <option value="{{ profile }}"{% if profile == profile_default %} selected{% endif %}>{{ profile }}</option>
+        {% endfor %}
+      </select>
+      {# Opt-in: never checked by default, so a run is unchanged unless asked. #}
+      <label class="row auto-toggle"
+             title="{{ tr("inspect this machine and the tape, choose a profile and model, and explain the choice") }}">
+        <input type="checkbox" name="auto" value="1"> {{ tr("auto") }}
+      </label>
+      <button class="primary" type="submit">{{ tr("Run") }}</button>
+    </form>
+    <div id="profile-options-{{ row.meeting.id }}" class="profile-options">
+      {% include "_profile_options.html" %}
+    </div>
+    {% if row.run %}
+      {% set run = row.run %}{% include "_run.html" %}
+    {% else %}
+      <div id="run-{{ row.meeting.id }}" class="run run-idle"><span class="muted">{{ tr("No run yet.") }}</span></div>
+    {% endif %}
+    <form class="row"
+          hx-post="/ui/meetings/{{ row.meeting.id }}/archives"
+          hx-target="#detail"
+          hx-swap="innerHTML">
+      <input name="root" placeholder="{{ tr("Archive root (optional)") }}">
+      <button type="submit">{{ tr("Archive") }}</button>
+    </form>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">{{ tr("No meetings yet.") }}</div>
+{% endif %}
+
+{% include "_archives.html" %}

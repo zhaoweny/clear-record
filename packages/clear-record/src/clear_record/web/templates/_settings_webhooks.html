@@ -1,0 +1,4 @@
+<div id="webhooks" hx-get="/ui/webhooks" hx-trigger="load, every 20s" hx-swap="innerHTML">
+  <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
+</div>
+<p class="muted settings-note">{{ tr("Endpoints are read from the config file at {path}; edit it to add or change one.", path=config_path) }}</p>

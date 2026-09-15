@@ -1,0 +1,53 @@
+{# Overview is the project's at-a-glance: what it is, the newest meetings to
+   re-enter, and the accepted minutes across it. The full meetings, glossary and
+   media inventory each have their own tab — this is not a dashboard. #}
+<div class="row overview-facts">
+  <span class="muted">{{ trn("{count} meeting", "{count} meetings", meeting_count, count=meeting_count) }}</span>
+  <span class="muted">{{ trn("{count} term", "{count} terms", term_count, count=term_count) }}</span>
+</div>
+
+<h3>{{ tr("Recent meetings") }}</h3>
+{% if recent %}
+<ul class="recent-meetings">
+  {% for row in recent %}
+  <li>
+    <a href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ row.meeting.title }}</a>
+    <span class="badge">{{ row.meeting.status }}</span>
+    {% if row.managed %}<span class="badge status-managed">{{ tr("managed") }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">{{ tr("No meetings yet.") }}</div>
+{% endif %}
+
+{# Minutes across the project (ticket 16): one row per meeting that has accepted
+   minutes, pointing at the meeting view where they are shown in full. #}
+<h3>{{ tr("Minutes") }}</h3>
+{% if minutes %}
+<table class="table-minutes">
+  <thead>
+    <tr>
+      <th>{{ tr("Meeting") }}</th>
+      <th>{{ tr("Accepted") }}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in minutes %}
+    <tr>
+      <td>
+        <strong>{{ row.meeting.title }}</strong>
+        {% if row.heading %}<div class="muted">{{ row.heading }}</div>{% endif %}
+      </td>
+      <td class="muted">{{ row.artifact.created_at }}</td>
+      <td>
+        <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open") }}</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">{{ tr("No accepted minutes yet.") }}</div>
+{% endif %}

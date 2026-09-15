@@ -89,7 +89,7 @@ def test_the_console_shows_plainly_that_no_endpoint_is_configured(tmp_path) -> N
     assert "/ui/agent-setup/use" in panel
     assert "/ui/agent-setup/detect" in panel
     # The state is on the page that loads the panel (htmx may not have run).
-    assert 'id="agent-setup"' in client.get("/").text
+    assert 'id="agent-setup"' in client.get("/settings/agent").text
 
 
 def test_the_json_api_starts_not_configured(tmp_path) -> None:

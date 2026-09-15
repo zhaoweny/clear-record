@@ -1,0 +1,42 @@
+{# The harness rung: find or point at an MCP-capable client. One implementation,
+   used twice: _agent_setup.html's Harness step, and _mcp_setup.html (the
+   standalone Settings -> MCP section). Both locations are the user's choice --
+   the console asks rather than inventing a path. #}
+{% set standalone = mcp_context == "mcp" %}
+{% set target = "#mcp-setup" if standalone else "#agent-setup" %}
+<div class="mcp-harness">
+  <p class="muted">{{ tr("clear-record exposes its tools over MCP as the command {command} with arguments {args}. Point an MCP-capable harness at it, then register it in that harness's client config.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
+
+  <h3>{{ tr("Agent harness (MCP)") }}</h3>
+
+  {% for harness in harnesses %}
+  <div class="row">
+    <code class="muted">{{ harness.name }}</code>
+    {% if harness.found %}
+    {# hx-vals carries the path find_harness found -- the same shape the endpoint
+       forms use, so no input markup the CSS scanner would read as a utility
+       class. tojson escapes the path into valid JSON, and the JSON's own quotes
+       are safe inside the single-quoted attribute. The path is still the user's
+       to accept: this only saves typing it. #}
+    <form hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
+          hx-swap="innerHTML" hx-vals='{{ {"harness": harness.path} | tojson }}'>
+      {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
+      <button class="btn btn-sm" type="submit">{{ tr("Point at this") }}</button>
+    </form>
+    {% else %}
+    <span class="badge status-missing">{{ tr("not on PATH") }}</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <form class="stack" hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
+        hx-swap="innerHTML">
+    {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
+    <input name="harness" value="" placeholder="{{ tr('path to pi-agent or another MCP-capable harness') }}">
+    <button type="submit">{{ tr("Point at this path") }}</button>
+  </form>
+
+  {# The download rung, told honestly: installing a harness is a human action,
+     and this setup neither bundles one nor performs a download. #}
+  <p class="muted agent-setup-note">{{ tr("{name} is not bundled, and this setup will not download one for you: get {name} (or any other MCP-capable client) the way you get software yourself, then point at it above.", name=pi_agent) }}</p>
+</div>

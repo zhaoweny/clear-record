@@ -66,20 +66,39 @@ from clear_record.service import (
     managed,
     read_transcript,
     resolve_run,
+    run_hello_check,
     verify_archive,
 )
-from clear_record.service.auto import render_message as render_service_message
+from clear_record.service.archive import tool_version
+from clear_record.service.auto import (
+    DEFAULT_MODEL,
+    models_on_disk,
+    render_message as render_service_message,
+)
+from clear_record.service.diagnostics import backend_status
+from clear_record.service.paths import (
+    config_path,
+    resolve_data_dir,
+    resolve_logs_dir,
+    resolve_models_dir,
+    resolve_state_dir,
+)
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
     Detection,
     PI_AGENT,
     SetupError,
+    current_version,
     detect,
     find_harness,
     mcp_server_entry,
     pull_model,
+    read_setup_state,
+    record_seen_version,
     remember_harness,
     resolve_harness,
+    seen_version,
+    setup_incomplete,
     setup_view,
     verify_endpoint,
     write_agent_settings,
@@ -124,6 +143,36 @@ TEMPLATES.env.globals["language_choices"] = LANGUAGE_CHOICES
 #: layering guard), but ``managed`` already owns that list for uploads.
 AUDIO_ACCEPT = ",".join(sorted(managed.AUDIO_SUFFIXES))
 TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
+
+#: The Settings page's sections (ADR-0027): each is a real URL,
+#: ``/settings/<slug>``. This is the control plane's spine, not the project
+#: navigation. The pinned sections (ticket 03): each is one job at a time.
+#: Only agent and MCP write; every other section shows its config path.
+#: Each entry is ``(slug, label, template)``; the template is the partial
+#: ``settings.html`` includes for that section, so the slug -> template mapping
+#: lives here once rather than as an if/elif in the page.
+#: The labels are ``deferred`` so Babel extracts them here while the template's
+#: ``tr`` picks the *request's* locale, not the import-time one.
+SETTINGS_SECTIONS: tuple[tuple[str, str, str], ...] = (
+    ("models", deferred("Models"), "_settings_models.html"),
+    ("backends", deferred("Backends"), "_settings_backends.html"),
+    ("agent", deferred("Agent"), "_settings_agent.html"),
+    ("mcp", deferred("MCP"), "_settings_mcp.html"),
+    ("webhooks", deferred("Webhooks"), "_settings_webhooks.html"),
+    ("storage", deferred("Storage"), "_settings_storage.html"),
+    ("status", deferred("Status"), "_settings_status.html"),
+)
+
+
+def settings_section(slug: str) -> tuple[str, str, str] | None:
+    """The ``(slug, label, template)`` entry for ``slug``, or ``None``."""
+    return next((entry for entry in SETTINGS_SECTIONS if entry[0] == slug), None)
+
+
+#: How many of the newest meetings the Projects landing's activity line and a
+#: project's Overview show. Both are cheap registry reads; walking every
+#: workspace for tapes and transcripts is the project's Media tab's job.
+RECENT_MEETINGS = 5
 
 
 def _accept_language_tags(header: str | None) -> list[str]:
@@ -623,9 +672,18 @@ def create_app(
 
     # --- HTML views (htmx + Alpine) ---------------------------------------- #
     def project_rows() -> list[dict]:
+        """Every project with its term and meeting counts, newest first.
+
+        The counts are the workspace at-a-glance facts (the project page owns
+        the full media inventory). Both are cheap registry reads.
+        """
         counts = registry.term_counts()
         return [
-            {"project": project, "term_count": counts.get(project.slug, 0)}
+            {
+                "project": project,
+                "term_count": counts.get(project.slug, 0),
+                "meeting_count": len(registry.list_meetings(project.slug)),
+            }
             for project in registry.list_projects()
         ]
 
@@ -708,28 +766,95 @@ def create_app(
             },
         )
 
-    def detail(request: Request, slug: str, error: str | None = None) -> HTMLResponse:
+    def project_context(
+        slug: str, tab: str = "overview", error: str | None = None
+    ) -> dict:
+        """Everything one project sub-tab renders, from the service only.
+
+        Each tab loads only what it shows, so a render (or a mutation's
+        re-render) never pays for the surfaces the operator is not looking at.
+        Raises ``KeyError`` for an unknown slug so each caller owns its 404:
+        the fragment route returns an ``HTTPException`` (htmx must not swap a
+        4xx), while the page route renders the not-found page.
+        """
+        project = registry.require_project(slug)
+        context: dict = {"project": project, "tab": tab, "error": error}
+        if tab == "meetings":
+            context.update(
+                meetings=meeting_rows(slug),
+                backends=BACKEND_CHOICES,
+                profiles=PROFILE_CHOICES,
+                profile_default=PROFILE_CUSTOM,
+                profile_options=profile_preview(PROFILE_CUSTOM),
+                archives=archive_rows(slug),
+            )
+        elif tab == "glossary":
+            context.update(terms=registry.list_terms(slug), statuses=TERM_STATUSES)
+        elif tab == "media":
+            context["media"] = media_rows(slug)
+        else:
+            meetings = registry.list_meetings(slug)
+            context.update(
+                meeting_count=len(meetings),
+                term_count=len(registry.list_terms(slug)),
+                recent=[
+                    {"meeting": meeting, "managed": managed.is_managed(meeting)}
+                    for meeting in meetings[:RECENT_MEETINGS]
+                ],
+                minutes=minutes_rows(slug),
+            )
+        return context
+
+    def media_rows(slug: str) -> list[dict]:
+        """Every meeting's tapes and transcript summary, from the service only.
+
+        Tapes are :func:`managed.meeting_storage` — the same accounting the
+        storage panel and the upload guard use — and the transcript summary is
+        :func:`read_transcript`, the read the MCP adapter and the review share.
+        The Media tab is an inventory: it restates no storage or transcript rule.
+        """
+        rows: list[dict] = []
+        for meeting in registry.list_meetings(slug):
+            usage = managed.meeting_storage(registry, meeting)
+            try:
+                transcript = read_transcript(meeting, limit=1)
+            except FileNotFoundError:
+                transcript = None
+            rows.append(
+                {
+                    "meeting": meeting,
+                    "workspace_path": usage["workspace_path"],
+                    "managed": usage["managed"],
+                    "tapes": [
+                        {
+                            "id": tape["id"],
+                            "name": tape["name"],
+                            "path": tape["path"],
+                            "sha256": tape["sha256"],
+                            "sha256_short": tape["sha256"][:12],
+                            "bytes": tape["bytes"],
+                            "size": human_bytes(tape["bytes"]),
+                        }
+                        for tape in usage["tapes"]
+                    ],
+                    "transcript": None
+                    if transcript is None
+                    else {"segments": transcript.total, "source": transcript.source},
+                }
+            )
+        return rows
+
+    def detail(
+        request: Request,
+        slug: str,
+        tab: str = "overview",
+        error: str | None = None,
+    ) -> HTMLResponse:
         try:
-            project = registry.require_project(slug)
+            context = project_context(slug, tab, error)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
-        return TEMPLATES.TemplateResponse(
-            request,
-            "_detail.html",
-            {
-                "project": project,
-                "terms": registry.list_terms(slug),
-                "statuses": TERM_STATUSES,
-                "meetings": meeting_rows(slug),
-                "backends": BACKEND_CHOICES,
-                "profiles": PROFILE_CHOICES,
-                "profile_default": PROFILE_CUSTOM,
-                "profile_options": profile_preview(PROFILE_CUSTOM),
-                "archives": archive_rows(slug),
-                "minutes": minutes_rows(slug),
-                "error": error,
-            },
-        )
+        return TEMPLATES.TemplateResponse(request, "_detail.html", context)
 
     # --- HTML views: a meeting's managed storage (ADR-0024) ---------------- #
     def human_bytes(count: int) -> str:
@@ -956,9 +1081,337 @@ def create_app(
         rows.sort(key=lambda row: row["artifact"].id, reverse=True)
         return rows
 
+    # --- Settings: the control plane (ADR-0027) ----------------------------- #
+    def backend_rows() -> list[dict]:
+        """Each ASR backend's availability and its reason, in catalog order.
+
+        diagnostics.backend_status is the service's one probe (it reaches
+        providers through cli, which the web layer may not import); the console
+        only renders the verdict and the reason, never recomputes them.
+        """
+        return [
+            {
+                "id": backend_id,
+                "available": verdict["available"],
+                "reason": verdict["reason"],
+            }
+            for backend_id, verdict in backend_status().items()
+        ]
+
+    def models_context() -> dict:
+        """The transcription defaults: model, language, models dir, profiles.
+
+        models_on_disk and DEFAULT_MODEL are the service's own reads
+        (re-exported from cli.auto), and profile_preview is the same resolver
+        the run form previews, so the page cannot disagree with a run.
+        """
+        return {
+            "default_model": DEFAULT_MODEL,
+            "default_language": "auto",
+            "models_dir": str(resolve_models_dir()),
+            "models_present": sorted(models_on_disk()),
+            "profiles": [profile_preview(name) for name in PROFILE_CHOICES],
+            "config_path": str(config_path()),
+        }
+
+    def storage_settings_context() -> dict:
+        """The managed root, its free space and each project's archive root."""
+        root = managed.managed_root()
+        try:
+            free_size = human_bytes(managed.root_free_bytes(root))
+        except OSError:
+            free_size = None
+        return {
+            "managed_root": str(root),
+            "free_size": free_size,
+            "archive_roots": [
+                {"project": project, "root": project.default_archive_root}
+                for project in registry.list_projects()
+            ],
+            "config_path": str(config_path()),
+        }
+
+    def status_context() -> dict:
+        """Version, the resolved directories, the queue and backend availability."""
+        queue = []
+        for run in registry.runs_with_status("queued", "running"):
+            meeting = registry.meeting_by_id(run.meeting_id)
+            queue.append(
+                {
+                    "run": run,
+                    "project_slug": meeting.project_slug if meeting else "",
+                    "meeting_title": meeting.title if meeting else "",
+                    "position": registry.queue_position(run.id),
+                }
+            )
+        return {
+            "version": tool_version(),
+            "dirs": [
+                {"label": tr("Data"), "path": str(resolve_data_dir())},
+                {"label": tr("State"), "path": str(resolve_state_dir())},
+                {"label": tr("Logs"), "path": str(resolve_logs_dir())},
+                {"label": tr("Config"), "path": str(config_path())},
+                {"label": tr("Models"), "path": str(resolve_models_dir())},
+            ],
+            "queue": queue,
+            "backends": backend_rows(),
+            "config_path": str(config_path()),
+            # The permanent hello-world check renders its idle state here; the
+            # /ui/hello-check POST swaps a result into #hello-check.
+            "check": None,
+        }
+
+    def settings_context(section: str) -> dict:
+        """Everything one Settings section renders, from the service only.
+
+        Only the active section's reads run, so opening Settings never probes
+        what the operator is not looking at (agent, MCP and webhooks load their
+        panels as htmx fragments).
+        """
+        entry = settings_section(section)
+        assert entry is not None  # the route validates the slug before calling
+        context: dict = {
+            "section": section,
+            "settings_sections": SETTINGS_SECTIONS,
+            "section_label": entry[1],
+            "section_template": entry[2],
+        }
+        if section == "models":
+            context.update(models_context())
+        elif section == "backends":
+            context["backends"] = backend_rows()
+            context["config_path"] = str(config_path())
+        elif section == "webhooks":
+            context["config_path"] = str(config_path())
+        elif section == "storage":
+            context.update(storage_settings_context())
+        elif section == "status":
+            context.update(status_context())
+        return context
+
+    # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
+    def setup_flags() -> dict:
+        """The setup marker's page-level facts (ADR-0027, ticket 04).
+
+        ``setup_incomplete`` shows the Setup link; ``setup_update`` shows the
+        dismissible "updated" notice. Both read the one record the service owns,
+        so the nav and the notice cannot disagree about the marker.
+        """
+        state = read_setup_state()
+        current = current_version()
+        seen = seen_version(state=state)
+        return {
+            "setup_incomplete": setup_incomplete(state=state, version=current),
+            "setup_update": bool(seen) and seen != current,
+            "current_version": current,
+        }
+
+    def page(
+        request: Request,
+        template: str,
+        *,
+        nav: str,
+        status_code: int = 200,
+        **extra,
+    ) -> HTMLResponse:
+        """A full page extending ``base.html``.
+
+        Every page needs the top-level nav item and the setup marker: the Setup
+        link and the update notice both come from :func:`setup_flags`, so a page
+        render cannot forget either.
+        """
+        return TEMPLATES.TemplateResponse(
+            request,
+            template,
+            {"nav": nav, **setup_flags(), **extra},
+            status_code=status_code,
+        )
+
+    def recent_meetings(projects: list[dict]) -> list[dict]:
+        """The newest meetings across every project, for the landing's one line.
+
+        A cheap registry read only: ``list_meetings()`` is newest first and
+        carries each meeting's project slug, whose name comes from the already
+        loaded project rows. Nothing here walks a workspace — the full tape and
+        transcript inventory is the project's Media tab (ADR-0027).
+        """
+        names = {row["project"].slug: row["project"].name for row in projects}
+        return [
+            {
+                "meeting": meeting,
+                "project_name": names.get(meeting.project_slug, meeting.project_slug),
+            }
+            for meeting in registry.list_meetings()[:RECENT_MEETINGS]
+        ]
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
-        return TEMPLATES.TemplateResponse(request, "index.html", {})
+        """The Projects workspace: the console lands here, not on a dashboard.
+
+        A genuine first run — installed, no marker recorded, and no projects yet
+        — starts at system readiness instead. Once either exists the workspace
+        is never hijacked (ADR-0027); an update shows a notice, not a redirect.
+        """
+        if seen_version() is None and not registry.list_projects():
+            return RedirectResponse("/setup", status_code=303)
+        projects = project_rows()
+        return page(
+            request,
+            "index.html",
+            nav="projects",
+            projects=projects,
+            recent=recent_meetings(projects),
+        )
+
+    def project_page(request: Request, slug: str, tab: str) -> HTMLResponse:
+        """A project page for one sub-tab, or the not-found page.
+
+        The tab is already validated by which route called this; the unknown
+        project (``KeyError``) is what each page route owns. The sidebar list
+        and the active-project mark ride along on every tab.
+        """
+        try:
+            context = project_context(slug, tab)
+        except KeyError:
+            return page(
+                request,
+                "404.html",
+                nav="projects",
+                status_code=404,
+                message=tr("No project named {slug}.", slug=slug),
+            )
+        return page(
+            request,
+            "project.html",
+            nav="projects",
+            active_slug=slug,
+            projects=project_rows(),
+            **context,
+        )
+
+    @app.get("/projects/{slug}", response_class=HTMLResponse)
+    def page_project(request: Request, slug: str) -> HTMLResponse:
+        """A project page: the URL is the source of truth for the selection.
+
+        The default tab is Overview; every other tab is its own URL, so a
+        refresh and the back button keep the operator where they were.
+        """
+        return project_page(request, slug, "overview")
+
+    @app.get("/projects/{slug}/meetings", response_class=HTMLResponse)
+    def page_project_meetings(request: Request, slug: str) -> HTMLResponse:
+        """The Meetings tab: the operational surface."""
+        return project_page(request, slug, "meetings")
+
+    @app.get("/projects/{slug}/glossary", response_class=HTMLResponse)
+    def page_project_glossary(request: Request, slug: str) -> HTMLResponse:
+        """The Glossary tab: the project's terms."""
+        return project_page(request, slug, "glossary")
+
+    @app.get("/projects/{slug}/media", response_class=HTMLResponse)
+    def page_project_media(request: Request, slug: str) -> HTMLResponse:
+        """The Media tab: every meeting's tapes and transcripts."""
+        return project_page(request, slug, "media")
+
+    @app.get("/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    def page_meeting(
+        request: Request, slug: str, meeting_slug: str, offset: int = 0
+    ) -> HTMLResponse:
+        """One meeting's review as its own page (transcript, artifacts, drafts).
+
+        The URL is the source of truth, so a refresh or a shared link keeps the
+        review; the review's own controls still swap the ``#detail`` fragment.
+        """
+        meeting = registry.get_meeting(slug, meeting_slug)
+        if meeting is None:
+            return page(
+                request,
+                "404.html",
+                nav="projects",
+                status_code=404,
+                message=tr("No meeting named {meeting}.", meeting=meeting_slug),
+            )
+        return page(
+            request,
+            "meeting.html",
+            nav="projects",
+            active_slug=slug,
+            projects=project_rows(),
+            tab="meetings",
+            **meeting_context(meeting, offset=max(0, offset)),
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def page_settings(request: Request) -> HTMLResponse:
+        """Settings lands on the first section, not an empty overview."""
+        return page(
+            request,
+            "settings.html",
+            nav="settings",
+            **settings_context(SETTINGS_SECTIONS[0][0]),
+        )
+
+    @app.get("/settings/{section}", response_class=HTMLResponse)
+    def page_settings_section(request: Request, section: str) -> HTMLResponse:
+        """One Settings section, or the not-found page for an unknown slug."""
+        if settings_section(section) is None:
+            return page(
+                request,
+                "404.html",
+                nav="settings",
+                status_code=404,
+                message=tr("No settings section named {name}.", name=section),
+            )
+        return page(
+            request,
+            "settings.html",
+            nav="settings",
+            **settings_context(section),
+        )
+
+    @app.get("/setup", response_class=HTMLResponse)
+    def page_setup(request: Request) -> HTMLResponse:
+        """Setup: system readiness, a numbered sequence (ticket 04).
+
+        The Agent step embeds the one agent flow (the same #agent-setup mount
+        Settings -> Agent uses), and the First record step points at that flow's
+        Try it check and at the permanent copy in Settings -> Status. Nothing
+        here is a second tape implementation.
+        """
+        return page(
+            request,
+            "setup.html",
+            nav="setup",
+            reason=request.query_params.get("reason", ""),
+            models_dir=str(resolve_models_dir()),
+            models_present=sorted(models_on_disk()),
+        )
+
+    @app.get("/setup/agent", response_class=HTMLResponse)
+    def page_setup_agent(request: Request) -> HTMLResponse:
+        """The setup wizard's Agent step as its own URL (ticket 05).
+
+        It mounts the same one flow (#agent-setup -> /ui/agent-setup) that
+        /settings/agent mounts, so the two entry points cannot drift.
+        """
+        return page(request, "agent.html", nav="setup")
+
+    @app.post("/setup/complete")
+    def complete_setup() -> RedirectResponse:
+        """Leave the wizard having seen this version, and land back in Projects.
+
+        COMPLETE is one of the only two writes that record the marker; visiting
+        or skipping a step records nothing, so the wizard cannot vanish
+        silently.
+        """
+        record_seen_version()
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/setup/dismiss")
+    def dismiss_setup() -> RedirectResponse:
+        """Dismiss the update notice: the same marker write as COMPLETE."""
+        record_seen_version()
+        return RedirectResponse("/", status_code=303)
 
     @app.post("/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
@@ -985,7 +1438,7 @@ def create_app(
     @app.get("/ui/projects", response_class=HTMLResponse)
     def ui_projects(request: Request) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows()}
+            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
         )
 
     @app.post("/ui/projects", response_class=HTMLResponse)
@@ -995,12 +1448,25 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows()}
+            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
         )
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
-        return detail(request, slug)
+        """The Overview tab as a fragment (the project page's default)."""
+        return detail(request, slug, tab="overview")
+
+    @app.get("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    def ui_project_meetings(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="meetings")
+
+    @app.get("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    def ui_project_glossary(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="glossary")
+
+    @app.get("/ui/projects/{slug}/media", response_class=HTMLResponse)
+    def ui_project_media(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="media")
 
     # --- HTML views: a meeting's transcript, artifacts and agent tasks ------ #
     @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
@@ -1097,7 +1563,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return detail(request, slug)
+        return detail(request, slug, tab="glossary")
 
     @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
@@ -1109,7 +1575,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return detail(request, term.project_slug)
+        return detail(request, term.project_slug, tab="glossary")
 
     @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
     def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
@@ -1117,7 +1583,7 @@ def create_app(
         if term is None:
             raise HTTPException(status_code=404, detail=f"no term {term_id}")
         registry.delete_term(term_id)
-        return detail(request, term.project_slug)
+        return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
     @app.post("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
@@ -1147,11 +1613,11 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except managed.UploadRejected as exc:
             # The meeting exists but its managed workspace could not be made:
-            # re-render the project with the service's message.
-            return detail(request, slug, error=str(exc))
+            # re-render the tab with the service's message.
+            return detail(request, slug, tab="meetings", error=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return detail(request, slug)
+        return detail(request, slug, tab="meetings")
 
     @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_set_tapes(
@@ -1165,7 +1631,7 @@ def create_app(
             registry.set_recording_set(meeting_id, tapes)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return detail(request, meeting.project_slug)
+        return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
     def ui_meeting_storage(request: Request, meeting_id: int) -> HTMLResponse:
@@ -1271,9 +1737,9 @@ def create_app(
             archive_meeting(registry, meeting, root or None)
         except ValueError as exc:
             # A missing archive root is fixable in the form, so re-render the
-            # project with the message rather than an error status htmx skips.
-            return detail(request, meeting.project_slug, error=str(exc))
-        return detail(request, meeting.project_slug)
+            # tab with the message rather than an error status htmx skips.
+            return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
+        return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
     @app.post("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
@@ -1392,6 +1858,7 @@ def create_app(
         error: str | None = None,
         notice: str | None = None,
         status_code: int = 200,
+        part: str = "agent",
     ) -> HTMLResponse:
         """The setup panel: the service's state, plus whatever a step just did.
 
@@ -1400,9 +1867,11 @@ def create_app(
         endpoint from the one a task would call. This boundary only renders and
         translates (the same split ``refusal()`` uses for an upload guard).
         """
+        # part="mcp" renders the MCP rung alone; the default is the whole flow.
+        standalone = part == "mcp"
         return TEMPLATES.TemplateResponse(
             request,
-            "_agent_setup.html",
+            "_mcp_setup.html" if standalone else "_agent_setup.html",
             {
                 "setup": setup_view(detection=detection),
                 "default_model": DEFAULT_SMALL_MODEL,
@@ -1412,16 +1881,20 @@ def create_app(
                 "harnesses": find_harness(),
                 "pi_agent": PI_AGENT,
                 "mcp_entry": mcp_server_entry(),
+                "mcp_context": "mcp" if standalone else "agent",
                 "error": error,
                 "notice": notice,
+                # No check has run on a plain render; the Try it stage shows its
+                # idle state and the POST below swaps a result in.
+                "check": None,
             },
             status_code=status_code,
         )
 
     @app.get("/ui/agent-setup", response_class=HTMLResponse)
-    def ui_agent_setup(request: Request) -> HTMLResponse:
+    def ui_agent_setup(request: Request, part: str = "agent") -> HTMLResponse:
         """The setup state, with no probe on a plain render (so a page is instant)."""
-        return agent_setup_panel(request)
+        return agent_setup_panel(request, part="mcp" if part == "mcp" else "agent")
 
     @app.get("/ui/agent-setup/detect", response_class=HTMLResponse)
     def ui_agent_setup_detect(request: Request) -> HTMLResponse:
@@ -1513,6 +1986,7 @@ def create_app(
     def ui_agent_setup_mcp_harness(
         request: Request,
         harness: str = Form(...),
+        part: str = Form("agent"),
     ) -> HTMLResponse:
         """Point at an existing MCP-capable harness, and remember it.
 
@@ -1521,15 +1995,20 @@ def create_app(
         location, and the service's ``resolve_harness`` refuses anything it could
         not actually run, so a typo is reported rather than recorded.
         """
+        panel_part = "mcp" if part == "mcp" else "agent"
         try:
             pointed = resolve_harness(harness)
         except SetupError as exc:
             return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
+                request,
+                part=panel_part,
+                error=exc.message.render(tr),
+                status_code=400,
             )
         remember_harness(pointed)
         return agent_setup_panel(
             request,
+            part=panel_part,
             notice=tr(
                 "Pointed at the agent harness {path}.",
                 path=pointed.path or pointed.name,
@@ -1540,6 +2019,7 @@ def create_app(
     def ui_agent_setup_mcp_config(
         request: Request,
         config: str = Form(...),
+        part: str = Form("agent"),
     ) -> HTMLResponse:
         """Register clear-record's MCP server in the client config the user names.
 
@@ -1551,18 +2031,44 @@ def create_app(
         its args, with no environment block, because the MCP server needs no
         credential (the agent brings its own model).
         """
+        panel_part = "mcp" if part == "mcp" else "agent"
         try:
             path = write_mcp_config(config)
         except SetupError as exc:
             return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
+                request,
+                part=panel_part,
+                error=exc.message.render(tr),
+                status_code=400,
             )
         return agent_setup_panel(
             request,
+            part=panel_part,
             notice=tr(
                 "Registered the clear-record MCP server in {path}.",
                 path=str(path),
             ),
+        )
+
+    @app.post("/ui/hello-check", response_class=HTMLResponse)
+    def ui_hello_check(request: Request) -> HTMLResponse:
+        """Run the hello-world acceptance check and render its outcome.
+
+        The **same** service call (clear_record.service.agent_flow.run_hello_check)
+        the agent flow's Try it stage and Settings -> Status both render: one
+        implementation, so a finding shown on Status is the one the flow shows.
+        Every anticipated failure is a finding the service returns -- no system
+        voice, no backend, no model, or a failed transcription -- so this route
+        never turns a diagnostic state into an exception.
+
+        The check creates its own scratch tape/transcript under the state dir and
+        runs the real stages; a missing voice or backend returns in milliseconds,
+        while a real transcription can take longer (the sync route runs in the
+        server's threadpool, so it does not block the event loop).
+        """
+        result = run_hello_check(lang=getattr(request.state, "locale", None))
+        return TEMPLATES.TemplateResponse(
+            request, "_hello_check.html", {"check": result}
         )
 
     @app.get("/api/agent/setup")

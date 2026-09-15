@@ -1,0 +1,14 @@
+{# The MCP rung: point at a harness, then at its client config. This is the one
+   implementation, used twice: _agent_setup.html includes the two steps inside the
+   agent flow, and /settings/mcp renders them alone here. Both locations are the
+   user's choice -- the console asks for each rather than inventing one. #}
+{% set standalone = mcp_context == "mcp" %}
+<div class="mcp-setup">
+  {# The agent panel already renders a step's error/notice at its top; the
+     standalone MCP section owns its own, so nothing is silently dropped. #}
+  {% if standalone and error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
+  {% if standalone and notice %}<p class="muted agent-setup-notice">{{ notice }}</p>{% endif %}
+
+  {% include "_harness_setup.html" %}
+  {% include "_mcp_config.html" %}
+</div>

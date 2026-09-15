@@ -244,6 +244,27 @@ code {
 
 .app-header .tag { color: var(--muted-foreground); font-size: var(--text-sm); }
 
+/* Top-level navigation: structural only (no search, no extras). Real links and
+   `hx-boost`; the current item is a filled pill, marked as well as tinted. */
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.app-nav a {
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.app-nav a:hover { color: var(--foreground); background: var(--muted); }
+
+.app-nav a[aria-current="page"] { color: var(--foreground); background: var(--muted); }
+
 /* Pushes the status chip, then the ghost controls, to the right. */
 .app-header #status { margin-left: auto; }
 
@@ -668,17 +689,23 @@ ul.projects {
   list-style: none;
 }
 
-ul.projects li.project {
+ul.projects a.project {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 6px var(--space-2);
   border-radius: var(--radius-md);
-  cursor: pointer;
   color: var(--foreground);
+  text-decoration: none;
 }
 
-ul.projects li.project:hover { background: var(--card); }
+ul.projects a.project:hover { background: var(--card); }
+
+/* The current project, marked with an edge as well as a fill. */
+ul.projects a.project[aria-current="page"] {
+  background: var(--card);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
 
 ul.projects .project-name {
   flex: 1;
@@ -700,6 +727,333 @@ ul.projects .count {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+}
+
+/* --- Workspace and Settings shells --------------------------------------- */
+/* `/` is the Projects workspace and `/setup` is readiness; neither has the
+   project sidebar, so they span the shell grid. */
+.workspace,
+.setup { grid-column: 1 / -1; }
+
+/* --- Setup: the readiness sequence --------------------------------------- */
+/* Setup is a numbered sequence of small, skippable steps. A step is a card,
+   and the number is a pill (the same shape as a project row's count) so the
+   order is legible without depending on position alone. */
+.setup-intro { margin: 0; max-width: 62ch; }
+
+.setup-update { margin: var(--space-3) 0 0; max-width: 62ch; }
+
+.setup-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: setup-step;
+}
+
+.setup-step {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  counter-increment: setup-step;
+  scroll-margin-top: calc(var(--header-h) + var(--space-4));
+}
+
+.setup-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.setup-step-head::before {
+  content: counter(setup-step);
+  flex: none;
+  min-width: 1.6em;
+  padding: 1px var(--space-1);
+  text-align: center;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.setup-step h3 { margin: 0; }
+
+.setup-step p { margin: 0; font-size: var(--text-sm); line-height: 1.55; }
+
+.setup-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.setup-step-actions form { margin: 0; }
+
+/* The update notice is a band under the header: a fact plus one dismiss form,
+   never a modal that blocks the page. */
+.setup-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  border-bottom: 1px solid var(--warn-line);
+  font-size: var(--text-sm);
+}
+
+.setup-notice a { color: inherit; }
+
+.setup-notice form { margin: 0 0 0 auto; }
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.workspace-head h2 { margin: 0; }
+
+/* The add-project form is horizontal here; in the project sidebar it stacks. */
+.workspace-head .add-project {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 0 auto;
+  max-width: none;
+}
+
+/* In the workspace the list is a content column, so it gets a card edge like
+   the other objects instead of the sidebar rows. */
+.workspace ul.projects {
+  padding: var(--space-2);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* The landing's one recent-activity line: the newest meetings across projects,
+   to jump back into work. Compact and structural, not a dashboard. */
+.recent-activity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.recent-activity ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-activity li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.recent-activity li + li::before {
+  content: "\00b7";
+  margin-right: var(--space-1);
+  color: var(--muted-foreground);
+}
+
+/* A project Overview: the at-a-glance facts and the newest meetings to re-enter. */
+.overview-facts {
+  gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.recent-meetings {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-meetings li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Settings is the control plane: its own section navigation, distinct from
+   the project list. */
+.settings-nav {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-nav a {
+  display: block;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.settings-nav a:hover { background: var(--card); }
+
+.settings-nav a[aria-current="page"] {
+  background: var(--card);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* Settings sections: the control plane reads one section at a time. A group is a
+   definition table of facts; every path is mono and selectable. Nothing here is
+   a dashboard -- one section, dense and scannable. */
+.table-settings {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.table-settings th,
+.table-settings td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  font-size: var(--text-sm);
+}
+.table-settings tr:last-child th,
+.table-settings tr:last-child td { border-bottom: 0; }
+.table-settings th {
+  width: 14rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.table-settings code { font-size: var(--text-xs); }
+.settings-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.backend-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.backend {
+  padding: var(--space-2) var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.backend-id { font-family: var(--font-mono); }
+.backend-reason { margin-top: var(--space-1); font-size: var(--text-xs); }
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-note { margin: var(--space-2) 0 0; font-size: var(--text-xs); line-height: 1.55; }
+.mcp-setup { display: grid; gap: var(--space-2); }
+.mcp-setup p { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
+.hello-check {
+  padding: var(--space-3);
+  background: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+.hello-check p { margin: 0; }
+
+/* The hello-world acceptance check / permanent diagnostic. The result is a card
+   inside the dashed host: success shows the transcript an MCP agent receives; a
+   finding names the leg that stopped. */
+.hello { display: grid; gap: var(--space-2); }
+.hello-intro { font-size: var(--text-xs); line-height: 1.55; }
+.hello-run { margin: 0; }
+.hello-idle { font-size: var(--text-xs); line-height: 1.55; }
+.hello-result {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.hello-result-head { align-items: center; gap: var(--space-2); }
+.hello-result p { font-size: var(--text-xs); line-height: 1.55; }
+.hello-finding { border-color: var(--danger-line); }
+.hello-transcript {
+  margin: 0;
+  padding: var(--space-3);
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* The project's sub-tabs: the page's spine. Real links (the enclosing section
+   carries `hx-boost`), with the current tab marked `aria-current` and an
+   underline, never colour alone. */
+.project-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.project-tabs a {
+  padding: 6px var(--space-3);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.project-tabs a:hover { color: var(--foreground); }
+
+.project-tabs a[aria-current="page"] {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
 }
 
 /* --- Cards --------------------------------------------------------------- */
@@ -945,6 +1299,15 @@ tbody tr:last-child td { border-bottom: none; }
   --chip-glyph: "\25CF\00a0"; /* app-owned */
 }
 
+/* Media inventory: one card per meeting; the tape and transcript labels are
+   sub-headings inside the card, quieter than a page section. */
+.media-label {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
 .table-tapes { margin-top: var(--space-3); }
 
 .table-tapes th:last-child,
@@ -1070,6 +1433,66 @@ tbody tr:last-child td { border-bottom: none; }
 .agent-probe .row { gap: var(--space-2); }
 
 .agent-setup-secret { color: var(--muted-foreground); }
+
+/* The one agent flow: four numbered stages (Endpoint -> Harness -> MCP config ->
+   Try it), the same numbering shape as the setup wizard's steps. */
+.agent-flow {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: agent-stage;
+}
+
+.agent-stage {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  counter-increment: agent-stage;
+  scroll-margin-top: calc(var(--header-h) + var(--space-4));
+}
+
+.agent-stage-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-stage-head::before {
+  content: counter(agent-stage);
+  flex: none;
+  min-width: 1.6em;
+  padding: 1px var(--space-1);
+  text-align: center;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.agent-stage-head h3 { margin: 0; }
+
+.agent-stage p { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
+
+.agent-stage .mcp-harness,
+.agent-stage .mcp-config { display: grid; gap: var(--space-2); }
+
+.agent-page-intro { margin: 0; max-width: 62ch; }
+
+.agent-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
 
 /* --- Meeting review: transcript, artifacts, agent drafts ----------------- */
 /* The record's reading column. Serif, a comfortable measure, and scroll-capped
@@ -1232,6 +1655,7 @@ tbody tr:last-child td { border-bottom: none; }
      wider than the screen and scroll, rather than mangle the data. */
   .table-artifacts,
   .table-archives,
+  .table-settings,
   .table-tapes,
   .table-draft,
   .table-minutes,

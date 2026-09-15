@@ -215,6 +215,13 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is
   driven as a subprocess in the providers layer, so a plain dev/CI environment
   needs no GPU framework.
+- [DESIGN] **Text-to-speech is a second provider seam**, not a vendor backend:
+  `clear_record.providers.tts` detects the system engines (macOS `say`;
+  Linux `espeak-ng` / `espeak` / `spd-say`) and synthesizes the setup
+  walkthrough's hello-world clip in the requested locale to a WAV with no new
+  runtime dependency (subprocess only). A missing voice for the requested
+  language is a state, not an exception, and `clear_record.core` never imports
+  it (ADR-0027).
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
   every later stage + the ASR backend operate on canonical audio. This is also
@@ -315,7 +322,7 @@ Layout:
 packages/clear-record → clear-record  single published dist; import clear_record
   src/clear_record/core       domain model — NO vendor/ML code
   src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
-  src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech) behind the Backend interface
+  src/clear_record/providers  ASR adapters (apple · nvidia · amd · apple-speech) and the system-TTS provider (tts)
   src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
   src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)
@@ -323,7 +330,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0026
+docs/adr/                     decision records 0001–0027
 docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```

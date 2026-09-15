@@ -100,6 +100,12 @@ from clear_record.service.glossary import (
     write_project_snapshot,
     write_snapshot,
 )
+from clear_record.service.hello_tape import (
+    HELLO_PHRASES,
+    HelloTape,
+    hello_phrase,
+    write_hello_tape,
+)
 from clear_record.service.managed import (
     DEFAULT_MAX_UPLOAD_BYTES,
     DisallowedExtension,
@@ -170,6 +176,22 @@ from clear_record.service.webhooks import (
     sign,
 )
 
+# The guided agent flow and its hello-world acceptance/diagnostic check
+# (ticket 05). Imported last on purpose: it reaches clear_record.service.setup,
+# which is not part of this package's eager import graph, so every module it
+# needs is already loaded when this line runs.
+from clear_record.service.agent_flow import (
+    HELLO_CHECK_DIRNAME,
+    LEG_BACKEND,
+    LEG_MODEL,
+    LEG_OK,
+    LEG_TRANSCRIBE,
+    LEG_TTS,
+    TRANSCRIPT_TOOL,
+    HelloCheck,
+    run_hello_check,
+)
+
 __all__ = [
     "AGENT_DIRNAME",
     "ALL_EVENTS",
@@ -192,6 +214,8 @@ __all__ = [
     "FUTURE_EVENTS",
     "GlossarySnapshot",
     "GlossaryTerm",
+    "HELLO_PHRASES",
+    "HelloTape",
     "InsufficientSpace",
     "MEETING_STATUSES",
     "Meeting",
@@ -266,6 +290,7 @@ __all__ = [
     "upload_tape",
     "verify_archive",
     "workspace_usage",
+    "write_hello_tape",
     "write_project_snapshot",
     "write_snapshot",
     # Agent-task runner seam (ADR-0018) — appended to keep the export block's
@@ -302,6 +327,7 @@ __all__ = [
     "default_config",
     "describe_draft",
     "glossary_collection_task",
+    "hello_phrase",
     "load_agent_config",
     "minutes_task",
     "plan_for",
@@ -313,4 +339,15 @@ __all__ = [
     "reset_default_config",
     "run_task",
     "transcript_check_task",
+    # Hello-world acceptance/diagnostic check (ticket 05) — appended for the
+    # same minimal-merge-surface reason as the agent-task block above.
+    "HELLO_CHECK_DIRNAME",
+    "LEG_BACKEND",
+    "LEG_MODEL",
+    "LEG_OK",
+    "LEG_TRANSCRIBE",
+    "LEG_TTS",
+    "TRANSCRIPT_TOOL",
+    "HelloCheck",
+    "run_hello_check",
 ]

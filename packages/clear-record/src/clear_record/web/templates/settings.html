@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Settings") }} · clear-record{% endblock %}
+
+{% block body %}
+{# Settings is the control plane (ADR-0027): one section at a time, each a real
+   URL, read often and configured occasionally. The sidebar is section
+   navigation; the content pane is #detail, the same in-page swap target the
+   project fragments use. Only Agent and MCP write; every other section shows
+   the value plus the config path a user would edit. The slug -> template
+   mapping lives once, in SETTINGS_SECTIONS (web/app.py); this page includes the
+   active section's partial rather than switching on the slug again. #}
+<aside class="sidebar">
+  <h2 class="sidebar-title">{{ tr("Settings") }}</h2>
+  <ul class="settings-nav">
+    {% for slug, label, _template in settings_sections %}
+    <li><a href="/settings/{{ slug }}"{% if section == slug %} aria-current="page"{% endif %}>{{ tr(label) }}</a></li>
+    {% endfor %}
+  </ul>
+</aside>
+<section id="detail" class="content">
+  <h2>{{ tr(section_label) }}</h2>
+  {% include section_template %}
+</section>
+{% endblock %}

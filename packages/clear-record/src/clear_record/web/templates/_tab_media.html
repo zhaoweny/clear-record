@@ -1,0 +1,52 @@
+{# The Media tab: a read-only inventory of every meeting's tapes and transcript.
+   Tapes and workspace come from `managed.meeting_storage`; the transcript
+   summary from `read_transcript` — the Media tab restates neither accounting.
+   Walking the workspaces lives here, not on the landing (ADR-0027). #}
+{% if media %}
+  {% for row in media %}
+  <div class="meeting media-meeting">
+    <div class="row meeting-head">
+      <strong>{{ row.meeting.title }}</strong>
+      <span class="badge">{{ row.meeting.status }}</span>
+      {% if row.managed %}<span class="badge status-managed">{{ tr("managed") }}</span>{% endif %}
+      <span class="muted meeting-path">{{ row.workspace_path or tr("no workspace") }}</span>
+      <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
+    </div>
+
+    <h3 class="media-label">{{ tr("Tapes") }}</h3>
+    {% if row.tapes %}
+    <table class="table-tapes">
+      <thead>
+        <tr><th>{{ tr("Tape") }}</th><th>{{ tr("Size") }}</th><th>{{ tr("SHA-256") }}</th></tr>
+      </thead>
+      <tbody>
+        {% for tape in row.tapes %}
+        <tr>
+          <td>
+            <strong>{{ tape.name }}</strong>
+            <div class="muted tape-path">{{ tape.path }}</div>
+          </td>
+          <td>{{ tape.size }}</td>
+          <td><code title="{{ tape.sha256 }}">{{ tape.sha256_short }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">{{ tr("No tapes uploaded yet.") }}</div>
+    {% endif %}
+
+    <h3 class="media-label">{{ tr("Transcript") }}</h3>
+    {% if row.transcript %}
+    <div class="muted transcript-meta">
+      {{ trn("{count} segment", "{count} segments", row.transcript.segments, count=row.transcript.segments) }} &middot; {{ row.transcript.source }}
+      &middot; <a href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open the review") }}</a>
+    </div>
+    {% else %}
+    <div class="empty">{{ tr("No transcript yet.") }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty">{{ tr("No meetings yet.") }}</div>
+{% endif %}

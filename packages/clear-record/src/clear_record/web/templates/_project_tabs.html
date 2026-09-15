@@ -1,0 +1,10 @@
+{# The project's sub-tabs (ADR-0027). Real links with `hx-boost` (the enclosing
+   section carries it), so a click is an in-place swap with history while a
+   plain click without JavaScript still navigates. The current tab is marked
+   with `aria-current` and an underline, never colour alone. #}
+<nav class="project-tabs" aria-label="{{ tr('Project sections') }}">
+  <a href="/projects/{{ project.slug }}"{% if tab == "overview" %} aria-current="page"{% endif %}>{{ tr("Overview") }}</a>
+  <a href="/projects/{{ project.slug }}/meetings"{% if tab == "meetings" %} aria-current="page"{% endif %}>{{ tr("Meetings") }}</a>
+  <a href="/projects/{{ project.slug }}/glossary"{% if tab == "glossary" %} aria-current="page"{% endif %}>{{ tr("Glossary") }}</a>
+  <a href="/projects/{{ project.slug }}/media"{% if tab == "media" %} aria-current="page"{% endif %}>{{ tr("Media") }}</a>
+</nav>

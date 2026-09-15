@@ -1,14 +1,14 @@
-<ul class="projects">
+{# The project list: the workspace centerpiece and the project page switcher.
+   A real link (`hx-boost` makes it fast; no JavaScript makes it a normal
+   navigation). The counts are each row at-a-glance facts. #}
+<ul class="projects" hx-boost="true">
   {% for row in projects %}
-  {# htmx's default trigger is a click; the extra keyup keeps the row reachable
-     by keyboard now that it is a focusable, button-like list item. #}
-  <li class="project" tabindex="0" role="button"
-      hx-get="/ui/projects/{{ row.project.slug }}"
-      hx-trigger="click, keyup[key=='Enter']"
-      hx-target="#detail"
-      hx-swap="innerHTML">
-    <span class="project-name">{{ row.project.name }}</span>
-    <span class="count">{{ row.term_count }}</span>
+  <li>
+    <a class="project" href="/projects/{{ row.project.slug }}"{% if active_slug is defined and row.project.slug == active_slug %} aria-current="page"{% endif %}>
+      <span class="project-name">{{ row.project.name }}</span>
+      <span class="count">{{ trn("{count} meeting", "{count} meetings", row.meeting_count, count=row.meeting_count) }}</span>
+      <span class="count">{{ trn("{count} term", "{count} terms", row.term_count, count=row.term_count) }}</span>
+    </a>
   </li>
   {% else %}
   <li class="empty">{{ tr("No projects yet.") }}</li>

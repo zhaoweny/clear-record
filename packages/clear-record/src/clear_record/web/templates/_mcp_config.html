@@ -1,0 +1,26 @@
+{# The MCP client-config rung: write clear-record's one mcpServers entry into the
+   config file the user names. Shared by the agent flow's MCP config step and the
+   standalone Settings -> MCP section. #}
+{% set standalone = mcp_context == "mcp" %}
+{% set target = "#mcp-setup" if standalone else "#agent-setup" %}
+<div class="mcp-config">
+  {% if setup.mcp_config %}
+  <p class="muted">{{ tr("Client config: {path}", path=setup.mcp_config) }}</p>
+  {% else %}
+  <p class="muted agent-setup-note">{{ tr("No MCP client config has been pointed at yet, so no agent can launch clear-record's tools.") }}</p>
+  {% endif %}
+  {% if setup.harness %}
+  <p class="muted">{{ tr("Harness: {path}", path=setup.harness) }}</p>
+  {% endif %}
+
+  <h3>{{ tr("MCP client config") }}</h3>
+  <form class="stack" hx-post="/ui/agent-setup/mcp/config" hx-target="{{ target }}"
+        hx-swap="innerHTML">
+    {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
+    {# The only pre-filled value is a path a previous run recorded -- never a
+       guessed default. An empty field means the user must choose. #}
+    <input name="config" value="{{ setup.mcp_config or '' }}" placeholder="{{ tr('path to your MCP client config (.json)') }}">
+    <button type="submit">{{ tr("Register clear-record here") }}</button>
+  </form>
+  <p class="muted agent-setup-secret">{{ tr("Choose the path: clear-record cannot know where your client keeps its config. clear-record adds one entry to that file and leaves the rest of it alone — the command {command} with arguments {args}.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
+</div>

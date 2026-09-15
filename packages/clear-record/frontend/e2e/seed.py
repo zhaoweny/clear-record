@@ -12,11 +12,13 @@ so it cannot drift from the app's own schema.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from pathlib import Path
 
 from clear_record.core import RecordDocument, Segment, write_json
+from clear_record.service import setup
 from clear_record.service.managed import workspace_path_for
 from clear_record.service.store import Registry
 
@@ -213,6 +215,17 @@ def main() -> int:
         produced_by="pipeline",
         review_state="final",
     )
+    # One uploaded tape: the Media tab's inventory and the storage panel need a
+    # real file to size, and the screenshot is empty without one.
+    tape_bytes = b"RIFF" + b"\x00" * 4092
+    tape_path = workspace / "kickoff-mic.wav"
+    tape_path.write_bytes(tape_bytes)
+    registry.register_tape(
+        kickoff.id,
+        path=str(tape_path),
+        sha256=hashlib.sha256(tape_bytes).hexdigest(),
+        bytes=len(tape_bytes),
+    )
     minutes = workspace / "minutes.md"
     minutes.write_text(
         "# Kickoff\n\n- Align on the raw tracks, reconcile after.\n"
@@ -257,6 +270,11 @@ def main() -> int:
         manifest_path=str(data / "archives" / "kickoff" / "manifest.json"),
         manifest_sha256="0" * 64,
     )
+
+    # A returning user (ticket 04): record the current version so `/` lands on
+    # Projects and no update notice shows. The update spec writes a stale marker
+    # deliberately, then dismisses it back to current.
+    setup.record_seen_version()
 
     print(f"seeded {data}")
     return 0

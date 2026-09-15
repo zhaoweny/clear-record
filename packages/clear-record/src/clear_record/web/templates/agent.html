@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Agent readiness") }} · clear-record{% endblock %}
+
+{% block body %}
+{# /setup/agent: the setup wizard's Agent step as its own URL. It mounts the ONE
+   agent flow (#agent-setup -> /ui/agent-setup), exactly as /settings/agent does,
+   so the two entry points cannot drift. #}
+<section class="content agent-page">
+  <h2>{{ tr("Agent readiness") }}</h2>
+  <p class="muted agent-page-intro">{{ tr("Connect a model endpoint, point at an MCP harness, register clear-record's MCP server, then run the hello-world acceptance test. Every step is skippable; you can return here from Settings or Setup.") }}</p>
+  <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+    <div class="muted">{{ tr("Loading agent setup…") }}</div>
+  </div>
+  <p class="muted agent-page-actions">
+    <a class="btn btn-sm" href="/setup">{{ tr("Back to setup") }}</a>
+    <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("hello-world check") }}</a>
+  </p>
+</section>
+{% endblock %}

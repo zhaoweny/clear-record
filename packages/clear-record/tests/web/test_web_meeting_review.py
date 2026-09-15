@@ -137,9 +137,9 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
 
 def test_the_project_view_links_to_the_meeting_review(tmp_path: Path) -> None:
     console = _console(tmp_path)
-    page = console.client.get("/ui/projects/ops")
+    page = console.client.get("/ui/projects/ops/meetings")
     assert "Review" in page.text
-    assert "/ui/projects/ops/meetings/kickoff" in page.text
+    assert 'href="/projects/ops/meetings/kickoff"' in page.text
 
 
 @pytest.mark.parametrize("kind", ("glossary_collection", "transcript_check", "minutes"))
@@ -169,7 +169,7 @@ def test_accepting_glossary_draft_adds_candidate_terms(tmp_path: Path) -> None:
     )
 
     assert page.status_code == 200
-    assert "term(s) added" in page.text
+    assert "1 term added as a candidate" in page.text
     assert [
         (term.term, term.status) for term in console.registry.list_terms("ops")
     ] == [("Falcon", "candidate")]

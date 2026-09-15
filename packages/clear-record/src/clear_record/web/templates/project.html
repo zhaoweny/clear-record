@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} · clear-record{% endblock %}
+
+{% block body %}
+{# The project page: the project list stays in the sidebar for switching, the
+   URL owns the selection, and the sub-tabs are real links (the section carries
+   `hx-boost`) so each view is deep-linkable and a refresh keeps your place.
+   `#detail` remains the in-page swap target every `/ui/*` project fragment
+   renders into; the tab itself is outside it, so a mutation cannot scramble the
+   navigation. #}
+<aside class="sidebar">
+  <h2 class="sidebar-title">{{ tr("Projects") }}</h2>
+  <div id="projects">
+    {% include "_projects.html" %}
+  </div>
+  {% include "_add_project.html" %}
+</aside>
+<section class="content" hx-boost="true">
+  {% include "_project_tabs.html" %}
+  <div id="detail">{% block detail %}{% include "_detail.html" %}{% endblock %}</div>
+</section>
+{% endblock %}

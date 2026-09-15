@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "clear-record"
-version = "0.2.0rc1"
+version = "0.2.0rc2.dev0"
 description = "Local-first multitrack transcription and record reconstruction: from many recordings to one clear record."
 readme = "README.md"
 license = "MIT"

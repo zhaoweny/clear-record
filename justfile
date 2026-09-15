@@ -153,13 +153,13 @@ app:
 version:
     uv version --frozen --package clear-record --short
 
-# Advance the dev segment (a new dev snapshot): X.Y.Z.devN -> X.Y.Z.dev(N+1).
-# Native `uv version` refuses a bump that would not increase the version, so this
-# only applies while the member carries a dev version; to open the next dev series
-# from a stable release use `just set-version X.Y.(Z+1).dev0`.
+# Advance the dev snapshot on `main`: X.Y.Z.devN -> X.Y.Z.dev(N+1), and after a
+# candidate X.Y.ZrcN -> X.Y.Zrc(N+1).dev0, so `main` leaves the version that was
+# tagged and the next `bump-rc` cuts the *next* candidate. `uv version --bump dev`
+# cannot do the rc case, so this is a pointer script; a stable `X.Y.Z` is refused
+# with the `just set-version X.Y.(Z+1).dev0` form to use instead.
 bump-dev:
-    uv version --no-sync --package clear-record --bump dev
-    uv version --no-sync --bump dev
+    uv run --no-project scripts/bump_dev.py
 
 # Cut or advance the rc segment: X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc(N+1).
 # (uv's `--bump rc` cannot cut an rc from a stable X.Y.Z: it refuses the bump, which

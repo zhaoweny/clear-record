@@ -112,7 +112,7 @@ Two lines exist as of 2026-09-14 (ADR-0011's Update "the release train is cut"):
 | Line | Branch | Version | What it carries |
 |---|---|---|---|
 | 0.1 maintenance | `releases/v0.1.x`, cut from the `v0.1.1` tag | `0.1.1` | the released 0.1.x code — patches only |
-| 0.2 development | `main` | `0.2.0.dev0` | the current work (console, runs, archive, MCP, tray) |
+| 0.2 development | `main` | `0.2.0rc2.dev0` | the current work (console, runs, archive, MCP, tray) |
 
 A **0.1.x patch release** is made from `releases/v0.1.x`: `just set-version
 0.1.<next>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
@@ -139,7 +139,7 @@ thin, branching-free `uv version` recipes:
 
 ```sh
 just version                 # print the member version (uv version --short)
-just bump-dev                # X.Y.Z.devN -> X.Y.Z.dev(N+1) (a new dev snapshot)
+just bump-dev                # X.Y.Z.devN -> X.Y.Z.dev(N+1); X.Y.ZrcN -> X.Y.Zrc{N+1}.dev0
 just bump-rc                 # X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc{N+1}
 just set-version 0.1.1       # force an explicit version (stable release)
 ```
@@ -152,7 +152,11 @@ that would not increase the version** and rejects a lowered version, so
 `bump-dev` / `bump-rc` only apply while the member carries a version they can
 advance:
 
-- `just bump-dev` needs a `X.Y.Z.devN` version (it advances `devN`);
+- `just bump-dev` advances `X.Y.Z.devN`, and from an `rc` opens the next
+  candidate's series (`X.Y.ZrcN -> X.Y.Zrc{N+1}.dev0`). That rc case is the one
+  `uv version --bump` cannot express, so the recipe is a pointer script
+  (`scripts/bump_dev.py`). A stable `X.Y.Z` is refused: use
+  `just set-version X.Y.(Z+1).dev0`;
 - `just bump-rc` cuts an `rc` from `X.Y.Z.devN` or advances `X.Y.ZrcN`, but it
   **cannot** cut one from a stable `X.Y.Z` (uv refuses it: the bump would not
   increase the version);

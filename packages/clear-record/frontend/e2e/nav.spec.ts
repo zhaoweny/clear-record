@@ -13,19 +13,14 @@ test("the header nav reaches Settings and Setup", async ({ page }) => {
   // Settings lands on the first of its pinned sections (models).
   await expect(page.locator("#detail h2")).toHaveText("Models");
 
-  // Setup is in the nav exactly while setup is incomplete. The machine surface
-  // is the source of truth, so a configured developer box does not flake this.
-  const setup = await page.request.get("/api/agent/setup");
-  const configured = (await setup.json()).configured;
-  const setupLink = page.locator(".app-nav a", { hasText: "Setup" });
-  if (configured) {
-    await expect(setupLink).toHaveCount(0);
-  } else {
-    await expect(setupLink).toBeVisible();
-    await setupLink.click();
-    await expect(page).toHaveURL(/\/setup$/);
-    await expect(page.locator(".agent-setup")).toBeVisible();
-  }
+  // The seeded console is a returning user: the seed records the setup version
+  // marker (ticket 04), so the Setup link is not in the nav. `setup.spec.ts`
+  // rewrites the marker stale and asserts the link appears, then dismisses it
+  // back. The setup page is still reachable by URL.
+  await expect(page.locator(".app-nav a", { hasText: "Setup" })).toHaveCount(0);
+  await page.goto("/setup");
+  await expect(page).toHaveURL(/\/setup$/);
+  await expect(page.locator(".setup-step").first()).toBeVisible();
 });
 
 test("a project opens on its own URL and the back button returns", async ({ page }) => {

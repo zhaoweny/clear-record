@@ -115,3 +115,6 @@ select = ["E4", "E7", "E9", "F"]
 testpaths = [
     "packages/clear-record/tests",
 ]
+markers = [
+    "own_setup_marker: the test arranges its own setup version marker (ticket 04)",
+]

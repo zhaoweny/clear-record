@@ -20,6 +20,12 @@ export const dataDir = under(
   process.env.CR_DATA_DIR,
   resolve(repoRoot, ".local/e2e/data"),
 );
+// The setup marker (`agent-setup.json`) lives in the app-owned state dir; the
+// seed writes it and the update spec rewrites it stale and back.
+export const stateDir = under(
+  process.env.CR_STATE_DIR,
+  resolve(repoRoot, ".local/e2e/state"),
+);
 // A fixed port collides the moment two e2e runs overlap — an agent's worktree
 // and the orchestrator's integration tree, or two worktrees verifying at once.
 // Derive the port from the tree path instead: distinct across worktrees, but

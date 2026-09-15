@@ -7,10 +7,11 @@ distinct from the fragment 404s htmx must not swap.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.core import RecordDocument, Segment, write_json
-from clear_record.service import AgentConfig, Registry
+from clear_record.service import AgentConfig, Registry, setup
 from clear_record.web.app import create_app
 
 
@@ -40,17 +41,26 @@ def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
     # Real links, plus hx-boost so a click is an in-place swap when JS is there.
     assert 'href="/"' in home.text
     assert 'href="/settings"' in home.text
-    assert 'href="/setup"' in home.text
     assert 'hx-boost="true"' in home.text
     assert 'id="projects"' in home.text
+    # The suite's autouse marker makes this a returning user, so Setup is not
+    # in the nav; `test_web_setup.py` covers the incomplete states.
+    assert 'href="/setup"' not in home.text
 
 
-def test_the_setup_link_is_hidden_once_an_agent_is_configured(tmp_path) -> None:
-    ready = _client(tmp_path, agent_config=AgentConfig(endpoint="http://local.test/v1"))
+@pytest.mark.own_setup_marker
+def test_the_setup_link_follows_the_marker_not_the_agent_config(tmp_path) -> None:
+    """A configured runner does not hide Setup (ticket 04); the marker does."""
+    client = _client(
+        tmp_path, agent_config=AgentConfig(endpoint="http://local.test/v1")
+    )
 
-    home = ready.get("/")
+    # No marker yet: Setup shows even though an agent endpoint is configured.
+    assert 'href="/setup"' in client.get("/").text
 
-    assert 'href="/"' in home.text
+    setup.record_seen_version()
+
+    home = client.get("/")
     assert 'href="/settings"' in home.text
     assert 'href="/setup"' not in home.text
 

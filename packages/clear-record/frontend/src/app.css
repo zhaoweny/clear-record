@@ -735,6 +735,87 @@ ul.projects .count {
 .workspace,
 .setup { grid-column: 1 / -1; }
 
+/* --- Setup: the readiness sequence --------------------------------------- */
+/* Setup is a numbered sequence of small, skippable steps. A step is a card,
+   and the number is a pill (the same shape as a project row's count) so the
+   order is legible without depending on position alone. */
+.setup-intro { margin: 0; max-width: 62ch; }
+
+.setup-update { margin: var(--space-3) 0 0; max-width: 62ch; }
+
+.setup-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: setup-step;
+}
+
+.setup-step {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  counter-increment: setup-step;
+  scroll-margin-top: calc(var(--header-h) + var(--space-4));
+}
+
+.setup-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.setup-step-head::before {
+  content: counter(setup-step);
+  flex: none;
+  min-width: 1.6em;
+  padding: 1px var(--space-1);
+  text-align: center;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.setup-step h3 { margin: 0; }
+
+.setup-step p { margin: 0; font-size: var(--text-sm); line-height: 1.55; }
+
+.setup-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.setup-step-actions form { margin: 0; }
+
+/* The update notice is a band under the header: a fact plus one dismiss form,
+   never a modal that blocks the page. */
+.setup-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  border-bottom: 1px solid var(--warn-line);
+  font-size: var(--text-sm);
+}
+
+.setup-notice a { color: inherit; }
+
+.setup-notice form { margin: 0 0 0 auto; }
+
 .workspace-head {
   display: flex;
   align-items: center;

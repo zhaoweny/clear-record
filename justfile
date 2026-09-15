@@ -88,9 +88,12 @@ web-assets-check:
 # Chromium). Seeds a throwaway data dir, boots the real server against it,
 # drives the UI headlessly, and writes screenshots to .local/e2e/screenshots.
 # It needs bun, Python and a downloaded browser, so it is NOT part of `verify`.
+# The seed writes the setup marker, so it must resolve the same state dir the
+# server will (playwright.config.ts sets CR_STATE_DIR for the webServer; the
+# seed runs as a separate process).
 e2e:
-    CR_DATA_DIR=.local/e2e/data uv run --all-packages python packages/clear-record/frontend/e2e/seed.py
-    CR_DATA_DIR=.local/e2e/data E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e
+    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state uv run --all-packages python packages/clear-record/frontend/e2e/seed.py
+    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e
 
 # One-time Chromium download for `e2e`. The browser lands in `.local/` so it
 # stays out of the repo and out of the OS cache.

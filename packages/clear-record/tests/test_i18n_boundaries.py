@@ -23,7 +23,7 @@ from clear_record.cli import stages
 from clear_record.cli.cli import _build_group, _split_value
 from clear_record.cli.workspace import Workspace
 from clear_record.core import RecordDocument, i18n, log_event, log_path
-from clear_record.service import Registry, managed
+from clear_record.service import Registry, managed, setup
 from clear_record.service.diagnostics import BundleFacts, build_bundle
 from clear_record.web.app import create_app
 
@@ -54,6 +54,9 @@ def test_tr_is_consulted_in_a_template(pseudo, tmp_path) -> None:
         )
     )
     assert "«No projects yet.»" in client.get("/ui/projects").text
+    # A returning user: the first-run redirect to /setup is not what this test
+    # is about, and the marker keeps `/` on the workspace page (ticket 04).
+    setup.record_seen_version()
     home = client.get("/")
     assert "«project console»" in home.text
     assert "«Add project»" in home.text

@@ -123,3 +123,25 @@ becoming a dashboard.
   marketing/SaaS dashboard: information hierarchy, workflow continuity, sensible
   density, keyboard-friendly interaction and clear system state over decoration.
 
+## Update — 2026-09-16: the check's boundaries (ticket 05, implemented)
+
+Implementation narrowed the "launches one agent task to prove the MCP
+round-trip" clause of the 2026-09-15 decision to what the offline gates can
+honestly assert:
+
+- [DECISION] The **Try it** check runs the local chain synchronously — create the
+  hello-world tape → ingest → transcribe → read the transcript with the same read
+  the MCP tool exposes — and reports the exact MCP client entry
+  (`clear-record mcp`) and the exposed tool (`read_transcript`). It does **not**
+  start an agent task: that needs a real model endpoint, and `just verify` /
+  `just e2e` stay offline and deterministic.
+- [DECISION] **Every anticipated failure is a finding that names the leg**:
+  `tts` (no system voice), `backend` (no ASR backend), `model` (no checkpoint on
+  disk, and none is ever downloaded), `transcribe` (the decode failed). The
+  finding carries the CLI's/service's own message; the console only translates it.
+- [DECISION] The **agent-answers** leg is proven on demand by the optional, BYOK
+  `just agent-drive` workflow (ticket 07), not by the console check.
+- [DECISION] The **same** check is the permanent diagnostic at Settings → Status;
+  `/setup/agent` and `/settings/agent` render the one four-stage flow
+  (Endpoint → Harness → MCP config → Try it).
+

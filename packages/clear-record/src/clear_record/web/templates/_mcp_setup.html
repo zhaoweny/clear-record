@@ -1,67 +1,14 @@
 {# The MCP rung: point at a harness, then at its client config. This is the one
-   implementation, used twice: _agent_setup.html includes it inside the agent
-   flow, and /settings/mcp renders it alone. Both locations are the user's
-   choice -- the console asks for each rather than inventing one. #}
+   implementation, used twice: _agent_setup.html includes the two steps inside the
+   agent flow, and /settings/mcp renders them alone here. Both locations are the
+   user's choice -- the console asks for each rather than inventing one. #}
 {% set standalone = mcp_context == "mcp" %}
-{% set target = "#mcp-setup" if standalone else "#agent-setup" %}
 <div class="mcp-setup">
-  <p class="muted">{{ tr("clear-record exposes its tools over MCP as the command {command} with args {args}. Point an MCP-capable harness at it, then register it in that harness's client config.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
-
   {# The agent panel already renders a step's error/notice at its top; the
      standalone MCP section owns its own, so nothing is silently dropped. #}
   {% if standalone and error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
   {% if standalone and notice %}<p class="muted agent-setup-notice">{{ notice }}</p>{% endif %}
 
-  {% if setup.mcp_config %}
-  <p class="muted">{{ tr("Client config: {path}", path=setup.mcp_config) }}</p>
-  {% else %}
-  <p class="muted agent-setup-note">{{ tr("No MCP client config has been pointed at yet, so no agent can launch clear-record's tools.") }}</p>
-  {% endif %}
-  {% if setup.harness %}
-  <p class="muted">{{ tr("Harness: {path}", path=setup.harness) }}</p>
-  {% endif %}
-
-  <h3>{{ tr("Agent harness (MCP)") }}</h3>
-
-  {% for harness in harnesses %}
-  <div class="row">
-    <code class="muted">{{ harness.name }}</code>
-    {% if harness.found %}
-    {# hx-vals carries the path find_harness found -- the same shape the endpoint
-       forms use, so no input markup the CSS scanner would read as a utility
-       class. tojson escapes the path into valid JSON, and the JSON's own quotes
-       are safe inside the single-quoted attribute. The path is still the user's
-       to accept: this only saves typing it. #}
-    <form hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
-          hx-swap="innerHTML" hx-vals='{{ {"harness": harness.path} | tojson }}'>
-      {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
-      <button class="btn btn-sm" type="submit">{{ tr("Point at this") }}</button>
-    </form>
-    {% else %}
-    <span class="badge status-missing">{{ tr("not on PATH") }}</span>
-    {% endif %}
-  </div>
-  {% endfor %}
-
-  <form class="stack" hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
-        hx-swap="innerHTML">
-    {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
-    <input name="harness" value="" placeholder="{{ tr('path to pi-agent or another MCP-capable harness') }}">
-    <button type="submit">{{ tr("Point at this path") }}</button>
-  </form>
-
-  {# The download rung, told honestly: installing a harness is a human action,
-     and this setup neither bundles one nor performs a download. #}
-  <p class="muted agent-setup-note">{{ tr("{name} is not bundled, and this setup will not download one for you: get {name} (or any other MCP-capable client) the way you get software yourself, then point at it above.", name=pi_agent) }}</p>
-
-  <h3>{{ tr("MCP client config") }}</h3>
-  <form class="stack" hx-post="/ui/agent-setup/mcp/config" hx-target="{{ target }}"
-        hx-swap="innerHTML">
-    {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
-    {# The only pre-filled value is a path a previous run recorded -- never a
-       guessed default. An empty field means the user must choose. #}
-    <input name="config" value="{{ setup.mcp_config or '' }}" placeholder="{{ tr('path to your MCP client config (.json)') }}">
-    <button type="submit">{{ tr("Register clear-record here") }}</button>
-  </form>
-  <p class="muted agent-setup-secret">{{ tr("The path is yours to choose: a client's config location is not something clear-record can know. clear-record adds one entry to that file and leaves the rest of it alone — the command {command} with args {args}.", command=mcp_entry.command, args=mcp_entry.args | join(' ')) }}</p>
+  {% include "_harness_setup.html" %}
+  {% include "_mcp_config.html" %}
 </div>

@@ -64,11 +64,10 @@
     <li class="setup-step" id="setup-first-record">
       <div class="setup-step-head">
         <h3>{{ tr("First record") }}</h3>
-        <span class="badge status-neutral">{{ tr("Coming next") }}</span>
       </div>
-      <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription and one agent task, proving the whole system worked once.") }}</p>
-      <p class="muted">{{ tr("It arrives with the next update. Until then, the permanent check lives in Settings → Status.") }}</p>
+      <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription, shown back as the transcript an MCP agent receives. Run it in the Agent step's Try it stage, or from Settings → Status.") }}</p>
       <div class="setup-step-actions">
+        <a class="btn btn-sm" href="#setup-agent">{{ tr("Run it in the Agent step") }}</a>
         <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("Hello World check") }}</a>
         <form method="post" action="/setup/complete">
           <button type="submit" class="primary">{{ tr("Finish setup") }}</button>

@@ -1,0 +1,57 @@
+{# The hello-world acceptance check: the agent flow's "Try it" stage AND the
+   permanent diagnostic Settings -> Status re-runs. One implementation, one
+   service call (clear_record.service.agent_flow.run_hello_check); this partial
+   is rendered inside a host element with id="hello-check" and swapped back into
+   it by the POST.
+
+   On success it shows the transcript the connected MCP agent receives, and the
+   exact client entry. On a finding it names the leg that stopped -- no system
+   voice, no ASR backend, no model, or a failed transcription -- which is the
+   diagnostic's whole value. #}
+<div class="hello">
+  <p class="muted hello-intro">{{ tr("This creates a hello-world tape with the system voice, transcribes it, and reads it back the way an MCP agent would. A failure names the leg that stopped, so a re-run localises the fault.") }}</p>
+  <form class="hello-run" hx-post="/ui/hello-check" hx-target="#hello-check"
+        hx-swap="innerHTML">
+    <button class="primary" type="submit">{{ tr("Run the check") }}</button>
+  </form>
+
+  {% if check %}
+    {% if check.ok %}
+    <div class="hello-result" data-leg="{{ check.leg }}">
+      <div class="row hello-result-head">
+        <span class="badge status-ok">{{ tr("the whole system worked once") }}</span>
+        <span class="muted">{{ trn("{count} segment", "{count} segments", check.segments, count=check.segments) }}</span>
+      </div>
+      <p class="muted">{{ check.message.render(tr) }}</p>
+      {% if check.tape %}
+      <p class="muted hello-tape">{{ tr("Tape: {path} (engine {engine}, language {lang})", path=check.tape.path, engine=check.tape.engine, lang=check.tape.lang) }}</p>
+      {% endif %}
+      <pre class="hello-transcript">{{ check.transcript }}</pre>
+
+      <h3>{{ tr("Exposed over MCP") }}</h3>
+      <p class="muted">{{ tr("clear-record's MCP server exposes this read as the tool {tool}; a connected agent calls it with the project and meeting and receives the transcript above.", tool=check.tool) }}</p>
+      <p class="muted">{{ tr("Client entry: {command} {args}", command=check.entry.command, args=check.entry.args | join(' ')) }}</p>
+      {% if check.mcp_config %}
+      <p class="muted">{{ tr("Registered in {path}.", path=check.mcp_config) }}</p>
+      {% else %}
+      <p class="muted">{{ tr("No MCP client config is pointed at yet; register one in the MCP config step, then point the harness at clear-record.") }}</p>
+      {% endif %}
+      {% if check.harness %}
+      <p class="muted">{{ tr("Harness: {path}", path=check.harness) }}</p>
+      {% endif %}
+      <p class="muted">{{ tr("To prove a real agent answers a question about the tape, run {recipe} against an endpoint you bring; it is deliberately not part of the offline test suite.", recipe="just agent-drive") }}</p>
+    </div>
+    {% else %}
+    <div class="hello-result hello-finding" data-leg="{{ check.leg }}">
+      <div class="row hello-result-head">
+        <span class="badge status-error">{{ tr("check stopped") }}</span>
+        <span class="muted hello-leg">{{ tr("leg: {leg}", leg=check.leg) }}</span>
+      </div>
+      <p>{{ check.message.render(tr) }}</p>
+      <p class="muted">{{ tr("Fix the leg named above and run the check again; each leg is a different part of the chain.") }}</p>
+    </div>
+    {% endif %}
+  {% else %}
+  <p class="muted hello-idle">{{ tr("Not run yet. The check works in its own scratch workspace under the state directory; nothing in your projects is touched, and the clip and transcript are never committed.") }}</p>
+  {% endif %}
+</div>

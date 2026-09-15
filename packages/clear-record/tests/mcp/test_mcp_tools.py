@@ -292,6 +292,18 @@ def test_update_project_and_meeting_notes(tmp_path: Path) -> None:
     )
 
 
+def test_the_agent_flow_advertises_a_transcript_tool_the_server_exposes() -> None:
+    """The hello-world check's MCP leg names a tool that really exists.
+
+    The service layer (below the MCP adapter, so it may not import it) advertises
+    the transcript read as a string; this pins that string to the real surface, so
+    a rename cannot leave the console promising a tool the server does not expose.
+    """
+    from clear_record.service.agent_flow import TRANSCRIPT_TOOL
+
+    assert TRANSCRIPT_TOOL in TOOL_NAMES
+
+
 def test_read_transcript_as_text_with_a_slice(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     registry.create_project("Ops")

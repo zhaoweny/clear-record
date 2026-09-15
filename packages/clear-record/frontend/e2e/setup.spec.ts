@@ -40,9 +40,13 @@ test("the setup page renders the numbered steps and the shared agent panel", asy
   await expect(page.locator(".setup-step")).toHaveCount(4);
   await expect(page.locator("#setup-welcome")).toContainText("Welcome");
   await expect(page.locator("#setup-models")).toContainText("Models");
-  await expect(page.locator("#setup-first-record")).toContainText("Coming next");
+  // First record points at the one acceptance test (the flow's Try it stage)
+  // and the permanent copy in Settings -> Status; it is not a second tape flow.
+  await expect(page.locator("#setup-first-record")).toContainText("Run it in the Agent step");
+  await expect(page.locator('#setup-first-record a[href="/settings/status"]')).toBeVisible();
   // The agent step is the one panel Settings -> Agent mounts, loaded by htmx.
   await expect(page.locator("#setup-agent #agent-setup .agent-setup")).toBeVisible();
+  await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(4);
 });
 
 test("a stale marker shows the update notice and the nav Setup link", async ({

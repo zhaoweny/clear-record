@@ -66,6 +66,7 @@ from clear_record.service import (
     managed,
     read_transcript,
     resolve_run,
+    run_hello_check,
     verify_archive,
 )
 from clear_record.service.archive import tool_version
@@ -1145,6 +1146,9 @@ def create_app(
             "queue": queue,
             "backends": backend_rows(),
             "config_path": str(config_path()),
+            # The permanent hello-world check renders its idle state here; the
+            # /ui/hello-check POST swaps a result into #hello-check.
+            "check": None,
         }
 
     def settings_context(section: str) -> dict:
@@ -1352,14 +1356,13 @@ def create_app(
         )
 
     @app.get("/setup", response_class=HTMLResponse)
-    @app.get("/setup/agent", response_class=HTMLResponse)
     def page_setup(request: Request) -> HTMLResponse:
         """Setup: system readiness, a numbered sequence (ticket 04).
 
-        The agent step is the same panel Settings -> Agent mounts, so the flow
-        has one implementation and this page only supplies the frame. The last
-        step is ticket 05's acceptance test, shown as a clear "coming next"
-        state rather than a second tape flow.
+        The Agent step embeds the one agent flow (the same #agent-setup mount
+        Settings -> Agent uses), and the First record step points at that flow's
+        Try it check and at the permanent copy in Settings -> Status. Nothing
+        here is a second tape implementation.
         """
         return page(
             request,
@@ -1369,6 +1372,15 @@ def create_app(
             models_dir=str(resolve_models_dir()),
             models_present=sorted(models_on_disk()),
         )
+
+    @app.get("/setup/agent", response_class=HTMLResponse)
+    def page_setup_agent(request: Request) -> HTMLResponse:
+        """The setup wizard's Agent step as its own URL (ticket 05).
+
+        It mounts the same one flow (#agent-setup -> /ui/agent-setup) that
+        /settings/agent mounts, so the two entry points cannot drift.
+        """
+        return page(request, "agent.html", nav="setup")
 
     @app.post("/setup/complete")
     def complete_setup() -> RedirectResponse:
@@ -1858,6 +1870,9 @@ def create_app(
                 "mcp_context": "mcp" if standalone else "agent",
                 "error": error,
                 "notice": notice,
+                # No check has run on a plain render; the Try it stage shows its
+                # idle state and the POST below swaps a result in.
+                "check": None,
             },
             status_code=status_code,
         )
@@ -2019,6 +2034,27 @@ def create_app(
                 "Registered the clear-record MCP server in {path}.",
                 path=str(path),
             ),
+        )
+
+    @app.post("/ui/hello-check", response_class=HTMLResponse)
+    def ui_hello_check(request: Request) -> HTMLResponse:
+        """Run the hello-world acceptance check and render its outcome.
+
+        The **same** service call (clear_record.service.agent_flow.run_hello_check)
+        the agent flow's Try it stage and Settings -> Status both render: one
+        implementation, so a finding shown on Status is the one the flow shows.
+        Every anticipated failure is a finding the service returns -- no system
+        voice, no backend, no model, or a failed transcription -- so this route
+        never turns a diagnostic state into an exception.
+
+        The check creates its own scratch tape/transcript under the state dir and
+        runs the real stages; a missing voice or backend returns in milliseconds,
+        while a real transcription can take longer (the sync route runs in the
+        server's threadpool, so it does not block the event loop).
+        """
+        result = run_hello_check(lang=getattr(request.state, "locale", None))
+        return TEMPLATES.TemplateResponse(
+            request, "_hello_check.html", {"check": result}
         )
 
     @app.get("/api/agent/setup")

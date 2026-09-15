@@ -15,6 +15,7 @@ file — only the variable's name.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -224,3 +225,103 @@ def test_a_key_value_never_reaches_the_console_or_the_config(
     assert "CR_SETUP_SECRET" in config  # the NAME is recorded, and only the name
     # The panel says where the key comes from without ever holding it.
     assert "CR_SETUP_SECRET" in client.get("/api/agent/setup").json()["api_key_env"]
+
+
+# --- the MCP rung: point at a harness, write its client config --------------- #
+
+
+def _executable(path: Path) -> Path:
+    """A file ``resolve_harness`` will accept: a regular, executable file."""
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_the_panel_asks_for_the_mcp_locations_instead_of_guessing_them(
+    tmp_path,
+) -> None:
+    """The harness path and the client-config path are both the user's choice.
+
+    An empty config field is the assertion that matters: a pre-filled value here
+    would be a location clear-record invented for an external client, and this
+    repo defines none.
+    """
+    client = _client(tmp_path)
+
+    panel = _panel(client)
+
+    assert "/ui/agent-setup/mcp/harness" in panel
+    assert "/ui/agent-setup/mcp/config" in panel
+    assert 'name="config" value=""' in panel
+    # The "download one" rung is honest about being a human action.
+    assert "pi-agent is not bundled" in panel
+    assert "will not download one for you" in panel
+
+
+def test_the_panel_offers_a_harness_it_found_on_path(tmp_path, monkeypatch) -> None:
+    found = setup.Harness(name="pi-agent", path="/opt/bin/pi-agent")
+    monkeypatch.setattr(web_app, "find_harness", lambda: (found,))
+    client = _client(tmp_path)
+
+    panel = _panel(client)
+
+    assert "/opt/bin/pi-agent" in panel
+    assert "Point at this" in panel
+    # The path rides in ``hx-vals`` (not an input the CSS scanner would read as a
+    # utility class), so accepting the hint posts it back as JSON.
+    assert 'hx-vals=\'{"harness": "/opt/bin/pi-agent"}\'' in panel
+
+
+def test_pointing_at_a_harness_records_the_users_path(tmp_path) -> None:
+    client = _client(tmp_path)
+    harness = _executable(tmp_path / "pi-agent")
+
+    response = client.post(
+        "/ui/agent-setup/mcp/harness", data={"harness": str(harness)}
+    )
+
+    assert response.status_code == 200
+    assert "Pointed at the agent harness" in response.text
+    assert client.get("/api/agent/setup").json()["harness"] == str(harness)
+    # A harness is a setup fact, not agent plumbing: the TOML keeps no trace.
+    assert not paths.config_path().is_file()
+
+
+def test_pointing_at_something_unrunnable_records_nothing(tmp_path) -> None:
+    client = _client(tmp_path)
+    plain = tmp_path / "pi-agent"
+    plain.write_text("#!/bin/sh\n", encoding="utf-8")
+    plain.chmod(0o644)
+
+    response = client.post("/ui/agent-setup/mcp/harness", data={"harness": str(plain)})
+
+    assert response.status_code == 400
+    assert "is not executable" in response.text
+    assert client.get("/api/agent/setup").json()["harness"] is None
+
+
+def test_the_mcp_config_is_written_only_where_the_user_chose(tmp_path) -> None:
+    client = _client(tmp_path)
+    chosen = tmp_path / "client" / "mcp.json"
+
+    response = client.post("/ui/agent-setup/mcp/config", data={"config": str(chosen)})
+
+    assert response.status_code == 200
+    assert "Registered the clear-record MCP server" in response.text
+    document = json.loads(chosen.read_text(encoding="utf-8"))
+    assert document["mcpServers"][setup.MCP_SERVER_NAME] == {
+        "command": "clear-record",
+        "args": ["mcp"],
+    }
+    assert client.get("/api/agent/setup").json()["mcp_config"] == str(chosen)
+    # Nothing beside the chosen file was created: no location was guessed.
+    assert [path.name for path in chosen.parent.iterdir()] == ["mcp.json"]
+
+
+def test_the_mcp_config_route_requires_a_path(tmp_path) -> None:
+    """No path, no write — the console cannot silently fall back to a default."""
+    client = _client(tmp_path)
+
+    response = client.post("/ui/agent-setup/mcp/config", data={})
+
+    assert response.status_code == 422

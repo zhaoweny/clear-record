@@ -49,6 +49,17 @@ format:
 test:
     uv run --all-packages pytest
 
+# Terminal wizard for the human-only agent provisioning (ticket 20): detect and
+# verify a local endpoint, record it, and point an MCP client at clear-record's
+# tools. Pointer to a Python script because it branches; `--all-packages` because
+# the script imports `clear_record`, so it must run in the project environment
+# (unlike `web-assets-check`, whose script declares its own dependencies). Note
+# `--no-project` is a latent trap here: it fails with ModuleNotFoundError
+# outside a synced checkout but *accidentally succeeds* inside the repo root,
+# where a project `.venv` already exists.
+agent-setup:
+    uv run --all-packages python scripts/agent_setup.py
+
 # Build the console's compiled assets into
 # packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
 # output is committed, so `just verify` and end users never need Node.

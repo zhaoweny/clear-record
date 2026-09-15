@@ -72,12 +72,18 @@ from clear_record.service.auto import render_message as render_service_message
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
     Detection,
+    PI_AGENT,
     SetupError,
     detect,
+    find_harness,
+    mcp_server_entry,
     pull_model,
+    remember_harness,
+    resolve_harness,
     setup_view,
     verify_endpoint,
     write_agent_settings,
+    write_mcp_config,
 )
 from clear_record.service.webhooks import (
     WebhookEmitter,
@@ -1400,6 +1406,12 @@ def create_app(
             {
                 "setup": setup_view(detection=detection),
                 "default_model": DEFAULT_SMALL_MODEL,
+                # The default-named harness, looked up on PATH. It is a *hint* for
+                # the "point at an existing pi-agent" rung, never a fallback: the
+                # harness and its client config are both the user's choice.
+                "harnesses": find_harness(),
+                "pi_agent": PI_AGENT,
+                "mcp_entry": mcp_server_entry(),
                 "error": error,
                 "notice": notice,
             },
@@ -1495,6 +1507,62 @@ def create_app(
         return agent_setup_panel(
             request,
             notice=tr("Pulled {model} and recorded it.", model=pulled.model),
+        )
+
+    @app.post("/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
+    def ui_agent_setup_mcp_harness(
+        request: Request,
+        harness: str = Form(...),
+    ) -> HTMLResponse:
+        """Point at an existing MCP-capable harness, and remember it.
+
+        The path is always the user's — typed here, or the one ``find_harness``
+        found on ``PATH`` and the panel offered. The console never invents a
+        location, and the service's ``resolve_harness`` refuses anything it could
+        not actually run, so a typo is reported rather than recorded.
+        """
+        try:
+            pointed = resolve_harness(harness)
+        except SetupError as exc:
+            return agent_setup_panel(
+                request, error=exc.message.render(tr), status_code=400
+            )
+        remember_harness(pointed)
+        return agent_setup_panel(
+            request,
+            notice=tr(
+                "Pointed at the agent harness {path}.",
+                path=pointed.path or pointed.name,
+            ),
+        )
+
+    @app.post("/ui/agent-setup/mcp/config", response_class=HTMLResponse)
+    def ui_agent_setup_mcp_config(
+        request: Request,
+        config: str = Form(...),
+    ) -> HTMLResponse:
+        """Register clear-record's MCP server in the client config the user names.
+
+        **The path is required and is never defaulted.** An external client's
+        config location is that client's business and is defined nowhere in this
+        repo, so the console asks for it rather than guessing one; the form
+        pre-fills only the path a previous run recorded. What is written is the
+        one ``mcpServers`` entry :func:`mcp_server_entry` builds — a command and
+        its args, with no environment block, because the MCP server needs no
+        credential (the agent brings its own model).
+        """
+        try:
+            path = write_mcp_config(config)
+        except SetupError as exc:
+            return agent_setup_panel(
+                request, error=exc.message.render(tr), status_code=400
+            )
+        return agent_setup_panel(
+            request,
+            notice=tr(
+                "Registered the clear-record MCP server in {path}.",
+                path=str(path),
+            ),
         )
 
     @app.get("/api/agent/setup")

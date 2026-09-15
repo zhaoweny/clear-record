@@ -105,3 +105,14 @@ def test_the_page_shell_wraps_the_project_fragment(tmp_path) -> None:
     assert "Weekly Ops" in fragment.text
     # A fragment is a body, not a document: it must not carry the page shell.
     assert "<!doctype html>" not in fragment.text
+
+
+def test_project_rows_label_their_counts(tmp_path) -> None:
+    """The counts are legible at a glance, not bare numbers behind a title."""
+    client = _client(tmp_path)
+    client.post("/api/projects", json={"name": "Weekly Ops"})
+
+    home = client.get("/")
+
+    assert "0 meetings" in home.text
+    assert "0 terms" in home.text

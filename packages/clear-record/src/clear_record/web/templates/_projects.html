@@ -6,8 +6,8 @@
   <li>
     <a class="project" href="/projects/{{ row.project.slug }}"{% if active_slug is defined and row.project.slug == active_slug %} aria-current="page"{% endif %}>
       <span class="project-name">{{ row.project.name }}</span>
-      <span class="count" title="{{ tr('Meetings') }}">{{ row.meeting_count }}</span>
-      <span class="count" title="{{ tr('Glossary') }}">{{ row.term_count }}</span>
+      <span class="count">{{ trn("{count} meeting", "{count} meetings", row.meeting_count, count=row.meeting_count) }}</span>
+      <span class="count">{{ trn("{count} term", "{count} terms", row.term_count, count=row.term_count) }}</span>
     </a>
   </li>
   {% else %}

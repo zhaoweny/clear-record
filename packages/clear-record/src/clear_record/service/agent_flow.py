@@ -51,7 +51,7 @@ from clear_record.service.setup import mcp_server_entry, read_setup_state
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 
 #: The legs the check reports. ``ok`` means the transcript was produced; the
-#: other four name the piece that stopped the chain, so a re-run localises a
+#: other four name the piece that stopped the chain, so a re-run localizes a
 #: fault rather than only saying "failed".
 LEG_OK = "ok"
 LEG_TTS = "tts"

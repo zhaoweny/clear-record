@@ -169,7 +169,7 @@ def test_accepting_glossary_draft_adds_candidate_terms(tmp_path: Path) -> None:
     )
 
     assert page.status_code == 200
-    assert "term(s) added" in page.text
+    assert "added as candidates" in page.text
     assert [
         (term.term, term.status) for term in console.registry.list_terms("ops")
     ] == [("Falcon", "candidate")]

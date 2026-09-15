@@ -652,7 +652,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="just agent-drive",
         description=(
-            "Drive clear-record own agent tasks against a real "
+            "Drive clear-record's own agent tasks against a real "
             "OpenAI-compatible endpoint. Optional and BYOK: without a key it "
             "skips. This is not part of just verify or just e2e."
         ),

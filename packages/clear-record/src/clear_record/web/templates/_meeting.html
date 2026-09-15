@@ -26,7 +26,7 @@
 {% if transcript %}
   <div class="muted transcript-meta">
     {{ transcript.source }} &middot;
-    {{ tr("{count} segments", count=transcript.total) }} &middot;
+    {{ trn("{count} segment", "{count} segments", transcript.total, count=transcript.total) }} &middot;
     {{ tr("showing {first}–{last}", first=transcript.offset + 1, last=transcript.offset + transcript.returned) }}
   </div>
   <pre class="transcript">{{ transcript.text }}</pre>
@@ -192,9 +192,9 @@
       <span class="badge status-accepted">{{ tr("accepted") }}</span>
       <span class="muted">{{ draft.promotion['at'] }}</span>
       {% if draft.kind == 'glossary_collection' %}
-      <div>{{ tr("{added} term(s) added as candidates; {skipped} already in the glossary.", added=draft.promotion['summary']['added'] | length, skipped=draft.promotion['summary']['skipped'] | length) }}</div>
+      <div>{{ trn("{added} term added as candidates; {skipped} already in the glossary.", "{added} terms added as candidates; {skipped} already in the glossary.", draft.promotion['summary']['added'] | length, added=draft.promotion['summary']['added'] | length, skipped=draft.promotion['summary']['skipped'] | length) }}</div>
       {% elif draft.kind == 'transcript_check' %}
-      <div>{{ tr("{count} correction(s) recorded as a new revision.", count=draft.promotion['summary']['changes']) }}</div>
+      <div>{{ trn("{count} correction recorded as a new revision.", "{count} corrections recorded as a new revision.", draft.promotion['summary']['changes'], count=draft.promotion['summary']['changes']) }}</div>
       <div class="muted"><code>{{ draft.promotion['summary']['revision_path'] }}</code></div>
       {% elif draft.kind == 'minutes' %}
       <div>{{ tr("Minutes recorded for this meeting.") }}</div>

@@ -2,16 +2,17 @@
 # clear-record dev commands (just).
 #
 # Tooling convention (operator, 2026-09-09):
-#   SIMPLE scripts (no branching statement)       -> the recipe body lives here.
+#   SIMPLE scripts (no branching statement) -> the recipe body lives here.
 #
-#   Anything WITH a branching statement           -> a Python inline-script
-#                                                    (PEP-722/PEP-723
-#                                                    `# /// script` block),
-#                                                    run via `uv run <file>.py`,
-#                                                    with a *pointer* recipe
-#                                                    below so `just` stays the
-#                                                    single entry point for
-#                                                    automation and chaining.
+#   Anything WITH a branching statement runs as a Python pointer-script behind a
+#   *pointer* recipe below, so `just` stays the single entry point for automation
+#   and chaining. There are two pointer-script shapes. A script that needs no
+#   project declares its own dependencies in a PEP-722/PEP-723 `# /// script`
+#   block and runs via `uv run <file>.py` (e.g. scripts/check_web_assets.py). A
+#   script that imports the local `clear_record` package instead needs the
+#   project environment and runs via `uv run --all-packages python
+#   scripts/<name>.py` (e.g. scripts/agent_drive.py, scripts/agent_setup.py); it
+#   must not pass `--no-project`.
 #
 #   Exemption: scripts/verify is a deliberate branching-free shim
 #   (`exec just verify`) kept only so tooling that already calls
@@ -60,14 +61,15 @@ test:
 agent-setup:
     uv run --all-packages python scripts/agent_setup.py
 
-# Optional BYOK agent test-drive (ticket 07): drives clear-record's own agent
-# tasks against a real OpenAI-compatible endpoint over a throwaway seeded data
-# dir, and prints a redacted report. It is NOT part of `verify` or `e2e` — those
-# stay offline and deterministic. Without a key it skips with a message and
-# exits 0. A supplied recording drives the tape leg: `just agent-drive --tape
-# <file.wav>`; with no `--tape` the TTS hello-world tape is used (a missing
-# system voice is a reported finding). Pointer to a Python script because it
-# branches; `--all-packages` because it imports `clear_record`.
+# Optional bring-your-own-key (BYOK) agent test-drive (ticket 07): drives
+# clear-record's own agent tasks against a real OpenAI-compatible endpoint over a
+# throwaway seeded data dir, and prints a redacted report. It is NOT part of
+# `verify` or `e2e` — those stay offline and deterministic. Without a key it
+# skips with a message and exits 0. A supplied recording drives the tape leg:
+# `just agent-drive --tape <file.wav>`; with no `--tape` the TTS hello-world
+# tape is used (a missing system voice is a reported finding). Pointer to a
+# Python script because it branches; `--all-packages` because it imports
+# `clear_record`.
 agent-drive *ARGS:
     uv run --all-packages python scripts/agent_drive.py {{ARGS}}
 

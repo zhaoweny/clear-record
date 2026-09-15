@@ -218,9 +218,10 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
 - [DESIGN] **Text-to-speech is a second provider seam**, not a vendor backend:
   `clear_record.providers.tts` detects the system engines (macOS `say`;
   Linux `espeak-ng` / `espeak` / `spd-say`) and synthesizes the setup
-  walkthrough's locale hello-world clip to a WAV with no new runtime dependency
-  (subprocess only). A missing voice for the requested language is a state, not
-  an exception, and `clear_record.core` never imports it (ADR-0027).
+  walkthrough's hello-world clip in the requested locale to a WAV with no new
+  runtime dependency (subprocess only). A missing voice for the requested
+  language is a state, not an exception, and `clear_record.core` never imports
+  it (ADR-0027).
 - [DESIGN] `ingest` normalizes every source to **16 kHz mono WAV** once, so
   decode/resample (incl. phone m4a/mp3 via ffmpeg) happens a single time and
   every later stage + the ASR backend operate on canonical audio. This is also
@@ -329,7 +330,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0026
+docs/adr/                     decision records 0001–0027
 docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```

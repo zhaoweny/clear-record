@@ -744,7 +744,7 @@ def run(args: argparse.Namespace) -> int:
     report.add(
         "4 MCP round-trip",
         "SKIP",
-        "later story; this slice drives clear-record own agent tasks, not MCP",
+        "the MCP round-trip is a later slice; this workflow drives clear-record's own agent tasks, not MCP",
     )
 
     report.say()

@@ -139,8 +139,9 @@ honestly assert:
   `tts` (no system voice), `backend` (no ASR backend), `model` (no checkpoint on
   disk, and none is ever downloaded), `transcribe` (the decode failed). The
   finding carries the CLI's/service's own message; the console only translates it.
-- [DECISION] The **agent-answers** leg is proven on demand by the optional, BYOK
-  `just agent-drive` workflow (ticket 07), not by the console check.
+- [DECISION] The **agent-answers** leg is proven on demand by the optional,
+  bring-your-own-key (BYOK) `just agent-drive` workflow (ticket 07), not by the
+  console check.
 - [DECISION] The **same** check is the permanent diagnostic at Settings → Status;
   `/setup/agent` and `/settings/agent` render the one four-stage flow
   (Endpoint → Harness → MCP config → Try it).

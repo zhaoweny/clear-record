@@ -60,6 +60,17 @@ test:
 agent-setup:
     uv run --all-packages python scripts/agent_setup.py
 
+# Optional BYOK agent test-drive (ticket 07): drives clear-record's own agent
+# tasks against a real OpenAI-compatible endpoint over a throwaway seeded data
+# dir, and prints a redacted report. It is NOT part of `verify` or `e2e` — those
+# stay offline and deterministic. Without a key it skips with a message and
+# exits 0. A supplied recording drives the tape leg: `just agent-drive --tape
+# <file.wav>`; with no `--tape` the TTS hello-world tape is used (a missing
+# system voice is a reported finding). Pointer to a Python script because it
+# branches; `--all-packages` because it imports `clear_record`.
+agent-drive *ARGS:
+    uv run --all-packages python scripts/agent_drive.py {{ARGS}}
+
 # Build the console's compiled assets into
 # packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
 # output is committed, so `just verify` and end users never need Node.

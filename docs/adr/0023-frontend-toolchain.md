@@ -104,3 +104,41 @@ Date: 2026-09-15
   Node, so a contributor who never touches the UI is not blocked.
 - Revisit if the compiled output proves noisy in diffs, or if the front-end grows
   enough that a committed artifact stops being reviewable.
+
+## Update — 2026-09-15: htmx 4, the component spin, and a browser gate
+
+- [FACT] htmx 4.0.0 released 2026-08-28. npm keeps 2.x as `latest` deliberately,
+  so the pin is exact. [VOICE: owner] *"htmx 4.0 is released. and it have skills
+  for you https://four.htmx.org/..."*.
+- [DECISION] The console moves to **htmx 4.0.0** and **Alpine 3.17.3** (was 2.0.4
+  and 3.14.9). The migration used htmx's own upgrade guide and shipped
+  `upgrade-check`. Three template changes were real: colon event names
+  (`hx-on::after:request`, `x-on:htmx:before:request`), a
+  `htmx.config.noSwap` for 4xx/5xx (the app raises `HTTPException` and relies on
+  htmx 2's no-swap), and the removal of `htmx:xhr:progress`.
+- [DECISION] **Attribute inheritance is not relied on.** htmx 4 makes it opt-in;
+  `upgrade-check` flags `_detail.html:36`, where the descendant `<select
+  hx-get>` declares its own `hx-target`/`hx-swap`. That is a verified false
+  positive, recorded rather than "fixed" with a wrong `:inherited`.
+- [DECISION] The upload meter becomes an **indeterminate busy state**: htmx 4
+  sends the body with `fetch()`, which reports no upload progress, and the owner
+  chose that over a hand-rolled XHR path or a bundled uploader. `hx-preserve`
+  keeps the chosen file across the storage re-render.
+- [DECISION] **The component spin ticket 02 deferred.** The tokens take shadcn's
+  own names (`--background`, `--primary`, `--border`, `--ring`, ...) so a
+  shadcn-htmx component copies in unmodified. `--primary` is **ink**, so every hue
+  is a status; light is paper, dark is graphite. The *record* (transcript,
+  minutes, draft bodies) is a system **serif** reading column; mono is for data
+  only (paths, hashes, `name=value`). The ALL-CAPS tracked eyebrows are gone.
+- [DECISION] **A Playwright gate** (`just e2e`) drives the real server against a
+  seeded data dir, asserts the flows, and writes light/dark desktop/mobile
+  screenshots for visual review. It is not part of `just verify` (it needs bun
+  and a browser). It already earned its place: it caught a duplicate
+  `#agent-setup` id (the mount and the fragment both carried it) and htmx-only
+  `<a>` controls with no link role, which were not keyboard-focusable (now
+  `<button>`).
+- Accepted trade-offs, all deliberate: no upload percentage; no theme toggle yet,
+  so the dark scheme follows `prefers-color-scheme` and shadcn's `.dark` class is
+  not wired; the project view still repeats each meeting's full run, tape and
+  archive controls, which reads long — collapsing them is a candidate follow-up,
+  not taken here because the spin kept the DOM structure.

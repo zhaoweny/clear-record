@@ -41,3 +41,15 @@ lives in a **separate CI job** (`verify.yml` → `web-assets`), not in
 3. Commit the source **and** the rebuilt `web/static/` output together.
 
 No compiled file is ever edited by hand.
+
+## End-to-end and visual review
+
+`just e2e` runs the Playwright suite against the **real** server: `e2e/seed.py`
+writes a deterministic data dir, the config's `webServer` boots
+`clear-record web` against it, and the specs drive the UI headlessly. It writes
+light/dark desktop/mobile screenshots to `.local/e2e/screenshots/` for visual
+review, alongside the component gallery that loads the shipped `app.css`.
+
+`just e2e` is **not** part of `just verify`: it needs bun, Python and a
+downloaded browser. `just e2e-install` fetches Chromium into
+`.local/ms-playwright` once.

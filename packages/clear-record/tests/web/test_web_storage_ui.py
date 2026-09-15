@@ -120,8 +120,13 @@ def test_the_panel_offers_an_upload_built_from_the_service_allow_list(client) ->
     # The picker reuses the guard's own list, never a restated one.
     assert f'accept="{AUDIO_ACCEPT}"' in panel.text
     assert ".wav" in AUDIO_ACCEPT and ".txt" not in AUDIO_ACCEPT
-    # htmx progress is wired, so a long transfer is not a frozen form.
-    assert "htmx:xhr:progress" in panel.text
+    # htmx 4 sends the body with fetch(), which reports no upload progress, so
+    # the control shows an indeterminate busy state instead. The removed XHR
+    # progress event must not come back, and the chosen file must survive the
+    # storage re-render.
+    assert "htmx:finally:request" in panel.text
+    assert "htmx:xhr:progress" not in panel.text
+    assert "hx-preserve" in panel.text
 
 
 def test_a_user_chosen_meeting_has_no_upload_and_says_why(client, tmp_path) -> None:

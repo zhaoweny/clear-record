@@ -8,10 +8,10 @@
    launch renders the service's own message in the `error` block rather than an
    error status htmx would refuse to swap. #}
 <div class="row meeting-head">
-  <a class="btn btn-sm btn-ghost"
-     hx-get="/ui/projects/{{ project.slug }}"
-     hx-target="#detail" hx-swap="innerHTML"
-     title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</a>
+  <button type="button" class="btn btn-sm btn-ghost"
+          hx-get="/ui/projects/{{ project.slug }}"
+          hx-target="#detail" hx-swap="innerHTML"
+          title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</button>
   <h2>{{ meeting.title }}</h2>
   <span class="badge status-neutral">{{ meeting.status }}</span>
   {% if minutes_artifact %}<span class="badge status-done">{{ tr("minutes") }}</span>{% endif %}
@@ -158,7 +158,7 @@
       <div class="muted">{{ tr("The draft corrected nothing.") }}</div>
       {% endif %}
       <div class="muted transcript-meta">{{ tr("Corrected revision") }}</div>
-      <pre class="transcript">{{ draft.value['revision'] }}</pre>
+      <pre class="prose">{{ draft.value['revision'] }}</pre>
     {% elif draft.kind == 'minutes' %}
       <div class="row">
         <span class="muted">{{ draft.value['meeting'] }} &middot; {{ draft.value['project'] }}</span>
@@ -172,7 +172,7 @@
       <div class="muted">{{ tr("Actions") }}</div>
       <ul>{% for action in draft.value['actions'] %}<li>{{ action }}</li>{% endfor %}</ul>
       {% endif %}
-      <pre class="transcript">{{ draft.value['body'] }}</pre>
+      <pre class="prose">{{ draft.value['body'] }}</pre>
     {% endif %}
 
     {% if draft.review_state == 'draft' %}
@@ -215,7 +215,7 @@
   <span class="badge status-accepted">{{ tr("accepted") }}</span>
   <span class="muted">{{ minutes_artifact.created_at }}</span>
 </div>
-<pre class="transcript">{{ minutes_text }}</pre>
+<pre class="prose">{{ minutes_text }}</pre>
 {% else %}
 <div class="empty">{{ tr("No accepted minutes yet. Accept a minutes draft above.") }}</div>
 {% endif %}

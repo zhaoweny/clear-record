@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>clear-record component gallery</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="app-header">
+  <svg class="brand" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+  <h1>clear-record</h1><span class="tag">project console</span>
+  <span class="badge" id="status">ready</span>
+  <form class="lang-switch"><span class="btn btn-sm is-active">English</span><button class="btn btn-sm btn-ghost" type="button">中文</button></form>
+  <a class="btn btn-ghost" href="#">Diagnostics</a>
+  <button class="btn btn-ghost btn-danger-ghost" type="button">Quit</button>
+</header>
+
+<main>
+<aside class="sidebar">
+  <h2 class="sidebar-title">Projects</h2>
+  <ul class="projects">
+    <li class="project"><span class="project-name">Q3 sync</span><span class="count">5</span></li>
+    <li class="project"><span class="project-name">Field interviews</span><span class="count">2</span></li>
+  </ul>
+  <h2 class="sidebar-title">Notifications</h2>
+  <div class="webhooks">
+    <div class="row webhooks-head">
+      <span class="badge status-webhook-delivery_failed">delivery failed</span>
+      <button class="btn btn-sm btn-ghost" type="button">Refresh</button>
+    </div>
+    <p class="muted webhooks-note">One endpoint is configured.</p>
+    <div class="webhooks-problems"><div class="webhooks-problem">endpoint "ops" rejected the signature</div></div>
+    <ul class="webhooks-endpoints">
+      <li class="webhook-endpoint">
+        <div class="row webhook-endpoint-head"><strong class="webhook-name">ops</strong><span class="badge status-webhook-delivered">delivered</span></div>
+        <div class="webhook-url muted">https://example.test/hooks/clear-record</div>
+        <div class="muted webhook-meta">All events &middot; signed</div>
+        <div class="webhook-last muted">Last delivery: <span class="badge status-done">delivered</span> HTTP 200</div>
+      </li>
+    </ul>
+  </div>
+  <h2 class="sidebar-title">Agent</h2>
+  <div class="agent-setup">
+    <div class="row agent-setup-head"><span class="badge status-ok">agent ready</span><button class="btn btn-sm btn-ghost" type="button">Detect</button></div>
+    <p class="muted">Endpoint: http://127.0.0.1:11434/v1</p>
+    <p class="muted">Model: qwen3:8b</p>
+  </div>
+</aside>
+
+<section class="content">
+  <h2>Component gallery</h2>
+  <div class="muted">Every component and status hue, on the shipped stylesheet.</div>
+
+  <h3>Buttons</h3>
+  <div class="row">
+    <button type="button">Default</button>
+    <button class="primary" type="button">Primary</button>
+    <button class="btn-ghost" type="button">Ghost</button>
+    <button class="btn btn-danger-ghost" type="button">Delete tape</button>
+    <button class="btn btn-sm" type="button">Small</button>
+    <button class="btn btn-sm btn-ghost" type="button">Small ghost</button>
+    <button class="btn btn-icon btn-sm btn-danger-ghost" aria-label="Delete">&#10005;</button>
+  </div>
+
+  <h3>Forms</h3>
+  <form class="stack">
+    <input placeholder="Term" value="falcon">
+    <select><option>balanced</option><option>max accuracy</option></select>
+    <select class="select-sm"><option>confirmed</option></select>
+    <textarea rows="3">falcon / FAL-kun / the internal codename</textarea>
+  </form>
+
+  <h3>Status</h3>
+  <div class="row">
+    <span class="badge status-neutral">neutral</span>
+    <span class="badge status-candidate">candidate</span>
+    <span class="badge status-confirmed">confirmed</span>
+    <span class="badge status-retired">retired</span>
+    <span class="badge status-queued">queued</span>
+    <span class="badge status-running">running</span>
+    <span class="badge status-done">done</span>
+    <span class="badge status-failed">failed</span>
+    <span class="badge status-error">error</span>
+    <span class="badge status-ok">ok</span>
+    <span class="badge status-missing">missing</span>
+    <span class="badge status-managed">managed workspace</span>
+    <span class="badge status-draft">draft</span>
+    <span class="badge status-accepted">accepted</span>
+    <span class="badge status-rejected">rejected</span>
+    <span class="badge status-webhook-not_configured">not configured</span>
+    <span class="badge status-webhook-no_delivery_yet">no delivery yet</span>
+    <span class="badge status-webhook-config_problem">config problem</span>
+  </div>
+
+  <h3>Run meter</h3>
+  <div class="run status-running">
+    <div class="run-head">
+      <span class="badge status-running">running</span>
+      <span class="run-stage">transcribe</span>
+      <span class="run-count">412 / 1640</span>
+      <span class="run-eta">ETA 4m 12s</span>
+    </div>
+    <div class="run-options">
+      <span class="badge">balanced</span>
+      <span class="knobs-label">resolved knobs</span>
+      <span class="knob">beam_size=5</span>
+      <span class="knob">temperature=0.0</span>
+    </div>
+    <progress value="412" max="1640"></progress>
+    <div class="muted run-message">decoding chunk 412 of 1640</div>
+  </div>
+  <div class="run status-queued">
+    <div class="run-head"><span class="badge status-queued">queued</span><span class="run-stage">waiting for the node</span><span class="run-eta">position 2</span></div>
+    <progress value="0" max="1"></progress>
+  </div>
+  <div id="run-9" class="run status-failed">
+    <div class="run-head"><span class="badge status-failed">failed</span><span class="run-stage">reconcile</span></div>
+    <progress value="1" max="1"></progress>
+    <div class="run-error" role="alert">no ggml model for apple-speech; pre-fetch it with hf download</div>
+  </div>
+  <div class="run run-idle"><span class="muted">No run yet.</span></div>
+
+  <h3>Knobs preview</h3>
+  <div>
+    <div class="run-form"><div class="row"><select><option>balanced</option></select><input placeholder="model (optional)"><button class="primary" type="button">Run</button></div></div>
+    <div class="profile-options">
+      <div class="knobs-head"><span class="badge">balanced</span><span class="knobs-label">resolved knobs</span></div>
+      <div class="knobs-values"><span class="knob">beam_size=5</span><span class="knob">temperature=0.0</span><span class="knob">condition_on_previous_text=false</span></div>
+      <p class="muted knobs-note">A profile tunes the decoder knobs only; your model and backend stay as chosen.</p>
+    </div>
+  </div>
+
+  <h3>Transcript</h3>
+  <div class="muted transcript-meta">record &middot; 16 segments &middot; showing 1-16</div>
+  <pre class="transcript">00:00:03.000 [Alex] so the recorder was running from the top of the hour
+00:00:08.100 [Bo] right, and I lined the second mic up to the laptop track afterwards
+00:00:14.600 [Alex] there is still a couple of hundred milliseconds of drift by the end
+00:00:19.800 [Bo] that is the room, not the clocks. the fan kicks in about twenty minutes in</pre>
+
+  <h3>Tables</h3>
+  <table class="table-glossary">
+    <thead><tr><th>Term</th><th>Aliases</th><th>Definition</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>falcon</strong><div class="muted">FAL-kun</div></td>
+        <td>Falcon, falcon-1</td>
+        <td>Internal codename for the reconciliation pass.</td>
+        <td><span class="badge status-confirmed">confirmed</span><div class="muted term-by">human</div></td>
+        <td><select class="select-sm"><option>confirmed</option></select> <button class="btn btn-icon btn-sm btn-danger-ghost" aria-label="Delete">&#10005;</button></td>
+      </tr>
+      <tr>
+        <td><strong>H4n</strong><div class="muted">aitch four en</div></td>
+        <td>H4N</td>
+        <td>The field recorder used as the second source.</td>
+        <td><span class="badge status-candidate">candidate</span><div class="muted term-by">agent</div></td>
+        <td><select class="select-sm"><option>candidate</option></select> <button class="btn btn-icon btn-sm btn-danger-ghost" aria-label="Delete">&#10005;</button></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table class="table-archives">
+    <thead><tr><th>Created</th><th>Meeting</th><th>Path</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td>2026-09-15 09:14</td><td>Kickoff</td><td><code>/archives/kickoff</code></td>
+        <td class="archive-status"><span class="status status-ok"><span class="badge">ok</span><span class="muted">12 files verified</span></span></td>
+        <td><button class="btn btn-sm btn-ghost" type="button">Verify</button></td>
+      </tr>
+      <tr>
+        <td>2026-09-14 18:02</td><td>Retro</td><td><code>/archives/retro</code></td>
+        <td class="archive-status"><span class="status status-missing"><span class="badge">missing</span><span class="muted">no manifest</span></span></td>
+        <td><button class="btn btn-sm btn-ghost" type="button">Verify</button></td>
+      </tr>
+      <tr>
+        <td>2026-09-13 11:30</td><td>Standup</td><td><code>/archives/standup</code></td>
+        <td class="archive-status"><span class="status status-checking"><span class="muted">checking…</span></span></td>
+        <td><button class="btn btn-sm btn-ghost" type="button">Verify</button></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Cards and storage</h3>
+  <div class="meeting">
+    <div class="row meeting-head">
+      <strong>Kickoff</strong>
+      <span class="badge">ready</span>
+      <span class="badge status-managed">managed</span>
+      <span class="muted meeting-path">~/Library/Application Support/clear-record/workspaces/q3-sync/kickoff</span>
+      <a class="btn btn-sm btn-ghost" href="#">Review</a>
+    </div>
+    <div class="storage">
+      <div class="row storage-head"><span class="badge status-managed">managed workspace</span><code class="storage-path">/data/workspaces/q3-sync/kickoff</code></div>
+      <p class="muted storage-usage">Workspace size: 1.4 GB &middot; Uploaded tapes: 1.4 GB &middot; Free on the managed disk: 220 GB</p>
+      <table class="table-tapes">
+        <thead><tr><th>Tape</th><th>Size</th><th>SHA-256</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><strong>h1n-2026-09-15.wav</strong><div class="muted tape-path">/data/workspaces/q3-sync/kickoff/tapes/h1n-2026-09-15.wav</div></td><td>1.4 GB</td><td><code>9f2c1ab4de77</code></td><td><button class="btn btn-sm btn-danger-ghost" aria-label="Delete tape">&#10005;</button></td></tr>
+        </tbody>
+      </table>
+      <div class="upload">
+        <div class="row upload-form"><input type="file"><button class="primary" type="button">Upload tape</button></div>
+        <div class="upload-progress"><progress></progress><span class="muted">Uploading…</span></div>
+      </div>
+    </div>
+    <div class="storage-refusal" role="note"><strong>Upload unavailable</strong><div class="muted">user-chosen workspace, which has no managed place for new tapes</div></div>
+  </div>
+
+  <div class="meeting draft">
+    <div class="row meeting-head"><span class="badge status-draft">draft</span><strong>minutes</strong><span class="muted">endpoint &middot; qwen3:8b &middot; 09:31</span><span class="muted">context 4f2c</span></div>
+    <div class="promotion"><span class="badge status-accepted">accepted</span><span class="muted">2026-09-15 09:33</span><div>Minutes recorded for this meeting.</div></div>
+  </div>
+
+  <h3>Empty states</h3>
+  <div class="empty">No projects yet.</div>
+  <div class="empty">No artifacts yet. Run the pipeline to produce a transcript and record.</div>
+
+  <h3>Alerts</h3>
+  <div class="run-error" role="alert">no agent endpoint is configured; start a local server and detect it</div>
+  <div class="promotion"><span class="badge status-accepted">accepted</span><div>3 term(s) added as candidates; 2 already in the glossary.</div></div>
+</section>
+</main>
+</body>
+</html>

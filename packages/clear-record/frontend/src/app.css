@@ -3,62 +3,65 @@
 
    Built by Vite + Tailwind v4 into ../clear_record/web/static/app.css, which is
    committed and shipped in the wheel. Do not edit the compiled file by hand:
-   run `just web-assets` (see frontend/README.md).
+   run the build (see frontend/README.md).
 
-   A design system, now with a real toolchain: every value that matters is a
-   token declared once in the Tailwind theme (`@theme`, CSS-first config) below.
-   Light is the base; dark is an explicit override of the *same names* under
-   `prefers-color-scheme: dark`, so both schemes are designed rather than one
-   being an accidental inversion. Rules after the token block read those names —
-   there are no colour, space or type literals below it (the only exceptions are
-   the status glyphs, which are text content).
+   Two ideas hold this together.
+
+   * The tokens are shadcn's own variable names (--background, --primary,
+     --border, --ring, ...), so a shadcn-htmx component copies in unmodified
+     (ADR-0023). Light is paper, dark is graphite; both are designed rather than
+     one being an inversion of the other. --primary is **ink**, so every hue in
+     the interface is a status.
+   * The console has two kinds of surface and they do not look alike. The
+     *instrument* (projects, runs, storage, archives, webhooks) is sans, small
+     and precise. The *record* (transcript, minutes, draft bodies) is a serif
+     reading column. Mono is for data only: paths, hashes, name=value.
 
    Layout contract — do not move these hooks, this file only decorates them:
-   `#projects`, `#detail`, `#webhooks`, `#run-<id>`, `#profile-options-<id>`,
-   `#archive-status-<id>` (the htmx targets).
+   #projects, #detail, #webhooks, #agent-setup, #run-<id>,
+   #profile-options-<id>, #storage-<id>, #archive-status-<id>.
 
-   Status vocabulary (see the badge/status block):
+   Status vocabulary. Each state has a hue *and* its own glyph, so status never
+   depends on colour alone:
      glossary  candidate / confirmed / retired
-     runs      queued / running / done / failed (and the template's `error`)
+     runs      queued / running / done / failed (and the template's error)
      archives  checking / ok / failed / missing
      webhooks  ok / config_problem / delivery_failed / not_configured and the
                per-endpoint delivered / delivery_failed / no_delivery_yet
-   Each has a hue *and* its own glyph, so status never depends on colour alone.
+     drafts    draft / accepted / rejected
+     storage   managed
    ========================================================================== */
 
-/* Tailwind's preflight, theme and utilities. */
 @import "tailwindcss";
 
-/* The Jinja templates use the component classes defined below; this tells
-   Tailwind where to look so utility classes added there are compiled too. */
 @source "../../src/clear_record/web/templates/**/*.html";
 
-/* --- Tokens: the Tailwind theme (CSS-first config) ----------------------- */
-/* `static` makes Tailwind emit every token, not only the ones backing a
-   utility — the rules below read them all through `var()`. */
-@theme static {
-  /* Surfaces and ink */
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #eef0f4;
-  --surface-3: #e4e8ee;
-  --surface-hover: #e9ecf1;
-  --ink: #1a1d23;
-  --ink-muted: #59606c;
-  --ink-faint: #6f7885;
+/* --- Tokens: light (paper) ----------------------------------------------- */
+:root {
+  /* shadcn surface ramp: background < muted < card */
+  --background: oklch(0.985 0.003 255);
+  --foreground: oklch(0.235 0.015 262);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.235 0.015 262);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.235 0.015 262);
 
-  /* Lines */
-  --line: #dde1e7;
-  --line-strong: #c2c8d1;
+  /* Action. Ink, so chroma is left to status. */
+  --primary: oklch(0.255 0.017 262);
+  --primary-foreground: oklch(0.99 0.002 255);
+  --secondary: oklch(0.962 0.004 255);
+  --secondary-foreground: oklch(0.255 0.017 262);
+  --muted: oklch(0.962 0.004 255);
+  --muted-foreground: oklch(0.53 0.014 262);
+  --accent: oklch(0.951 0.005 255);
+  --accent-foreground: oklch(0.255 0.017 262);
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.99 0.002 255);
+  --border: oklch(0.912 0.006 258);
+  --input: oklch(0.9 0.007 258);
+  --ring: oklch(0.45 0.02 262);
 
-  /* Action */
-  --accent: #1d4ed8;
-  --accent-hover: #1a44bd;
-  --accent-ink: #ffffff;
-  --accent-soft: #e8eefc;
-  --focus: #1d4ed8;
-
-  /* Status hues: chip background / chip ink / chip border */
+  /* Status hues: chip background / chip ink / chip line. */
   --info-bg: #e8eefc;    --info-ink: #1e40af;    --info-line: #bcd0fb;
   --ok-bg: #e3f5ea;      --ok-ink: #11613a;      --ok-line: #a9dcbd;
   --neutral-bg: #edf0f3; --neutral-ink: #59606c; --neutral-line: #d2d8e0;
@@ -66,66 +69,46 @@
   --run-bg: #e5edff;     --run-ink: #1d4ed8;     --run-line: #b8ccfb;
   --danger-bg: #fdeaea;  --danger-ink: #a01a1a;  --danger-line: #f2b9b9;
 
-  /* Elevation */
-  --shadow-sm: 0 1px 2px rgba(16, 20, 30, 0.06);
-  --shadow: 0 10px 28px rgba(16, 20, 30, 0.09);
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
+  --radius: 0.5rem;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.05);
 
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-base: 15px;
-  --text-lg: 17px;
-  --text-xl: 20px;
-  --text-2xl: 26px;
+  --space-1: 4px;   --space-2: 8px;   --space-3: 12px; --space-4: 16px;
+  --space-5: 24px;  --space-6: 32px;  --space-7: 48px;
 
-  --leading-tight: 1.25;
-  --leading: 1.5;
-  --weight-normal: 400;
-  --weight-medium: 500;
-  --weight-semibold: 600;
+  --leading-tight: 1.2;
+  --leading: 1.55;
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-pill: 999px;
-
-  --header-h: 56px;
-  --sidebar-w: 280px;
+  --header-h: 52px;
+  --sidebar-w: 264px;
+  --content-max: 1120px;
   --control-h: 34px;
 }
 
-:root {
-  color-scheme: light dark;
-}
-
-/* --- Tokens: the dark scheme overrides the same names -------------------- */
+/* --- Tokens: dark (graphite) --------------------------------------------- */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e1013;
-    --surface: #16191e;
-    --surface-2: #1d2128;
-    --surface-3: #262b34;
-    --surface-hover: #222732;
-    --ink: #e8ebf0;
-    --ink-muted: #a5adba;
-    --ink-faint: #8a929e;
+    --background: oklch(0.168 0.008 262);
+    --foreground: oklch(0.955 0.004 255);
+    --card: oklch(0.203 0.009 262);
+    --card-foreground: oklch(0.955 0.004 255);
+    --popover: oklch(0.203 0.009 262);
+    --popover-foreground: oklch(0.955 0.004 255);
 
-    --line: #2a2f38;
-    --line-strong: #3b424d;
-
-    --accent: #7ba4ff;
-    --accent-hover: #93b5ff;
-    --accent-ink: #0b1220;
-    --accent-soft: #1b2740;
-    --focus: #9db9ff;
+    --primary: oklch(0.94 0.004 255);
+    --primary-foreground: oklch(0.2 0.01 262);
+    --secondary: oklch(0.262 0.01 262);
+    --secondary-foreground: oklch(0.955 0.004 255);
+    --muted: oklch(0.262 0.01 262);
+    --muted-foreground: oklch(0.72 0.012 255);
+    --accent: oklch(0.288 0.012 262);
+    --accent-foreground: oklch(0.955 0.004 255);
+    --destructive: oklch(0.66 0.19 25);
+    --destructive-foreground: oklch(0.985 0.002 255);
+    --border: oklch(1 0 0 / 11%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.78 0.015 255);
 
     --info-bg: #17273f;    --info-ink: #bcd4ff;    --info-line: #2f4c85;
     --ok-bg: #10291d;      --ok-ink: #9fdfb9;      --ok-line: #24583c;
@@ -134,9 +117,59 @@
     --run-bg: #16264a;     --run-ink: #bdd2ff;     --run-line: #33528f;
     --danger-bg: #38191a;  --danger-ink: #f4b1b1;  --danger-line: #7c3333;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.4);
+    --shadow-sm: 0 2px 6px oklch(0 0 0 / 0.45);
   }
+}
+
+/* --- Tailwind theme: fonts, the type scale, and shadcn's colour names ----- */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji";
+  /* The record's face. System-native: no bytes, no licence, and CJK falls back
+     to the platform's own serif. */
+  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --text-xs: 0.75rem;     --text-xs--line-height: 1.4;
+  --text-sm: 0.8125rem;   --text-sm--line-height: 1.45;
+  --text-base: 0.9375rem; --text-base--line-height: 1.55;
+  --text-lg: 1.0625rem;   --text-lg--line-height: 1.4;
+  --text-xl: 1.25rem;     --text-xl--line-height: 1.3;
+  --text-2xl: 1.5rem;     --text-2xl--line-height: 1.2;
+  --text-3xl: 1.875rem;   --text-3xl--line-height: 1.15;
+}
+
+/* inline emits shadcn's names, so utilities like bg-card, text-muted-foreground,
+   border-border and ring-ring exist for a component copied from shadcn-htmx. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 /* --- Base ---------------------------------------------------------------- */
@@ -147,32 +180,39 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--ink);
+  background: var(--background);
+  color: var(--foreground);
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading);
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--accent); }
+/* Links are ink with a quiet underline: colour belongs to status. */
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor 30%, transparent);
+}
+a:hover { text-decoration-color: currentColor; }
 
 code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  font-size: 0.88em;
+  background: var(--muted);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.08em 0.35em;
+  padding: 0.06em 0.34em;
   overflow-wrap: anywhere;
 }
 
 /* One ring, everywhere, for keyboard users only. */
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
-/* Alpine's pre-init hide: an element marked `x-cloak` stays hidden until Alpine
-   removes the attribute, so e.g. an upload progress meter does not flash before
-   its component starts. */
+/* Alpine's pre-init hide: an element marked x-cloak stays hidden until Alpine
+   removes the attribute, so e.g. an upload busy state does not flash. */
 [x-cloak] { display: none !important; }
 }
 
@@ -188,23 +228,23 @@ code {
   gap: var(--space-3);
   height: var(--header-h);
   padding: 0 var(--space-5);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
 }
 
-.brand { flex: none; width: 22px; height: 22px; color: var(--accent); }
+/* The record dot: the one mark in the chrome, drawn in ink. */
+.brand { flex: none; width: 20px; height: 20px; color: var(--foreground); }
 
 .app-header h1 {
   margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
-.app-header .tag { color: var(--ink-muted); font-size: var(--text-sm); }
+.app-header .tag { color: var(--muted-foreground); font-size: var(--text-sm); }
 
-/* Pushes the status chip, then the ghost buttons, to the right. */
+/* Pushes the status chip, then the ghost controls, to the right. */
 .app-header #status { margin-left: auto; }
 
 main {
@@ -220,70 +260,62 @@ main {
   align-self: start;
   max-height: calc(100vh - var(--header-h));
   overflow-y: auto;
-  padding: var(--space-5);
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-}
-
-.sidebar-title {
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--ink-faint);
+  padding: var(--space-5) var(--space-4);
+  background: var(--muted);
+  border-right: 1px solid var(--border);
 }
 
 .content {
   min-width: 0;
-  padding: var(--space-6) var(--space-6) var(--space-7);
+  padding: var(--space-6) var(--space-7) var(--space-7);
 }
+
+/* Cap the reading measure. Without this a 1440px window gives 170-character
+   lines on the knobs note and the project description. */
+.content > * { max-width: var(--content-max); }
 
 /* --- Typography ---------------------------------------------------------- */
 h2 {
   margin: 0 0 var(--space-1);
   font-size: var(--text-2xl);
-  font-weight: var(--weight-semibold);
+  font-weight: 600;
   line-height: var(--leading-tight);
   letter-spacing: -0.02em;
 }
 
-/* Section labels: small, quiet, and used consistently as the page's spine. */
+/* Section labels: sentence case, small, and the page's spine. They name a
+   region; they are not a decorative eyebrow. */
 h3 {
   margin: var(--space-6) 0 var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--ink-faint);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
 }
 
 h3:first-child { margin-top: 0; }
 
-.muted { color: var(--ink-muted); }
+.muted { color: var(--muted-foreground); }
 
 /* --- Badges and status --------------------------------------------------- */
-/* A status class sets `--chip-*`; because custom properties inherit it works
-   whether the class sits on the `.badge` itself (glossary, runs) or on a
-   wrapper (the archive fragment, whose inner `<span class="badge">ok</span>`
-   the tests quote verbatim). Each hue carries a glyph so the state is legible
-   without colour. */
+/* A status class sets --chip-*; because custom properties inherit, it works
+   whether the class sits on the .badge itself (glossary, runs) or on a wrapper
+   (the archive fragment, whose inner badge markup the tests quote verbatim). */
 .badge {
   display: inline-flex;
   align-items: center;
   padding: 1px var(--space-2);
-  border: 1px solid var(--chip-line, var(--line));
-  border-radius: var(--radius-pill);
-  background: var(--chip-bg, var(--surface-2));
-  color: var(--chip-ink, var(--ink-muted));
+  border: 1px solid var(--chip-line, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--chip-bg, var(--muted));
+  color: var(--chip-ink, var(--muted-foreground));
   font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  line-height: 1.5;
+  font-weight: 500;
+  line-height: 1.6;
   white-space: nowrap;
-  letter-spacing: 0.01em;
 }
 
-.badge::before { content: var(--chip-glyph, ""); font-weight: var(--weight-semibold); }
+.badge::before { content: var(--chip-glyph, ""); font-weight: 600; }
 
 .status-neutral {
   --chip-bg: var(--neutral-bg);
@@ -294,39 +326,39 @@ h3:first-child { margin-top: 0; }
   --chip-bg: var(--info-bg);
   --chip-ink: var(--info-ink);
   --chip-line: var(--info-line);
-  --chip-glyph: "\25CB\00a0"; /* ○  proposed */
+  --chip-glyph: "\25CB\00a0"; /* proposed */
 }
 .status-confirmed {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\2713\00a0"; /* ✓  confirmed */
+  --chip-glyph: "\2713\00a0"; /* confirmed */
 }
 .status-retired {
   --chip-bg: var(--neutral-bg);
   --chip-ink: var(--neutral-ink);
   --chip-line: var(--neutral-line);
-  --chip-glyph: "\2205\00a0"; /* ∅  retired */
+  --chip-glyph: "\2205\00a0"; /* retired */
 }
 .status-queued {
   --chip-bg: var(--warn-bg);
   --chip-ink: var(--warn-ink);
   --chip-line: var(--warn-line);
-  --chip-glyph: "\2026\00a0"; /* …  waiting */
+  --chip-glyph: "\2026\00a0"; /* waiting */
   --progress-fill: var(--warn-ink);
 }
 .status-running {
   --chip-bg: var(--run-bg);
   --chip-ink: var(--run-ink);
   --chip-line: var(--run-line);
-  --chip-glyph: "\25B6\00a0"; /* ▶  in flight */
-  --progress-fill: var(--accent);
+  --chip-glyph: "\25B6\00a0"; /* in flight */
+  --progress-fill: var(--run-ink);
 }
 .status-done {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\2713\00a0"; /* ✓  finished */
+  --chip-glyph: "\2713\00a0"; /* finished */
   --progress-fill: var(--ok-ink);
 }
 .status-failed,
@@ -334,43 +366,42 @@ h3:first-child { margin-top: 0; }
   --chip-bg: var(--danger-bg);
   --chip-ink: var(--danger-ink);
   --chip-line: var(--danger-line);
-  --chip-glyph: "\2715\00a0"; /* ✕  failed */
+  --chip-glyph: "\2715\00a0"; /* failed */
   --progress-fill: var(--danger-ink);
 }
 .status-ok {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\2713\00a0"; /* ✓  archive verified */
+  --chip-glyph: "\2713\00a0"; /* archive verified */
 }
 .status-missing {
   --chip-bg: var(--warn-bg);
   --chip-ink: var(--warn-ink);
   --chip-line: var(--warn-line);
-  --chip-glyph: "\003F\00a0"; /* ?  no manifest */
+  --chip-glyph: "\003F\00a0"; /* no manifest */
 }
 /* Webhook delivery (ADR-0020). The overall state and an endpoint's health share
-   a vocabulary; `delivered` reuses the ok hue, `no_delivery_yet` stays neutral
-   so a configured-but-idle endpoint cannot be read as either a success or a
-   failure. Underscores keep the class aligned with the service's state words. */
+   a vocabulary; delivered reuses the ok hue, no_delivery_yet stays neutral so a
+   configured-but-idle endpoint reads as neither success nor failure. */
 .status-webhook-ok,
 .status-webhook-delivered {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\2713\00a0"; /* ✓  delivering */
+  --chip-glyph: "\2713\00a0"; /* delivering */
 }
 .status-webhook-config_problem {
   --chip-bg: var(--warn-bg);
   --chip-ink: var(--warn-ink);
   --chip-line: var(--warn-line);
-  --chip-glyph: "\0021\00a0"; /* !  config broken */
+  --chip-glyph: "\0021\00a0"; /* config broken */
 }
 .status-webhook-delivery_failed {
   --chip-bg: var(--danger-bg);
   --chip-ink: var(--danger-ink);
   --chip-line: var(--danger-line);
-  --chip-glyph: "\2715\00a0"; /* ✕  delivery failed */
+  --chip-glyph: "\2715\00a0"; /* delivery failed */
 }
 .status-webhook-not_configured,
 .status-webhook-no_delivery_yet {
@@ -378,8 +409,8 @@ h3:first-child { margin-top: 0; }
   --chip-ink: var(--neutral-ink);
   --chip-line: var(--neutral-line);
 }
-.status-webhook-not_configured { --chip-glyph: "\2013\00a0"; } /* –  opted out */
-.status-webhook-no_delivery_yet { --chip-glyph: "\2026\00a0"; } /* …  waiting */
+.status-webhook-not_configured { --chip-glyph: "\2013\00a0"; } /* opted out */
+.status-webhook-no_delivery_yet { --chip-glyph: "\2026\00a0"; } /* waiting */
 
 /* The archive fragment swaps into a table cell; this wrapper is layout only. */
 .status {
@@ -391,14 +422,14 @@ h3:first-child { margin-top: 0; }
 
 .status-detail { margin-top: var(--space-1); font-size: var(--text-xs); }
 
-/* "checking…" — a fixed-size spinner, so filling in does not reflow the cell. */
+/* checking — a fixed-size spinner, so filling in does not reflow the cell. */
 .status-checking::before {
   content: "";
   flex: none;
   width: 0.7em;
   height: 0.7em;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--accent);
+  border: 2px solid var(--border);
+  border-top-color: var(--foreground);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -416,11 +447,12 @@ button,
   padding: 0 var(--space-3);
   font: inherit;
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -429,33 +461,33 @@ button,
 }
 
 button:hover,
-.btn:hover { background: var(--surface-hover); }
+.btn:hover { background: var(--accent); border-color: var(--input); }
 
 button:active,
-.btn:active { transform: translateY(1px); }
+.btn:active { transform: translateY(0.5px); }
 
-button:disabled { opacity: 0.6; cursor: default; }
+button:disabled { opacity: 0.55; cursor: default; }
 
 button.primary,
 .btn-primary {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
 button.primary:hover,
 .btn-primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+  border-color: transparent;
 }
 
 .btn-ghost {
-  color: var(--ink-muted);
+  color: var(--muted-foreground);
   background: transparent;
   border-color: transparent;
 }
 
-.btn-ghost:hover { color: var(--ink); background: var(--surface-2); }
+.btn-ghost:hover { color: var(--foreground); background: var(--accent); }
 
 .btn-sm { min-height: 28px; padding: 0 var(--space-2); font-size: var(--text-xs); }
 
@@ -463,13 +495,12 @@ button.primary:hover,
   width: var(--control-h);
   min-height: var(--control-h);
   padding: 0;
-  font-size: var(--text-base);
 }
 
 .btn-icon.btn-sm { width: 28px; min-height: 28px; }
 
 /* Quiet at rest, unambiguously destructive on hover or keyboard focus. */
-.btn-danger-ghost { color: var(--ink-faint); background: transparent; border-color: transparent; }
+.btn-danger-ghost { color: var(--muted-foreground); background: transparent; border-color: transparent; }
 
 .btn-danger-ghost:hover,
 .btn-danger-ghost:focus-visible {
@@ -479,29 +510,29 @@ button.primary:hover,
 }
 
 /* --- Language switcher --------------------------------------------------- */
-/* The header's language control: the two endonyms as a segmented pill. The
-   endonyms are not translated on purpose — a picker must be legible to a
-   speaker of *either* language — and the current one is filled in, so the
-   choice reads by shape and colour and is marked `aria-current` in the markup. */
+/* The two endonyms as a segmented pill. They are not translated on purpose: a
+   picker must be legible to a speaker of either language, and the current one is
+   filled in, so the choice reads by shape and is marked aria-current. */
 .lang-switch {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .lang-switch .btn {
   min-height: 26px;
   padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-md);
+  border-color: transparent;
+  background: transparent;
 }
 
 .lang-switch .is-active {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--primary);
   cursor: default;
 }
 
@@ -511,25 +542,30 @@ select,
 textarea {
   min-height: var(--control-h);
   padding: 6px var(--space-2);
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
   font-family: inherit;
   font-size: var(--text-sm);
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 input::placeholder,
-textarea::placeholder { color: var(--ink-faint); }
+textarea::placeholder { color: var(--muted-foreground); }
 
 input:hover,
 select:hover,
-textarea:hover { border-color: var(--ink-faint); }
+textarea:hover { border-color: color-mix(in oklab, var(--input) 65%, var(--foreground)); }
 
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible { border-color: var(--accent); }
+textarea:focus-visible {
+  border-color: var(--ring);
+  outline-width: 3px;
+  outline-color: color-mix(in oklab, var(--ring) 30%, transparent);
+  outline-offset: 0;
+}
 
 select { cursor: pointer; }
 
@@ -574,17 +610,17 @@ form.row {
    two stacked panels sharing a border, split by the panel edge. */
 .run-form {
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--muted);
+  border: 1px solid var(--border);
   border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .profile-options {
   padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 .knobs-head {
@@ -594,13 +630,7 @@ form.row {
   margin-bottom: var(--space-2);
 }
 
-.knobs-label {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
-}
+.knobs-label { font-size: var(--text-xs); color: var(--muted-foreground); }
 
 .knobs-values {
   display: flex;
@@ -609,21 +639,30 @@ form.row {
 }
 
 .knob {
-  padding: 2px var(--space-2);
+  padding: 1px var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  color: var(--foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
-.knobs-note { margin: var(--space-2) 0 0; font-size: var(--text-xs); line-height: 1.5; }
+.knobs-note { margin: var(--space-2) 0 0; font-size: var(--text-xs); line-height: 1.55; }
 
-/* --- Sidebar project list ------------------------------------------------ */
+/* --- Sidebar ------------------------------------------------------------- */
+.sidebar-title {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.sidebar-title:first-child { margin-top: 0; }
+
 ul.projects {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
@@ -633,13 +672,13 @@ ul.projects li.project {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
-ul.projects li.project:hover { background: var(--surface-hover); }
+ul.projects li.project:hover { background: var(--card); }
 
 ul.projects .project-name {
   flex: 1;
@@ -647,38 +686,59 @@ ul.projects .project-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--text-sm);
 }
 
 ul.projects .count {
   flex: none;
-  min-width: 1.7em;
+  min-width: 1.6em;
   padding: 1px var(--space-1);
   text-align: center;
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--ink-muted);
-  background: var(--surface-2);
-  border-radius: var(--radius-pill);
+  color: var(--muted-foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
-/* --- Meetings ------------------------------------------------------------ */
+/* --- Cards --------------------------------------------------------------- */
+/* Cards are for real objects (a meeting, a draft, a run), not for wrapping every
+   section: the page's sections are named by their h3 instead. */
 .meeting {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   margin-top: var(--space-3);
   padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
-.meeting-head strong { font-size: var(--text-lg); }
+.meeting-head { gap: var(--space-2); }
+
+.meeting-head strong { font-size: var(--text-base); font-weight: 600; }
 
 .meeting-path {
   min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  color: var(--muted-foreground);
   overflow-wrap: anywhere;
+}
+
+/* In a card header the path truncates rather than wrapping the whole row: the
+   object's name, status and action stay on one line. */
+.meeting-head strong,
+.meeting-head .badge,
+.meeting-head .btn { flex: none; }
+
+.meeting-head .meeting-path {
+  flex: 1 1 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 /* --- Tables -------------------------------------------------------------- */
@@ -696,24 +756,22 @@ thead th {
   padding: var(--space-2) var(--space-3);
   text-align: left;
   font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-faint);
-  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: var(--background);
   /* A shadow, not a border: collapsed borders do not stick. */
-  box-shadow: inset 0 -1px 0 var(--line-strong);
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 tbody td {
   padding: var(--space-3);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 
 tbody tr { transition: background-color 0.1s ease; }
 
-tbody tr:hover { background: var(--surface-hover); }
+tbody tr:hover { background: color-mix(in oklab, var(--accent) 55%, transparent); }
 
 tbody tr:last-child td { border-bottom: none; }
 
@@ -730,7 +788,7 @@ tbody tr:last-child td { border-bottom: none; }
 }
 
 .table-glossary td:nth-child(2),
-.table-glossary td:nth-child(3) { color: var(--ink-muted); }
+.table-glossary td:nth-child(3) { color: var(--muted-foreground); }
 
 .table-glossary td:last-child form { display: inline; }
 
@@ -749,9 +807,9 @@ tbody tr:last-child td { border-bottom: none; }
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .run-idle { background: transparent; border-style: dashed; }
@@ -761,21 +819,30 @@ tbody tr:last-child td { border-bottom: none; }
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+  /* A fixed row, so polling never reflows the counts or the bar. */
+  min-height: 22px;
 }
 
-.run-stage { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.run-stage { font-size: var(--text-sm); font-weight: 500; }
 
 .run-count {
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
 .run-eta {
   margin-left: auto;
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
+}
+
+.run-options {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  flex-wrap: wrap;
 }
 
 .run-message { font-size: var(--text-sm); }
@@ -785,31 +852,31 @@ tbody tr:last-child td { border-bottom: none; }
   appearance: none;
   display: block;
   width: 100%;
-  height: 10px;
+  height: 6px;
   border: none;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
   overflow: hidden;
 }
 
-.run progress::-webkit-progress-bar { background: var(--surface-3); }
+.run progress::-webkit-progress-bar { background: var(--muted); }
 
 .run progress::-webkit-progress-value {
-  background-color: var(--progress-fill, var(--accent));
-  border-radius: var(--radius-pill);
+  background-color: var(--progress-fill, var(--primary));
+  border-radius: var(--radius-lg);
   transition: width 0.3s ease;
 }
 
 .run progress::-moz-progress-bar {
-  background-color: var(--progress-fill, var(--accent));
-  border-radius: var(--radius-pill);
+  background-color: var(--progress-fill, var(--primary));
+  border-radius: var(--radius-lg);
 }
 
 /* In flight reads as striped; queued / done / failed stay solid. */
 .run.status-running progress::-webkit-progress-value {
   background-image: repeating-linear-gradient(
     115deg,
-    rgba(255, 255, 255, 0.25) 0 6px,
+    oklch(1 0 0 / 0.28) 0 6px,
     transparent 6px 12px
   );
 }
@@ -817,17 +884,19 @@ tbody tr:last-child td { border-bottom: none; }
 .run.status-running progress::-moz-progress-bar {
   background-image: repeating-linear-gradient(
     115deg,
-    rgba(255, 255, 255, 0.25) 0 6px,
+    oklch(1 0 0 / 0.28) 0 6px,
     transparent 6px 12px
   );
 }
 
 /* --- Archives ------------------------------------------------------------ */
-/* Fixed layout plus fixed column widths: `checking…` becomes `ok` / `failed` /
-   `missing` without the columns reflowing. */
+/* Fixed layout plus fixed column widths: checking becomes ok / failed / missing
+   without the columns reflowing. */
 .table-archives { table-layout: fixed; }
 
-.table-archives th:nth-child(1) { width: 10rem; }
+.table-archives th:nth-child(1) { width: 11rem; }
+
+.table-archives td:first-child { white-space: nowrap; }
 .table-archives th:nth-child(2) { width: 11rem; }
 .table-archives th:nth-child(4) { width: 15rem; }
 .table-archives th:nth-child(5) { width: 6rem; }
@@ -840,14 +909,14 @@ tbody tr:last-child td { border-bottom: none; }
 /* The panel sits inside a meeting card: an inset surface so it reads as the
    meeting's own storage rather than another page section. */
 .storage {
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
-.storage-head { gap: var(--space-3); }
+.storage-head { gap: var(--space-2); }
 
 .storage-path { overflow-wrap: anywhere; }
 
@@ -857,12 +926,13 @@ tbody tr:last-child td { border-bottom: none; }
 
 .storage-refusal {
   margin-top: var(--space-3);
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: var(--warn-bg);
   border: 1px solid var(--warn-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--warn-ink);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  line-height: 1.5;
 }
 
 .storage-refusal .muted { color: inherit; }
@@ -872,7 +942,7 @@ tbody tr:last-child td { border-bottom: none; }
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\25CF\00a0"; /* ●  app-owned */
+  --chip-glyph: "\25CF\00a0"; /* app-owned */
 }
 
 .table-tapes { margin-top: var(--space-3); }
@@ -893,7 +963,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 .upload { margin-top: var(--space-3); }
 
-/* The progress meter mirrors the run bar; only an upload transfer drives it. */
+/* Indeterminate: htmx 4 sends the body with fetch(), which reports no upload
+   progress, so this is a busy state rather than a percentage. */
 .upload-progress {
   display: flex;
   align-items: center;
@@ -905,35 +976,34 @@ tbody tr:last-child td { border-bottom: none; }
   -webkit-appearance: none;
   appearance: none;
   flex: 1;
-  height: 10px;
+  height: 6px;
   border: none;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
   overflow: hidden;
 }
 
-.upload-progress progress::-webkit-progress-bar { background: var(--surface-3); }
+.upload-progress progress::-webkit-progress-bar { background: var(--muted); }
 
 .upload-progress progress::-webkit-progress-value {
-  background-color: var(--accent);
-  border-radius: var(--radius-pill);
+  background-color: var(--foreground);
+  border-radius: var(--radius-lg);
   transition: width 0.2s ease;
 }
 
 .upload-progress progress::-moz-progress-bar {
-  background-color: var(--accent);
-  border-radius: var(--radius-pill);
+  background-color: var(--foreground);
+  border-radius: var(--radius-lg);
 }
 
 /* --- Webhooks (delivery status) ------------------------------------------ */
 /* A sidebar panel, so it is compact: the state chip headlines, then the
-   emitter's own config problems (if any), then one card per endpoint with its
-   health and last delivery. */
+   emitter's own config problems (if any), then one card per endpoint. */
 .webhooks { display: grid; gap: var(--space-2); }
 
 .webhooks-head { gap: var(--space-2); }
 
-.webhooks-note { margin: 0; font-size: var(--text-xs); line-height: 1.5; }
+.webhooks-note { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
 
 .webhooks-problems { display: grid; gap: var(--space-1); }
 
@@ -960,9 +1030,9 @@ tbody tr:last-child td { border-bottom: none; }
   display: grid;
   gap: var(--space-1);
   padding: var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
 .webhook-endpoint-head { gap: var(--space-1); }
@@ -973,34 +1043,69 @@ tbody tr:last-child td { border-bottom: none; }
 .webhook-meta,
 .webhook-last { font-size: var(--text-xs); overflow-wrap: anywhere; }
 
+/* --- Agent setup --------------------------------------------------------- */
+.agent-setup { display: grid; gap: var(--space-2); }
+
+.agent-setup-head { gap: var(--space-2); }
+
+.agent-setup p { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
+
+.agent-setup-probes {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-probe {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.agent-probe .row { gap: var(--space-2); }
+
+.agent-setup-secret { color: var(--muted-foreground); }
+
 /* --- Meeting review: transcript, artifacts, agent drafts ----------------- */
-/* The transcript body: monospace and scroll-capped, so a multi-hour tape does
-   not push the artifacts and the review controls off the page. It is a `pre`
-   with wrapping, so a long segment wraps instead of scrolling sideways. */
-.transcript {
-  max-height: 28rem;
-  overflow: auto;
+/* The record's reading column. Serif, a comfortable measure, and scroll-capped
+   so a multi-hour tape does not push the review controls off the page. */
+.transcript,
+.prose {
   margin-top: var(--space-2);
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: 1.5;
+  padding: var(--space-4) var(--space-5);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-serif);
+  font-size: var(--text-base);
+  line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
+
+.transcript {
+  max-width: 78ch;
+  max-height: 30rem;
+  overflow: auto;
+}
+
+.prose { max-width: 78ch; }
 
 .transcript-meta { margin-top: var(--space-2); font-size: var(--text-xs); }
 
 /* An agent draft reads as its own card inside the meeting view; the review
    controls sit under the value they act on. */
-.draft .meeting-head strong { font-size: var(--text-base); font-family: var(--font-mono); }
+.draft .meeting-head strong { font-family: var(--font-mono); font-size: var(--text-sm); }
 
 .agent-launchers form { margin: 0; }
 
-.agent-note { margin-top: var(--space-2); font-size: var(--text-xs); }
+.agent-note { margin-top: var(--space-2); font-size: var(--text-xs); line-height: 1.55; }
 
 /* The promotion outcome an acceptance produced, shown in place of the controls. */
 .promotion {
@@ -1010,32 +1115,32 @@ tbody tr:last-child td { border-bottom: none; }
   padding: var(--space-3);
   background: var(--ok-bg);
   border: 1px solid var(--ok-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--ok-ink);
   font-size: var(--text-sm);
 }
 
 .promotion .muted { color: inherit; }
 
-/* Review states a draft can hold, alongside the glossary's candidate/confirmed
-   vocabulary. A rejected draft keeps the danger hue so it cannot read as done. */
+/* Review states a draft can hold, alongside the glossary's vocabulary. A
+   rejected draft keeps the danger hue so it cannot read as done. */
 .status-draft {
   --chip-bg: var(--neutral-bg);
   --chip-ink: var(--neutral-ink);
   --chip-line: var(--neutral-line);
-  --chip-glyph: "\25CB\00a0"; /* ○  awaiting review */
+  --chip-glyph: "\25CB\00a0"; /* awaiting review */
 }
 .status-accepted {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
-  --chip-glyph: "\2713\00a0"; /* ✓  accepted */
+  --chip-glyph: "\2713\00a0"; /* accepted */
 }
 .status-rejected {
   --chip-bg: var(--danger-bg);
   --chip-ink: var(--danger-ink);
   --chip-line: var(--danger-line);
-  --chip-glyph: "\2715\00a0"; /* ✕  rejected */
+  --chip-glyph: "\2715\00a0"; /* rejected */
 }
 
 .table-artifacts td:first-child,
@@ -1050,14 +1155,15 @@ tbody tr:last-child td { border-bottom: none; }
 .empty {
   padding: var(--space-6) var(--space-4);
   text-align: center;
-  color: var(--ink-muted);
-  background: var(--surface);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px dashed var(--input);
+  border-radius: var(--radius-lg);
   font-size: var(--text-sm);
 }
 
-.projects .empty {
+.projects .empty,
+.sidebar .empty {
   padding: var(--space-4) var(--space-2);
   text-align: left;
   background: transparent;
@@ -1073,12 +1179,11 @@ tbody tr:last-child td { border-bottom: none; }
   color: var(--danger-ink);
   background: var(--danger-bg);
   border: 1px solid var(--danger-line);
-  border-left-width: 4px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
 
-.run-error::before { content: "\2715"; flex: none; font-weight: var(--weight-semibold); }
+.run-error::before { content: "\2715"; flex: none; font-weight: 600; }
 
 /* --- htmx request state -------------------------------------------------- */
 .htmx-request { opacity: 0.6; transition: opacity 0.15s ease; }
@@ -1101,15 +1206,39 @@ tbody tr:last-child td { border-bottom: none; }
     position: static;
     max-height: none;
     border-right: none;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--border);
   }
 
-  .app-header { padding: 0 var(--space-4); }
+  /* The chrome does not fit on a phone: drop the tag and let the row wrap
+     rather than clipping the last control. */
+  .app-header {
+    height: auto;
+    min-height: var(--header-h);
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-4);
+    row-gap: var(--space-2);
+  }
 
-  .content { padding: var(--space-4) var(--space-4) var(--space-6); }
+  .app-header .tag { display: none; }
+
+  .content { padding: var(--space-5) var(--space-4) var(--space-6); }
 
   thead th { position: static; }
 
   .table-archives { table-layout: auto; }
+
+  /* A five-column table with a monospace path cannot be squeezed into a phone
+     without collapsing a column to one character per line. Let the table be
+     wider than the screen and scroll, rather than mangle the data. */
+  .table-artifacts,
+  .table-archives,
+  .table-tapes,
+  .table-draft,
+  .table-minutes,
+  .table-glossary {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
 }
 }

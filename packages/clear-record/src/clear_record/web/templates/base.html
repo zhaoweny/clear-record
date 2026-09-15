@@ -5,6 +5,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# htmx 4 swaps any response that is not 204/304 by default; this app raises
+     HTTPException for genuinely unexpected conditions and relies on the client
+     not swapping that body into a fragment target. Restore htmx 2's no-swap. #}
+  <meta name="htmx-config" content='{"noSwap": [204, 304, "4xx", "5xx"]}'>
   <title>{% block title %}clear-record{% endblock %}</title>
   {# Compiled, committed build output (Vite + Tailwind v4): htmx and Alpine are
      bundled in, so the console is offline with no CDN and no hands-kept vendor

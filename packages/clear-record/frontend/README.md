@@ -16,6 +16,10 @@ and [docs/frontend-assets.md](../../../docs/frontend-assets.md).
 | `src/main.js` | The JS entry. Imports htmx and Alpine and starts them. |
 | `src/app.css` | The stylesheet source: the Tailwind theme (`@theme`) and the console's component rules. |
 | `node_modules/` | Installed deps (gitignored). |
+| `playwright.config.ts` | The e2e run: one booted server, one seeded data dir. |
+| `e2e/seed.py` | Seeds a deterministic console (projects, meetings, transcript, glossary). |
+| `e2e/*.spec.ts` | Flow tests, visual captures, and the component gallery. |
+| `e2e/fixtures/components.html` | The gallery page, loading the shipped `app.css`. |
 
 The interaction model is unchanged: htmx + Alpine over server-rendered Jinja.
 htmx and Alpine are real npm dependencies now; they are bundled into
@@ -41,6 +45,17 @@ src/clear_record/web/static/app.js
 
 Both are committed. Change a source file, run `just web-assets`, and commit the
 source **and** the rebuilt output together.
+
+## End-to-end and visual review
+
+```sh
+just e2e-install   # one-time: download Chromium into .local/ms-playwright
+just e2e           # seed, boot the real console, run the specs, write screenshots
+```
+
+`just e2e` is not part of `just verify` — it needs bun and a browser. It writes
+screenshots to `.local/e2e/screenshots/` (gitignored) for the visual review, and
+its specs assert the htmx wiring those captures show.
 
 ### Filenames are stable, not content-hashed
 

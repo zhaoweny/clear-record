@@ -15,9 +15,9 @@
       <span class="badge status-neutral">{{ tr("user-chosen") }}</span>
       {% endif %}
       <span class="muted meeting-path">{{ row.meeting.workspace_path or tr("no workspace") }}</span>
-      <a class="btn btn-sm btn-ghost"
-         hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
-         hx-target="#detail" hx-swap="innerHTML">{{ tr("Review") }}</a>
+      <button type="button" class="btn btn-sm btn-ghost"
+              hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
+              hx-target="#detail" hx-swap="innerHTML">{{ tr("Review") }}</button>
     </div>
     {# The managed workspace's storage: resolved path, sizes, tapes, upload and
        delete controls. Fetched per meeting so the project render stays cheap. #}
@@ -106,9 +106,9 @@
       </td>
       <td class="muted">{{ row.artifact.created_at }}</td>
       <td>
-        <a class="btn btn-sm btn-ghost"
-           hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
-           hx-target="#detail" hx-swap="innerHTML">{{ tr("Open") }}</a>
+        <button type="button" class="btn btn-sm btn-ghost"
+                hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
+                hx-target="#detail" hx-swap="innerHTML">{{ tr("Open") }}</button>
       </td>
     </tr>
     {% endfor %}
@@ -124,7 +124,7 @@
       hx-post="/ui/projects/{{ project.slug }}/meetings"
       hx-target="#detail"
       hx-swap="innerHTML"
-      hx-on::after-request="if (event.detail.successful) this.reset()">
+      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
   <div class="row">
     <input name="title" placeholder="{{ tr("Meeting title") }}" required>
     <input name="workspace_path" placeholder="{{ tr("Workspace path") }}">
@@ -192,7 +192,7 @@
       hx-post="/ui/projects/{{ project.slug }}/glossary"
       hx-target="#detail"
       hx-swap="innerHTML"
-      hx-on::after-request="if (event.detail.successful) this.reset()">
+      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
   <div class="row">
     <input name="term" placeholder="{{ tr("Term") }}" required>
     <input name="reading" placeholder="{{ tr("Reading / pronunciation") }}">

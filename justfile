@@ -73,6 +73,19 @@ web-assets:
 web-assets-check:
     uv run --no-project scripts/check_web_assets.py
 
+# Browser end-to-end and visual review for the console (Playwright +
+# Chromium). Seeds a throwaway data dir, boots the real server against it,
+# drives the UI headlessly, and writes screenshots to .local/e2e/screenshots.
+# It needs bun, Python and a downloaded browser, so it is NOT part of `verify`.
+e2e:
+    CR_DATA_DIR=.local/e2e/data uv run --all-packages python packages/clear-record/frontend/e2e/seed.py
+    CR_DATA_DIR=.local/e2e/data E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e
+
+# One-time Chromium download for `e2e`. The browser lands in `.local/` so it
+# stays out of the repo and out of the OS cache.
+e2e-install:
+    PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e:install
+
 # Message catalogs (Babel, build-time only; see docs/i18n.md). Source strings are
 # the English message IDs in the code and templates; `i18n-extract` merges new
 # and changed ones into each locale's messages.po, and `i18n-compile` writes the

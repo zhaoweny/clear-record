@@ -5,7 +5,9 @@
 
    A credential is never shown and never written: `api_key_env` is a variable
    NAME, and a local endpoint has none at all. #}
-<div class="agent-setup" id="agent-setup">
+{# No id here: `index.html`'s mount owns `#agent-setup`, and this fragment is
+   swapped into it — a second id would make the htmx target ambiguous. #}
+<div class="agent-setup">
   <div class="row agent-setup-head">
     {% if setup.state == 'ready' %}
     <span class="badge status-ok">{{ tr("agent ready") }}</span>

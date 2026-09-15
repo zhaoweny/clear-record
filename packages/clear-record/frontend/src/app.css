@@ -244,6 +244,27 @@ code {
 
 .app-header .tag { color: var(--muted-foreground); font-size: var(--text-sm); }
 
+/* Top-level navigation: structural only (no search, no extras). Real links and
+   `hx-boost`; the current item is a filled pill, marked as well as tinted. */
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.app-nav a {
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.app-nav a:hover { color: var(--foreground); background: var(--muted); }
+
+.app-nav a[aria-current="page"] { color: var(--foreground); background: var(--muted); }
+
 /* Pushes the status chip, then the ghost controls, to the right. */
 .app-header #status { margin-left: auto; }
 
@@ -668,17 +689,23 @@ ul.projects {
   list-style: none;
 }
 
-ul.projects li.project {
+ul.projects a.project {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 6px var(--space-2);
   border-radius: var(--radius-md);
-  cursor: pointer;
   color: var(--foreground);
+  text-decoration: none;
 }
 
-ul.projects li.project:hover { background: var(--card); }
+ul.projects a.project:hover { background: var(--card); }
+
+/* The current project, marked with an edge as well as a fill. */
+ul.projects a.project[aria-current="page"] {
+  background: var(--card);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
 
 ul.projects .project-name {
   flex: 1;
@@ -700,6 +727,66 @@ ul.projects .count {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+}
+
+/* --- Workspace and Settings shells --------------------------------------- */
+/* `/` is the Projects workspace and `/setup` is readiness; neither has the
+   project sidebar, so they span the shell grid. */
+.workspace,
+.setup { grid-column: 1 / -1; }
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.workspace-head h2 { margin: 0; }
+
+/* The add-project form is horizontal here; in the project sidebar it stacks. */
+.workspace-head .add-project {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 0 auto;
+  max-width: none;
+}
+
+/* In the workspace the list is a content column, so it gets a card edge like
+   the other objects instead of the sidebar rows. */
+.workspace ul.projects {
+  padding: var(--space-2);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* Settings is the control plane: its own section navigation, distinct from
+   the project list. */
+.settings-nav {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-nav a {
+  display: block;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.settings-nav a:hover { background: var(--card); }
+
+.settings-nav a[aria-current="page"] {
+  background: var(--card);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--primary);
 }
 
 /* --- Cards --------------------------------------------------------------- */

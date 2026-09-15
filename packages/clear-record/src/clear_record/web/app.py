@@ -125,6 +125,17 @@ TEMPLATES.env.globals["language_choices"] = LANGUAGE_CHOICES
 AUDIO_ACCEPT = ",".join(sorted(managed.AUDIO_SUFFIXES))
 TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
 
+#: The Settings page's sections (ADR-0027): each is a real URL,
+#: ``/settings/<slug>``. This is the control plane's spine, not the project
+#: navigation. Ticket 03 grows the set; today it holds the two surfaces the
+#: console already has - the agent endpoint/MCP setup and the webhook panel.
+#: The labels are ``deferred`` so Babel extracts them here while the template's
+#: ``tr`` picks the *request's* locale, not the import-time one.
+SETTINGS_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("agent", deferred("Agent")),
+    ("webhooks", deferred("Webhooks")),
+)
+
 
 def _accept_language_tags(header: str | None) -> list[str]:
     """The language tags in an ``Accept-Language`` header, highest ``q`` first.
@@ -623,9 +634,18 @@ def create_app(
 
     # --- HTML views (htmx + Alpine) ---------------------------------------- #
     def project_rows() -> list[dict]:
+        """Every project with its term and meeting counts, newest first.
+
+        The counts are the workspace at-a-glance facts (the project page owns
+        the full media inventory). Both are cheap registry reads.
+        """
         counts = registry.term_counts()
         return [
-            {"project": project, "term_count": counts.get(project.slug, 0)}
+            {
+                "project": project,
+                "term_count": counts.get(project.slug, 0),
+                "meeting_count": len(registry.list_meetings(project.slug)),
+            }
             for project in registry.list_projects()
         ]
 
@@ -708,28 +728,34 @@ def create_app(
             },
         )
 
+    def detail_context(slug: str, error: str | None = None) -> dict:
+        """Everything the project view renders, from the service only.
+
+        Raises ``KeyError`` for an unknown slug so each caller owns its 404:
+        the fragment route returns an ``HTTPException`` (htmx must not swap a
+        4xx), while the page route renders the not-found page.
+        """
+        project = registry.require_project(slug)
+        return {
+            "project": project,
+            "terms": registry.list_terms(slug),
+            "statuses": TERM_STATUSES,
+            "meetings": meeting_rows(slug),
+            "backends": BACKEND_CHOICES,
+            "profiles": PROFILE_CHOICES,
+            "profile_default": PROFILE_CUSTOM,
+            "profile_options": profile_preview(PROFILE_CUSTOM),
+            "archives": archive_rows(slug),
+            "minutes": minutes_rows(slug),
+            "error": error,
+        }
+
     def detail(request: Request, slug: str, error: str | None = None) -> HTMLResponse:
         try:
-            project = registry.require_project(slug)
+            context = detail_context(slug, error)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
-        return TEMPLATES.TemplateResponse(
-            request,
-            "_detail.html",
-            {
-                "project": project,
-                "terms": registry.list_terms(slug),
-                "statuses": TERM_STATUSES,
-                "meetings": meeting_rows(slug),
-                "backends": BACKEND_CHOICES,
-                "profiles": PROFILE_CHOICES,
-                "profile_default": PROFILE_CUSTOM,
-                "profile_options": profile_preview(PROFILE_CUSTOM),
-                "archives": archive_rows(slug),
-                "minutes": minutes_rows(slug),
-                "error": error,
-            },
-        )
+        return TEMPLATES.TemplateResponse(request, "_detail.html", context)
 
     # --- HTML views: a meeting's managed storage (ADR-0024) ---------------- #
     def human_bytes(count: int) -> str:
@@ -956,9 +982,92 @@ def create_app(
         rows.sort(key=lambda row: row["artifact"].id, reverse=True)
         return rows
 
+    # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
+    def page(
+        request: Request,
+        template: str,
+        *,
+        nav: str,
+        status_code: int = 200,
+        **extra,
+    ) -> HTMLResponse:
+        """A full page extending ``base.html``.
+
+        The header needs two facts on every page: which top-level nav item is
+        current, and whether setup is still incomplete (which shows the Setup
+        link, ADR-0027). Injecting them here means a page render cannot forget
+        either.
+        """
+        return TEMPLATES.TemplateResponse(
+            request,
+            template,
+            {"nav": nav, "setup_incomplete": not agent_ready(), **extra},
+            status_code=status_code,
+        )
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
-        return TEMPLATES.TemplateResponse(request, "index.html", {})
+        """The Projects workspace: the console lands here, not on a dashboard."""
+        return page(request, "index.html", nav="projects", projects=project_rows())
+
+    @app.get("/projects/{slug}", response_class=HTMLResponse)
+    def page_project(request: Request, slug: str) -> HTMLResponse:
+        """A project page: the URL is the source of truth for the selection."""
+        try:
+            context = detail_context(slug)
+        except KeyError:
+            return page(
+                request,
+                "404.html",
+                nav="projects",
+                status_code=404,
+                message=tr("No project named {slug}.", slug=slug),
+            )
+        return page(
+            request,
+            "project.html",
+            nav="projects",
+            active_slug=slug,
+            projects=project_rows(),
+            **context,
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def page_settings(request: Request) -> HTMLResponse:
+        """Settings lands on the first section, not an empty overview."""
+        return page(
+            request,
+            "settings.html",
+            nav="settings",
+            section="agent",
+            settings_sections=SETTINGS_SECTIONS,
+        )
+
+    @app.get("/settings/{section}", response_class=HTMLResponse)
+    def page_settings_section(request: Request, section: str) -> HTMLResponse:
+        """One Settings section, or the not-found page for an unknown slug."""
+        if section not in tuple(one for one, _ in SETTINGS_SECTIONS):
+            return page(
+                request,
+                "404.html",
+                nav="settings",
+                status_code=404,
+                message=tr("No settings section named {name}.", name=section),
+            )
+        return page(
+            request,
+            "settings.html",
+            nav="settings",
+            section=section,
+            settings_sections=SETTINGS_SECTIONS,
+        )
+
+    @app.get("/setup", response_class=HTMLResponse)
+    @app.get("/setup/agent", response_class=HTMLResponse)
+    def page_setup(request: Request) -> HTMLResponse:
+        """Setup: system readiness. The agent flow is one reusable panel with
+        two entry points (here and Settings -> Agent); this ticket wires them."""
+        return page(request, "setup.html", nav="setup")
 
     @app.post("/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
@@ -985,7 +1094,7 @@ def create_app(
     @app.get("/ui/projects", response_class=HTMLResponse)
     def ui_projects(request: Request) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows()}
+            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
         )
 
     @app.post("/ui/projects", response_class=HTMLResponse)
@@ -995,7 +1104,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows()}
+            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
         )
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)

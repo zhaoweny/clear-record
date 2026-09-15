@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Setup") }} · clear-record{% endblock %}
+
+{% block body %}
+{# Setup is system readiness (installed -> usable), not the daily workspace.
+   This is the agent flow first-run entry point; Settings -> Agent reaches the
+   same panel, so the flow itself has one home. Ticket 04 grows the steps. #}
+<section class="content setup">
+  <h2>{{ tr("Setup") }}</h2>
+  <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+    <div class="muted">{{ tr("Loading agent setup…") }}</div>
+  </div>
+</section>
+{% endblock %}

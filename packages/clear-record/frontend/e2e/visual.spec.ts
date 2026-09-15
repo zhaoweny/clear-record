@@ -29,25 +29,35 @@ async function shoot(page: Page, name: string, size: Size, scheme: Scheme) {
 
 for (const scheme of ["light", "dark"] as const) {
   for (const size of [DESKTOP, MOBILE]) {
-    test(`home ${size.tag} ${scheme}`, async ({ page }) => {
+    test(`projects ${size.tag} ${scheme}`, async ({ page }) => {
       await page.goto("/");
       await page.locator("#projects .project").first().waitFor();
-      await shoot(page, "home", size, scheme);
+      await shoot(page, "projects", size, scheme);
     });
 
     test(`project ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/");
-      await page.locator("#projects .project", { hasText: "Q3 sync" }).click();
+      await page.goto("/projects/q3-sync");
       await page.locator("#detail .meeting").first().waitFor();
       await shoot(page, "project", size, scheme);
     });
 
     test(`meeting ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/");
-      await page.locator("#projects .project", { hasText: "Q3 sync" }).click();
+      await page.goto("/projects/q3-sync");
       await page.locator("#detail .meeting", { hasText: "Kickoff" }).getByText("Review", { exact: true }).click();
       await page.locator("pre.transcript").first().waitFor();
       await shoot(page, "meeting", size, scheme);
+    });
+
+    test(`settings ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/settings");
+      await page.locator(".agent-setup").waitFor();
+      await shoot(page, "settings", size, scheme);
+    });
+
+    test(`setup ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/setup");
+      await page.locator(".agent-setup").waitFor();
+      await shoot(page, "setup", size, scheme);
     });
   }
 }

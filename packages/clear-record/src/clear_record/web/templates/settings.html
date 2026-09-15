@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Settings") }} · clear-record{% endblock %}
+
+{% block body %}
+{# Settings is the control plane, kept distinct from the Projects workspace:
+   its own section navigation, one section at a time. Each section is a real
+   URL, so it can be linked and refreshed. #}
+<aside class="sidebar">
+  <h2 class="sidebar-title">{{ tr("Settings") }}</h2>
+  <ul class="settings-nav">
+    {% for slug, label in settings_sections %}
+    <li><a href="/settings/{{ slug }}"{% if section == slug %} aria-current="page"{% endif %}>{{ tr(label) }}</a></li>
+    {% endfor %}
+  </ul>
+</aside>
+<section id="detail" class="content">
+  {% if section == "agent" %}
+  <h2>{{ tr("Agent") }}</h2>
+  {# The one guided agent flow, reached again from Setup; ticket 01 only wires
+     the entry points - the flow itself is the existing panel. #}
+  <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+    <div class="muted">{{ tr("Loading agent setup…") }}</div>
+  </div>
+  {% elif section == "webhooks" %}
+  <h2>{{ tr("Webhooks") }}</h2>
+  <div id="webhooks" hx-get="/ui/webhooks" hx-trigger="load, every 20s" hx-swap="innerHTML">
+    <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

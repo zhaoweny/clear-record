@@ -12,6 +12,7 @@ so it cannot drift from the app's own schema.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -212,6 +213,17 @@ def main() -> int:
         path=str(workspace / "record.json"),
         produced_by="pipeline",
         review_state="final",
+    )
+    # One uploaded tape: the Media tab's inventory and the storage panel need a
+    # real file to size, and the screenshot is empty without one.
+    tape_bytes = b"RIFF" + b"\x00" * 4092
+    tape_path = workspace / "kickoff-mic.wav"
+    tape_path.write_bytes(tape_bytes)
+    registry.register_tape(
+        kickoff.id,
+        path=str(tape_path),
+        sha256=hashlib.sha256(tape_bytes).hexdigest(),
+        bytes=len(tape_bytes),
     )
     minutes = workspace / "minutes.md"
     minutes.write_text(

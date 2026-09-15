@@ -136,6 +136,11 @@ SETTINGS_SECTIONS: tuple[tuple[str, str], ...] = (
     ("webhooks", deferred("Webhooks")),
 )
 
+#: How many of the newest meetings the Projects landing's activity line and a
+#: project's Overview show. Both are cheap registry reads; walking every
+#: workspace for tapes and transcripts is the project's Media tab's job.
+RECENT_MEETINGS = 5
+
 
 def _accept_language_tags(header: str | None) -> list[str]:
     """The language tags in an ``Accept-Language`` header, highest ``q`` first.
@@ -728,31 +733,92 @@ def create_app(
             },
         )
 
-    def detail_context(slug: str, error: str | None = None) -> dict:
-        """Everything the project view renders, from the service only.
+    def project_context(
+        slug: str, tab: str = "overview", error: str | None = None
+    ) -> dict:
+        """Everything one project sub-tab renders, from the service only.
 
+        Each tab loads only what it shows, so a render (or a mutation's
+        re-render) never pays for the surfaces the operator is not looking at.
         Raises ``KeyError`` for an unknown slug so each caller owns its 404:
         the fragment route returns an ``HTTPException`` (htmx must not swap a
         4xx), while the page route renders the not-found page.
         """
         project = registry.require_project(slug)
-        return {
-            "project": project,
-            "terms": registry.list_terms(slug),
-            "statuses": TERM_STATUSES,
-            "meetings": meeting_rows(slug),
-            "backends": BACKEND_CHOICES,
-            "profiles": PROFILE_CHOICES,
-            "profile_default": PROFILE_CUSTOM,
-            "profile_options": profile_preview(PROFILE_CUSTOM),
-            "archives": archive_rows(slug),
-            "minutes": minutes_rows(slug),
-            "error": error,
-        }
+        context: dict = {"project": project, "tab": tab, "error": error}
+        if tab == "meetings":
+            context.update(
+                meetings=meeting_rows(slug),
+                backends=BACKEND_CHOICES,
+                profiles=PROFILE_CHOICES,
+                profile_default=PROFILE_CUSTOM,
+                profile_options=profile_preview(PROFILE_CUSTOM),
+                archives=archive_rows(slug),
+            )
+        elif tab == "glossary":
+            context.update(terms=registry.list_terms(slug), statuses=TERM_STATUSES)
+        elif tab == "media":
+            context["media"] = media_rows(slug)
+        else:
+            meetings = registry.list_meetings(slug)
+            context.update(
+                meeting_count=len(meetings),
+                term_count=len(registry.list_terms(slug)),
+                recent=[
+                    {"meeting": meeting, "managed": managed.is_managed(meeting)}
+                    for meeting in meetings[:RECENT_MEETINGS]
+                ],
+                minutes=minutes_rows(slug),
+            )
+        return context
 
-    def detail(request: Request, slug: str, error: str | None = None) -> HTMLResponse:
+    def media_rows(slug: str) -> list[dict]:
+        """Every meeting's tapes and transcript summary, from the service only.
+
+        Tapes are :func:`managed.meeting_storage` — the same accounting the
+        storage panel and the upload guard use — and the transcript summary is
+        :func:`read_transcript`, the read the MCP adapter and the review share.
+        The Media tab is an inventory: it restates no storage or transcript rule.
+        """
+        rows: list[dict] = []
+        for meeting in registry.list_meetings(slug):
+            usage = managed.meeting_storage(registry, meeting)
+            try:
+                transcript = read_transcript(meeting, limit=1)
+            except FileNotFoundError:
+                transcript = None
+            rows.append(
+                {
+                    "meeting": meeting,
+                    "workspace_path": usage["workspace_path"],
+                    "managed": usage["managed"],
+                    "tapes": [
+                        {
+                            "id": tape["id"],
+                            "name": tape["name"],
+                            "path": tape["path"],
+                            "sha256": tape["sha256"],
+                            "sha256_short": tape["sha256"][:12],
+                            "bytes": tape["bytes"],
+                            "size": human_bytes(tape["bytes"]),
+                        }
+                        for tape in usage["tapes"]
+                    ],
+                    "transcript": None
+                    if transcript is None
+                    else {"segments": transcript.total, "source": transcript.source},
+                }
+            )
+        return rows
+
+    def detail(
+        request: Request,
+        slug: str,
+        tab: str = "overview",
+        error: str | None = None,
+    ) -> HTMLResponse:
         try:
-            context = detail_context(slug, error)
+            context = project_context(slug, tab, error)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         return TEMPLATES.TemplateResponse(request, "_detail.html", context)
@@ -1005,16 +1071,44 @@ def create_app(
             status_code=status_code,
         )
 
+    def recent_meetings(projects: list[dict]) -> list[dict]:
+        """The newest meetings across every project, for the landing's one line.
+
+        A cheap registry read only: ``list_meetings()`` is newest first and
+        carries each meeting's project slug, whose name comes from the already
+        loaded project rows. Nothing here walks a workspace — the full tape and
+        transcript inventory is the project's Media tab (ADR-0027).
+        """
+        names = {row["project"].slug: row["project"].name for row in projects}
+        return [
+            {
+                "meeting": meeting,
+                "project_name": names.get(meeting.project_slug, meeting.project_slug),
+            }
+            for meeting in registry.list_meetings()[:RECENT_MEETINGS]
+        ]
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         """The Projects workspace: the console lands here, not on a dashboard."""
-        return page(request, "index.html", nav="projects", projects=project_rows())
+        projects = project_rows()
+        return page(
+            request,
+            "index.html",
+            nav="projects",
+            projects=projects,
+            recent=recent_meetings(projects),
+        )
 
-    @app.get("/projects/{slug}", response_class=HTMLResponse)
-    def page_project(request: Request, slug: str) -> HTMLResponse:
-        """A project page: the URL is the source of truth for the selection."""
+    def project_page(request: Request, slug: str, tab: str) -> HTMLResponse:
+        """A project page for one sub-tab, or the not-found page.
+
+        The tab is already validated by which route called this; the unknown
+        project (``KeyError``) is what each page route owns. The sidebar list
+        and the active-project mark ride along on every tab.
+        """
         try:
-            context = detail_context(slug)
+            context = project_context(slug, tab)
         except KeyError:
             return page(
                 request,
@@ -1030,6 +1124,58 @@ def create_app(
             active_slug=slug,
             projects=project_rows(),
             **context,
+        )
+
+    @app.get("/projects/{slug}", response_class=HTMLResponse)
+    def page_project(request: Request, slug: str) -> HTMLResponse:
+        """A project page: the URL is the source of truth for the selection.
+
+        The default tab is Overview; every other tab is its own URL, so a
+        refresh and the back button keep the operator where they were.
+        """
+        return project_page(request, slug, "overview")
+
+    @app.get("/projects/{slug}/meetings", response_class=HTMLResponse)
+    def page_project_meetings(request: Request, slug: str) -> HTMLResponse:
+        """The Meetings tab: the operational surface."""
+        return project_page(request, slug, "meetings")
+
+    @app.get("/projects/{slug}/glossary", response_class=HTMLResponse)
+    def page_project_glossary(request: Request, slug: str) -> HTMLResponse:
+        """The Glossary tab: the project's terms."""
+        return project_page(request, slug, "glossary")
+
+    @app.get("/projects/{slug}/media", response_class=HTMLResponse)
+    def page_project_media(request: Request, slug: str) -> HTMLResponse:
+        """The Media tab: every meeting's tapes and transcripts."""
+        return project_page(request, slug, "media")
+
+    @app.get("/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    def page_meeting(
+        request: Request, slug: str, meeting_slug: str, offset: int = 0
+    ) -> HTMLResponse:
+        """One meeting's review as its own page (transcript, artifacts, drafts).
+
+        The URL is the source of truth, so a refresh or a shared link keeps the
+        review; the review's own controls still swap the ``#detail`` fragment.
+        """
+        meeting = registry.get_meeting(slug, meeting_slug)
+        if meeting is None:
+            return page(
+                request,
+                "404.html",
+                nav="projects",
+                status_code=404,
+                message=tr("No meeting named {meeting}.", meeting=meeting_slug),
+            )
+        return page(
+            request,
+            "meeting.html",
+            nav="projects",
+            active_slug=slug,
+            projects=project_rows(),
+            tab="meetings",
+            **meeting_context(meeting, offset=max(0, offset)),
         )
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -1109,7 +1255,20 @@ def create_app(
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
-        return detail(request, slug)
+        """The Overview tab as a fragment (the project page's default)."""
+        return detail(request, slug, tab="overview")
+
+    @app.get("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    def ui_project_meetings(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="meetings")
+
+    @app.get("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    def ui_project_glossary(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="glossary")
+
+    @app.get("/ui/projects/{slug}/media", response_class=HTMLResponse)
+    def ui_project_media(request: Request, slug: str) -> HTMLResponse:
+        return detail(request, slug, tab="media")
 
     # --- HTML views: a meeting's transcript, artifacts and agent tasks ------ #
     @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
@@ -1206,7 +1365,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return detail(request, slug)
+        return detail(request, slug, tab="glossary")
 
     @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
@@ -1218,7 +1377,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return detail(request, term.project_slug)
+        return detail(request, term.project_slug, tab="glossary")
 
     @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
     def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
@@ -1226,7 +1385,7 @@ def create_app(
         if term is None:
             raise HTTPException(status_code=404, detail=f"no term {term_id}")
         registry.delete_term(term_id)
-        return detail(request, term.project_slug)
+        return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
     @app.post("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
@@ -1256,11 +1415,11 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except managed.UploadRejected as exc:
             # The meeting exists but its managed workspace could not be made:
-            # re-render the project with the service's message.
-            return detail(request, slug, error=str(exc))
+            # re-render the tab with the service's message.
+            return detail(request, slug, tab="meetings", error=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return detail(request, slug)
+        return detail(request, slug, tab="meetings")
 
     @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_set_tapes(
@@ -1274,7 +1433,7 @@ def create_app(
             registry.set_recording_set(meeting_id, tapes)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return detail(request, meeting.project_slug)
+        return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
     def ui_meeting_storage(request: Request, meeting_id: int) -> HTMLResponse:
@@ -1380,9 +1539,9 @@ def create_app(
             archive_meeting(registry, meeting, root or None)
         except ValueError as exc:
             # A missing archive root is fixable in the form, so re-render the
-            # project with the message rather than an error status htmx skips.
-            return detail(request, meeting.project_slug, error=str(exc))
-        return detail(request, meeting.project_slug)
+            # tab with the message rather than an error status htmx skips.
+            return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
+        return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
     @app.post("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)

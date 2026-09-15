@@ -762,6 +762,59 @@ ul.projects .count {
   border-radius: var(--radius-lg);
 }
 
+/* The landing's one recent-activity line: the newest meetings across projects,
+   to jump back into work. Compact and structural, not a dashboard. */
+.recent-activity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.recent-activity ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-activity li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.recent-activity li + li::before {
+  content: "\00b7";
+  margin-right: var(--space-1);
+  color: var(--muted-foreground);
+}
+
+/* A project Overview: the at-a-glance facts and the newest meetings to re-enter. */
+.overview-facts {
+  gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.recent-meetings {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-meetings li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Settings is the control plane: its own section navigation, distinct from
    the project list. */
 .settings-nav {
@@ -787,6 +840,34 @@ ul.projects .count {
   background: var(--card);
   font-weight: 500;
   box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* The project's sub-tabs: the page's spine. Real links (the enclosing section
+   carries `hx-boost`), with the current tab marked `aria-current` and an
+   underline, never colour alone. */
+.project-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.project-tabs a {
+  padding: 6px var(--space-3);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.project-tabs a:hover { color: var(--foreground); }
+
+.project-tabs a[aria-current="page"] {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
 }
 
 /* --- Cards --------------------------------------------------------------- */
@@ -1030,6 +1111,15 @@ tbody tr:last-child td { border-bottom: none; }
   --chip-ink: var(--ok-ink);
   --chip-line: var(--ok-line);
   --chip-glyph: "\25CF\00a0"; /* app-owned */
+}
+
+/* Media inventory: one card per meeting; the tape and transcript labels are
+   sub-headings inside the card, quieter than a page section. */
+.media-label {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted-foreground);
 }
 
 .table-tapes { margin-top: var(--space-3); }

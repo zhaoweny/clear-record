@@ -1,0 +1,8 @@
+{% extends "project.html" %}
+
+{% block title %}{{ meeting.title }} · clear-record{% endblock %}
+
+{# The meeting review is its own URL under the project; the project shell (the
+   sidebar and the sub-tabs, with Meetings marked) carries over, and the review
+   itself still swaps the `#detail` fragment its own controls target. #}
+{% block detail %}{% include "_meeting.html" %}{% endblock %}

@@ -25,6 +25,17 @@
        hx-swap="innerHTML">
     <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
   </div>
+
+  {# Guided agent setup (ADR-0018's onboarding half): the console says plainly
+     when no endpoint is configured, with a way to fix it, instead of an opaque
+     task failure. The panel is its own template; this block is only the mount. #}
+  <h2 class="sidebar-title">{{ tr("Agent") }}</h2>
+  <div id="agent-setup"
+       hx-get="/ui/agent-setup"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="muted">{{ tr("Loading agent setup…") }}</div>
+  </div>
 </aside>
 
 <section id="detail" class="content">

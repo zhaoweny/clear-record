@@ -69,6 +69,16 @@ from clear_record.service import (
     verify_archive,
 )
 from clear_record.service.auto import render_message as render_service_message
+from clear_record.service.setup import (
+    DEFAULT_SMALL_MODEL,
+    Detection,
+    SetupError,
+    detect,
+    pull_model,
+    setup_view,
+    verify_endpoint,
+    write_agent_settings,
+)
 from clear_record.service.webhooks import (
     WebhookEmitter,
     WebhookStatus,
@@ -1367,6 +1377,135 @@ def create_app(
             "_webhooks.html",
             {"status": webhook_status_view(emitter.status())},
         )
+
+    # --- guided agent setup (ADR-0018's onboarding half, ticket 20) -------- #
+    def agent_setup_panel(
+        request: Request,
+        *,
+        detection: Detection | None = None,
+        error: str | None = None,
+        notice: str | None = None,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        """The setup panel: the service's state, plus whatever a step just did.
+
+        Every fact is the service's own — the resolved endpoint, the config
+        problems, what a probe found — so the console cannot show a different
+        endpoint from the one a task would call. This boundary only renders and
+        translates (the same split ``refusal()`` uses for an upload guard).
+        """
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_agent_setup.html",
+            {
+                "setup": setup_view(detection=detection),
+                "default_model": DEFAULT_SMALL_MODEL,
+                "error": error,
+                "notice": notice,
+            },
+            status_code=status_code,
+        )
+
+    @app.get("/ui/agent-setup", response_class=HTMLResponse)
+    def ui_agent_setup(request: Request) -> HTMLResponse:
+        """The setup state, with no probe on a plain render (so a page is instant)."""
+        return agent_setup_panel(request)
+
+    @app.get("/ui/agent-setup/detect", response_class=HTMLResponse)
+    def ui_agent_setup_detect(request: Request) -> HTMLResponse:
+        """Probe the known local servers and test-call the first usable one."""
+        return agent_setup_panel(request, detection=detect())
+
+    @app.post("/ui/agent-setup/use", response_class=HTMLResponse)
+    def ui_agent_setup_use(
+        request: Request,
+        endpoint: str = Form(...),
+        model: str = Form(""),
+        api_key_env: str = Form(""),
+    ) -> HTMLResponse:
+        """Verify an endpoint with a real call, then record it in the config.
+
+        Verification comes first and is a precondition: an endpoint that cannot
+        answer a test call is never written as if it worked — the failure is
+        shown with what the endpoint actually said. ``api_key_env`` stays a
+        **name**; no value is read here or stored anywhere.
+        """
+        try:
+            verification = verify_endpoint(
+                endpoint, model=model or None, api_key_env=api_key_env or None
+            )
+            if not verification.ok:
+                shown = (
+                    verification.detail.render(tr)
+                    if verification.detail is not None
+                    else tr("The endpoint did not answer a test call.")
+                )
+                return agent_setup_panel(request, error=shown, status_code=400)
+            path = write_agent_settings(
+                endpoint, model=model or None, api_key_env=api_key_env or None
+            )
+        except SetupError as exc:
+            return agent_setup_panel(
+                request, error=exc.message.render(tr), status_code=400
+            )
+        return agent_setup_panel(
+            request,
+            notice=tr(
+                "Recorded {endpoint} in {path}.",
+                endpoint=endpoint,
+                path=str(path),
+            ),
+        )
+
+    @app.post("/ui/agent-setup/pull", response_class=HTMLResponse)
+    def ui_agent_setup_pull(
+        request: Request,
+        endpoint: str = Form(...),
+        model: str = Form(""),
+    ) -> HTMLResponse:
+        """Pull a small model where the server supports it, then record the choice.
+
+        A pull is a download the user asked for here, never a silent one, and the
+        model it actually chose is what gets recorded — verified by a test call
+        first, so a pull that succeeded but cannot serve does not get written.
+        """
+        chosen = model.strip() or DEFAULT_SMALL_MODEL
+        pulled = pull_model(chosen, endpoint=endpoint)
+        if not pulled.ok:
+            shown = (
+                pulled.detail.render(tr)
+                if pulled.detail is not None
+                else tr("The model could not be pulled.")
+            )
+            return agent_setup_panel(request, error=shown, status_code=400)
+        verification = verify_endpoint(endpoint, model=pulled.model)
+        if not verification.ok:
+            shown = (
+                verification.detail.render(tr)
+                if verification.detail is not None
+                else tr("The endpoint did not answer a test call.")
+            )
+            return agent_setup_panel(request, error=shown, status_code=400)
+        try:
+            write_agent_settings(endpoint, model=pulled.model)
+        except SetupError as exc:
+            return agent_setup_panel(
+                request, error=exc.message.render(tr), status_code=400
+            )
+        return agent_setup_panel(
+            request,
+            notice=tr("Pulled {model} and recorded it.", model=pulled.model),
+        )
+
+    @app.get("/api/agent/setup")
+    def agent_setup_status(detect_now: bool = False) -> dict:
+        """The machine surface for the setup state; ``?detect_now=1`` probes first.
+
+        JSON, so it stays English (the i18n boundary). The key is never part of
+        it: ``api_key_env`` is a variable name, and a value is never read.
+        """
+        found = detect() if detect_now else None
+        return setup_view(detection=found).as_dict()
 
     # --- JSON API (machines, scripts, later MCP) ---------------------------- #
     @app.get("/api/health")

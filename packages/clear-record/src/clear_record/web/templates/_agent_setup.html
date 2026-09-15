@@ -1,0 +1,106 @@
+{# Guided agent setup (ADR-0018's onboarding half, ticket 20). Every fact is the
+   service's own (`clear_record.service.setup`): the resolved endpoint and model,
+   the config problems, and what a probe found. The console only renders and
+   translates — it never recomputes the service's answer.
+
+   A credential is never shown and never written: `api_key_env` is a variable
+   NAME, and a local endpoint has none at all. #}
+<div class="agent-setup" id="agent-setup">
+  <div class="row agent-setup-head">
+    {% if setup.state == 'ready' %}
+    <span class="badge status-ok">{{ tr("agent ready") }}</span>
+    {% elif setup.state == 'problem' %}
+    <span class="badge status-error">{{ tr("agent config problem") }}</span>
+    {% else %}
+    <span class="badge status-missing">{{ tr("no endpoint configured") }}</span>
+    {% endif %}
+    <button class="btn btn-sm btn-ghost" type="button"
+            hx-get="/ui/agent-setup/detect" hx-target="#agent-setup" hx-swap="innerHTML"
+            title="{{ tr('Look for a local OpenAI-compatible server and test it') }}">{{ tr("Detect") }}</button>
+  </div>
+
+  {% if error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
+  {% if notice %}<p class="muted agent-setup-notice">{{ notice }}</p>{% endif %}
+
+  {% if setup.state == 'ready' %}
+  <p class="muted">{{ tr("Endpoint: {endpoint}", endpoint=setup.endpoint or tr("the configured command template")) }}</p>
+  {% if setup.model %}<p class="muted">{{ tr("Model: {model}", model=setup.model) }}</p>{% endif %}
+  {% if setup.api_key_env %}<p class="muted">{{ tr("Key read from the environment variable {name}; never stored.", name=setup.api_key_env) }}</p>{% endif %}
+  {% if setup.commands %}<p class="muted">{{ tr("Command templates: {kinds}", kinds=setup.commands | join(', ')) }}</p>{% endif %}
+  {% else %}
+  <p class="muted agent-setup-note">{{ tr("No agent endpoint is configured yet, so agent tasks cannot run. Start a local OpenAI-compatible server (Ollama, LM Studio or llama.cpp) and detect it, or enter an address below.") }}</p>
+  {% endif %}
+
+  {% for problem in setup.problems %}
+  {# The service's own wording, translated for display; the console never
+     restates the rule that raised it. #}
+  <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+  {% endfor %}
+
+  {% if setup.detection %}
+  <ul class="agent-setup-probes">
+    {% for probe in setup.detection.probes %}
+    <li class="agent-probe">
+      <div class="row">
+        <strong>{{ probe.candidate.label }}</strong>
+        <code class="muted">{{ probe.candidate.base_url }}</code>
+        {% if probe.verified %}
+        <span class="badge status-ok">{{ tr("verified") }}</span>
+        {% elif probe.reachable %}
+        <span class="badge status-queued">{{ tr("reachable") }}</span>
+        {% else %}
+        <span class="badge status-missing">{{ tr("not running") }}</span>
+        {% endif %}
+      </div>
+      {% if probe.verified %}
+      <div class="muted">{{ tr("Verified with a test call to {model}.", model=probe.verified_model or tr("the server's model")) }}</div>
+      {% elif probe.reachable %}
+      {% if probe.verify_detail %}<div class="run-error" role="alert">{{ probe.verify_detail.render(tr) }}</div>{% endif %}
+      {% if probe.models %}
+      <div class="muted">{{ tr("Models:") }} {{ probe.models | join(', ') }}</div>
+      {% else %}
+      <div class="muted">{{ tr("The server answers but serves no model yet.") }}</div>
+      {% endif %}
+      {% else %}
+      {% if probe.detail %}<div class="muted">{{ probe.detail.render(tr) }}</div>{% endif %}
+      {# The hint is the plain "what to install or run" this rung owes the user. #}
+      <div class="muted">{{ tr(probe.candidate.install_hint) }}</div>
+      {% endif %}
+
+      {% if not setup.configured and probe.reachable %}
+      {# ``hx-vals`` carries the probed endpoint, so the form stays exactly the
+         user's editable model field — and no field markup the CSS scanner would
+         read as a utility class. #}
+      <form class="stack" hx-post="/ui/agent-setup/use" hx-target="#agent-setup"
+            hx-swap="innerHTML" hx-vals='{"endpoint": "{{ probe.candidate.base_url }}"}'>
+        <input name="model" value="{{ probe.models[0] if probe.models else '' }}"
+               placeholder="{{ tr('model (optional)') }}">
+        <button class="primary" type="submit">{{ tr("Verify and use") }}</button>
+      </form>
+      {% endif %}
+      {% if not setup.configured and probe.pull_supported %}
+      <form class="stack" hx-post="/ui/agent-setup/pull" hx-target="#agent-setup"
+            hx-swap="innerHTML" hx-vals='{"endpoint": "{{ probe.candidate.base_url }}"}'>
+        <input name="model" value="{{ default_model }}" placeholder="{{ tr('model to pull') }}">
+        <button type="submit">{{ tr("Pull a small model") }}</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p><button class="btn btn-sm" type="button"
+             hx-get="/ui/agent-setup/detect" hx-target="#agent-setup" hx-swap="innerHTML">{{ tr("Look for Ollama, LM Studio or a llama.cpp server") }}</button></p>
+  {% endif %}
+
+  {% if not setup.configured %}
+  <form class="stack agent-setup-manual"
+        hx-post="/ui/agent-setup/use" hx-target="#agent-setup" hx-swap="innerHTML">
+    <input name="endpoint" placeholder="http://127.0.0.1:11434/v1" required>
+    <input name="model" placeholder="{{ tr('model (optional)') }}">
+    <input name="api_key_env" placeholder="{{ tr('key environment variable name (optional)') }}">
+    <button class="primary" type="submit">{{ tr("Verify and record") }}</button>
+  </form>
+  <p class="muted agent-setup-secret">{{ tr("clear-record never stores a key: a hosted endpoint names the environment variable that holds it, and a local endpoint needs none.") }}</p>
+  {% endif %}
+</div>

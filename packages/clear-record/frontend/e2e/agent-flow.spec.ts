@@ -1,11 +1,10 @@
 // Ticket 05: the reusable agent flow and its hello-world acceptance test.
 //
-// e2e stays offline and deterministic. This machine has no working system voice
-// (macOS say exits 0 and writes a zero-frame WAV) and no ASR backend, so
-// "Try it" must land in a FINDING that names the leg -- never a crash and never
-// a real model call. The success path is asserted by the Python tests with the
-// pipeline stubbed; a real agent answer is the separate optional just
-// agent-drive workflow (ticket 07).
+// The check's contract is "a transcript, or a finding that names the leg", so the
+// test accepts EITHER: a machine with a working voice and an ASR backend reaches
+// "ok" (as a full-access macOS does), a bare CI box lands on a leg-naming finding.
+// Neither outcome is a crash and neither makes a model call -- the ASR is local.
+// A real agent answer is the separate optional just agent-drive workflow.
 import { test, expect, type Page } from "@playwright/test";
 
 function watch(page: Page): string[] {
@@ -17,11 +16,10 @@ function watch(page: Page): string[] {
   return errors;
 }
 
-// Every leg a finding may name. A success here would mean this environment grew
-// a voice and an ASR backend, which is exactly what the test must not assume.
-const FINDING_LEGS = ["tts", "backend", "model", "transcribe"];
+// Every outcome the check may report: "ok", or the leg that stopped the chain.
+const LEGS = ["ok", "tts", "backend", "model", "transcribe"];
 
-test("the Try it check reports a finding that names the leg", async ({ page }) => {
+test("the Try it check reports a transcript or a leg-naming finding", async ({ page }) => {
   const errors = watch(page);
 
   await page.goto("/settings/status");
@@ -30,11 +28,16 @@ test("the Try it check reports a finding that names the leg", async ({ page }) =
 
   const result = page.locator("#hello-check .hello-result");
   await expect(result).toBeVisible();
-  await expect(result).toHaveClass(/hello-finding/);
   const leg = await result.getAttribute("data-leg");
-  expect(FINDING_LEGS).toContain(leg);
-  // The finding names the leg in the copy too, not only in the attribute.
-  await expect(result.locator(".hello-leg")).toContainText(String(leg));
+  expect(LEGS).toContain(leg);
+  if (leg === "ok") {
+    // A machine with a voice and an ASR backend runs the whole chain here.
+    await expect(result.locator(".hello-transcript")).toBeVisible();
+  } else {
+    await expect(result).toHaveClass(/hello-finding/);
+    // The finding names the leg in the copy too, not only in the attribute.
+    await expect(result.locator(".hello-leg")).toContainText(String(leg));
+  }
   expect(errors).toEqual([]);
 });
 
@@ -49,7 +52,7 @@ test("the same check runs from the agent flow's Try it stage", async ({ page }) 
   const result = stage.locator("#hello-check .hello-result");
   await expect(result).toBeVisible();
   const leg = await result.getAttribute("data-leg");
-  expect(FINDING_LEGS).toContain(leg);
+  expect(LEGS).toContain(leg);
   expect(errors).toEqual([]);
 });
 

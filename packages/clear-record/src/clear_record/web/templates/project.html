@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} · clear-record{% endblock %}
+
+{% block body %}
+{# The project page: the project list stays in the sidebar for switching, and
+   the URL owns the selection. `#detail` remains the in-page swap target every
+   `/ui/*` project fragment renders into. #}
+<aside class="sidebar">
+  <h2 class="sidebar-title">{{ tr("Projects") }}</h2>
+  <div id="projects">
+    {% include "_projects.html" %}
+  </div>
+  {% include "_add_project.html" %}
+</aside>
+<section id="detail" class="content">
+  {% include "_detail.html" %}
+</section>
+{% endblock %}

@@ -1,44 +1,19 @@
 {% extends "base.html" %}
 
+{% block title %}{{ tr("Projects") }} · clear-record{% endblock %}
+
 {% block body %}
-<aside class="sidebar">
-  <h2 class="sidebar-title">{{ tr("Projects") }}</h2>
-  <div id="projects" hx-get="/ui/projects" hx-trigger="load" hx-swap="innerHTML"></div>
-
-  <form class="stack"
-        hx-post="/ui/projects"
-        hx-target="#projects"
-        hx-swap="innerHTML"
-        hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
-    <input name="name" placeholder="{{ tr("New project name") }}" required>
-    <button class="primary" type="submit">{{ tr("Add project") }}</button>
-  </form>
-
-  {# The webhook delivery panel (ADR-0020): process-wide, so it lives in the
-     sidebar beside the projects, not inside a project. Polled so the last
-     outcome appears as a run finishes; the placeholder inside is swapped in on
-     load. #}
-  <h2 class="sidebar-title">{{ tr("Notifications") }}</h2>
-  <div id="webhooks"
-       hx-get="/ui/webhooks"
-       hx-trigger="load, every 20s"
-       hx-swap="innerHTML">
-    <div class="muted webhooks-note">{{ tr("Loading webhook status…") }}</div>
+{# The console lands on the Projects workspace, not a dashboard: the projects
+   and the one obvious action. The list is server-rendered, so a plain link
+   works with no JavaScript; `_projects.html` is still the fragment
+   `POST /ui/projects` swaps in. #}
+<section class="content workspace">
+  <div class="workspace-head">
+    <h2>{{ tr("Projects") }}</h2>
+    {% include "_add_project.html" %}
   </div>
-
-  {# Guided agent setup (ADR-0018's onboarding half): the console says plainly
-     when no endpoint is configured, with a way to fix it, instead of an opaque
-     task failure. The panel is its own template; this block is only the mount. #}
-  <h2 class="sidebar-title">{{ tr("Agent") }}</h2>
-  <div id="agent-setup"
-       hx-get="/ui/agent-setup"
-       hx-trigger="load"
-       hx-swap="innerHTML">
-    <div class="muted">{{ tr("Loading agent setup…") }}</div>
+  <div id="projects">
+    {% include "_projects.html" %}
   </div>
-</aside>
-
-<section id="detail" class="content">
-  <div class="empty">{{ tr("Select or create a project.") }}</div>
 </section>
 {% endblock %}

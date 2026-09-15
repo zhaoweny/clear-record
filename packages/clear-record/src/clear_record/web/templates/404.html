@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Not found") }} · clear-record{% endblock %}
+
+{% block body %}
+{# A page route 404 is a page, not a JSON body; the message is already
+   translated by the route that could not resolve the URL. #}
+<section class="content">
+  <h2>{{ tr("Not found") }}</h2>
+  <p class="muted">{{ message }}</p>
+  <p><a href="/">{{ tr("Projects") }}</a></p>
+</section>
+{% endblock %}

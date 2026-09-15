@@ -159,6 +159,10 @@ def test_web_console_assets_ship_with_the_package() -> None:
     required = (
         "templates/base.html",
         "templates/index.html",
+        "templates/project.html",
+        "templates/settings.html",
+        "templates/setup.html",
+        "templates/404.html",
         "templates/_projects.html",
         "templates/_detail.html",
         "static/app.css",

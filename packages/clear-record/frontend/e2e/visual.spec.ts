@@ -66,11 +66,22 @@ for (const scheme of ["light", "dark"] as const) {
       await shoot(page, "meeting", size, scheme);
     });
 
-    test(`settings ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/settings");
-      await page.locator(".agent-setup").waitFor();
-      await shoot(page, "settings", size, scheme);
-    });
+    // One capture per Settings section: the split is the point of this ticket.
+    for (const section of [
+      { slug: "models", name: "models", marker: ".table-settings" },
+      { slug: "backends", name: "backends", marker: ".backend-list" },
+      { slug: "agent", name: "agent", marker: ".agent-setup" },
+      { slug: "mcp", name: "mcp", marker: ".mcp-setup" },
+      { slug: "webhooks", name: "webhooks", marker: ".webhooks" },
+      { slug: "storage", name: "storage", marker: ".table-settings" },
+      { slug: "status", name: "status", marker: "#hello-check" },
+    ]) {
+      test(`settings ${section.name} ${size.tag} ${scheme}`, async ({ page }) => {
+        await page.goto(`/settings/${section.slug}`);
+        await page.locator(section.marker).first().waitFor();
+        await shoot(page, `settings-${section.name}`, size, scheme);
+      });
+    }
 
     test(`setup ${size.tag} ${scheme}`, async ({ page }) => {
       await page.goto("/setup");

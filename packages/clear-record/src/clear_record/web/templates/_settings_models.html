@@ -1,0 +1,49 @@
+{# Models: the transcription defaults, read-only. Each value is the service's
+   own (the built-in checkpoint, the resolved models directory, what is on
+   disk) plus the config path a user would edit. Nothing here writes. #}
+<div class="settings-group">
+  <table class="table-settings">
+    <tbody>
+      <tr>
+        <th>{{ tr("Default model") }}</th>
+        <td><code>{{ default_model }}</code> <span class="muted">{{ tr("the built-in checkpoint") }}</span></td>
+      </tr>
+      <tr>
+        <th>{{ tr("Default language") }}</th>
+        <td><code>{{ default_language }}</code> <span class="muted">{{ tr("detected from the tape") }}</span></td>
+      </tr>
+      <tr>
+        <th>{{ tr("Model directory") }}</th>
+        <td><code>{{ models_dir }}</code></td>
+      </tr>
+      <tr>
+        <th>{{ tr("Config file") }}</th>
+        <td><code>{{ config_path }}</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>{{ tr("Models present") }}</h3>
+{% if models_present %}
+<ul class="chip-list">
+  {% for model in models_present %}<li><code>{{ model }}</code></li>{% endfor %}
+</ul>
+{% else %}
+<div class="empty">{{ tr("No ggml checkpoints in the models directory.") }}</div>
+{% endif %}
+
+<h3>{{ tr("Built-in profiles") }}</h3>
+<ul class="settings-list">
+  {% for profile in profiles %}
+  <li>
+    <span class="badge">{{ profile.profile }}</span>
+    {% if profile.knobs %}
+    {% for name, value in profile.knobs.items() %}<span class="knob">{{ name }}={{ value }}</span>{% endfor %}
+    {% else %}
+    <span class="muted">{{ tr("no preset — every knob stays as you set it.") }}</span>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<p class="muted settings-note">{{ tr("These are the defaults a run uses when it sets nothing. Edit {path} or set them per run to change them.", path=config_path) }}</p>

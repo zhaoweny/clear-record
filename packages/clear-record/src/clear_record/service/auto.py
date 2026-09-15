@@ -26,6 +26,11 @@ from clear_record.core.i18n import deferred
 #: can name it without importing ``cli`` or ``providers``).
 BACKEND_AUTO = _auto.BACKEND_AUTO
 
+#: The backend's own built-in checkpoint (providers.base.DEFAULT_MODEL),
+#: re-exported so web can name the default model without importing
+#: providers (the layering guard). It is still the backend's value.
+DEFAULT_MODEL = _auto.DEFAULT_MODEL
+
 #: The re-exported resolver values and types. ``web`` names only what it needs;
 #: ``available_backend_ids`` rides along from ``cli.auto``'s own namespace
 #: (``cli.auto`` legitimately imports ``providers``), which is how ``service``
@@ -35,6 +40,7 @@ AutoProbe = _auto.AutoProbe
 BackendChoice = _auto.BackendChoice
 NoBackendAvailable = _auto.NoBackendAvailable
 available_backend_ids = _auto.available_backend_ids
+models_on_disk = _auto.models_on_disk
 probe_auto = _auto.probe_auto
 resolve_auto = _auto.resolve_auto
 resolve_backend = _auto.resolve_backend
@@ -177,9 +183,11 @@ __all__ = [
     "AutoRun",
     "BACKEND_AUTO",
     "BackendChoice",
+    "DEFAULT_MODEL",
     "ModelNotOnDisk",
     "NoBackendAvailable",
     "available_backend_ids",
+    "models_on_disk",
     "probe_auto",
     "render_message",
     "resolve_auto",

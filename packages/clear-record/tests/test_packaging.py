@@ -165,6 +165,12 @@ def test_web_console_assets_ship_with_the_package() -> None:
         "templates/404.html",
         "templates/_projects.html",
         "templates/_detail.html",
+        "templates/_agent_setup.html",
+        "templates/_mcp_setup.html",
+        "templates/_settings_models.html",
+        "templates/_settings_backends.html",
+        "templates/_settings_storage.html",
+        "templates/_settings_status.html",
         "static/app.css",
         "static/app.js",
     )

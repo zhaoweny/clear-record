@@ -34,6 +34,7 @@ from clear_record.engine import channel_count
 from clear_record.engine.audio import read_audio
 from clear_record.providers import (
     APPLE_SPEECH_BACKEND_ID,
+    DEFAULT_MODEL,
     WINDOWS_AI_BACKEND_ID,
     available_backend_ids,
     resolve_models_dir,
@@ -538,6 +539,7 @@ def probe_auto(
 __all__ = [
     "BACKEND_AUTO",
     "BACKEND_PREFERENCE",
+    "DEFAULT_MODEL",
     "AutoChoice",
     "AutoProbe",
     "BackendChoice",

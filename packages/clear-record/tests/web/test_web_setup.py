@@ -142,8 +142,10 @@ def test_the_setup_page_renders_the_numbered_steps(tmp_path) -> None:
     # The agent step is the one shared panel, mounted by the same htmx URL.
     assert 'id="agent-setup"' in page
     assert 'hx-get="/ui/agent-setup"' in page
-    # First record is ticket 05: a clear coming-next state, not a tape flow.
-    assert "Coming next" in page
+    # First record is ticket 05: it points at the one acceptance test (the flow's
+    # Try it stage) and the permanent copy in Settings -> Status.
+    assert "Run it in the Agent step" in page
+    assert 'href="/settings/status"' in page
     assert "/setup/complete" in page
     assert "/setup/dismiss" in page
 

@@ -88,5 +88,20 @@ for (const scheme of ["light", "dark"] as const) {
       await page.locator(".agent-setup").waitFor();
       await shoot(page, "setup", size, scheme);
     });
+
+    // Ticket 05: the agent flow as its own entry point, and the permanent
+    // diagnostic at its deterministic finding state on this machine.
+    test(`setup agent ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/setup/agent");
+      await page.locator(".agent-flow").waitFor();
+      await shoot(page, "setup-agent", size, scheme);
+    });
+
+    test(`settings status finding ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/settings/status");
+      await page.getByRole("button", { name: "Run the check" }).click();
+      await page.locator("#hello-check .hello-result").waitFor();
+      await shoot(page, "settings-status-finding", size, scheme);
+    });
   }
 }

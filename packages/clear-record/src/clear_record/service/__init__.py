@@ -176,6 +176,23 @@ from clear_record.service.webhooks import (
     sign,
 )
 
+# The guided agent flow and its hello-world acceptance/diagnostic check
+# (ticket 05). Imported last on purpose: it reaches clear_record.service.setup,
+# which is not part of this package's eager import graph, so every module it
+# needs is already loaded when this line runs.
+from clear_record.service.agent_flow import (
+    HELLO_CHECK_DIRNAME,
+    LEG_BACKEND,
+    LEG_MODEL,
+    LEG_OK,
+    LEG_TRANSCRIBE,
+    LEG_TTS,
+    LEGS,
+    TRANSCRIPT_TOOL,
+    HelloCheck,
+    run_hello_check,
+)
+
 __all__ = [
     "AGENT_DIRNAME",
     "ALL_EVENTS",
@@ -323,4 +340,16 @@ __all__ = [
     "reset_default_config",
     "run_task",
     "transcript_check_task",
+    # Hello-world acceptance/diagnostic check (ticket 05) — appended for the
+    # same minimal-merge-surface reason as the agent-task block above.
+    "HELLO_CHECK_DIRNAME",
+    "LEG_BACKEND",
+    "LEG_MODEL",
+    "LEG_OK",
+    "LEG_TRANSCRIBE",
+    "LEG_TTS",
+    "LEGS",
+    "TRANSCRIPT_TOOL",
+    "HelloCheck",
+    "run_hello_check",
 ]

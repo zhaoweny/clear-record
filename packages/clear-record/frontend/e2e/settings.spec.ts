@@ -53,19 +53,31 @@ test("a section is refresh-safe and an unknown one is a page 404", async ({ page
 });
 
 test("the read sections carry no write control", async ({ page }) => {
-  for (const slug of ["models", "backends", "storage", "status"]) {
+  for (const slug of ["models", "backends", "storage"]) {
     await page.goto("/settings/" + slug);
     await expect(page.locator("#detail [hx-post]")).toHaveCount(0);
     await expect(page.locator("#detail form")).toHaveCount(0);
   }
 });
 
-test("the agent flow is one panel with two entry points", async ({ page }) => {
-  await page.goto("/settings/agent");
-  await expect(page.locator(".agent-setup")).toBeVisible();
+test("status carries exactly the re-runnable hello-world check", async ({ page }) => {
+  await page.goto("/settings/status");
+  // The one write on Status is ticket 05's diagnostic, and it is a POST the
+  // check owns -- no other control.
+  await expect(page.locator('#detail [hx-post="/ui/hello-check"]')).toHaveCount(1);
+  await expect(page.locator("#detail form")).toHaveCount(1);
+  await expect(page.locator("#hello-check")).toBeVisible();
+});
 
-  await page.goto("/setup/agent");
-  await expect(page.locator(".agent-setup")).toBeVisible();
+test("the agent flow is one four-stage panel with two entry points", async ({ page }) => {
+  for (const path of ["/settings/agent", "/setup/agent"]) {
+    await page.goto(path);
+    await expect(page.locator(".agent-setup")).toBeVisible();
+    await expect(page.locator(".agent-flow .agent-stage")).toHaveCount(4);
+    await expect(page.locator("#agent-stage-endpoint")).toContainText("Endpoint");
+    await expect(page.locator("#agent-stage-try")).toContainText("Try it");
+    await expect(page.locator("#agent-stage-try #hello-check")).toBeVisible();
+  }
 });
 
 test("the MCP section exposes the harness and client-config writes", async ({ page }) => {

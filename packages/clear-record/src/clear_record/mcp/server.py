@@ -34,15 +34,21 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from clear_record.core import PipelineOptions
 from clear_record.service import (
+    TASK_KINDS,
     TERM_STATUSES,
+    AgentConfig,
+    AgentTaskError,
     GlossaryTerm,
     Meeting,
+    MeetingAgent,
     ModelNotOnDisk,
     NoBackendAvailable,
     Project,
     Registry,
+    Runner,
     RunManager,
     RunState,
+    describe_draft,
     read_transcript as _read_transcript,
     resolve_run,
 )
@@ -55,6 +61,10 @@ INSTRUCTIONS = (
     "story in project and meeting notes, start and watch pipeline runs (with "
     "explicit profile/backend/model/language, or the opt-in auto / backend auto "
     "resolvers), read the transcript text and list the artifacts a run produced. "
+    "Run the three agent tasks (glossary collection, transcript check, minutes) "
+    "with run_agent_task, review the drafts with list_agent_drafts / "
+    "read_agent_draft, and apply one with accept_agent_draft (or discard it with "
+    "reject_agent_draft): an agent task's output is a draft until it is accepted. "
     "Recordings and model weights are local files; "
     "this server is a thin adapter over the same service the web console uses. "
     "For the glossary ↔ transcript tuning loop the agent orchestrates: read the "
@@ -75,9 +85,20 @@ class ServiceTools:
     explicit. :func:`build_server` registers each method as a tool.
     """
 
-    def __init__(self, registry: Registry, manager: RunManager | None = None) -> None:
+    def __init__(
+        self,
+        registry: Registry,
+        manager: RunManager | None = None,
+        *,
+        runner: Runner | None = None,
+        config: AgentConfig | None = None,
+    ) -> None:
         self.registry = registry
         self.manager = manager or RunManager(registry)
+        # The agent-task seam's injection points (tests, embedders); with neither
+        # a launch resolves the process config the same way the console does.
+        self.runner = runner
+        self.config = config
 
     # --- lookup helpers ---------------------------------------------------- #
     def _project(self, slug: str) -> Project:
@@ -432,6 +453,97 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         return _as_dict(page)
 
+    # --- agent tasks (ADR-0018) -------------------------------------------- #
+    def _agent(self, project: str, meeting: str) -> MeetingAgent:
+        found = self._meeting(project, meeting)
+        return MeetingAgent(
+            self.registry, found, runner=self.runner, config=self.config
+        )
+
+    def _draft(self, agent: MeetingAgent, run_id: str):
+        draft = agent.draft(run_id)
+        if draft is None:
+            raise ToolError(
+                f"unknown agent draft {run_id!r} for {agent.meeting.slug!r}; "
+                "list them with list_agent_drafts"
+            )
+        return draft
+
+    def list_agent_drafts(self, project: str, meeting: str) -> dict[str, Any]:
+        """List a meeting's agent-task drafts with their review state.
+
+        The three task kinds (``glossary_collection``, ``transcript_check``,
+        ``minutes``) each produce a **draft**; nothing is applied until an
+        explicit ``accept_agent_draft``. ``configured`` says whether a runner is
+        available at all (an endpoint, a command template, or one injected by the
+        embedder), so a launch that would fail is visible before it is attempted.
+        """
+        agent = self._agent(project, meeting)
+        minutes = agent.minutes_artifact()
+        return {
+            "tasks": list(TASK_KINDS),
+            "configured": agent.configured(),
+            "drafts": [describe_draft(draft) for draft in agent.drafts()],
+            "minutes": None if minutes is None else _as_dict(minutes),
+        }
+
+    def read_agent_draft(
+        self, project: str, meeting: str, run_id: str
+    ) -> dict[str, Any]:
+        """Read one draft: its validated value, its provenance and its review state."""
+        agent = self._agent(project, meeting)
+        return describe_draft(self._draft(agent, run_id))
+
+    def run_agent_task(self, project: str, meeting: str, kind: str) -> dict[str, Any]:
+        """Launch one agent task for a meeting and return its draft.
+
+        ``kind`` is one of ``glossary_collection``, ``transcript_check`` or
+        ``minutes``. The task is packaged from the meeting's transcript, the
+        project's confirmed-term glossary snapshot and the meeting/project notes,
+        then run with the configured runner (or the endpoint/command the config
+        names). It needs a transcript in the meeting workspace: run the pipeline
+        first. The result is a **draft**; review it with ``read_agent_draft`` and
+        apply it with ``accept_agent_draft``.
+        """
+        if kind not in TASK_KINDS:
+            raise ToolError(
+                f"unknown agent task kind {kind!r}; known kinds: {list(TASK_KINDS)}"
+            )
+        agent = self._agent(project, meeting)
+        try:
+            draft = agent.launch(kind)
+        except AgentTaskError as exc:
+            raise ToolError(str(exc)) from exc
+        return describe_draft(draft)
+
+    def accept_agent_draft(
+        self, project: str, meeting: str, run_id: str
+    ) -> dict[str, Any]:
+        """Accept a draft, promoting it into what its kind produces.
+
+        Promotion is type-specific and idempotent: ``glossary_collection`` adds the
+        proposed terms as **candidate** registry terms (confirm them individually
+        to bias the decoder), ``transcript_check`` writes the corrected revision
+        and its change list as a new artifact (never an in-place overwrite of the
+        record), and ``minutes`` writes and registers the meeting's minutes
+        document. Re-accepting an already-promoted draft changes nothing.
+        """
+        agent = self._agent(project, meeting)
+        draft = self._draft(agent, run_id)
+        try:
+            promoted = agent.promote(draft)
+        except AgentTaskError as exc:
+            raise ToolError(str(exc)) from exc
+        return describe_draft(promoted)
+
+    def reject_agent_draft(
+        self, project: str, meeting: str, run_id: str
+    ) -> dict[str, Any]:
+        """Reject a draft, keeping it and its provenance on disk as history."""
+        agent = self._agent(project, meeting)
+        draft = self._draft(agent, run_id)
+        return describe_draft(agent.reject(draft))
+
 
 #: The tool methods, in the order they are registered. Kept explicit so the
 #: surface is reviewable in one place and a rename cannot silently change a name.
@@ -453,6 +565,11 @@ TOOL_NAMES: tuple[str, ...] = (
     "run_events",
     "list_artifacts",
     "read_transcript",
+    "list_agent_drafts",
+    "read_agent_draft",
+    "run_agent_task",
+    "accept_agent_draft",
+    "reject_agent_draft",
 )
 
 
@@ -461,9 +578,11 @@ def build_server(
     manager: RunManager | None = None,
     *,
     name: str = SERVER_NAME,
+    runner: Runner | None = None,
+    config: AgentConfig | None = None,
 ) -> MCPServer:
     """Build the MCP server over an opened registry (inject a temp one in tests)."""
-    tools = ServiceTools(registry, manager)
+    tools = ServiceTools(registry, manager, runner=runner, config=config)
     server: MCPServer = MCPServer(name=name, instructions=INSTRUCTIONS)
     for tool_name in TOOL_NAMES:
         server.add_tool(getattr(tools, tool_name))

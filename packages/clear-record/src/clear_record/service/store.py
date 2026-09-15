@@ -952,6 +952,21 @@ class Registry:
             ).fetchall()
         return [self._artifact(row) for row in rows]
 
+    def latest_artifact(self, meeting_id: int, kind: str) -> Artifact | None:
+        """The meeting's newest artifact of ``kind``, or ``None``.
+
+        "Newest" is the highest id, which is the insertion order: a meeting's
+        ``minutes`` artifact is the one most recently accepted, so a re-accept
+        supersedes the earlier one without rewriting history.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact WHERE meeting_id = ? AND kind = ?"
+                " ORDER BY id DESC LIMIT 1",
+                (meeting_id, kind),
+            ).fetchone()
+        return self._artifact(row) if row else None
+
     # --- archives ---------------------------------------------------------- #
     def add_archive(
         self,

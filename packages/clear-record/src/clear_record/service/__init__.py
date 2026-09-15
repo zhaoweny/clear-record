@@ -58,6 +58,16 @@ from clear_record.service.agent_tasks import (
     render_prompt,
     transcript_check_task,
 )
+from clear_record.service.agent_review import (
+    AGENT_DIRNAME,
+    PROMOTERS,
+    TASKS,
+    MeetingAgent,
+    MeetingAgentError,
+    PromotionError,
+    describe_draft,
+    promote_draft,
+)
 from clear_record.service.archive import archive_meeting, verify_archive
 from clear_record.service.auto import (
     AutoChoice,
@@ -161,6 +171,7 @@ from clear_record.service.webhooks import (
 )
 
 __all__ = [
+    "AGENT_DIRNAME",
     "ALL_EVENTS",
     "APP",
     "ARCHIVE_CREATED",
@@ -184,11 +195,15 @@ __all__ = [
     "InsufficientSpace",
     "MEETING_STATUSES",
     "Meeting",
+    "MeetingAgent",
+    "MeetingAgentError",
     "ModelNotOnDisk",
     "NoBackendAvailable",
+    "PROMOTERS",
     "PipelineOptions",
     "PipelineRun",
     "Project",
+    "PromotionError",
     "REGISTRY_FILENAME",
     "RESTART_REASON",
     "RUN_FAILED",
@@ -201,6 +216,7 @@ __all__ = [
     "RunState",
     "SCHEMA_VERSION",
     "SIGNATURE_HEADER",
+    "TASKS",
     "TERM_AUTHORS",
     "TERM_STATUSES",
     "TRANSCRIPT_READY",
@@ -284,10 +300,12 @@ __all__ = [
     "context_hash",
     "contract_for",
     "default_config",
+    "describe_draft",
     "glossary_collection_task",
     "load_agent_config",
     "minutes_task",
     "plan_for",
+    "promote_draft",
     "prompt_hash",
     "read_draft",
     "reject_draft",

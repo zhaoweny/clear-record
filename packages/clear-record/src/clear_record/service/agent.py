@@ -412,6 +412,12 @@ class Draft:
     ``value`` is the validated, JSON-shaped artifact; ``text`` is its canonical
     serialization (what is on disk at :attr:`artifact_path`).
     :attr:`review_state` is ``"draft"`` until an explicit accept or reject.
+
+    :attr:`promotion` is the record of what an acceptance **produced** — the
+    per-kind outcome written by
+    :func:`clear_record.service.agent_review.promote_draft`. ``None`` means the
+    draft has not been promoted; a present record means the promotion's side
+    effects already ran, which is what makes promotion idempotent.
     """
 
     run_dir: Path
@@ -424,6 +430,7 @@ class Draft:
     value: object
     provenance: Provenance
     review_state: str = "draft"
+    promotion: dict | None = None
 
     @property
     def accepted(self) -> bool:
@@ -565,12 +572,24 @@ def _write_review_state(
 
 
 def accept_draft(draft: Draft) -> Draft:
-    """Promote a draft: the explicit act that makes agent output canonical."""
+    """Flip a draft's review state to ``accepted``, changing nothing else.
+
+    This is the **flag only**: it records the decision but produces no artifact,
+    term or revision, because it has no registry or meeting to act on. A surface
+    that means to apply a draft uses
+    :func:`clear_record.service.agent_review.promote_draft`, which performs this
+    transition *and* the kind-specific promotion in one write; this function
+    stays for callers that only track the review state.
+    """
     return _transition(draft, "accepted")
 
 
 def reject_draft(draft: Draft) -> Draft:
-    """Reject a draft, keeping it on disk (and its provenance) as history."""
+    """Reject a draft, keeping it on disk (and its provenance) as history.
+
+    A rejected draft keeps whatever promotion it already recorded: rejection
+    changes the decision, not the artifacts an earlier acceptance produced.
+    """
     return _transition(draft, "rejected")
 
 
@@ -619,6 +638,7 @@ def read_draft(run_dir: str | Path) -> Draft:
         value=json.loads(text),
         provenance=provenance,
         review_state=document.get("review_state", "draft"),
+        promotion=document.get("promotion"),
     )
 
 

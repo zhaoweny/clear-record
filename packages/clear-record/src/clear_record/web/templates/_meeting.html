@@ -1,0 +1,221 @@
+{# One meeting's review surface: its transcript, the artifacts and their
+   provenance, the three agent tasks with their drafts, and the meeting's
+   accepted minutes. Loaded into `#detail` by htmx (its link lives in
+   `_detail.html`), so every control here targets `#detail` and re-renders this
+   fragment in place — the same single-page shell the rest of the console uses.
+
+   The action forms are plain posts to the service-backed routes; a refused
+   launch renders the service's own message in the `error` block rather than an
+   error status htmx would refuse to swap. #}
+<div class="row meeting-head">
+  <a class="btn btn-sm btn-ghost"
+     hx-get="/ui/projects/{{ project.slug }}"
+     hx-target="#detail" hx-swap="innerHTML"
+     title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</a>
+  <h2>{{ meeting.title }}</h2>
+  <span class="badge status-neutral">{{ meeting.status }}</span>
+  {% if minutes_artifact %}<span class="badge status-done">{{ tr("minutes") }}</span>{% endif %}
+</div>
+<div class="muted">
+  <code>{{ meeting.project_slug }}/{{ meeting.slug }}</code>
+  {% if meeting.workspace_path %} &middot; <span class="meeting-path">{{ meeting.workspace_path }}</span>{% endif %}
+</div>
+
+{% if error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
+
+<h3>{{ tr("Transcript") }}</h3>
+{% if transcript %}
+  <div class="muted transcript-meta">
+    {{ transcript.source }} &middot;
+    {{ tr("{count} segments", count=transcript.total) }} &middot;
+    {{ tr("showing {first}–{last}", first=transcript.offset + 1, last=transcript.offset + transcript.returned) }}
+  </div>
+  <pre class="transcript">{{ transcript.text }}</pre>
+  <div class="row">
+    {% if transcript.prev is not none %}
+    <button type="button"
+            hx-get="/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.prev }}"
+            hx-target="#detail" hx-swap="innerHTML">{{ tr("Previous") }}</button>
+    {% endif %}
+    {% if transcript.next is not none %}
+    <button type="button"
+            hx-get="/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.next }}"
+            hx-target="#detail" hx-swap="innerHTML">{{ tr("Next") }}</button>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="empty">{{ transcript_error }}</div>
+{% endif %}
+
+<h3>{{ tr("Artifacts") }}</h3>
+{% if artifacts %}
+<table class="table-artifacts">
+  <thead>
+    <tr>
+      <th>{{ tr("Kind") }}</th>
+      <th>{{ tr("Path") }}</th>
+      <th>{{ tr("Provenance") }}</th>
+      <th>{{ tr("SHA-256") }}</th>
+      <th>{{ tr("Created") }}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for artifact in artifacts %}
+    <tr>
+      <td><span class="badge status-neutral">{{ artifact.kind }}</span></td>
+      <td><code class="tape-path">{{ artifact.path }}</code></td>
+      <td>
+        <div>{{ artifact.produced_by }}</div>
+        {% if artifact.run_id %}<div class="muted">{{ tr("run {id}", id=artifact.run_id) }}</div>{% endif %}
+        <div class="muted">{{ artifact.review_state }}</div>
+      </td>
+      <td><code title="{{ artifact.sha256 }}">{{ artifact.sha256_short }}</code></td>
+      <td class="muted">{{ artifact.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <div class="empty">{{ tr("No artifacts yet. Run the pipeline to produce a transcript and record.") }}</div>
+{% endif %}
+
+<h3>{{ tr("Agent tasks") }}</h3>
+{% if not agent_ready %}
+<div class="empty">
+  {{ tr("No agent is configured. Set CR_AGENT_ENDPOINT to an OpenAI-compatible endpoint, or an [agent.commands] template for a task kind, then reload.") }}
+</div>
+{% endif %}
+<div class="row agent-launchers">
+  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/glossary_collection"
+        hx-target="#detail" hx-swap="innerHTML">
+    <button type="submit">{{ tr("Collect glossary terms") }}</button>
+  </form>
+  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/transcript_check"
+        hx-target="#detail" hx-swap="innerHTML">
+    <button type="submit">{{ tr("Check the transcript") }}</button>
+  </form>
+  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/minutes"
+        hx-target="#detail" hx-swap="innerHTML">
+    <button type="submit">{{ tr("Write minutes") }}</button>
+  </form>
+</div>
+<div class="muted agent-note">
+  {{ tr("A launch produces a draft. Nothing is applied until you accept it; accepting is what promotes it.") }}
+</div>
+
+{% if drafts %}
+  {% for draft in drafts %}
+  <div class="meeting draft">
+    <div class="row meeting-head">
+      <span class="badge status-{{ draft.review_state }}">{{ draft.review_state }}</span>
+      <strong>{{ draft.kind }}</strong>
+      <span class="muted">
+        {{ draft.provenance.runner }}{% if draft.provenance.model %} &middot; {{ draft.provenance.model }}{% endif %}
+        &middot; {{ draft.provenance.started_at }}
+      </span>
+      <span class="muted" title="{{ draft.provenance.context_hash }}">{{ tr("context") }} {{ draft.context_hash_short }}</span>
+      <span class="muted" title="{{ draft.provenance.prompt_hash }}">{{ tr("prompt") }} {{ draft.prompt_hash_short }}</span>
+    </div>
+
+    {% if draft.kind == 'glossary_collection' %}
+      {% if draft.value['terms'] %}
+      <table class="table-draft">
+        <thead>
+          <tr><th>{{ tr("Term") }}</th><th>{{ tr("Reading") }}</th><th>{{ tr("Aliases") }}</th><th>{{ tr("Definition") }}</th><th>{{ tr("Evidence") }}</th></tr>
+        </thead>
+        <tbody>
+          {% for term in draft.value['terms'] %}
+          <tr>
+            <td><strong>{{ term['term'] }}</strong></td>
+            <td>{{ term['reading'] or "" }}</td>
+            <td>{{ (term['aliases'] or []) | join(", ") }}</td>
+            <td>{{ term['definition'] or "" }}</td>
+            <td class="muted">{{ term['evidence'] or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">{{ tr("The draft proposed no terms.") }}</div>
+      {% endif %}
+    {% elif draft.kind == 'transcript_check' %}
+      {% if draft.value['changes'] %}
+      <table class="table-draft">
+        <thead>
+          <tr><th>{{ tr("Before") }}</th><th>{{ tr("After") }}</th><th>{{ tr("Reason") }}</th></tr>
+        </thead>
+        <tbody>
+          {% for change in draft.value['changes'] %}
+          <tr>
+            <td><code>{{ change['before'] }}</code></td>
+            <td><code>{{ change['after'] }}</code></td>
+            <td class="muted">{{ change['reason'] or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted">{{ tr("The draft corrected nothing.") }}</div>
+      {% endif %}
+      <div class="muted transcript-meta">{{ tr("Corrected revision") }}</div>
+      <pre class="transcript">{{ draft.value['revision'] }}</pre>
+    {% elif draft.kind == 'minutes' %}
+      <div class="row">
+        <span class="muted">{{ draft.value['meeting'] }} &middot; {{ draft.value['project'] }}</span>
+      </div>
+      <div class="muted">{{ tr("Attendees") }}: {{ (draft.value['attendees'] or []) | join(", ") }}</div>
+      {% if draft.value['decisions'] %}
+      <div class="muted">{{ tr("Decisions") }}</div>
+      <ul>{% for decision in draft.value['decisions'] %}<li>{{ decision }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if draft.value['actions'] %}
+      <div class="muted">{{ tr("Actions") }}</div>
+      <ul>{% for action in draft.value['actions'] %}<li>{{ action }}</li>{% endfor %}</ul>
+      {% endif %}
+      <pre class="transcript">{{ draft.value['body'] }}</pre>
+    {% endif %}
+
+    {% if draft.review_state == 'draft' %}
+    <div class="row">
+      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.run_id }}/accept"
+            hx-target="#detail" hx-swap="innerHTML">
+        <button class="primary" type="submit">{{ tr("Accept") }}</button>
+      </form>
+      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.run_id }}/reject"
+            hx-target="#detail" hx-swap="innerHTML">
+        <button type="submit">{{ tr("Reject") }}</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if draft.promotion %}
+    <div class="promotion">
+      <span class="badge status-accepted">{{ tr("accepted") }}</span>
+      <span class="muted">{{ draft.promotion['at'] }}</span>
+      {% if draft.kind == 'glossary_collection' %}
+      <div>{{ tr("{added} term(s) added as candidates; {skipped} already in the glossary.", added=draft.promotion['summary']['added'] | length, skipped=draft.promotion['summary']['skipped'] | length) }}</div>
+      {% elif draft.kind == 'transcript_check' %}
+      <div>{{ tr("{count} correction(s) recorded as a new revision.", count=draft.promotion['summary']['changes']) }}</div>
+      <div class="muted"><code>{{ draft.promotion['summary']['revision_path'] }}</code></div>
+      {% elif draft.kind == 'minutes' %}
+      <div>{{ tr("Minutes recorded for this meeting.") }}</div>
+      <div class="muted"><code>{{ draft.promotion['summary']['path'] }}</code></div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">{{ tr("No agent drafts yet.") }}</div>
+{% endif %}
+
+<h3>{{ tr("Minutes") }}</h3>
+{% if minutes_text %}
+<div class="row">
+  <span class="badge status-accepted">{{ tr("accepted") }}</span>
+  <span class="muted">{{ minutes_artifact.created_at }}</span>
+</div>
+<pre class="transcript">{{ minutes_text }}</pre>
+{% else %}
+<div class="empty">{{ tr("No accepted minutes yet. Accept a minutes draft above.") }}</div>
+{% endif %}

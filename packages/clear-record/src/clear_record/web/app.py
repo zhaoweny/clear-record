@@ -47,16 +47,24 @@ from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
     BACKEND_AUTO,
     BUNDLE_FILENAME,
+    TASK_KINDS,
     TERM_STATUSES,
+    AgentConfig,
+    AgentTaskError,
+    MeetingAgent,
     ModelNotOnDisk,
     NoBackendAvailable,
     PipelineOptions,
     Registry,
+    Runner,
     RunManager,
     RunState,
     archive_meeting,
     collect_bundle,
+    default_config,
+    describe_draft,
     managed,
+    read_transcript,
     resolve_run,
     verify_archive,
 )
@@ -376,6 +384,42 @@ def _run_context(
     return context
 
 
+#: How many transcript segments the meeting view shows per page. The transcript
+#: is paged rather than rendered whole: a multi-hour tape is tens of thousands of
+#: ``HH:MM:SS.mmm [speaker] text`` lines, which no reviewer reads in one scroll.
+TRANSCRIPT_PAGE = 500
+
+
+def error_message(exc: BaseException) -> str:
+    """One user-facing error, translated when the service supplied a message ID.
+
+    A service error that carries ``msgid``/``params`` (``managed.UploadRejected``,
+    ``MeetingAgentError``) is rendered through ``tr`` here, at the presentation
+    boundary; anything else is its own English diagnostic, passed through
+    unchanged rather than restating a rule the service owns.
+    """
+    msgid = getattr(exc, "msgid", None)
+    if isinstance(msgid, str):
+        return tr(msgid, **getattr(exc, "params", {}))
+    return str(exc)
+
+
+def draft_view(draft) -> dict:
+    """A draft as the templates render it: the shared view plus display fields.
+
+    Everything factual comes from :func:`~clear_record.service.describe_draft`
+    (the same shape the MCP adapter returns), so the browser and an agent cannot
+    disagree about a draft; only the short checksum and the label are added here.
+    """
+    view = describe_draft(draft)
+    provenance = view["provenance"]
+    digest = provenance.get("context_hash") or ""
+    view["context_hash_short"] = digest[:12]
+    prompt = provenance.get("prompt_hash") or ""
+    view["prompt_hash_short"] = prompt[:12]
+    return view
+
+
 # --- webhooks: delivery health (ADR-0020) ---------------------------------- #
 # The label for each overall webhook state. Each branch calls ``tr`` with a
 # literal so the catalog tooling can extract it; a state the service adds later
@@ -459,6 +503,8 @@ def create_app(
     *,
     trusted_hosts: Sequence[str] | None = None,
     webhooks: WebhookEmitter | None = None,
+    agent_runner: Runner | None = None,
+    agent_config: AgentConfig | None = None,
 ) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
 
@@ -473,6 +519,12 @@ def create_app(
     ``webhooks`` is the emitter whose health the console reports; it defaults to
     the shared config-driven one the runs already deliver through, and a test can
     inject an inert or a failing one to exercise the status surface offline.
+
+    ``agent_runner`` / ``agent_config`` are the agent-task seam's two injection
+    points, mirroring ``runs``: a test injects a runner so a launch never touches
+    an endpoint, and an embedder can pin a config. With neither, the process's
+    resolved config (:func:`clear_record.service.default_config`) is read **once**
+    here rather than per request, so a page render never re-reads the config file.
     """
     # The console's user-facing text is translated per process. A CLI ``--lang``
     # (or an explicit ``install``) has already chosen; otherwise honour
@@ -484,6 +536,8 @@ def create_app(
     # the shared one), so the console reports on the same delivery the runs make.
     # Injecting one lets a test drive the status surface with no config file.
     emitter = webhooks if webhooks is not None else default_emitter()
+    if agent_runner is None and agent_config is None:
+        agent_config = default_config()
     app = FastAPI(
         title="clear-record",
         summary="Local project console: projects, glossary, meetings and runs.",
@@ -495,6 +549,8 @@ def create_app(
     # embedder reach the same seam.
     app.state.runs = runs
     app.state.webhooks = emitter
+    app.state.agent_runner = agent_runner
+    app.state.agent_config = agent_config
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -654,6 +710,7 @@ def create_app(
                 "profile_default": PROFILE_CUSTOM,
                 "profile_options": profile_preview(PROFILE_CUSTOM),
                 "archives": archive_rows(slug),
+                "minutes": minutes_rows(slug),
                 "error": error,
             },
         )
@@ -773,6 +830,116 @@ def create_app(
             {"storage": storage_context(meeting), "error": error},
         )
 
+    # --- HTML views: one meeting's review surface (ticket 16) --------------- #
+    def meeting_agent(meeting) -> MeetingAgent:
+        """The agent seam for one meeting, over the app's injected plumbing."""
+        return MeetingAgent(
+            registry,
+            meeting,
+            runner=app.state.agent_runner,
+            config=app.state.agent_config,
+        )
+
+    def agent_ready() -> bool:
+        """Whether a launch has a runner at all (a display hint, not a guard)."""
+        if app.state.agent_runner is not None:
+            return True
+        config = app.state.agent_config
+        return bool(config and (config.endpoint or config.commands))
+
+    def artifact_text(artifact) -> str | None:
+        """An artifact's file contents, or ``None`` when the file is gone."""
+        try:
+            return Path(artifact.path).read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    def meeting_context(meeting, *, offset: int = 0, error: str | None = None) -> dict:
+        """Everything the meeting review view renders, from the service only.
+
+        The transcript is the same :func:`read_transcript` the MCP adapter uses
+        (paged here), the artifacts are the registry's rows, and the drafts are
+        read back from the workspace with
+        :meth:`~clear_record.service.MeetingAgent.drafts`, so an accepted result
+        and its provenance are shown rather than re-derived.
+        """
+        try:
+            page = read_transcript(meeting, offset=offset, limit=TRANSCRIPT_PAGE)
+            transcript = {
+                "text": page.text,
+                "source": page.source,
+                "total": page.total,
+                "offset": page.offset,
+                "returned": page.returned,
+                "next": page.next,
+                "prev": max(0, page.offset - TRANSCRIPT_PAGE) if page.offset else None,
+            }
+            transcript_error = None
+        except FileNotFoundError:
+            transcript = None
+            transcript_error = tr("No transcript yet. Run the pipeline first.")
+        agent = meeting_agent(meeting)
+        minutes_artifact = agent.minutes_artifact()
+        return {
+            "project": registry.require_project(meeting.project_slug),
+            "meeting": meeting,
+            "transcript": transcript,
+            "transcript_error": transcript_error,
+            "page_size": TRANSCRIPT_PAGE,
+            "artifacts": [
+                {
+                    "kind": artifact.kind,
+                    "path": artifact.path,
+                    "sha256": artifact.sha256,
+                    "sha256_short": (artifact.sha256 or "")[:12],
+                    "bytes": artifact.bytes,
+                    "produced_by": artifact.produced_by,
+                    "review_state": artifact.review_state,
+                    "created_at": artifact.created_at,
+                    "run_id": artifact.run_id,
+                }
+                for artifact in registry.list_artifacts(meeting.id)
+            ],
+            "drafts": [draft_view(draft) for draft in agent.drafts()],
+            "agent_ready": agent_ready(),
+            "minutes_artifact": minutes_artifact,
+            "minutes_text": artifact_text(minutes_artifact)
+            if minutes_artifact is not None
+            else None,
+            "error": error,
+        }
+
+    def render_meeting(
+        request: Request, meeting, *, offset: int = 0, error: str | None = None
+    ) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_meeting.html",
+            meeting_context(meeting, offset=offset, error=error),
+        )
+
+    def minutes_rows(slug: str) -> list[dict]:
+        """Each meeting of a project that has accepted minutes, newest first.
+
+        "Minutes across the project" is exactly the latest ``minutes`` artifact
+        per meeting (:meth:`Registry.latest_artifact`), so a re-accepted draft
+        supersedes the earlier one instead of appearing twice.
+        """
+        rows: list[dict] = []
+        for meeting in registry.list_meetings(slug):
+            artifact = registry.latest_artifact(meeting.id, "minutes")
+            if artifact is None:
+                continue
+            text = artifact_text(artifact) or ""
+            heading = next(
+                (line.strip() for line in text.splitlines() if line.strip()), ""
+            )
+            rows.append(
+                {"meeting": meeting, "artifact": artifact, "heading": heading[:120]}
+            )
+        rows.sort(key=lambda row: row["artifact"].id, reverse=True)
+        return rows
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(request, "index.html", {})
@@ -818,6 +985,80 @@ def create_app(
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug)
+
+    # --- HTML views: a meeting's transcript, artifacts and agent tasks ------ #
+    @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    def ui_meeting(
+        request: Request, slug: str, meeting_slug: str, offset: int = 0
+    ) -> HTMLResponse:
+        """One meeting's review surface, as an htmx fragment.
+
+        A fragment rather than a full page, exactly like the project detail: the
+        console's navigation is htmx swaps into ``#detail``, so a project and a
+        meeting are views of the same single-page shell.
+        """
+        meeting = registry.get_meeting(slug, meeting_slug)
+        if meeting is None:
+            raise HTTPException(
+                status_code=404, detail=f"no meeting {meeting_slug!r} in {slug!r}"
+            )
+        return render_meeting(request, meeting, offset=max(0, offset))
+
+    @app.post("/ui/meetings/{meeting_id}/agent/{kind}", response_class=HTMLResponse)
+    def ui_run_agent_task(request: Request, meeting_id: int, kind: str) -> HTMLResponse:
+        """Launch one agent task for a meeting and re-render the meeting view.
+
+        A refused launch (no configured agent, no transcript, a runner failure)
+        re-renders the view with the service's own message as a 200, so htmx
+        swaps it in and the operator can fix the cause in place.
+        """
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        if kind not in TASK_KINDS:
+            raise HTTPException(status_code=404, detail=f"no agent task {kind!r}")
+        try:
+            meeting_agent(meeting).launch(kind)
+        except AgentTaskError as exc:
+            return render_meeting(request, meeting, error=error_message(exc))
+        return render_meeting(request, meeting)
+
+    def review_draft(request: Request, meeting_id: int, run_id: str, accept: bool):
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        agent = meeting_agent(meeting)
+        draft = agent.draft(run_id)
+        if draft is None:
+            return render_meeting(
+                request,
+                meeting,
+                error=tr("No draft {run_id} for this meeting.", run_id=run_id),
+            )
+        try:
+            if accept:
+                agent.promote(draft)
+            else:
+                agent.reject(draft)
+        except AgentTaskError as exc:
+            return render_meeting(request, meeting, error=error_message(exc))
+        return render_meeting(request, meeting)
+
+    @app.post(
+        "/ui/meetings/{meeting_id}/agent/drafts/{run_id}/accept",
+        response_class=HTMLResponse,
+    )
+    def ui_accept_draft(request: Request, meeting_id: int, run_id: str) -> HTMLResponse:
+        """Accept a draft: promote it into what its kind produces, then show it."""
+        return review_draft(request, meeting_id, run_id, accept=True)
+
+    @app.post(
+        "/ui/meetings/{meeting_id}/agent/drafts/{run_id}/reject",
+        response_class=HTMLResponse,
+    )
+    def ui_reject_draft(request: Request, meeting_id: int, run_id: str) -> HTMLResponse:
+        """Reject a draft, keeping it and its provenance as history."""
+        return review_draft(request, meeting_id, run_id, accept=False)
 
     @app.post("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_add_term(
@@ -1274,6 +1515,63 @@ def create_app(
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         return _out(meeting)
+
+    # --- JSON API: a meeting's agent tasks --------------------------------- #
+    def require_meeting_row(meeting_id: int):
+        meeting = registry.meeting_by_id(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
+        return meeting
+
+    @app.get("/api/meetings/{meeting_id}/agent")
+    def meeting_agent_tasks(meeting_id: int) -> dict:
+        """A meeting's agent-task surface: the kinds, the drafts and the minutes."""
+        meeting = require_meeting_row(meeting_id)
+        agent = meeting_agent(meeting)
+        minutes = agent.minutes_artifact()
+        return {
+            "tasks": list(TASK_KINDS),
+            "configured": agent_ready(),
+            "drafts": [describe_draft(draft) for draft in agent.drafts()],
+            "minutes": None if minutes is None else _out(minutes),
+        }
+
+    @app.post("/api/meetings/{meeting_id}/agent/{kind}", status_code=201)
+    def run_agent_task(meeting_id: int, kind: str) -> dict:
+        """Launch one agent task; the result is a draft, never auto-accepted."""
+        meeting = require_meeting_row(meeting_id)
+        if kind not in TASK_KINDS:
+            raise HTTPException(status_code=404, detail=f"no agent task {kind!r}")
+        try:
+            draft = meeting_agent(meeting).launch(kind)
+        except AgentTaskError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return describe_draft(draft)
+
+    def review_api(meeting_id: int, run_id: str, accept: bool) -> dict:
+        meeting = require_meeting_row(meeting_id)
+        agent = meeting_agent(meeting)
+        draft = agent.draft(run_id)
+        if draft is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no draft {run_id!r} for meeting {meeting_id}",
+            )
+        try:
+            reviewed = agent.promote(draft) if accept else agent.reject(draft)
+        except AgentTaskError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return describe_draft(reviewed)
+
+    @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/accept")
+    def accept_agent_draft(meeting_id: int, run_id: str) -> dict:
+        """Accept a draft and return what its acceptance produced."""
+        return review_api(meeting_id, run_id, accept=True)
+
+    @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/reject")
+    def reject_agent_draft(meeting_id: int, run_id: str) -> dict:
+        """Reject a draft, keeping it and its provenance on disk."""
+        return review_api(meeting_id, run_id, accept=False)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
     def set_tapes(meeting_id: int, body: TapesUpdate) -> dict:

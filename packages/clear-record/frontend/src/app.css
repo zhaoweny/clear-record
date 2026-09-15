@@ -973,6 +973,79 @@ tbody tr:last-child td { border-bottom: none; }
 .webhook-meta,
 .webhook-last { font-size: var(--text-xs); overflow-wrap: anywhere; }
 
+/* --- Meeting review: transcript, artifacts, agent drafts ----------------- */
+/* The transcript body: monospace and scroll-capped, so a multi-hour tape does
+   not push the artifacts and the review controls off the page. It is a `pre`
+   with wrapping, so a long segment wraps instead of scrolling sideways. */
+.transcript {
+  max-height: 28rem;
+  overflow: auto;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.transcript-meta { margin-top: var(--space-2); font-size: var(--text-xs); }
+
+/* An agent draft reads as its own card inside the meeting view; the review
+   controls sit under the value they act on. */
+.draft .meeting-head strong { font-size: var(--text-base); font-family: var(--font-mono); }
+
+.agent-launchers form { margin: 0; }
+
+.agent-note { margin-top: var(--space-2); font-size: var(--text-xs); }
+
+/* The promotion outcome an acceptance produced, shown in place of the controls. */
+.promotion {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--radius-sm);
+  color: var(--ok-ink);
+  font-size: var(--text-sm);
+}
+
+.promotion .muted { color: inherit; }
+
+/* Review states a draft can hold, alongside the glossary's candidate/confirmed
+   vocabulary. A rejected draft keeps the danger hue so it cannot read as done. */
+.status-draft {
+  --chip-bg: var(--neutral-bg);
+  --chip-ink: var(--neutral-ink);
+  --chip-line: var(--neutral-line);
+  --chip-glyph: "\25CB\00a0"; /* ○  awaiting review */
+}
+.status-accepted {
+  --chip-bg: var(--ok-bg);
+  --chip-ink: var(--ok-ink);
+  --chip-line: var(--ok-line);
+  --chip-glyph: "\2713\00a0"; /* ✓  accepted */
+}
+.status-rejected {
+  --chip-bg: var(--danger-bg);
+  --chip-ink: var(--danger-ink);
+  --chip-line: var(--danger-line);
+  --chip-glyph: "\2715\00a0"; /* ✕  rejected */
+}
+
+.table-artifacts td:first-child,
+.table-draft td:first-child { white-space: nowrap; }
+
+.table-artifacts td:last-child,
+.table-minutes td:last-child { text-align: right; white-space: nowrap; }
+
+.table-minutes td:nth-child(2) { width: 12rem; }
+
 /* --- Empty and error states ---------------------------------------------- */
 .empty {
   padding: var(--space-6) var(--space-4);

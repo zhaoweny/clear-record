@@ -15,6 +15,9 @@
       <span class="badge status-neutral">{{ tr("user-chosen") }}</span>
       {% endif %}
       <span class="muted meeting-path">{{ row.meeting.workspace_path or tr("no workspace") }}</span>
+      <a class="btn btn-sm btn-ghost"
+         hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
+         hx-target="#detail" hx-swap="innerHTML">{{ tr("Review") }}</a>
     </div>
     {# The managed workspace's storage: resolved path, sizes, tapes, upload and
        delete controls. Fetched per meeting so the project render stays cheap. #}
@@ -81,6 +84,40 @@
 {% endif %}
 
 {% include "_archives.html" %}
+
+{# Minutes across the project (ticket 16): one row per meeting that has accepted
+   minutes, pointing at the meeting view where they are shown in full. #}
+<h3>{{ tr("Minutes") }}</h3>
+{% if minutes %}
+<table class="table-minutes">
+  <thead>
+    <tr>
+      <th>{{ tr("Meeting") }}</th>
+      <th>{{ tr("Accepted") }}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in minutes %}
+    <tr>
+      <td>
+        <strong>{{ row.meeting.title }}</strong>
+        {% if row.heading %}<div class="muted">{{ row.heading }}</div>{% endif %}
+      </td>
+      <td class="muted">{{ row.artifact.created_at }}</td>
+      <td>
+        <a class="btn btn-sm btn-ghost"
+           hx-get="/ui/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}"
+           hx-target="#detail" hx-swap="innerHTML">{{ tr("Open") }}</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">{{ tr("No accepted minutes yet.") }}</div>
+{% endif %}
+
 
 <h3>{{ tr("Add a meeting") }}</h3>
 <form class="stack"

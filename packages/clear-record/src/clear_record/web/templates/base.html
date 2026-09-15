@@ -53,6 +53,19 @@
             hx-post="/api/shutdown" hx-swap="none"
             onclick="this.disabled=true;this.textContent='{{ tr("stopping…") }}'">{{ tr("Quit") }}</button>
   </header>
+  {# The upgrade path is a notice, never a hijack: only a marker naming a
+     different version shows it, and Dismiss records the marker (ticket 04).
+     The Setup page carries its own update copy, so the notice is suppressed
+     there. #}
+  {% if setup_update and nav != 'setup' %}
+  <div class="setup-notice">
+    <span>{{ tr("clear-record was updated to {version}.", version=current_version) }}</span>
+    <a href="/setup?reason=update">{{ tr("Review setup") }}</a>
+    <form method="post" action="/setup/dismiss">
+      <button type="submit" class="btn btn-sm btn-ghost">{{ tr("Dismiss") }}</button>
+    </form>
+  </div>
+  {% endif %}
   <main>
     {% block body %}{% endblock %}
   </main>

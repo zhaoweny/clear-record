@@ -25,6 +25,7 @@ import pytest
 
 from clear_record.service import setup
 from clear_record.service.agent import load_agent_config
+from clear_record.service.archive import tool_version
 
 CANDIDATE = setup.EndpointCandidate(
     slug="ollama",
@@ -369,6 +370,33 @@ def test_the_setup_record_has_no_field_for_a_credential(tmp_path) -> None:
     assert record == {"model": "m"}
     with pytest.raises(setup.SetupError):
         setup.update_setup_state(path=tmp_path / "state.json", api_key="value")
+
+
+# --- the version marker (ticket 04) ------------------------------------------ #
+
+
+def test_the_version_marker_is_an_allowed_non_secret_fact(tmp_path) -> None:
+    record = tmp_path / "state.json"
+
+    setup.record_seen_version(path=record, version="1.2.3")
+
+    assert setup.read_setup_state(path=record) == {"seen_version": "1.2.3"}
+    assert setup.seen_version(state={"seen_version": "1.2.3"}) == "1.2.3"
+    assert setup.seen_version(state={}) is None
+    # A key outside the allow-list is still refused, marker or not.
+    with pytest.raises(setup.SetupError):
+        setup.update_setup_state(path=record, seen="1.2.3")
+
+
+def test_setup_incomplete_is_the_marker_compared_with_the_current_version() -> None:
+    assert setup.setup_incomplete(state={}, version="1.2.3") is True
+    seen = {"seen_version": "1.2.3"}
+    assert setup.setup_incomplete(state=seen, version="1.2.3") is False
+    assert setup.setup_incomplete(state=seen, version="1.2.4") is True
+
+
+def test_the_current_version_comes_from_package_metadata() -> None:
+    assert setup.current_version() == tool_version()
 
 
 # --- the view ---------------------------------------------------------------- #

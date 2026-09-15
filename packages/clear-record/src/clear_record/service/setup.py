@@ -893,7 +893,7 @@ SETUP_FILENAME = "agent-setup.json"
 #: The only keys setup ever writes. A key is an allow-list so a future caller
 #: cannot quietly persist something that is not a setup fact — and so no field
 #: here could ever be a credential.
-SETUP_STATE_KEYS = ("endpoint", "model", "harness", "mcp_config")
+SETUP_STATE_KEYS = ("endpoint", "model", "harness", "mcp_config", "seen_version")
 
 
 def setup_state_path() -> Path:
@@ -943,6 +943,52 @@ def update_setup_state(*, path: str | Path | None = None, **fields: object) -> d
 def remember_harness(harness: Harness) -> dict:
     """Record which harness the user pointed at (a path; never a credential)."""
     return update_setup_state(harness=harness.path)
+
+
+# --- the version marker (first run vs after an update, ticket 04) ----------- #
+
+
+def current_version() -> str:
+    """The installed version, from package metadata — never a hand-copied literal.
+
+    The same value Status shows (:func:`clear_record.service.archive.tool_version`),
+    so a release cannot leave the wizard's marker behind: the marker is compared
+    with the version the process actually is.
+    """
+    from clear_record.service.archive import tool_version
+
+    return tool_version()
+
+
+def seen_version(*, state: Mapping | None = None) -> str | None:
+    """The version the user last dismissed or completed setup for, if any."""
+    record = dict(state) if state is not None else read_setup_state()
+    value = record.get("seen_version")
+    return value if isinstance(value, str) and value else None
+
+
+def setup_incomplete(
+    *, state: Mapping | None = None, version: str | None = None
+) -> bool:
+    """Whether the Setup link shows: no marker recorded, or a different version.
+
+    This is deliberately **not** "no runner is configured". A returning user
+    whose agent is set up must still see Setup after an upgrade, and a first-run
+    user must see it before any probe has run. Visiting or skipping records
+    nothing; only :func:`record_seen_version` writes the marker.
+    """
+    seen = seen_version(state=state)
+    current = version if version is not None else current_version()
+    return seen is None or seen != current
+
+
+def record_seen_version(
+    *, path: str | Path | None = None, version: str | None = None
+) -> dict:
+    """Mark this version as seen — the one write DISMISS and COMPLETE share."""
+    return update_setup_state(
+        path=path, seen_version=version if version is not None else current_version()
+    )
 
 
 # --- the view every surface renders ----------------------------------------- #
@@ -1065,6 +1111,7 @@ __all__ = [
     "TEST_CALL_PROMPT",
     "VERIFY_TIMEOUT",
     "Verification",
+    "current_version",
     "detect",
     "find_harness",
     "mcp_client_config",
@@ -1072,9 +1119,12 @@ __all__ = [
     "probe_endpoint",
     "pull_model",
     "read_setup_state",
+    "record_seen_version",
     "remember_harness",
     "render_agent_block",
     "resolve_harness",
+    "seen_version",
+    "setup_incomplete",
     "setup_state_path",
     "setup_view",
     "update_setup_state",

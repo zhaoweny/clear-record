@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 
 from clear_record.core import RecordDocument, Segment, write_json
+from clear_record.service import setup
 from clear_record.service.managed import workspace_path_for
 from clear_record.service.store import Registry
 
@@ -269,6 +270,11 @@ def main() -> int:
         manifest_path=str(data / "archives" / "kickoff" / "manifest.json"),
         manifest_sha256="0" * 64,
     )
+
+    # A returning user (ticket 04): record the current version so `/` lands on
+    # Projects and no update notice shows. The update spec writes a stale marker
+    # deliberately, then dismisses it back to current.
+    setup.record_seen_version()
 
     print(f"seeded {data}")
     return 0

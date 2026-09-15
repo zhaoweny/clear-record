@@ -3,13 +3,81 @@
 {% block title %}{{ tr("Setup") }} · clear-record{% endblock %}
 
 {% block body %}
-{# Setup is system readiness (installed -> usable), not the daily workspace.
-   This is the agent flow first-run entry point; Settings -> Agent reaches the
-   same panel, so the flow itself has one home. Ticket 04 grows the steps. #}
+{# Setup is system readiness (installed -> usable), not the daily workspace. The
+   steps are a real sequence, so they are numbered and each is skippable: setup
+   never blocks a returning user. The agent step reuses the one
+   `/ui/agent-setup` panel Settings -> Agent mounts, so there is no second
+   implementation. The last step is ticket 05's acceptance test and is shown as a
+   clear "coming next" state here. #}
 <section class="content setup">
   <h2>{{ tr("Setup") }}</h2>
-  <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
-    <div class="muted">{{ tr("Loading agent setup…") }}</div>
-  </div>
+  <p class="muted setup-intro">{{ tr("Setup is system readiness: get clear-record from installed to usable. Every step can be skipped — you can return whenever you like.") }}</p>
+  {% if reason == 'update' %}
+  <p class="muted setup-update">{{ tr("clear-record was updated to {version}. Walk the steps again to check the system still works.", version=current_version) }}</p>
+  {% endif %}
+
+  <ol class="setup-steps">
+    <li class="setup-step" id="setup-welcome">
+      <div class="setup-step-head">
+        <h3>{{ tr("Welcome") }}</h3>
+      </div>
+      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Nothing here is required before you start; this path only gets a working runner and an MCP harness in place.") }}</p>
+      <div class="setup-step-actions">
+        <a class="btn btn-sm" href="#setup-models">{{ tr("Next: Models") }}</a>
+        <a class="btn btn-sm btn-ghost" href="#setup-agent">{{ tr("Skip") }}</a>
+      </div>
+    </li>
+
+    <li class="setup-step" id="setup-models">
+      <div class="setup-step-head">
+        <h3>{{ tr("Models") }}</h3>
+      </div>
+      <p class="muted">{{ tr("Transcription needs a model checkpoint on disk. The Agent step can pull a small one where the server supports it, or you can fetch one from Models settings.") }}</p>
+      <p class="muted"><code>{{ models_dir }}</code></p>
+      {% if models_present %}
+      <p class="muted">{{ tr("Models on disk: {models}", models=models_present | join(', ')) }}</p>
+      {% else %}
+      <p class="muted">{{ tr("No model checkpoints are on disk yet.") }}</p>
+      {% endif %}
+      <div class="setup-step-actions">
+        <a class="btn btn-sm" href="#setup-agent">{{ tr("Next: Agent") }}</a>
+        <a class="btn btn-sm btn-ghost" href="#setup-first-record">{{ tr("Skip") }}</a>
+        <a class="btn btn-sm btn-ghost" href="/settings/models">{{ tr("Open Models settings") }}</a>
+      </div>
+    </li>
+
+    <li class="setup-step" id="setup-agent">
+      <div class="setup-step-head">
+        <h3>{{ tr("Agent") }}</h3>
+      </div>
+      <p class="muted">{{ tr("Connect an OpenAI-compatible model endpoint and register clear-record with your MCP harness. This is the same panel as Settings → Agent; there is only one.") }}</p>
+      {# The one agent flow, loaded by htmx (and visible to e2e on page load). #}
+      <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+        <div class="muted">{{ tr("Loading agent setup…") }}</div>
+      </div>
+      <div class="setup-step-actions">
+        <a class="btn btn-sm" href="#setup-first-record">{{ tr("Next: First record") }}</a>
+        <a class="btn btn-sm btn-ghost" href="#setup-first-record">{{ tr("Skip") }}</a>
+      </div>
+    </li>
+
+    <li class="setup-step" id="setup-first-record">
+      <div class="setup-step-head">
+        <h3>{{ tr("First record") }}</h3>
+        <span class="badge status-neutral">{{ tr("Coming next") }}</span>
+      </div>
+      <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription and one agent task, proving the whole system worked once.") }}</p>
+      <p class="muted">{{ tr("It arrives with the next update. Until then, the permanent check lives in Settings → Status.") }}</p>
+      <div class="setup-step-actions">
+        <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("Hello World check") }}</a>
+        <form method="post" action="/setup/complete">
+          <button type="submit" class="primary">{{ tr("Finish setup") }}</button>
+        </form>
+        <form method="post" action="/setup/dismiss">
+          <button type="submit" class="btn btn-ghost">{{ tr("Skip setup") }}</button>
+        </form>
+      </div>
+    </li>
+  </ol>
 </section>
 {% endblock %}

@@ -87,12 +87,16 @@ from clear_record.service.setup import (
     Detection,
     PI_AGENT,
     SetupError,
+    current_version,
     detect,
     find_harness,
     mcp_server_entry,
     pull_model,
+    read_setup_state,
+    record_seen_version,
     remember_harness,
     resolve_harness,
+    setup_incomplete,
     setup_view,
     verify_endpoint,
     write_agent_settings,
@@ -1168,6 +1172,22 @@ def create_app(
         return context
 
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
+    def setup_flags() -> dict:
+        """The setup marker's page-level facts (ADR-0027, ticket 04).
+
+        ``setup_incomplete`` shows the Setup link; ``setup_update`` shows the
+        dismissible "updated" notice. Both read the one record the service owns,
+        so the nav and the notice cannot disagree about the marker.
+        """
+        state = read_setup_state()
+        current = current_version()
+        seen = state.get("seen_version")
+        return {
+            "setup_incomplete": setup_incomplete(state=state, version=current),
+            "setup_update": bool(seen) and seen != current,
+            "current_version": current,
+        }
+
     def page(
         request: Request,
         template: str,
@@ -1178,15 +1198,14 @@ def create_app(
     ) -> HTMLResponse:
         """A full page extending ``base.html``.
 
-        The header needs two facts on every page: which top-level nav item is
-        current, and whether setup is still incomplete (which shows the Setup
-        link, ADR-0027). Injecting them here means a page render cannot forget
-        either.
+        Every page needs the top-level nav item and the setup marker: the Setup
+        link and the update notice both come from :func:`setup_flags`, so a page
+        render cannot forget either.
         """
         return TEMPLATES.TemplateResponse(
             request,
             template,
-            {"nav": nav, "setup_incomplete": not agent_ready(), **extra},
+            {"nav": nav, **setup_flags(), **extra},
             status_code=status_code,
         )
 
@@ -1209,7 +1228,14 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
-        """The Projects workspace: the console lands here, not on a dashboard."""
+        """The Projects workspace: the console lands here, not on a dashboard.
+
+        A genuine first run — installed, no marker recorded, and no projects yet
+        — starts at system readiness instead. Once either exists the workspace
+        is never hijacked (ADR-0027); an update shows a notice, not a redirect.
+        """
+        if not read_setup_state().get("seen_version") and not registry.list_projects():
+            return RedirectResponse("/setup", status_code=303)
         projects = project_rows()
         return page(
             request,
@@ -1328,9 +1354,38 @@ def create_app(
     @app.get("/setup", response_class=HTMLResponse)
     @app.get("/setup/agent", response_class=HTMLResponse)
     def page_setup(request: Request) -> HTMLResponse:
-        """Setup: system readiness. The agent flow is one reusable panel with
-        two entry points (here and Settings -> Agent); this ticket wires them."""
-        return page(request, "setup.html", nav="setup")
+        """Setup: system readiness, a numbered sequence (ticket 04).
+
+        The agent step is the same panel Settings -> Agent mounts, so the flow
+        has one implementation and this page only supplies the frame. The last
+        step is ticket 05's acceptance test, shown as a clear "coming next"
+        state rather than a second tape flow.
+        """
+        return page(
+            request,
+            "setup.html",
+            nav="setup",
+            reason=request.query_params.get("reason", ""),
+            models_dir=str(resolve_models_dir()),
+            models_present=sorted(models_on_disk()),
+        )
+
+    @app.post("/setup/complete")
+    def complete_setup() -> RedirectResponse:
+        """Leave the wizard having seen this version, and land back in Projects.
+
+        COMPLETE is one of the only two writes that record the marker; visiting
+        or skipping a step records nothing, so the wizard cannot vanish
+        silently.
+        """
+        record_seen_version()
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/setup/dismiss")
+    def dismiss_setup() -> RedirectResponse:
+        """Dismiss the update notice: the same marker write as COMPLETE."""
+        record_seen_version()
+        return RedirectResponse("/", status_code=303)
 
     @app.post("/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:

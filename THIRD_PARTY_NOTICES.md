@@ -33,6 +33,7 @@ this repository.
 
 | Package | Version | License |
 | --- | --- | --- |
+| [`json-repair`](https://pypi.org/project/json-repair/) | 0.63.4 | MIT |
 | [`numpy`](https://pypi.org/project/numpy/) | 2.5.3 | BSD-3-Clause (the wheel also bundles code under 0BSD, MIT, Zlib and CC0-1.0) |
 | [`soundfile`](https://pypi.org/project/soundfile/) | 0.14.0 | BSD-3-Clause; the wheel bundles **libsndfile** (LGPL-2.1) including **libmp3lame** (LGPL-2+) and **libmpg123** (LGPL-2.1) |
 | [`cffi`](https://pypi.org/project/cffi/) *(transitive, via soundfile)* | 2.1.1 | MIT-0 |

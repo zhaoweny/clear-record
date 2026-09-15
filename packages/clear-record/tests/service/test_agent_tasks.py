@@ -156,6 +156,30 @@ def test_a_wrapped_object_is_recovered_but_still_validated() -> None:
         )
 
 
+def test_a_truncated_object_is_repaired_then_validated() -> None:
+    """A model that runs out of tokens leaves a dangling object.
+
+    Repair closes it; the schema still decides whether the answer counts.
+    """
+    document = {
+        "meeting": "m",
+        "project": "p",
+        "attendees": ["A"],
+        "decisions": [],
+        "actions": [],
+        "body": "# Minutes",
+    }
+    truncated = json.dumps(document)[:-1]  # the closing brace never arrived
+
+    parsed = contract_for("minutes").parse(truncated)
+    assert parsed["body"] == "# Minutes"
+
+    # Repair cannot rescue a missing required field.
+    without_body = json.dumps({k: v for k, v in document.items() if k != "body"})
+    with pytest.raises(OutputContractError, match="missing required key"):
+        contract_for("minutes").parse(without_body[:-1])
+
+
 def test_each_contract_returns_a_validated_json_shape() -> None:
     check = contract_for("transcript_check").parse(
         json.dumps(

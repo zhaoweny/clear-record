@@ -45,6 +45,7 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "click>=8.1",
+    "json-repair>=0.63",
     "numpy>=2.0",
     "platformdirs>=4.0",
     "soundfile>=0.12",

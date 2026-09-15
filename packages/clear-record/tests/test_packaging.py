@@ -51,7 +51,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # set with the CLI port (ADR-0022): it is pure Python, zero transitive deps.
 # `platformdirs` joined with ADR-0025: the one platform-native path resolver,
 # MIT, zero dependencies (imported at the package root, never in `core`).
-RUNTIME_DEPS = {"click", "numpy", "platformdirs", "soundfile"}
+RUNTIME_DEPS = {"click", "json-repair", "numpy", "platformdirs", "soundfile"}
 
 # The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
 # They must not leak into the base dependencies: a CLI-only install stays
@@ -105,7 +105,7 @@ def test_no_cr_dependency_survives_the_collapse() -> None:
 
 
 def test_single_dist_runtime_dependencies() -> None:
-    """The one published dist depends only on numpy/soundfile (ADR-0012).
+    """The one published dist depends only on its declared allow-list (ADR-0012).
 
     This is the packaging face of the vendor-free boundary that now lives in
     `test_layering.py`: the dist metadata names no vendor stack and no

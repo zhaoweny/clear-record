@@ -100,6 +100,12 @@ from clear_record.service.glossary import (
     write_project_snapshot,
     write_snapshot,
 )
+from clear_record.service.hello_tape import (
+    HELLO_PHRASES,
+    HelloTape,
+    hello_phrase,
+    write_hello_tape,
+)
 from clear_record.service.managed import (
     DEFAULT_MAX_UPLOAD_BYTES,
     DisallowedExtension,
@@ -192,6 +198,8 @@ __all__ = [
     "FUTURE_EVENTS",
     "GlossarySnapshot",
     "GlossaryTerm",
+    "HELLO_PHRASES",
+    "HelloTape",
     "InsufficientSpace",
     "MEETING_STATUSES",
     "Meeting",
@@ -266,6 +274,7 @@ __all__ = [
     "upload_tape",
     "verify_archive",
     "workspace_usage",
+    "write_hello_tape",
     "write_project_snapshot",
     "write_snapshot",
     # Agent-task runner seam (ADR-0018) — appended to keep the export block's
@@ -302,6 +311,7 @@ __all__ = [
     "default_config",
     "describe_draft",
     "glossary_collection_task",
+    "hello_phrase",
     "load_agent_config",
     "minutes_task",
     "plan_for",

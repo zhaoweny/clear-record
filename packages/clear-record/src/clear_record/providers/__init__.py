@@ -42,6 +42,16 @@ from clear_record.providers.process import (
     ProcessRunner,
     SubprocessRunner,
 )
+from clear_record.providers.tts import (
+    Synthesis,
+    TtsEngine,
+    TtsError,
+    TtsUnavailable,
+    TtsVoice,
+    detect,
+    synthesize,
+    synthesize_clip,
+)
 
 __all__ = [
     "APPLE_SPEECH_BACKEND_ID",
@@ -64,10 +74,18 @@ __all__ = [
     "RUNTIME_WHISPER_CLI",
     "SpeechProbe",
     "SubprocessRunner",
+    "Synthesis",
+    "TtsEngine",
+    "TtsError",
+    "TtsUnavailable",
+    "TtsVoice",
     "WINDOWS_AI_BACKEND_ID",
     "available_backend_ids",
     "backend_availability",
+    "detect",
     "get_backend",
     "probe_ggml_plugin_load",
     "resolve_models_dir",
+    "synthesize",
+    "synthesize_clip",
 ]

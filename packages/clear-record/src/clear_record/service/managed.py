@@ -57,7 +57,6 @@ from typing import BinaryIO
 from clear_record.cli.workspace import (
     AUDIO_DIR,
     AUDIO_SUFFIXES,
-    CHUNKS_DIR,
     EXPORT_DIR,
     Workspace,
     is_audio,
@@ -129,7 +128,6 @@ _BUCKET_DIRS = {
     AUDIO_DIR: "audio",
     EXPORT_DIR: "exports",
     AGENT_DIRNAME: "agent_runs",
-    CHUNKS_DIR: "chunks",
 }
 
 
@@ -399,6 +397,10 @@ def meeting_storage(
     :func:`root_free_bytes`), so the console's panel and the guard cannot drift;
     it is ``None`` when the root cannot report it, or when the meeting is not
     managed (its disk is not this app's concern).
+
+    ``bytes`` is deliberately the **workspace alone** (the machine-wide surface
+    is :func:`machine_storage`, whose rows are workspace + that workspace's
+    chunk cache + the models); do not "fix" the two into one number.
     """
     resolved_root = managed_root(root)
     managed_here = is_managed(meeting, resolved_root)
@@ -437,21 +439,27 @@ def machine_storage(
     **source** (the tape, irreplaceable) or **derived** (recomputable). The
     chunk cache (app-owned, outside every workspace) and the model directory are
     **inside** the total; a *user-chosen* workspace is measured exactly like a
-    managed one, and its row says which disk it is on (``managed``). A component
-    that cannot be read is ``None`` -- "unknown", never a silent zero -- and is
-    named in ``unknown``, so ``total_bytes`` is a lower bound in that case.
+    managed one, and its row says which disk it is on (``managed``).
+
+    Each bucket carries the bytes it could **measure** plus a ``partial`` flag:
+    a component that cannot be read contributes whatever was readable and is
+    named in ``unknown``, so ``total_bytes`` stays a true lower bound (the
+    console shows it as ">=") instead of collapsing to zero. One physical file
+    is counted once per call, so a tape registered for two meetings, a symlink
+    beside its target, or a workspace two meetings share cannot double count.
 
     ``meeting_storage``'s ``bytes`` keeps its original, narrower meaning (the
     meeting workspace's own bytes); this is a separate, wider surface.
     """
     resolved_root = managed_root(root)
-    machine: dict[str, int | None] = {key: 0 for key, _l, _k in STORAGE_BUCKETS}
+    machine: dict[str, _Measure] = {key: _ZERO for key, _l, _k in STORAGE_BUCKETS}
+    seen: set[str] = set()
     projects: list[dict] = []
     for project in registry.list_projects():
-        measured: dict[str, int | None] = {key: 0 for key in WORKSPACE_BUCKETS}
+        measured: dict[str, _Measure] = {key: _ZERO for key in WORKSPACE_BUCKETS}
         workspaces: list[dict] = []
         for meeting in registry.list_meetings(project.slug):
-            one = _meeting_buckets(registry, meeting)
+            one = _meeting_buckets(registry, meeting, seen)
             for key, value in one.items():
                 measured[key] = _add(measured[key], value)
                 machine[key] = _add(machine[key], value)
@@ -463,27 +471,31 @@ def machine_storage(
                     "managed": is_managed(meeting, resolved_root),
                     "total_bytes": known,
                     "total_size": _human_bytes(known),
-                    "unknown": _unknown(one),
+                    "partial": bool(_unknown(one)),
                 }
             )
+        project_total = _sum_known(measured)
         projects.append(
             {
                 "slug": project.slug,
                 "name": project.name,
                 "buckets": _bucket_rows(measured),
-                "total_bytes": _sum_known(measured),
-                "total_size": _human_bytes(_sum_known(measured)),
+                "total_bytes": project_total,
+                "total_size": _human_bytes(project_total),
                 "unknown": _unknown(measured),
+                "partial": bool(_unknown(measured)),
                 "workspaces": workspaces,
             }
         )
-    machine["models"] = _dir_bytes(resolve_models_dir())
+    machine["models"] = _dir_bytes(resolve_models_dir(), seen)
     total = _sum_known(machine)
+    unknown = _unknown(machine)
     return {
         "buckets": _bucket_rows(machine),
         "total_bytes": total,
         "total_size": _human_bytes(total),
-        "unknown": _unknown(machine),
+        "unknown": unknown,
+        "partial": bool(unknown),
         "projects": projects,
     }
 
@@ -727,14 +739,36 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def _scan(root: Path) -> tuple[list[tuple[Path, int]], bool]:
-    """Every regular file under *root* (symlinks never followed) and its size.
+#: One measured component: the bytes that could be read, plus whether any part
+#: of it could not. (0, True) is "unknown", never a silent zero.
+_Measure = tuple[int, bool]
+
+_ZERO: _Measure = (0, False)
+
+
+def _identity(path: Path) -> str:
+    """A stable key for one physical file (its resolved path, else absolute)."""
+    try:
+        return str(path.resolve())
+    except OSError:  # pragma: no cover - a path that cannot be resolved
+        return str(path.absolute())
+
+
+def _scan(root: Path) -> tuple[list[tuple[Path, int, str]], bool]:
+    """Every file under *root*, its size and its identity, plus a partial flag.
+
+    The identity is the **resolved** path, so one physical file reached twice
+    (two links, a link and its target, two meetings) is counted once. A symlink
+    pointing back inside *root* is skipped -- the walk reaches its target
+    itself -- while a link to a target outside *root* is a file the pipeline
+    can read (discover_audio follows it), so it is counted under the target's
+    identity. Directory symlinks are never followed.
 
     The flag is True when a part of the tree could not be read (a permission
-    error, a mount gone away): the caller reports "unknown" rather than a total
-    that silently dropped bytes.
+    error, a mount gone away): the caller marks the bucket partial rather than
+    letting the missing bytes vanish silently.
     """
-    files: list[tuple[Path, int]] = []
+    files: list[tuple[Path, int, str]] = []
     unreadable = False
 
     def _note_error(_exc: OSError) -> None:
@@ -747,9 +781,9 @@ def _scan(root: Path) -> tuple[list[tuple[Path, int]], bool]:
         for name in filenames:
             path = Path(dirpath) / name
             try:
-                if path.is_symlink():
-                    continue
-                files.append((path, path.stat().st_size))
+                if path.is_symlink() and _within(path.resolve(), root):
+                    continue  # the walk reaches the real file on its own
+                files.append((path, path.stat().st_size, _identity(path)))
             except FileNotFoundError:
                 continue  # raced away: it holds nothing here now
             except OSError:
@@ -757,130 +791,162 @@ def _scan(root: Path) -> tuple[list[tuple[Path, int]], bool]:
     return files, unreadable
 
 
-def _dir_bytes(root: Path) -> int | None:
-    """Bytes under *root*: 0 when it is absent, None when it cannot be read."""
-    try:
-        if not root.exists():
-            return 0
-    except OSError:
-        return None
-    files, unreadable = _scan(root)
-    return None if unreadable else sum(size for _path, size in files)
+def _dir_bytes(root: Path, seen: set[str]) -> _Measure:
+    """The bytes under *root* not already counted, plus a partial flag.
 
-
-def _file_bytes(path: Path) -> int | None:
-    """One file's size: 0 when it is gone, None when it cannot be read."""
+    The existence probe is a stat: Path.exists swallows a permission error and
+    answers False, which would report an unreadable directory as an empty one.
+    An absent directory is genuinely 0; any other OSError is unknown (partial).
+    """
     try:
-        return path.stat().st_size
+        root.stat()
     except FileNotFoundError:
-        return 0
+        return _ZERO
     except OSError:
-        return None
+        return (0, True)
+    files, unreadable = _scan(root)
+    total = 0
+    for _path, size, identity in files:
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += size
+    return (total, unreadable)
 
 
-def _workspace_buckets(root: Path) -> dict[str, int] | None:
+def _file_bytes(path: Path, seen: set[str]) -> _Measure:
+    """One file's bytes if this call has not counted it, plus a partial flag.
+
+    A file that is gone contributes nothing (a vanished source is not an
+    unreadable one); any other OSError is unknown.
+    """
+    identity = _identity(path)
+    if identity in seen:
+        return _ZERO
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return _ZERO
+    except OSError:
+        return (0, True)
+    seen.add(identity)
+    return (size, False)
+
+
+def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
     """One walk over a meeting's workspace, split into STO-01's buckets.
 
-    A file under ``tapes/`` -- or input audio the pipeline would discover -- is a
-    **source** tape. ``audio/``, ``export/`` and ``agent/`` are the app's derived
-    output, and the manifest, segments, transcript and minutes are the meeting's
-    records. ``None`` when any part cannot be read.
+    A file under tapes/ -- or input audio the pipeline would discover, symlinks
+    included -- is a **source** tape. audio/, export/ and agent/ are the app's
+    derived output, and the manifest, segments, transcript and minutes are the
+    meeting's records. Files this call already counted are skipped, so a shared
+    workspace or a linked target cannot double count; every bucket carries the
+    walk's partial flag.
     """
     files, unreadable = _scan(root)
-    if unreadable:
-        return None
     buckets = {key: 0 for key in WORKSPACE_BUCKETS}
-    for path, size in files:
+    for path, size, identity in files:
+        if identity in seen:
+            continue
+        seen.add(identity)
         rel = path.relative_to(root).parts
         top = rel[0] if rel else ""
         bucket = _BUCKET_DIRS.get(top)
         if bucket is None:
             bucket = "tapes" if top == TAPES_DIRNAME or is_audio(path) else "records"
         buckets[bucket] += size
-    return buckets
+    return {key: (value, unreadable) for key, value in buckets.items()}
 
 
 def _tape_bytes_outside(
-    registry: Registry, meeting: Meeting, workspace: Path | None
-) -> int | None:
-    """Sizes of this meeting's tapes that live outside its workspace.
+    registry: Registry,
+    meeting: Meeting,
+    workspace: Path | None,
+    seen: set[str],
+) -> _Measure:
+    """The bytes of this meeting's tapes that live outside its workspace.
 
     Tapes inside the workspace are already counted by the walk (they are input
-    audio); one mounted elsewhere -- a user-chosen path registered by hand -- is
-    still source data and belongs in the total. A tape row whose file is gone
-    contributes nothing; an unreadable one is unknown.
+    audio); one mounted elsewhere -- a user-chosen path registered by hand --
+    is still source data and belongs in the total. Rows are deduped by resolved
+    path, so the same file registered for two meetings counts once. A tape row
+    whose file is gone contributes nothing; an unreadable one is partial.
     """
     total = 0
+    partial = False
     for tape in registry.list_tapes(meeting.id):
         path = Path(tape.path)
         if workspace is not None and _within(path, workspace):
             continue
-        size = _file_bytes(path)
-        if size is None:
-            return None
+        size, unreadable = _file_bytes(path, seen)
         total += size
-    return total
+        partial = partial or unreadable
+    return (total, partial)
 
 
-def _chunk_bytes(meeting: Meeting) -> int | None:
+def _chunk_bytes(meeting: Meeting, seen: set[str]) -> _Measure:
     """The workspace's app-owned chunk cache, which lives outside the workspace."""
     if not meeting.workspace_path:
-        return 0
-    return _dir_bytes(Workspace.at(meeting.workspace_path).chunks_dir)
+        return _ZERO
+    return _dir_bytes(Workspace.at(meeting.workspace_path).chunks_dir, seen)
 
 
-def _meeting_buckets(registry: Registry, meeting: Meeting) -> dict[str, int | None]:
-    """One meeting's slice of the buckets (everything but the machine-wide models)."""
+def _meeting_buckets(
+    registry: Registry, meeting: Meeting, seen: set[str]
+) -> dict[str, _Measure]:
+    """One meeting's slice of the buckets (everything but the machine-wide models).
+
+    A meeting with no workspace still has registered tapes, which live outside
+    any workspace by definition, so the outside-tape walk runs for it too.
+    """
     workspace = Path(meeting.workspace_path) if meeting.workspace_path else None
     if workspace is None:
-        measured: dict[str, int | None] = {key: 0 for key in WORKSPACE_BUCKETS}
+        measured: dict[str, _Measure] = {key: _ZERO for key in WORKSPACE_BUCKETS}
     else:
-        measured = _workspace_buckets(workspace)
-        if measured is None:
-            measured = {key: None for key in WORKSPACE_BUCKETS}
-        else:
-            measured["tapes"] = _add(
-                measured["tapes"], _tape_bytes_outside(registry, meeting, workspace)
-            )
-    measured["chunks"] = _add(measured["chunks"], _chunk_bytes(meeting))
+        measured = _workspace_buckets(workspace, seen)
+    measured["tapes"] = _add(
+        measured["tapes"], _tape_bytes_outside(registry, meeting, workspace, seen)
+    )
+    # The chunk cache is measured separately (it lives outside the workspace),
+    # so it does not inherit the walk's partial flag.
+    measured["chunks"] = _chunk_bytes(meeting, seen)
     return measured
 
 
-def _add(total: int | None, value: int | None) -> int | None:
-    """Add one component to a running total; ``None`` (unknown) absorbs it."""
-    if total is None or value is None:
-        return None
-    return total + value
+def _add(left: _Measure, right: _Measure) -> _Measure:
+    """Add one component to a bucket: the bytes sum, a partial part survives."""
+    return (left[0] + right[0], left[1] or right[1])
 
 
-def _sum_known(measured: dict[str, int | None]) -> int:
-    """The total of the components that could be measured (a lower bound)."""
-    return sum(value for value in measured.values() if value is not None)
+def _sum_known(measured: dict[str, _Measure]) -> int:
+    """The total of the bytes that could be measured (a lower bound)."""
+    return sum(value for value, _partial in measured.values())
 
 
-def _unknown(measured: dict[str, int | None]) -> list[str]:
-    """The ids of the components that could not be measured, in bucket order."""
+def _unknown(measured: dict[str, _Measure]) -> list[str]:
+    """The ids of the components that could not be fully measured, in order."""
     return [
         key
         for key, _label, _kind in STORAGE_BUCKETS
-        if key in measured and measured[key] is None
+        if key in measured and measured[key][1]
     ]
 
 
-def _bucket_rows(measured: dict[str, int | None]) -> list[dict]:
+def _bucket_rows(measured: dict[str, _Measure]) -> list[dict]:
     """The template rows for one measured set, labels and kinds included."""
     rows = []
     for key, label, kind in STORAGE_BUCKETS:
         if key not in measured:
             continue
-        count = measured[key]
+        count, partial = measured[key]
         rows.append(
             {
                 "id": key,
                 "label": label,
                 "kind": kind,
                 "bytes": count,
-                "size": None if count is None else _human_bytes(count),
+                "size": _human_bytes(count),
+                "partial": partial,
             }
         )
     return rows

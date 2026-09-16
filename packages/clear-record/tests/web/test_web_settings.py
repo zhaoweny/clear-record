@@ -235,6 +235,7 @@ def test_the_storage_section_shows_the_managed_root_and_archive_roots(tmp_path) 
     assert "Retention is manual only" in page.text
     assert str(paths.resolve_workspace_root()) in page.text
 
+
 def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project("Ops")
@@ -254,8 +255,41 @@ def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> No
     assert "Per project" in page
     assert "Ops" in page
     assert str(meeting.workspace_path) in page
+    assert "Kickoff" in page
     assert "managed by clear-record" in page
 
+
+def test_the_storage_section_renders_a_partial_total_as_a_lower_bound(
+    tmp_path, monkeypatch
+) -> None:
+    """A bucket the service could not measure is named, and the total says >=."""
+    from clear_record.service import managed as managed_service
+
+    def partial(registry, root=None):
+        return {
+            "buckets": [
+                {
+                    "id": "chunks",
+                    "label": "Chunk cache",
+                    "kind": "derived",
+                    "bytes": 0,
+                    "size": "0 B",
+                    "partial": True,
+                }
+            ],
+            "total_bytes": 20,
+            "total_size": "20 B",
+            "unknown": ["chunks"],
+            "partial": True,
+            "projects": [],
+        }
+
+    monkeypatch.setattr(managed_service, "machine_storage", partial)
+    page = _client(tmp_path).get("/settings/storage")
+
+    assert "&gt;= 20 B" in page.text
+    assert "at least: some components could not be measured" in page.text
+    assert "Chunk cache" in page.text
 
 
 def test_the_status_section_carries_diagnostics_and_the_hello_check(tmp_path) -> None:

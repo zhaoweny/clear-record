@@ -1,0 +1,41 @@
+{# The Transcription step (ADR-0027): ASR backend and checkpoint readiness, from
+   service.agent_flow.transcription_status. It is its own file because the explicit
+   download action re-renders just this step in place (#setup-transcription) after
+   the user asks for the checkpoint -- the hello-world acceptance check never
+   downloads, so this is the one place setup triggers a first-use fetch. #}
+<li class="setup-step" id="setup-transcription">
+  <div class="setup-step-head">
+    <h3>{{ tr("Transcription") }}</h3>
+  </div>
+  {% if transcription.state == 'ok' %}
+  <p class="muted">{{ tr("Transcription is ready here: the {backend} backend runs on this machine.", backend=transcription.backend) }}</p>
+  {% if transcription.backend == 'apple-speech' %}
+  <p class="muted">{{ tr("That backend is model-free: it needs no checkpoint on this system.") }}</p>
+  {% else %}
+  <p class="muted">{{ tr("Checkpoint on disk: {model}.", model=transcription.model) }}</p>
+  {% endif %}
+  {% elif transcription.state == 'backend' %}
+  <p class="muted">{{ tr("No ASR backend is available on this machine yet. Install one, then reload this page; Settings → Backends names what each backend needs.") }}</p>
+  {% else %}
+  <p class="muted">{{ tr("The {backend} backend needs a model checkpoint, and none is on disk yet. Download it here, or place a ggml checkpoint in the directory below.", backend=transcription.backend) }}</p>
+  {% endif %}
+  {% if error %}
+  <p class="muted setup-error" role="alert">{{ tr("The download did not finish: {error}", error=error) }}</p>
+  {% endif %}
+  <p class="muted">{{ tr("Models directory: {models_dir}", models_dir=transcription.models_dir) }}</p>
+  {% if transcription.models_present %}
+  <p class="muted">{{ tr("Models on disk: {models}", models=transcription.models_present | join(', ')) }}</p>
+  {% else %}
+  <p class="muted">{{ tr("No model checkpoints are on disk yet.") }}</p>
+  {% endif %}
+  {% if transcription.state == 'model' %}
+  <form class="setup-download" hx-post="/ui/setup/download-model" hx-target="#setup-transcription" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <button class="primary" type="submit">{{ tr("Download the default model") }}</button>
+    <span class="muted">{{ tr("It is fetched once and verified against a pinned checksum; this can take a few minutes.") }}</span>
+  </form>
+  {% endif %}
+  <div class="setup-step-actions">
+    <a class="btn btn-sm" href="#setup-agent">{{ tr("Next: Agent") }}</a>
+    <a class="btn btn-sm btn-ghost" href="#setup-try">{{ tr("Skip") }}</a>
+  </div>
+</li>

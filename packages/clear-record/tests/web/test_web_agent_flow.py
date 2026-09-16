@@ -163,10 +163,11 @@ def test_the_success_result_labels_only_what_the_check_proved(
     # and the round-trip the console cannot prove.
     assert "Transcription ready" in text
     assert "Agent integration configured" in text
-    assert "Agent round-trip verified" in text
-    # The round-trip is never a green badge from this check.
-    assert 'status-ok">Agent round-trip verified' not in text
-    assert 'status-neutral">Agent round-trip verified' in text
+    assert "Agent round-trip" in text
+    # The round-trip is never a green badge from this check, and the copy says so.
+    assert 'status-ok">Agent round-trip' not in text
+    assert 'status-neutral">Agent round-trip' in text
+    assert "Not verified by this check" in text
     assert "just agent-drive" in text
     # The badge that overclaimed the whole system is gone.
     assert "the whole system worked once" not in text

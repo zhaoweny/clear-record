@@ -5,7 +5,7 @@ question "is this machine ready for an agent to work with clear-record?". It is
 reached two ways (the setup wizard's Agent step and Settings -> Agent), and the
 same **Try it** check is the permanent diagnostic Settings -> Status re-runs.
 
-The check is the whole system working once, in one synchronous call:
+The check proves the local chain once, in one synchronous call:
 
 1. create the locale's hello-world tape with the system voice
    (:func:`clear_record.service.hello_tape.write_hello_tape`);
@@ -196,6 +196,24 @@ def transcription_status(
         str(models_dir),
         present,
     )
+
+
+def download_transcription_model(*, model_dir: str | None = None) -> str:
+    """Download (and verify) the resolved backend's checkpoint, on request.
+
+    The console's explicit remediation for the ``model`` readiness state. It
+    reuses the CLI's pinned, checksum-verified downloader, so a click here and
+    a first transcription install identical bytes -- and it is reached only by
+    a click: the acceptance check stays side-effect-free. Returns the model
+    path, or the empty string when a checkpoint is already present or no
+    backend needs one.
+    """
+    from clear_record.cli import stages
+
+    status = transcription_status(model_dir=model_dir)
+    if status.backend is None or status.state != LEG_MODEL:
+        return status.model or ""
+    return stages.prepare_model(status.backend, None, model_dir)
 
 
 def _run_pipeline(
@@ -408,6 +426,7 @@ __all__ = [
     "LEG_TTS",
     "TRANSCRIPT_TOOL",
     "TranscriptionStatus",
+    "download_transcription_model",
     "hello_check_workspace",
     "run_hello_check",
     "transcription_status",

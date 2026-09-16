@@ -177,6 +177,19 @@ def _load_glossary(w: Workspace, explicit: str | None) -> tuple[str, str]:
     return ", ".join(terms)[:2000], str(path)
 
 
+def prepare_model(
+    backend_id: str, model: str | None = None, model_dir: str | None = None
+) -> str:
+    """Resolve a backend's model, downloading and verifying it on first use.
+
+    The same pinned, checksum-verified fetch a normal run performs, exposed on
+    its own so the setup wizard can offer an explicit, user-triggered download.
+    Nothing calls it implicitly: the hello-world acceptance check never
+    downloads.
+    """
+    return get_backend(backend_id).prepare(model, model_dir)
+
+
 def transcribe(
     directory: str,
     backend_id: str,

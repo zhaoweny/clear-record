@@ -22,40 +22,14 @@
       <div class="setup-step-head">
         <h3>{{ tr("Welcome") }}</h3>
       </div>
-      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Nothing here is required before you start; this path only gets a working runner and an MCP harness in place.") }}</p>
+      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Nothing here is required before you start; this path gets transcription ready, connects an MCP harness, and ends with an acceptance test.") }}</p>
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-transcription">{{ tr("Next: Transcription") }}</a>
         <a class="btn btn-sm btn-ghost" href="#setup-agent">{{ tr("Skip") }}</a>
       </div>
     </li>
 
-    <li class="setup-step" id="setup-transcription">
-      <div class="setup-step-head">
-        <h3>{{ tr("Transcription") }}</h3>
-      </div>
-      {% if transcription.state == 'ok' %}
-      <p class="muted">{{ tr("Transcription is ready here: the {backend} backend runs on this machine.", backend=transcription.backend) }}</p>
-      {% if transcription.backend == 'apple-speech' %}
-      <p class="muted">{{ tr("That backend is model-free: it needs no checkpoint on this system.") }}</p>
-      {% else %}
-      <p class="muted">{{ tr("Checkpoint on disk: {model}.", model=transcription.model) }}</p>
-      {% endif %}
-      {% elif transcription.state == 'backend' %}
-      <p class="muted">{{ tr("No ASR backend is available on this machine yet. Install one, then reload this page; Settings → Backends names what each backend needs.") }}</p>
-      {% else %}
-      <p class="muted">{{ tr("The {backend} backend needs a model checkpoint, and none is on disk yet. The first transcription run downloads one from Hugging Face, or you can place a ggml checkpoint in the directory below.", backend=transcription.backend) }}</p>
-      {% endif %}
-      <p class="muted">{{ tr("Models directory: {models_dir}", models_dir=transcription.models_dir) }}</p>
-      {% if transcription.models_present %}
-      <p class="muted">{{ tr("Models on disk: {models}", models=transcription.models_present | join(', ')) }}</p>
-      {% else %}
-      <p class="muted">{{ tr("No model checkpoints are on disk yet.") }}</p>
-      {% endif %}
-      <div class="setup-step-actions">
-        <a class="btn btn-sm" href="#setup-agent">{{ tr("Next: Agent") }}</a>
-        <a class="btn btn-sm btn-ghost" href="#setup-try">{{ tr("Skip") }}</a>
-      </div>
-    </li>
+    {% include "_setup_transcription.html" %}
 
     <li class="setup-step" id="setup-agent">
       <div class="setup-step-head">

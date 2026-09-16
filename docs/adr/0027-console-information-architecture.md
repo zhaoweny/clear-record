@@ -183,3 +183,22 @@ A follow-up refinement to the ticket-04/05 console work (owner-approved).
   workflow. The old "the whole system worked once" badge was re-scoped to what
   the check actually proves.
 
+## Update — 2026-09-16: the missing-model remediation
+
+A second-pass review of the wizard found that "needs model" was accurate but had
+no in-wizard action that moved it to ready: the acceptance check deliberately
+never downloads, and Models settings is read-only, so a fresh user fell out of the
+guided path.
+
+- [DECISION] The **Transcription** step offers an explicit, user-triggered
+  **Download the default model** action (`POST /ui/setup/download-model`) when
+  `state == "model"`. It reuses the same pinned, checksum-verified downloader a
+  normal first use performs (`cli.stages.prepare_model` -> the provider's
+  `prepare`), then re-renders the step, so readiness becomes **ready** in place:
+  **needs model -> Download model -> Transcription ready -> Try it**.
+- [DECISION] The download is **never implicit**: the hello-world acceptance check
+  still downloads nothing, and this click is the only setup path that fetches. A
+  failed download is shown in the step, not raised.
+- [DESIGN] The neutral hello-check badge is **Agent round-trip**, with the adjacent
+  "Not verified by this check" copy, so the eye does not parse a contradiction.
+

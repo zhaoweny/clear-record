@@ -69,7 +69,10 @@ from clear_record.service import (
     run_hello_check,
     verify_archive,
 )
-from clear_record.service.agent_flow import transcription_status
+from clear_record.service.agent_flow import (
+    download_transcription_model,
+    transcription_status,
+)
 from clear_record.service.archive import tool_version
 from clear_record.service.auto import (
     DEFAULT_MODEL,
@@ -1387,6 +1390,27 @@ def create_app(
             nav="setup",
             reason=request.query_params.get("reason", ""),
             transcription=transcription_status(),
+        )
+
+    @app.post("/ui/setup/download-model", response_class=HTMLResponse)
+    def ui_setup_download_model(request: Request) -> HTMLResponse:
+        """Download the resolved backend's default checkpoint, on the user's click.
+
+        The one place setup triggers a first-use fetch: explicit, never implicit,
+        and the same pinned, checksum-verified download a normal run performs, so
+        a manual download and a first transcription install identical bytes. The
+        refreshed Transcription step is returned so its readiness updates in
+        place; a failure is shown in the step rather than raised.
+        """
+        error = ""
+        try:
+            download_transcription_model()
+        except Exception as exc:  # noqa: BLE001 - a failed download is a state
+            error = f"{type(exc).__name__}: {exc}"
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_setup_transcription.html",
+            {"transcription": transcription_status(), "error": error},
         )
 
     @app.get("/setup/agent", response_class=HTMLResponse)

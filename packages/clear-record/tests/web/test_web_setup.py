@@ -218,7 +218,7 @@ def test_the_transcription_step_names_a_missing_backend(tmp_path, monkeypatch) -
     assert "/home/u/models" in page
 
 
-def test_the_transcription_step_says_the_first_run_downloads_a_missing_checkpoint(
+def test_the_transcription_step_offers_to_download_a_missing_checkpoint(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
@@ -230,9 +230,66 @@ def test_the_transcription_step_says_the_first_run_downloads_a_missing_checkpoin
     page = TestClient(_app(tmp_path)).get("/setup").text
 
     assert "The apple backend needs a model checkpoint" in page
-    assert "downloads one from Hugging Face" in page
+    assert "Download it here" in page
+    # The remediation is explicit and user-triggered: a button that reuses the
+    # pinned downloader, never a promise that some later run will fetch it.
+    assert 'hx-post="/ui/setup/download-model"' in page
+    assert "Download the default model" in page
     assert "Models on disk: ggml-small.bin" in page
     assert "No model checkpoints are on disk yet." not in page
+
+
+def test_a_ready_step_offers_no_download(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
+    )
+
+    page = TestClient(_app(tmp_path)).get("/setup").text
+
+    assert 'hx-post="/ui/setup/download-model"' not in page
+
+
+def test_downloading_the_default_model_refreshes_the_step_to_ready(
+    tmp_path, monkeypatch
+) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(
+        web_app,
+        "download_transcription_model",
+        lambda **kwargs: calls.append(1) or "",
+    )
+
+    def status(*args, **kwargs):
+        # Model state before the click, ready after it.
+        if calls:
+            return _status(LEG_OK, model="/home/u/models/ggml-small.bin")
+        return _status(LEG_MODEL)
+
+    monkeypatch.setattr(web_app, "transcription_status", status)
+
+    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+
+    assert response.status_code == 200
+    assert calls == [1]
+    assert "Transcription is ready here" in response.text
+    assert "Checkpoint on disk: /home/u/models/ggml-small.bin." in response.text
+
+
+def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
+    def boom(**kwargs):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(web_app, "download_transcription_model", boom)
+    monkeypatch.setattr(
+        web_app, "transcription_status", lambda *args, **kwargs: _status(LEG_MODEL)
+    )
+
+    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+
+    assert response.status_code == 200
+    assert "The download did not finish: RuntimeError: no network" in response.text
 
 
 def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:

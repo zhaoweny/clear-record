@@ -633,11 +633,26 @@ class RunManager:
 
     # --- lifecycle ---------------------------------------------------------- #
     def wait(self, run_id: int, timeout: float | None = None) -> RunState:
-        """Block until the run reaches a terminal status (tests; bounded by timeout)."""
+        """Block until the run is terminal **and** has left the live set.
+
+        A terminal status in the registry is not the end of the run's lifecycle:
+        :meth:`_execute_run` keeps the id in :attr:`_live` until
+        ``_run_pipeline`` and its synchronous effects (the artifact rows and
+        the ``run.finished`` log among them) have all happened. Returning on
+        the status alone would let a waiter observe a finished run *before* its
+        ``run.finished`` log exists. So wait for both, reading :attr:`_live`
+        under the lock. ``_live`` is only populated by the process actually
+        executing the run, so a run finished by another process still returns
+        on its terminal status.
+
+        Bounded by ``timeout``; on timeout the current state is returned.
+        """
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             state = self.require_state(run_id)
-            if state.status in TERMINAL_STATUSES:
+            with self._lock:
+                live = run_id in self._live
+            if state.status in TERMINAL_STATUSES and not live:
                 return state
             if deadline is not None and time.monotonic() >= deadline:
                 return state

@@ -258,6 +258,55 @@ def test_run_lifecycle_records_events_and_artifacts(tmp_path) -> None:
     assert all(artifact.bytes for artifact in artifacts)
 
 
+def test_wait_does_not_return_until_the_run_leaves_live(tmp_path) -> None:
+    """``wait`` ends only when the run is terminal *and* off the live set.
+
+    The registry flips to ``done`` inside ``_run_pipeline``, but the worker keeps
+    the id in ``_live`` until that method and its synchronous effects (the
+    artifact rows and the ``run.finished`` log) are complete. Returning on the
+    status alone opens a window where a waiter sees a finished run before its
+    ``run.finished`` log exists — the race that made
+    ``test_run_lifecycle_is_logged`` flaky. This freezes that window: the run
+    reaches ``done`` while it is still live, and stays there.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    frozen = threading.Event()
+    release = threading.Event()
+
+    class FrozenAfterTerminal(RunManager):
+        def _run_pipeline(self, run, meeting, options) -> None:
+            super()._run_pipeline(run, meeting, options)
+            frozen.set()
+            release.wait(10)
+
+    manager = FrozenAfterTerminal(registry, pipeline=lambda *args: None)
+    run = manager.start(meeting)
+    assert frozen.wait(10), "the run did not reach its terminal transition"
+    assert manager.require_state(run.id).status == "done"
+    with manager._lock:
+        assert run.id in manager._live
+
+    # The status is already terminal; the old wait would return here. It must
+    # instead block until the timeout, then return the state (the timeout rule).
+    started = time.monotonic()
+    state = manager.wait(run.id, timeout=0.5)
+    elapsed = time.monotonic() - started
+    assert state.status == "done"
+    assert elapsed >= 0.45, elapsed
+
+    # Once the worker lets go, wait returns promptly rather than waiting out
+    # the whole timeout.
+    release.set()
+    started = time.monotonic()
+    state = manager.wait(run.id, timeout=10)
+    assert state.status == "done"
+    assert time.monotonic() - started < 5
+
+
 def test_failed_run_is_recorded(tmp_path) -> None:
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"

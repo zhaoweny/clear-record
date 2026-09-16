@@ -31,6 +31,26 @@ class ServiceState(enum.StrEnum):
     UNREACHABLE = "unreachable"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Answer with the 3xx response instead of following it.
+
+    ``urlopen`` follows redirects by default, so a health route that answered
+    307 to the setup page would read as a healthy console.
+    """
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        return fp
+
+    http_error_302 = http_error_301
+    http_error_303 = http_error_301
+    http_error_307 = http_error_301
+    http_error_308 = http_error_301
+
+
+#: One opener per process for the health probe — never a redirect follower.
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class ServiceController:
     """Runs the console on a background thread and can stop it cleanly."""
 
@@ -85,10 +105,15 @@ class ServiceController:
         return self.healthy()
 
     def healthy(self) -> bool:
+        """Does the console's health URL answer exactly 200, right now?
+
+        Redirects are **not** followed: a 3xx (e.g. a redirect to the setup
+        page) is not a healthy server. The path stays the current one — B3
+        replaces it with a dedicated credential-free ``GET /health``
+        (AUTH-06/AUTH-07), whose response must not carry the registry path.
+        """
         try:
-            with urllib.request.urlopen(
-                f"{self.url}api/health", timeout=1.0
-            ) as response:
+            with _OPENER.open(f"{self.url}api/health", timeout=1.0) as response:
                 return response.status == 200
         except (urllib.error.URLError, OSError):
             return False
@@ -105,23 +130,36 @@ class ServiceController:
             return ServiceState.STOPPED
         return ServiceState.RUNNING if self.healthy() else ServiceState.UNREACHABLE
 
-    def stop(self, timeout: float = 10.0) -> None:
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Ask the server to exit and wait for its thread; True when it is gone.
+
+        A graceful shutdown waits for in-flight requests (a transcription takes
+        a while), so the join may time out. The handles are then **kept**:
+        clearing them would report "stopped" — and let :meth:`start` bind a
+        second server on the port the first still holds. A later
+        :meth:`stop` retries the join.
+        """
         if self._server is not None:
             self._server.should_exit = True
-        if self._thread is not None:
-            self._thread.join(timeout)
-            self._thread = None
+        if self._thread is None:
+            self._server = None
+            return True
+        self._thread.join(timeout)
+        if self._thread.is_alive():
+            return False
+        self._thread = None
         self._server = None
+        return True
 
     def restart(self, timeout: float = 15.0) -> bool:
-        """Stop the server and start it again on the same URL.
+        """Stop the server, then start it again on the same URL.
 
-        Blocks until the old server releases the port (typically well under a
-        second; ``timeout`` bounds a wedged one), so the caller is the tray's
-        explicit restart action, not the poll timer. Returns whether the
-        console answered again before ``timeout``.
+        Returns False when the old server did not shut down in time: nothing is
+        started (a second bind on the same port would fail), the handles stay,
+        and the caller can report the failure and retry.
         """
-        self.stop(timeout)
+        if not self.stop(timeout):
+            return False
         self.start()
         return self.wait_until_ready(timeout=timeout)
 

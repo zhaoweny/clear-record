@@ -361,13 +361,18 @@ runnable, and the **project console** is built on top of it:
   deferred Flatpak story (ADR-0014, ADR-0015).
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
-background runs and the **archive** (copy + sha256 manifest); the **web UI**
-renders projects, the glossary table, meetings and tape sets, the **live run
-view**, **tape upload** into a managed workspace, and the **archive view**, and
-the **MCP surface** now carries the **tuning loop** (ADR-0017, ADR-0018). The
-**agent tasks**' runner seam, prompts, drafts and accept/reject states have
-landed; their **console wiring** and **guided agent setup** are **specified but
-unbuilt** — see ADR-0018 and the trackers below.
+background runs and the **archive** (copy + sha256 manifest); the **web UI** is
+the page information architecture of ADR-0027 — **Projects** (the daily
+workspace: the project list, then Overview / Meetings / Glossary / Media),
+**Settings** (the control plane), **Setup** (system readiness) and the one
+**Agent** flow — over the **live run view**, **tape upload** into a managed
+workspace and the **archive view**; the **MCP surface** carries the **tuning
+loop** and the **agent tasks** (ADR-0017, ADR-0018). The **agent tasks**' runner
+seam, prompts, drafts, accept/reject states, their **console wiring** and the
+guided **agent setup** have all landed, and the setup path's **hello-world
+acceptance test** proves tape → transcription → transcript while localising a
+failure to a leg (`tts`, `backend`, `model`, `transcribe`). The real agent
+round-trip over MCP is proven by the optional `just agent-drive`.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
@@ -428,12 +433,7 @@ which is not published):
 - **Windows-native** (`Microsoft.Windows.AI.Speech`) — deferred for its
   MSIX/`systemAIModels` packaging requirement. Apple-native has left this list:
   it landed as the `apple-speech` backend (ADR-0019);
-- the **agent tasks' console surface** — glossary collection, transcript check
-  and minutes. Their runner seam, prompts, drafts and accept/reject states have
-  landed (ADR-0018); launching a task and reviewing a draft from the console or
-  MCP has not, so accepting a draft still only records its review state;
-- **meeting review + minutes** and **guided agent setup** in the console, and
-  deeper **diarization** behind the same seam.
+- deeper **diarization** behind the same seam.
 
 No longer gaps, having landed since this list was written: **profiles and
 `--auto`** (the profile table, the decoder knobs and the explainable recommended
@@ -448,11 +448,9 @@ chunk of every source, so the tuning loop is affordable on multi-hour tapes).
    DGX Spark research is a candidate target), decide whether to add an **Intel**
    adapter from the hardware research, and retire the AMD subprocess if a
    maintained Vulkan/HIP wheel appears.
-2. **Agent tasks** — glossary collection, transcript check and minutes as
-   reviewable drafts, on the runner seam that has landed (ADR-0018).
-3. **Console UI** — meeting review + minutes, and guided agent setup, over the
-   agent tasks. **Diarization** remains a baseline to deepen behind the same
-   seam.
+2. **Windows-native ASR** — the deferred MSIX/`systemAIModels` packaging in the
+   gap list above.
+3. **Diarization** — deepen the baseline behind the same seam.
 
 ---
 

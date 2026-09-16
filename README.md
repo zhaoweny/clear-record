@@ -317,8 +317,20 @@ clear-record transcribe <dir> --backend apple --model medium   # picks up glossa
 
 ## Web console (optional)
 
-A local web console for managing **projects** and their **glossary tables**. The
-console ships in this wheel, but its web stack is an optional extra so a
+A local desktop-style console for the daily work, with the control plane kept
+separate from it: four surfaces, four jobs
+([ADR-0027](docs/adr/0027-console-information-architecture.md)).
+
+- **Projects** — the daily workspace: the project list, then a project's own
+  Overview, Meetings, Glossary and Media.
+- **Settings** — the control plane: models, backends, agent, MCP, storage and
+  status — configured occasionally, read often.
+- **Setup** — system readiness: the first-run and upgrade path (welcome,
+  transcription, agent, try it), skippable at every step.
+- **Agent setup** — integration readiness: one reusable flow, reached from the
+  Setup path and from Settings → Agent.
+
+The console ships in this wheel, but its web stack is an optional extra so a
 CLI-only install stays audio-only:
 
 ```sh
@@ -330,7 +342,7 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 Running `clear-record web` without the extra prints the exact install command.
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
 server binds **localhost only** and needs no account. The UI language comes from
-`--lang`, `CR_LANG` or `LANG` (English is the source, `de` ships) — see
+`--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the
 console also resolves this machine's tailnet name, runs a **foreground**
 `tailscale serve --https=<port> http://127.0.0.1:<port>` (the tailnet port
@@ -370,13 +382,16 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 `--dir` workspace and a meeting's user-chosen `workspace_path` are unchanged
 ([deployment guide §4](docs/service-deployment.md)).
 
-> **Status:** the console covers projects, the multi-project glossary table,
-> meetings and tape sets, running tapes with progress and a live run view, tape
-> upload into a managed workspace, and the archive view; the MCP surface carries
-> the glossary ↔ transcript tuning loop. The **agent tasks** (glossary
-> collection, transcript check, minutes) run on the landed runner seam and land
-> as reviewable drafts (ADR-0018); wiring them into the console and the MCP
-> surface, and the guided agent setup, are the next slices.
+> **Status:** the console is the page information architecture of ADR-0027 —
+> Projects, a project's Overview/Meetings/Glossary/Media, Settings, Setup and
+> the one agent flow. It covers the multi-project glossary table, meetings and
+> tape sets, running tapes with progress and a live run view, tape upload into a
+> managed workspace, and the archive view. The **agent tasks** (glossary
+> collection, transcript check, minutes) run on the runner seam and land as
+> reviewable drafts (ADR-0018), and the setup path's hello-world acceptance test
+> proves tape → transcription → transcript, localising a failure to a leg (`tts`,
+> `backend`, `model`, `transcribe`). The real agent round-trip over MCP is proven
+> by the optional `just agent-drive` — see [docs/architecture.md](docs/architecture.md).
 
 ### Desktop app (macOS · Windows)
 

@@ -140,7 +140,7 @@ thin, branching-free `uv version` recipes:
 ```sh
 just version                 # print the member version (uv version --short)
 just bump-dev                # X.Y.Z.devN -> X.Y.Z.dev(N+1); X.Y.ZrcN -> X.Y.Zrc{N+1}.dev0
-just bump-rc                 # X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc{N+1}
+just bump-rc                 # X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN.devM -> X.Y.ZrcN; X.Y.ZrcN -> X.Y.Zrc{N+1}
 just set-version 0.1.1       # force an explicit version (stable release)
 ```
 
@@ -157,9 +157,13 @@ advance:
   `uv version --bump` cannot express, so the recipe is a pointer script
   (`scripts/bump_dev.py`). A stable `X.Y.Z` is refused: use
   `just set-version X.Y.(Z+1).dev0`;
-- `just bump-rc` cuts an `rc` from `X.Y.Z.devN` or advances `X.Y.ZrcN`, but it
-  **cannot** cut one from a stable `X.Y.Z` (uv refuses it: the bump would not
-  increase the version);
+- `just bump-rc` cuts the candidate whose dev snapshot `main` carries
+  (`X.Y.Z.devN -> X.Y.Zrc1`, and `X.Y.ZrcN.devM -> X.Y.ZrcN`), or advances a
+  cut candidate (`X.Y.ZrcN -> X.Y.Zrc{N+1}`). `uv version --bump rc` gets the
+  `rcN.devM` case wrong (it produces `rc(N+1)`, skipping the candidate the
+  snapshot was for), so the recipe is a pointer script (`scripts/bump_rc.py`).
+  It **cannot** cut one from a stable `X.Y.Z` (uv refuses it: the bump would
+  not increase the version);
 - `just set-version X.Y.Z` is the explicit-value form, so it forces the write —
   use it to drop the suffix onto a stable release, or to start the next dev
   series after one (`just set-version X.Y.(Z+1).dev0`).

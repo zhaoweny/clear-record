@@ -161,12 +161,13 @@ version:
 bump-dev:
     uv run --no-project scripts/bump_dev.py
 
-# Cut or advance the rc segment: X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN -> X.Y.Zrc(N+1).
-# (uv's `--bump rc` cannot cut an rc from a stable X.Y.Z: it refuses the bump, which
-# would not increase the version. Use `set-version` for that.)
+# Cut or advance the rc segment: X.Y.Z.devN -> X.Y.Zrc1; X.Y.ZrcN.devM -> X.Y.ZrcN
+# (the dev snapshot is *of* rcN, so cutting drops the suffix); X.Y.ZrcN ->
+# X.Y.Zrc(N+1). `uv version --bump rc` mishandles the rcN.devM case by giving
+# rc(N+1), so this is a pointer script. A stable X.Y.Z is refused -- use
+# `set-version`.
 bump-rc:
-    uv version --no-sync --package clear-record --bump rc
-    uv version --no-sync --bump rc
+    uv run --no-project scripts/bump_rc.py
 
 # Set an explicit version (stable release: drop the suffix, e.g. `just set-version 0.1.1`).
 # Unlike `--bump`, an explicit value forces the write (it may lower the version).

@@ -311,3 +311,47 @@ def test_resolve_auto_does_not_mutate_or_touch_io() -> None:
     before = dataclasses.asdict(probe)
     resolve_auto(probe)
     assert dataclasses.asdict(probe) == before
+
+
+# --- the terminal output follows the installed catalog ---------------------- #
+def test_backend_auto_explanation_is_translated(monkeypatch, capsys) -> None:
+    """The explanation is user-facing text, so it must go through tr().
+
+    The zh_CN catalog ships the translation; before the fix the CLI printed
+    str(message), the English render, so a Chinese user got English here.
+    """
+    from clear_record.core import i18n
+
+    i18n.install("zh_CN")
+    monkeypatch.setattr("clear_record.cli.cli.available_backend_ids", lambda: ("amd",))
+
+    _pipeline_options(_args(["run", "dir", "--backend", "auto"]))
+
+    assert "--backend auto：选择了" in capsys.readouterr().out
+
+
+def test_auto_explanation_is_translated(monkeypatch, capsys) -> None:
+    from clear_record.core import i18n
+
+    i18n.install("zh_CN")
+    monkeypatch.setattr(
+        auto,
+        "probe_auto",
+        lambda *a, **k: _probe(models_on_disk=frozenset({"medium"})),
+    )
+
+    _pipeline_options(_args(["run", "dir", "--auto"]))
+
+    assert "--auto：选择了" in capsys.readouterr().out
+
+
+def test_backend_auto_unavailable_error_is_translated(monkeypatch) -> None:
+    from clear_record.core import i18n
+
+    i18n.install("zh_CN")
+    monkeypatch.setattr("clear_record.cli.cli.available_backend_ids", lambda: ())
+
+    with pytest.raises(SystemExit) as err:
+        _pipeline_options(_args(["run", "dir", "--backend", "auto"]))
+
+    assert "此机器上没有可用的 ASR 后端" in str(err.value)

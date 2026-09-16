@@ -8,7 +8,8 @@
 #   *pointer* recipe below, so `just` stays the single entry point for automation
 #   and chaining. There are two pointer-script shapes. A script that needs no
 #   project declares its own dependencies in a PEP-722/PEP-723 `# /// script`
-#   block and runs via `uv run <file>.py` (e.g. scripts/check_web_assets.py). A
+#   block and runs via `uv run --no-project <file>.py` (e.g.
+#   scripts/check_web_assets.py). A
 #   script that imports the local `clear_record` package instead needs the
 #   project environment and runs via `uv run --all-packages python
 #   scripts/<name>.py` (e.g. scripts/agent_drive.py, scripts/agent_setup.py); it

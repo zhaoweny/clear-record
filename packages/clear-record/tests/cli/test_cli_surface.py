@@ -166,3 +166,15 @@ def test_eval_tokenizes_nonempty(text: str) -> None:
     from clear_record.cli.eval import _tokenize
 
     assert len(_tokenize(text)) > 0
+
+
+def test_standalone_diarize_rejects_no_diarize() -> None:
+    """`diarize` always diarizes, so `--no-diarize` is a usage error, not a no-op."""
+    result = CliRunner().invoke(_build_group(), ["diarize", "dir", "--no-diarize"])
+
+    assert result.exit_code == 2
+    assert "--no-diarize" in result.output + result.stderr
+
+
+def test_standalone_diarize_keeps_the_speakers_knob() -> None:
+    assert _parse("diarize", ["dir", "--speakers", "3"]).speakers == 3

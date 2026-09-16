@@ -20,6 +20,7 @@ from clear_record.providers.backends import (
     PluginLoadProbe,
     available_backend_ids,
     backend_availability,
+    download_ggml_model,
     get_backend,
     probe_ggml_plugin_load,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "available_backend_ids",
     "backend_availability",
     "detect",
+    "download_ggml_model",
     "get_backend",
     "probe_ggml_plugin_load",
     "resolve_models_dir",

@@ -549,6 +549,19 @@ def _resolve_ggml_model(model: str, model_dir: str | None) -> str:
     return _download_ggml_model(model, name, base, candidate)
 
 
+def download_ggml_model(model: str, model_dir: str | None = None) -> str:
+    """Resolve a ggml checkpoint by name, downloading and verifying it on first use.
+
+    A **backend-independent** entry point: ``model`` is always a ggml name/size
+    (e.g. ``"medium"``), never a backend-specific language or asset request. The
+    console's explicit model picker uses it to fetch exactly the checkpoint the
+    user chose even when the resolved backend has no ggml checkpoint of its own
+    (``apple-speech`` provisions a language asset, not a ``.bin``). The pinned,
+    checksum-verified download is the same one the whisper-cli backends perform.
+    """
+    return _resolve_ggml_model(model, model_dir)
+
+
 def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> str:
     """Download ``ggml-<name>.bin`` to ``candidate`` (single-flight).
 
@@ -959,6 +972,7 @@ __all__ = [
     "PluginLoadProbe",
     "available_backend_ids",
     "backend_availability",
+    "download_ggml_model",
     "get_backend",
     "probe_ggml_plugin_load",
 ]

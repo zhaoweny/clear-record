@@ -213,8 +213,13 @@ def download_transcription_model(
     is reached only by a click: the acceptance check stays side-effect-free.
 
     ``model`` is a size from the ladder (tiny .. large-v3) or ``None`` for the
-    resolved backend's own default. Returns the model path, or the empty string
-    when no backend can transcribe here.
+    resolved backend's own default. A named model is fetched as that exact ggml
+    checkpoint **independently of the preferred backend** -- on macOS 26 the
+    default resolves ``apple-speech``, whose ``prepare`` provisions a language
+    asset rather than a ``.bin`` -- so the click always lands the chosen file;
+    ``None`` still asks the resolved backend for its own default. Returns the
+    model path, or the empty string when ``model`` is ``None`` and no backend
+    can transcribe here.
     """
     from clear_record.cli import stages
 
@@ -222,10 +227,16 @@ def download_transcription_model(
         raise ValueError(
             f"unknown model {model!r}; expected one of {chr(44).join(MODEL_LADDER)}"
         )
+    if model is not None:
+        # A named model is a ggml checkpoint request, whatever backend is
+        # preferred here: on macOS 26 the default resolves ``apple-speech``,
+        # whose ``prepare`` provisions a language asset, not a ``.bin``, so
+        # routing through the backend would report success without fetching.
+        return stages.download_ggml_model(model, model_dir)
     status = transcription_status(model_dir=model_dir)
     if status.backend is None:
         return ""
-    if model is None and status.state != LEG_MODEL:
+    if status.state != LEG_MODEL:
         return status.model or ""
     return stages.prepare_model(status.backend, model, model_dir)
 

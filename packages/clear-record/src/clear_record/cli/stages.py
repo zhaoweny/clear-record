@@ -45,7 +45,11 @@ from clear_record.engine import (
     source_speaker_names,
 )
 from clear_record.engine.audio import read_audio
-from clear_record.providers import get_backend, probe_ggml_plugin_load
+from clear_record.providers import (
+    download_ggml_model as _providers_download_ggml_model,
+    get_backend,
+    probe_ggml_plugin_load,
+)
 
 from clear_record.cli import eval as _eval
 from clear_record.cli import transcription
@@ -199,6 +203,18 @@ def prepare_model(
     downloads.
     """
     return get_backend(backend_id).prepare(model, model_dir)
+
+
+def download_ggml_model(model: str, model_dir: str | None = None) -> str:
+    """Download a named ggml checkpoint, independent of the active backend.
+
+    The bridge ``service`` uses (it may import ``cli`` but not ``providers``).
+    Unlike :func:`prepare_model`, the argument is always a ggml name/size, so a
+    named download fetches exactly ``ggml-<model>.bin`` whatever backend this
+    machine prefers -- on macOS 26 that is ``apple-speech``, whose ``prepare``
+    provisions a language asset rather than a ggml checkpoint.
+    """
+    return _providers_download_ggml_model(model, model_dir)
 
 
 def transcribe(

@@ -13,6 +13,7 @@ from clear_record.providers import (
     BackendBase,
     BackendInfo,
     available_backend_ids,
+    download_ggml_model,
     get_backend,
 )
 from clear_record.providers.backends import BACKENDS
@@ -88,3 +89,10 @@ def test_whisper_cli_prepare_resolves_a_local_model(tmp_path) -> None:
     model = tmp_path / "ggml-small.bin"
     model.write_bytes(b"stub")
     assert get_backend("apple").prepare("small", str(tmp_path)) == str(model)
+
+
+def test_download_ggml_model_resolves_a_local_checkpoint(tmp_path) -> None:
+    """The public ggml downloader is backend-independent: a name -> a path."""
+    model = tmp_path / "ggml-small.bin"
+    model.write_bytes(b"stub")
+    assert download_ggml_model("small", str(tmp_path)) == str(model)

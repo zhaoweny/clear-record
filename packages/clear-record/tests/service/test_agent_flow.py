@@ -335,3 +335,46 @@ def test_readiness_lists_what_is_on_disk(tmp_path) -> None:
     )
 
     assert status.models_present == ("ggml-large-v3-q5_0.bin", "ggml-small.bin")
+
+
+# --- explicit model downloads ------------------------------------------------- #
+
+
+def test_a_named_download_targets_the_ggml_checkpoint_not_the_backend(
+    tmp_path, monkeypatch
+) -> None:
+    """A named model is a ggml checkpoint even when apple-speech is preferred.
+
+    On macOS 26 the default backend resolves to ``apple-speech``, whose
+    ``prepare`` provisions a *language asset* -- so routing a named download
+    through the backend reported success while no ``ggml-medium.bin`` landed.
+    The download must go straight to the ggml downloader.
+    """
+    from clear_record.providers import backends
+    from clear_record.providers.apple_speech import AppleSpeechBackend
+
+    models = tmp_path / "models"
+    models.mkdir()
+    downloaded: list[tuple[str, str, str, str]] = []
+
+    def fake_download(model: str, name: str, base: str, candidate: str) -> str:
+        downloaded.append((model, name, base, candidate))
+        Path(candidate).write_bytes(b"ggml")
+        return candidate
+
+    monkeypatch.setattr(backends, "_download_ggml_model", fake_download)
+
+    def no_apple_prepare(*_args, **_kwargs):  # pragma: no cover - a call is failure
+        raise AssertionError("a named model download went through the backend")
+
+    monkeypatch.setattr(AppleSpeechBackend, "prepare", no_apple_prepare)
+    # The machine's preferred backend is the model-free native path.
+    monkeypatch.setattr(agent_flow, "available_backend_ids", lambda: ("apple-speech",))
+
+    result = agent_flow.download_transcription_model("medium", model_dir=str(models))
+
+    assert len(downloaded) == 1
+    called_model, called_name, _base, candidate = downloaded[0]
+    assert (called_model, called_name) == ("medium", "ggml-medium.bin")
+    assert candidate == result
+    assert result.endswith("ggml-medium.bin")

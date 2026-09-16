@@ -195,6 +195,14 @@ def test_glossary_status_filter(client) -> None:
     assert [t["term"] for t in confirmed] == ["A"]
 
 
+def test_glossary_status_filter_rejects_an_unknown_status(client) -> None:
+    """A bad client filter is a 400, not an uncaught ValueError turned 500."""
+    client.post("/api/projects", json={"name": "Ops"})
+    res = client.get("/api/projects/ops/glossary?status=bogus")
+    assert res.status_code == 400
+    assert "bogus" in res.json()["detail"]
+
+
 def test_unknown_project_is_404(client) -> None:
     assert client.get("/api/projects/nope").status_code == 404
     assert client.get("/api/projects/nope/glossary").status_code == 404

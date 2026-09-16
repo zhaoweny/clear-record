@@ -544,7 +544,7 @@ def draft_view(draft) -> dict:
 # --- webhooks: delivery health (ADR-0020) ---------------------------------- #
 # The label for each overall webhook state. Each branch calls ``tr`` with a
 # literal so the catalog tooling can extract it; a state the service adds later
-# falls through to its own word rather than vanishing.
+# falls through to the neutral "Configured" rather than vanishing from display.
 def _webhook_state_label(state: str) -> str:
     if state == "not_configured":
         return tr("Not configured")
@@ -552,6 +552,8 @@ def _webhook_state_label(state: str) -> str:
         return tr("Configuration problem")
     if state == "delivery_failed":
         return tr("A delivery is failing")
+    if state == "no_delivery_yet":
+        return tr("No delivery yet")
     return tr("Configured")
 
 

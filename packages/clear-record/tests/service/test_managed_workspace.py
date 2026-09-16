@@ -105,6 +105,24 @@ def test_a_managed_meeting_gets_a_workspace_inside_the_root(
     )
 
 
+def test_a_path_escaping_slug_creates_nothing_outside_the_root(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Containment is checked before mkdir, so nothing escapes the managed root."""
+    import dataclasses
+
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    meeting = registry.create_meeting("ops", "Kickoff")
+    escaped = dataclasses.replace(meeting, project_slug="../escaped")
+
+    with pytest.raises(managed.UploadRejected, match="outside the managed root"):
+        managed.ensure_managed_workspace(registry, escaped)
+
+    assert not (tmp_path / "escaped").exists()
+    assert registry.meeting_by_id(meeting.id).workspace_path is None
+
+
 def test_a_symlinked_managed_root_is_allowed(registry, tmp_path, monkeypatch) -> None:
     """The operator may point the root at a symlink (e.g. a mounted NAS)."""
     real = tmp_path / "real-root"
@@ -375,6 +393,16 @@ def test_a_blank_filename_is_rejected(registry, tmp_path, monkeypatch) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     with pytest.raises(managed.UnsafeFilename):
         managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename="  ")
+
+
+def test_a_name_over_255_utf8_bytes_is_rejected(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    name = "\u674e" * 100 + ".wav"  # 304 UTF-8 bytes, 104 characters
+    assert len(name) <= 255 and len(name.encode("utf-8")) > 255
+    with pytest.raises(managed.UnsafeFilename, match="255 bytes"):
+        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename=name)
 
 
 def test_a_non_audio_extension_is_rejected(registry, tmp_path, monkeypatch) -> None:

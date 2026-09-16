@@ -86,10 +86,18 @@ _FILE_SUFFIXES = (
     "toml",
 )
 #: One pass over both shapes (a path with separators, or a bare filename), so a
-#: replacement is never re-hashed by a second rule.
+#: replacement is never re-hashed by a second rule. The path branch runs to the
+#: next line break, quote, comma, semicolon, angle bracket, pipe or close paren,
+#: so a component containing a space (My Meeting) is redacted as one token; a
+#: space alone does not end the path. The bare branch likewise admits interior
+#: spaces (My Meeting.wav), so a filename is hashed whole rather than only from
+#: its last word; that can also hash the words leading up to a filename in free
+#: text, which is the safe direction for a privacy redactor.
 _TOKEN = re.compile(
-    r"(?:[A-Za-z]:)?(?:[\\/][^\s\"'<>|,;)]+)+"
-    r"|(?<![\w/\\])[\w][\w.\-]*\.(?:" + "|".join(_FILE_SUFFIXES) + r")(?![\w])",
+    r"(?:[A-Za-z]:)?(?:[\\/][^\n\"'<>|,;)]+)+"
+    r"|(?<![\w/\\])[\w][\w.\-]*(?: [\w.\-]+)*\.(?:"
+    + "|".join(_FILE_SUFFIXES)
+    + r")(?![\w])",
     re.IGNORECASE,
 )
 
@@ -108,6 +116,11 @@ def hash_component(name: str) -> str:
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:_HASH_LEN]
     prefix = "." if name.startswith(".") and name not in (".", "..") else ""
     suffix = Path(name).suffix
+    if any(char.isspace() for char in suffix):
+        # A path token may run to the end of the line, so its suffix can be
+        # trailing prose (for example notes.txt because it is locked); never
+        # let that survive as though it were a file extension.
+        suffix = ""
     return f"{prefix}{digest}{suffix}"
 
 
@@ -221,9 +234,10 @@ def _render_options(options: Mapping[str, object], redact) -> list[str]:
         if value is None:
             continue
         if isinstance(value, str):
-            # A path is redacted; a bare value (a model name, a language, a
-            # sha) is not a user file and stays readable for triage.
-            rendered = redact(value) if ("/" in value or "\\" in value) else value
+            # Redact every string value: redact_text leaves a bare non-file
+            # value (a model size, a language, a sha) readable, but hashes a
+            # filename whether or not it carries a separator.
+            rendered = redact(value)
         else:
             rendered = str(value)
         out.append(f"{key}: {rendered}")
@@ -310,8 +324,9 @@ def build_bundle(facts: BundleFacts) -> str:
             "started_at",
             "ended_at",
         ):
-            if facts.run.get(key) is not None:
-                out.append(f"{key}: {facts.run[key]}")
+            value = facts.run.get(key)
+            if value is not None:
+                out.append(f"{key}: {redact(str(value))}")
         if facts.run.get("error"):
             out.append(f"error: {redact(str(facts.run['error']))}")
     else:
@@ -494,7 +509,7 @@ class DiagnosticsHandler(logging.Handler):
     redaction applies to them unchanged.
     """
 
-    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+    def emit(self, record: logging.LogRecord) -> None:
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a log line must never raise

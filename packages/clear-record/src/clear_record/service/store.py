@@ -214,6 +214,22 @@ def _slugify(name: str) -> str:
     return slug or "project"
 
 
+_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+
+
+def _require_slug(slug: str, what: str) -> str:
+    """Validate an explicitly supplied slug: [a-z0-9-]+ only.
+
+    A generated slug is safe by construction; a caller-supplied one is not. The
+    managed workspace builds a filesystem path from a meeting's project_slug and
+    slug (ADR-0024), so a separator or a '..' component here would escape the
+    managed root.
+    """
+    if not _SLUG_RE.fullmatch(slug):
+        raise ValueError(f"{what} slug must match [a-z0-9-]+ (got {slug!r})")
+    return slug
+
+
 class Registry:
     """The single owner of the SQLite registry and its read/writes."""
 
@@ -287,8 +303,11 @@ class Registry:
         name = name.strip()
         if not name:
             raise ValueError("project name must not be blank")
+        explicit = (slug or "").strip()
+        if explicit:
+            _require_slug(explicit, "project")
         with self._connect() as conn:
-            slug = (slug or "").strip() or self._unique_slug(conn, name)
+            slug = explicit or self._unique_slug(conn, name)
             try:
                 cur = conn.execute(
                     "INSERT INTO project (slug, name, notes, default_archive_root, created_at)"
@@ -516,10 +535,11 @@ class Registry:
         title = title.strip()
         if not title:
             raise ValueError("meeting title must not be blank")
+        explicit = (slug or "").strip()
+        if explicit:
+            _require_slug(explicit, "meeting")
         with self._connect() as conn:
-            slug = (slug or "").strip() or self._unique_meeting_slug(
-                conn, project.id, title
-            )
+            slug = explicit or self._unique_meeting_slug(conn, project.id, title)
             try:
                 cur = conn.execute(
                     "INSERT INTO meeting"
@@ -779,6 +799,12 @@ class Registry:
         error: str | None = None,
         progress: dict | None = None,
     ) -> PipelineRun:
+        """Update a run's mutable fields.
+
+        The progress summary is written for the run-progress work and has no
+        reader yet: the console reconstructs it from the durable event stream.
+        It stays write-only until that surface lands.
+        """
         fields: dict[str, object] = {}
         if status is not None:
             if status not in RUN_STATUSES:

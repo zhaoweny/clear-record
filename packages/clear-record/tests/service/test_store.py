@@ -42,6 +42,18 @@ def test_duplicate_explicit_slug_is_rejected(tmp_path) -> None:
         reg.create_project("B", slug="shared")
 
 
+def test_unsafe_explicit_slugs_are_rejected(tmp_path) -> None:
+    """A caller-supplied slug must be [a-z0-9-]+; the managed root builds paths from it."""
+    reg = _registry(tmp_path)
+    for bad in ("../escaped", "a/b", "UPPER", "with space", "."):
+        with pytest.raises(ValueError, match="slug must match"):
+            reg.create_project("Ops", slug=bad)
+
+    reg.create_project("Ops")
+    with pytest.raises(ValueError, match="slug must match"):
+        reg.create_meeting("ops", "Kickoff", slug="../escaped")
+
+
 def test_blank_project_name_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     with pytest.raises(ValueError):

@@ -119,3 +119,11 @@ def test_negative_limit_is_rejected(tmp_path: Path) -> None:
     _write_record(workspace, [Segment(start=0.0, end=1.0, text="x", source="a")])
     with pytest.raises(ValueError, match="limit"):
         read_transcript(meeting, limit=-1)
+
+
+def test_zero_limit_is_rejected(tmp_path: Path) -> None:
+    """A zero page cannot advance the cursor, so it is refused outright."""
+    _, meeting, workspace = _meeting(tmp_path)
+    _write_record(workspace, [Segment(start=0.0, end=1.0, text="x", source="a")])
+    with pytest.raises(ValueError, match="at least 1"):
+        read_transcript(meeting, limit=0)

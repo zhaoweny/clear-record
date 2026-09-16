@@ -156,8 +156,10 @@ def archive_meeting(
     ``archive.json``. The archive is recorded in the registry and returned.
 
     An existing archive is never reused or overwritten; every call makes a new
-    directory. On any failure the partial directory is removed, so a registry
-    row always points at a complete archive.
+    directory. A name that a concurrent archive won between the uniqueness probe
+    and the mkdir is retried, never touched. On any failure only the partial
+    directory *this call* created is removed, so a registry row always points at
+    a complete archive and a concurrent winner survives.
 
     ``webhooks`` defaults to the shared config-driven emitter; ``archive.created``
     is emitted only after the archive is complete, and delivery (off-thread)
@@ -174,8 +176,19 @@ def archive_meeting(
 
     archive_dir = _archive_dir(root_path, meeting, _timestamp())
     manifest_path = archive_dir / MANIFEST_FILENAME
+    created = False
     try:
-        archive_dir.mkdir(parents=True, exist_ok=False)
+        # The uniqueness probe and this mkdir are not atomic: a concurrent
+        # archive can win the same timestamped name in between. Retry with the
+        # next free name rather than touching the winner's directory.
+        while True:
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=False)
+                created = True
+                break
+            except FileExistsError:
+                archive_dir = _archive_dir(root_path, meeting, _timestamp())
+                manifest_path = archive_dir / MANIFEST_FILENAME
 
         files: list[dict] = []
         used_tapes: set[str] = set()
@@ -208,7 +221,8 @@ def archive_meeting(
         )
         manifest_sha256 = _sha256(manifest_path)
     except Exception:
-        shutil.rmtree(archive_dir, ignore_errors=True)
+        if created:
+            shutil.rmtree(archive_dir, ignore_errors=True)
         raise
 
     archive = registry.add_archive(

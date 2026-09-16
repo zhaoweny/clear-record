@@ -147,8 +147,9 @@ def is_managed(meeting: Meeting, root: str | os.PathLike | None = None) -> bool:
 def workspace_path_for(root: Path, meeting: Meeting) -> Path:
     """Where a managed meeting's workspace lives: ``<root>/<project>/<meeting>``.
 
-    Both parts are registry slugs (``[a-z0-9-]``), so the path cannot escape the
-    root by construction.
+    Both parts are registry slugs ([a-z0-9-]): the store validates an explicit
+    slug, so the path cannot escape the root by construction. _safe_mkdir still
+    re-checks containment before it creates anything.
     """
     return Path(root) / meeting.project_slug / meeting.slug
 
@@ -456,11 +457,9 @@ def sanitize_filename(filename: str | None) -> str:
             deferred("refusing the filename {name!r}: it contains a control character"),
             name=name,
         )
-    if len(name) > 255:
+    if len(name.encode("utf-8")) > 255:
         raise UnsafeFilename(
-            deferred(
-                "refusing the filename {name!r}: it is longer than 255 characters"
-            ),
+            deferred("refusing the filename {name!r}: it is longer than 255 bytes"),
             name=name,
         )
     return name
@@ -552,7 +551,15 @@ def _require_within(path: Path, root: Path) -> None:
 
 
 def _safe_mkdir(path: Path, *, root: Path | None = None) -> Path:
-    """``mkdir -p`` that refuses to use (or follow) a symlink at ``path``."""
+    """mkdir -p that refuses to use (or follow) a symlink at path.
+
+    Containment is checked *before* the directory is created, so a path that
+    escapes the root (an unvalidated slug, an absolute path) creates nothing
+    outside it; the check is repeated after creation to close the
+    symlink-race window.
+    """
+    if root is not None:
+        _require_within(path, root)
     path.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise UploadRejected(

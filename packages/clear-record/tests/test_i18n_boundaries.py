@@ -222,3 +222,72 @@ def test_diagnostics_bundle_stays_untranslated(pseudo) -> None:
     assert bundle.startswith("clear-record diagnostics bundle")
     assert "WITHHELD by default" in bundle
     assert "«" not in bundle
+
+
+def test_the_backends_command_stays_english_under_a_catalog(
+    pseudo, monkeypatch
+) -> None:
+    """The terminal reads the message's English form, never the catalog's."""
+    from click.testing import CliRunner
+
+    import clear_record.providers.backends as provider_backends
+    from clear_record.core.i18n import deferred
+    from clear_record.core.message import Message
+    from clear_record.providers import Availability, BackendBase, BackendInfo
+
+    class _FakeSystemBackend(BackendBase):
+        def __init__(self) -> None:
+            self.info = BackendInfo(
+                id="apple-speech",
+                vendor="Apple",
+                frameworks=("Speech",),
+                description="fake system backend",
+                default_model="system",
+                runtime="system",
+                chunked=False,
+            )
+
+        def availability(self) -> Availability:
+            return Availability(
+                False,
+                Message(
+                    deferred("requires macOS {major}+ (this is {host})"),
+                    (("major", 26), ("host", "Linux")),
+                ),
+            )
+
+        def transcribe(self, audio_path, **kwargs):  # pragma: no cover - unused
+            raise AssertionError
+
+    monkeypatch.setitem(
+        provider_backends.BACKENDS, "apple-speech", _FakeSystemBackend()
+    )
+
+    result = CliRunner().invoke(_build_group(), ["backends", "--all"])
+
+    assert result.exit_code == 0
+    line = next(
+        line for line in result.output.splitlines() if line.startswith("apple-speech")
+    )
+    assert "requires macOS 26+ (this is Linux)" in line
+    assert "«" not in line
+
+
+def test_the_diagnostics_reason_stays_english(pseudo) -> None:
+    """The bundle is machine-read: the reason renders in English, untranslated."""
+    message_node = {
+        "id": "requires macOS {major}+ (this is {host})",
+        "params": {"major": 26, "host": "Linux"},
+    }
+    bundle = build_bundle(
+        BundleFacts(
+            version="0.0.0",
+            python="3.12",
+            platform="test",
+            machine="test",
+            backends={"apple-speech": {"available": False, "reason": message_node}},
+            options={},
+        )
+    )
+    assert "requires macOS 26+ (this is Linux)" in bundle
+    assert "«" not in bundle

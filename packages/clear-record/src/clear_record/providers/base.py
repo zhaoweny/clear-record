@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from clear_record.core import TranscriptionResult
+from clear_record.core.message import Message
 
 from clear_record.providers.process import ProcessRunner
 
@@ -42,13 +43,14 @@ class Availability:
     ``available()`` stays the cheap boolean probe; this carries the same verdict
     with the *why* attached, so ``clear-record backends`` can say a backend is
     missing an OS version, a capability, or a provisioned asset rather than only
-    that it is unavailable. ``reason`` is a short human-readable phrase: the
-    failing check when unavailable, or a summary of how it is available (the
-    shipped adapters both do this).
+    that it is unavailable. ``reason`` is a
+    :class:`~clear_record.core.message.Message` (an ID plus parameters) the
+    boundary renders: the failing check when unavailable, or a summary of how it
+    is available (the shipped adapters both do this).
     """
 
     available: bool
-    reason: str = ""
+    reason: Message | None = None
 
 
 @dataclass(frozen=True)

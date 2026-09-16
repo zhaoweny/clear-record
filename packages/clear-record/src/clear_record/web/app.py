@@ -128,6 +128,9 @@ TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 #: English source verbatim.
 TEMPLATES.env.globals["tr"] = tr
 TEMPLATES.env.globals["trn"] = trn
+#: The message-node renderer, so a template can render a ``Message`` (an ID plus
+#: parameters) composed in a lower layer with the same ``tr`` lookup.
+TEMPLATES.env.globals["render_message"] = render_service_message
 
 #: The cookie that persists the console's explicit language choice: the one new
 #: piece of state the switcher adds, and it carries a language tag and **nothing
@@ -1089,11 +1092,13 @@ def create_app(
 
     # --- Settings: the control plane (ADR-0027) ----------------------------- #
     def backend_rows() -> list[dict]:
-        """Each ASR backend's availability and its reason, in catalog order.
+        """Each ASR backend's availability and its message node, in catalog order.
 
         diagnostics.backend_status is the service's one probe (it reaches
         providers through cli, which the web layer may not import); the console
-        only renders the verdict and the reason, never recomputes them.
+        only renders the verdict and the reason, never recomputes them. The
+        reason is a :class:`~clear_record.core.message.Message` JSON node, and
+        the shared template renders it with `tr` at the boundary.
         """
         return [
             {

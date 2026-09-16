@@ -13,7 +13,7 @@
       <span class="badge status-missing">{{ tr("unavailable") }}</span>
       {% endif %}
     </div>
-    {% if backend.reason %}<div class="muted backend-reason">{{ backend.reason }}</div>{% endif %}
+    {% if backend.reason %}<div class="muted backend-reason">{{ render_message(backend.reason, tr) }}</div>{% endif %}
   </li>
   {% endfor %}
 </ul>

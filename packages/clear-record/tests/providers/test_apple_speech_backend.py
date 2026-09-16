@@ -114,8 +114,8 @@ def test_unavailable_off_macos_without_probing(monkeypatch) -> None:
     status = AppleSpeechBackend(helper).availability()
 
     assert status.available is False
-    assert "macOS 26+" in status.reason
-    assert "Linux" in status.reason
+    assert "macOS 26+" in str(status.reason)
+    assert "Linux" in str(status.reason)
     # The platform gate is in-process: the helper is never invoked off macOS.
     assert helper.probe_calls == 0
 
@@ -128,8 +128,8 @@ def test_unavailable_on_pre_26_macos(monkeypatch) -> None:
     status = AppleSpeechBackend(helper).availability()
 
     assert status.available is False
-    assert "requires macOS 26+" in status.reason
-    assert "15.4" in status.reason
+    assert "requires macOS 26+" in str(status.reason)
+    assert "15.4" in str(status.reason)
     assert helper.probe_calls == 0
 
 
@@ -145,7 +145,7 @@ def test_unavailable_when_the_helper_cannot_be_built(monkeypatch) -> None:
     status = backend.availability()
 
     assert status.available is False
-    assert "xcode-select --install" in status.reason
+    assert "xcode-select --install" in str(status.reason)
     assert backend.available() is False
 
 
@@ -156,7 +156,7 @@ def test_unavailable_when_speech_transcriber_says_so(monkeypatch) -> None:
     status = backend.availability()
 
     assert status.available is False
-    assert "SpeechTranscriber" in status.reason
+    assert "SpeechTranscriber" in str(status.reason)
 
 
 def test_available_on_macos_26(monkeypatch) -> None:
@@ -166,7 +166,7 @@ def test_available_on_macos_26(monkeypatch) -> None:
     status = backend.availability()
 
     assert status.available is True
-    assert "SpeechTranscriber" in status.reason
+    assert "SpeechTranscriber" in str(status.reason)
     assert backend.available() is True
 
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import pytest
 
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 from clear_record.providers import (
     APPLE_SPEECH_BACKEND_ID,
     Availability,
@@ -32,7 +34,8 @@ class _StubSystemBackend(BackendBase):
         self._available = available
 
     def availability(self) -> Availability:
-        return Availability(self._available, "" if self._available else "stubbed")
+        reason = None if self._available else Message(deferred("stubbed"))
+        return Availability(self._available, reason)
 
 
 def test_catalog_declares_the_whisper_cli_trio_plus_the_native_backend() -> None:

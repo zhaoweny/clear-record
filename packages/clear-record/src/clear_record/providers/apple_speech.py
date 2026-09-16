@@ -72,6 +72,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from clear_record.core import Segment, TranscriptionResult
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 from clear_record.core.paths import resolve_cache_dir
 from clear_record.providers.base import (
     APPLE_SPEECH_BACKEND_ID,
@@ -483,27 +485,54 @@ class AppleSpeechBackend(BackendBase):
         system = platform.system()
         if system != "Darwin":
             return Availability(
-                False, f"requires macOS {MIN_MACOS_MAJOR}+ (this is {system})"
+                False,
+                Message(
+                    deferred("requires macOS {major}+ (this is {host})"),
+                    (("major", MIN_MACOS_MAJOR), ("host", system)),
+                ),
             )
         major = _macos_major()
         if major is None or major < MIN_MACOS_MAJOR:
             version = platform.mac_ver()[0] or "unknown"
             return Availability(
-                False, f"requires macOS {MIN_MACOS_MAJOR}+ (this is {version})"
+                False,
+                Message(
+                    deferred("requires macOS {major}+ (this is {host})"),
+                    (("major", MIN_MACOS_MAJOR), ("host", version)),
+                ),
             )
         try:
             probe = self._helper.probe()
         except AppleSpeechUnavailable as exc:
-            return Availability(False, str(exc))
+            return Availability(
+                False,
+                Message(
+                    deferred("Apple Speech is unavailable: {detail}"),
+                    (("detail", str(exc)),),
+                ),
+            )
         except AppleSpeechError as exc:
-            return Availability(False, f"Apple Speech probe failed: {exc}")
+            return Availability(
+                False,
+                Message(
+                    deferred("Apple Speech probe failed: {detail}"),
+                    (("detail", str(exc)),),
+                ),
+            )
         if not probe.is_available:
             return Availability(
                 False,
-                "SpeechTranscriber reports the on-device model unavailable on "
-                "this device",
+                Message(
+                    deferred(
+                        "SpeechTranscriber reports the on-device model "
+                        "unavailable on this device"
+                    )
+                ),
             )
-        return Availability(True, "Apple SpeechTranscriber (macOS 26+, on-device)")
+        return Availability(
+            True,
+            Message(deferred("Apple SpeechTranscriber (macOS 26+, on-device)")),
+        )
 
     def prepare(self, model: str | None, model_dir: str | None) -> None:
         """Install/reserve the current locale's asset (the seam has no language).

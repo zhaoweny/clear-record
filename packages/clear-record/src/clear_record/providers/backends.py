@@ -43,6 +43,8 @@ import urllib.request
 from collections.abc import Callable
 
 from clear_record.core import DECODER_KNOB_FIELDS, Segment, TranscriptionResult
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 
 from clear_record.providers.apple_speech import AppleSpeechBackend
 from clear_record.providers.base import (
@@ -711,21 +713,42 @@ class _WhisperCliBackend(BackendBase):
         """
         system = platform.system()
         if system != self._system:
-            return Availability(False, f"requires {self._system} (this is {system})")
+            return Availability(
+                False,
+                Message(
+                    deferred("requires {target} (this is {host})"),
+                    (("target", self._system), ("host", system)),
+                ),
+            )
         if _find_whisper_cli() is None:
             return Availability(
-                False, "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
+                False,
+                Message(deferred("whisper-cli not found on PATH (set CR_WHISPER_CLI)")),
             )
         plugin = _find_ggml_gpu_backend(self._gpu_backends)
         if plugin is None:
             families = "/".join(self._gpu_backends)
             return Availability(
-                False, f"no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
+                False,
+                Message(
+                    deferred(
+                        "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
+                    ),
+                    (("families", families),),
+                ),
             )
         if not self._device_check():
-            return Availability(False, "no matching GPU device found")
+            return Availability(
+                False, Message(deferred("no matching GPU device found"))
+            )
         families = "/".join(self._gpu_backends)
-        return Availability(True, f"whisper-cli + ggml {families} plugin")
+        return Availability(
+            True,
+            Message(
+                deferred("whisper-cli + ggml {families} plugin"),
+                (("families", families),),
+            ),
+        )
 
     def prepare(self, model: str | None, model_dir: str | None) -> str:
         """Resolve (downloading on first use) this backend's ggml model path.

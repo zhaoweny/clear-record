@@ -702,7 +702,7 @@ def _cmd_backends(**kwargs: Any) -> int:
         if not kwargs["all_backends"] and not status.available:
             continue
         state = "available" if status.available else "unavailable"
-        reason = f" — {status.reason}" if status.reason else ""
+        reason = f" — {str(status.reason)}" if status.reason else ""
         print(f"{bid:12s} {state}{reason}")
     return 0
 

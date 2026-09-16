@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from clear_record.service import Registry, paths
 from clear_record.service.setup import MCP_SERVER_NAME
 from clear_record.web import app as web_app
-from clear_record.web.app import SETTINGS_SECTIONS, create_app
+from clear_record.web.app import LANG_COOKIE, SETTINGS_SECTIONS, create_app
 
 #: The slugs the pinned section list must expose, in order.
 SECTIONS = tuple(slug for slug, _label, _template in SETTINGS_SECTIONS)
@@ -243,3 +243,31 @@ def test_the_mcp_write_re_renders_only_the_mcp_rung(tmp_path) -> None:
         "command": "clear-record",
         "args": ["mcp"],
     }
+
+
+def test_an_unavailable_backend_reason_is_translated_in_a_chinese_console(
+    tmp_path, monkeypatch
+) -> None:
+    """Ticket 08: the reason is a message node, so the console can translate it.
+
+    The service hands backend_status a JSON message node (an ID plus
+    parameters); the shared backend list renders it with the boundary's
+    translation lookup, so a zh_CN console shows the translated reason rather
+    than the raw English.
+    """
+    message_node = {
+        "id": "requires macOS {major}+ (this is {host})",
+        "params": {"major": 26, "host": "Linux"},
+    }
+    monkeypatch.setattr(
+        "clear_record.web.app.backend_status",
+        lambda: {"apple-speech": {"available": False, "reason": message_node}},
+    )
+
+    client = _client(tmp_path)
+    client.cookies.set(LANG_COOKIE, "zh_CN")
+    page = client.get("/settings/backends")
+
+    assert page.status_code == 200
+    assert "需要 macOS 26+（当前为 Linux）" in page.text
+    assert "requires macOS" not in page.text

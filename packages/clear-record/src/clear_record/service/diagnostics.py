@@ -39,6 +39,7 @@ from types import SimpleNamespace
 import click
 
 from clear_record.core.diagnostics import effective_level, log_event
+from clear_record.core.message import _english, render_message
 from clear_record.service import paths
 
 # --- bundle --------------------------------------------------------------- #
@@ -172,7 +173,10 @@ def backend_status() -> dict[str, dict]:
 
     status = backend_availability()
     result = {
-        backend_id: {"available": verdict.available, "reason": verdict.reason}
+        backend_id: {
+            "available": verdict.available,
+            "reason": verdict.reason.as_json() if verdict.reason else None,
+        }
         for backend_id, verdict in status.items()
     }
     log_event(
@@ -275,7 +279,12 @@ def build_bundle(facts: BundleFacts) -> str:
         width = max(len(str(backend_id)) for backend_id in facts.backends)
         for backend_id, verdict in facts.backends.items():
             state = "available" if verdict.get("available") else "unavailable"
-            reason = redact(str(verdict.get("reason") or ""))
+            reason_node = verdict.get("reason")
+            reason = (
+                redact(render_message(reason_node, _english) or "")
+                if reason_node
+                else ""
+            )
             out.append(f"{str(backend_id):<{width}}  {state:<11} {reason}".rstrip())
     else:
         out.append("(backend probe unavailable)")

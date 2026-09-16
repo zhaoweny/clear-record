@@ -13,6 +13,8 @@ from __future__ import annotations
 import pytest
 
 import clear_record.providers.backends as backends
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 from clear_record.providers import (
     APPLE_SPEECH_BACKEND_ID,
     RUNTIME_SYSTEM,
@@ -31,7 +33,7 @@ from clear_record.providers.backends import BACKENDS
 class _FakeSystemBackend(BackendBase):
     """A native backend that never touches an OS API: only the seam."""
 
-    def __init__(self, *, available: bool, reason: str = "") -> None:
+    def __init__(self, *, available: bool, reason: Message | None = None) -> None:
         self.info = BackendInfo(
             id=APPLE_SPEECH_BACKEND_ID,
             vendor="Apple",
@@ -100,19 +102,20 @@ def test_whisper_cli_backends_still_advertise_the_ggml_probe() -> None:
 # --------------------------------------------------------------------------- #
 def test_system_backend_reports_its_own_unavailable_reason() -> None:
     backend = _FakeSystemBackend(
-        available=False, reason="requires macOS 26+ (this is 15.0)"
+        available=False,
+        reason=Message(deferred("requires macOS 26+ (this is 15.0)")),
     )
     assert backend.available() is False
     status = backend.availability()
     assert status.available is False
-    assert "macOS 26+" in status.reason
+    assert "macOS 26+" in str(status.reason)
 
 
 def test_system_backend_available_derives_from_availability() -> None:
     backend = _FakeSystemBackend(available=True)
     # `available()` is inherited from BackendBase and reads `availability()`.
     assert backend.available() is True
-    assert backend.availability().reason == ""
+    assert backend.availability().reason is None
 
 
 def test_backend_base_requires_one_of_the_probe_pair() -> None:
@@ -124,13 +127,15 @@ def test_backend_base_requires_one_of_the_probe_pair() -> None:
 
 
 def test_backend_availability_reports_reasons(monkeypatch) -> None:
-    fake = _FakeSystemBackend(available=False, reason="speech asset not installed")
+    fake = _FakeSystemBackend(
+        available=False, reason=Message(deferred("speech asset not installed"))
+    )
     monkeypatch.setitem(backends.BACKENDS, APPLE_SPEECH_BACKEND_ID, fake)
 
     report = backend_availability()
 
     assert report[APPLE_SPEECH_BACKEND_ID].available is False
-    assert report[APPLE_SPEECH_BACKEND_ID].reason == "speech asset not installed"
+    assert str(report[APPLE_SPEECH_BACKEND_ID].reason) == "speech asset not installed"
 
 
 def test_whisper_cli_availability_names_the_failing_check(monkeypatch) -> None:
@@ -139,7 +144,7 @@ def test_whisper_cli_availability_names_the_failing_check(monkeypatch) -> None:
     status = get_backend("apple").availability()
 
     assert status.available is False
-    assert "Darwin" in status.reason
+    assert "Darwin" in str(status.reason)
 
 
 # --------------------------------------------------------------------------- #

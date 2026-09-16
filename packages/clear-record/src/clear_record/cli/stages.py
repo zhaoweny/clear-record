@@ -247,13 +247,13 @@ def transcribe(
             hint = "`brew install whisper-cpp`"
         else:
             hint = "a system `whisper-cli` + a ggml GPU plugin (see README)"
-        reason = f" — {status.reason}" if status.reason else ""
+        reason = f" — {str(status.reason)}" if status.reason else ""
         log_event(
             "error",
             "transcribe",
             "backend.unavailable",
             backend=backend_id,
-            reason=status.reason,
+            reason=str(status.reason),
         )
         raise SystemExit(
             f"[transcribe] backend '{backend_id}' is not available on this machine"

@@ -14,6 +14,8 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from clear_record.cli import cli
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 from clear_record.providers import Availability, BackendBase, BackendInfo
 
 
@@ -31,7 +33,9 @@ class _FakeSystemBackend(BackendBase):
         )
 
     def availability(self) -> Availability:
-        return Availability(False, "requires macOS 26+ (this is 15.0)")
+        return Availability(
+            False, Message(deferred("requires macOS 26+ (this is 15.0)"))
+        )
 
     def transcribe(self, audio_path: str, **kwargs):  # pragma: no cover - unused
         raise AssertionError

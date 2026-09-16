@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from clear_record.core import ChunkScope, ScopeError, format_seconds, parse_time_range
+from clear_record.core import (
+    ChunkScope,
+    ScopeError,
+    format_seconds,
+    i18n,
+    parse_time_range,
+)
 
 
 def test_no_scope_input_is_none_not_an_empty_scope() -> None:
@@ -84,3 +90,12 @@ def test_describe_names_what_is_selected() -> None:
 def test_format_seconds_rounds_to_whole_seconds() -> None:
     assert format_seconds(3725.4) == "1:02:05"
     assert format_seconds(-3) == "0:00:00"
+
+
+def test_a_scope_error_is_translated_in_a_chinese_catalog() -> None:
+    """A malformed scope is a user-facing usage error, not an internal one."""
+    i18n.install("zh_CN")
+    with pytest.raises(ScopeError) as excinfo:
+        parse_time_range("noon-18:00")
+    assert "无法读取重跑范围" in str(excinfo.value)
+    assert "cannot read" not in str(excinfo.value)

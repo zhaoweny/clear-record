@@ -51,6 +51,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from clear_record.core.i18n import tr
+
 APP = "clear-record"
 REGISTRY_FILENAME = "registry.sqlite3"
 CONFIG_FILENAME = "config.toml"
@@ -171,9 +173,15 @@ def _adopt(
     if label not in _notified:
         _notified.add(label)
         print(
-            f"clear-record: adopting the existing pre-platformdirs {label} "
-            f"directory at {legacy}; move it to {native} for the platform-native "
-            f"layout (ADR-0025).{hint}",
+            tr(
+                "clear-record: adopting the existing pre-platformdirs {label} "
+                "directory at {legacy}; move it to {native} for the "
+                "platform-native layout (ADR-0025).{hint}",
+                label=label,
+                legacy=legacy,
+                native=native,
+                hint=hint,
+            ),
             file=sys.stderr,
         )
     return legacy
@@ -295,8 +303,9 @@ def resolve_cache_dir(explicit: str | os.PathLike | None = None) -> Path:
 def resolve_logs_dir(explicit: str | os.PathLike | None = None) -> Path:
     """Resolve the rotating diagnostics log directory.
 
-    ``CR_LOG_DIR`` wins; there is no config key (a log sink is not a document).
-    Honours the legacy state location so an existing log trail is not orphaned.
+    ``CR_LOG_DIR`` wins, then the config file's ``log_dir`` key; the platform
+    default is last. Honours the legacy state location so an existing log trail
+    is not orphaned.
     """
     dirs = _dirs()
     return _resolve_app_dir(
@@ -330,7 +339,7 @@ def resolve_models_dir(explicit: str | os.PathLike | None = None) -> Path:
         legacy=_cwd() / MODELS_DIRNAME,
         label="models",
         recognize=_looks_like_ggml_cache,
-        hint=" Set CR_MODELS_DIR to pin a different models directory.",
+        hint=tr(" Set CR_MODELS_DIR to pin a different models directory."),
     )
 
 

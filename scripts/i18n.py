@@ -185,8 +185,8 @@ def check() -> int:
             )
         if stale:
             problems.append(
-                f"{lang}: {len(stale)} catalog entr(ies) no longer in the "
-                f"source — run `just i18n-extract` (e.g. "
+                f"{lang}: {len(stale)} obsolete catalog entry(ies) (no longer "
+                f"in the source) — run `just i18n-extract` (e.g. "
                 f"{sorted(map(str, stale))[0]!r})"
             )
         if _compiled_bytes(po) != mo.read_bytes():

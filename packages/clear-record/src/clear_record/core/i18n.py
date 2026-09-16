@@ -85,7 +85,7 @@ def deferred(msgid: str) -> str:
     For a string whose lookup happens later than module import — the Click help
     assembled after ``--lang`` is parsed — the extraction tool must still see a
     literal call. ``deferred`` is that marker: it translates nothing now, and
-    ``tr`` looks the ID up at build time.
+    ``tr`` looks the ID up at call time.
     """
     return msgid
 
@@ -96,13 +96,13 @@ def deferred(msgid: str) -> str:
 def normalize_locale(value: str | None) -> str | None:
     """Reduce a locale string to a language tag, or ``None`` for "no preference".
 
-    ``fr_FR.UTF-8@euro`` → ``fr_FR``; ``de`` → ``de``. ``C``/``POSIX`` (and an
-    empty value) mean "no translation", signalled by ``None`` so the caller can
-    fall through to the next candidate.
+    ``fr_FR.UTF-8@euro`` → ``fr_FR``; ``zh-CN`` → ``zh_CN``; ``de`` → ``de``.
+    ``C``/``POSIX`` (and an empty value) mean "no translation", signalled by
+    ``None`` so the caller can fall through to the next candidate.
     """
     if not value:
         return None
-    code = value.split(".")[0].split("@")[0].strip()
+    code = value.split(".")[0].split("@")[0].strip().replace("-", "_")
     if not code or code in {"C", "POSIX"}:
         return None
     return code
@@ -150,13 +150,16 @@ def install(locale: str | None = None, *, localedir: str | Path | None = None) -
         _locale = None
         _installed = True
         return
-    _translations = _gettext.translation(
+    translations = _gettext.translation(
         DOMAIN,
         localedir=str(LOCALES_DIR if localedir is None else localedir),
         languages=[code],
         fallback=True,
     )
-    _locale = code
+    _translations = translations
+    # An absent catalog falls back to English; report that honestly instead of
+    # claiming a locale that was never installed.
+    _locale = code if isinstance(translations, _gettext.GNUTranslations) else None
     _installed = True
 
 

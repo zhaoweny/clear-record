@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.core import paths
+from clear_record.core import i18n, paths
 
 
 def _dirs(tmp_path: Path, *, legacy: bool = False) -> paths.DefaultDirs:
@@ -253,3 +253,22 @@ def test_a_config_value_still_beats_the_default(tmp_path, install, monkeypatch) 
     monkeypatch.setattr(paths, "config_path", lambda: config)
     assert paths.resolve_data_dir() == tmp_path / "from-config"
     assert paths.resolve_models_dir() == tmp_path / "cfg-models"
+
+
+def test_the_adoption_notice_is_translated(tmp_path, install, capsys) -> None:
+    """The migration notice is user-facing copy, so it goes through ``tr``."""
+    i18n.install("zh_CN")
+    install(_dirs(tmp_path, legacy=True))
+    assert paths.resolve_data_dir() == tmp_path / "legacy" / "data"
+    err = capsys.readouterr().err
+    assert "沿用" in err
+    assert "adopting" not in err
+
+
+def test_a_config_log_dir_is_honoured(tmp_path, install, monkeypatch) -> None:
+    """The precedence includes the config file's ``log_dir`` key."""
+    install(_dirs(tmp_path))
+    config = tmp_path / "config.toml"
+    config.write_text(f'[paths]\nlog_dir = "{tmp_path / "cfg-logs"}"\n')
+    monkeypatch.setattr(paths, "config_path", lambda: config)
+    assert paths.resolve_logs_dir() == tmp_path / "cfg-logs"

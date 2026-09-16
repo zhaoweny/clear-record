@@ -36,6 +36,8 @@ from __future__ import annotations
 import dataclasses
 import re
 
+from clear_record.core.i18n import tr
+
 
 class ScopeError(ValueError):
     """A re-run scope that cannot be honoured as written.
@@ -56,8 +58,12 @@ def _clock(token: str, whole: str) -> float:
     token = token.strip()
     if not _CLOCK_RE.match(token):
         raise ScopeError(
-            f"cannot read {token!r} in re-run range {whole!r}: expected "
-            "H:MM, H:MM:SS or seconds (e.g. 12:30-18:00)."
+            tr(
+                "cannot read {token!r} in re-run range {whole!r}: expected "
+                "H:MM, H:MM:SS or seconds (e.g. 12:30-18:00).",
+                token=token,
+                whole=whole,
+            )
         )
     fields = [float(part) for part in token.split(":")]
     if len(fields) == 1:
@@ -65,11 +71,23 @@ def _clock(token: str, whole: str) -> float:
     if len(fields) == 2:
         hours, minutes = fields
         if minutes >= 60:
-            raise ScopeError(f"minutes must be under 60 in {whole!r} ({token!r}).")
+            raise ScopeError(
+                tr(
+                    "minutes must be under 60 in {whole!r} ({token!r}).",
+                    whole=whole,
+                    token=token,
+                )
+            )
         return hours * 3600.0 + minutes * 60.0
     hours, minutes, seconds = fields
     if minutes >= 60 or seconds >= 60:
-        raise ScopeError(f"minutes/seconds must be under 60 in {whole!r} ({token!r}).")
+        raise ScopeError(
+            tr(
+                "minutes/seconds must be under 60 in {whole!r} ({token!r}).",
+                whole=whole,
+                token=token,
+            )
+        )
     return hours * 3600.0 + minutes * 60.0 + seconds
 
 
@@ -81,19 +99,25 @@ def parse_time_range(text: str) -> tuple[float, float]:
     """
     whole = (text or "").strip()
     if not whole:
-        raise ScopeError("re-run range is empty.")
+        raise ScopeError(tr("re-run range is empty."))
     parts = whole.split("-")
     if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
         raise ScopeError(
-            f"cannot read re-run range {whole!r}: expected START-END "
-            "(e.g. 12:30-18:00 or 745-1050)."
+            tr(
+                "cannot read re-run range {whole!r}: expected START-END "
+                "(e.g. 12:30-18:00 or 745-1050).",
+                whole=whole,
+            )
         )
     start = _clock(parts[0], whole)
     end = _clock(parts[1], whole)
     if end <= start:
         raise ScopeError(
-            f"re-run range {whole!r} ends at or before it starts; the end must "
-            "be later than the start."
+            tr(
+                "re-run range {whole!r} ends at or before it starts; the end "
+                "must be later than the start.",
+                whole=whole,
+            )
         )
     return start, end
 

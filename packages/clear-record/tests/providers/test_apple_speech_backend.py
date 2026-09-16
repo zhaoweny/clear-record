@@ -26,6 +26,7 @@ from clear_record.providers import (
     AppleSpeechError,
     AppleSpeechHelper,
     AppleSpeechUnavailable,
+    CancellableProcessRunner,
     SpeechProbe,
     get_backend,
     probe_ggml_plugin_load,
@@ -84,6 +85,23 @@ class _FakeHelper:
             raise self._transcribe_error
         self.calls.append((audio_path, language, terms))
         return self._transcribe or {"language": "en", "segments": []}
+
+
+class _RunnerObject:
+    """A ``ProcessRunner``-shaped object: it has ``.run`` but no ``__call__``.
+
+    ``providers.process.CancellableProcessRunner`` is exactly this shape, so a
+    test driving this object exercises the contract the pipeline passes.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd, *, capture_output=True, text=True, timeout=None):
+        self.calls.append(cmd)
+        with open(cmd[cmd.index("--out") + 1], "w", encoding="utf-8") as fh:
+            json.dump({"language": "en", "segments": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
 def _macos_26(monkeypatch) -> None:
@@ -278,15 +296,51 @@ def test_transcribe_surfaces_an_actionable_language_error() -> None:
         backend.transcribe("a.wav", language="xx-XX")
 
 
-def test_transcribe_passes_the_process_runner_to_the_helper() -> None:
-    """The pool's cancellable runner must reach the helper, not be dropped."""
+def test_transcribe_adapts_a_process_runner_object_for_the_helper() -> None:
+    """The pool passes a ProcessRunner object (it has .run, not __call__); the
+    backend must forward the bound .run, not the object itself, which is not
+    callable and crashed the helper."""
     helper = _FakeHelper()
     backend = AppleSpeechBackend(helper)
-    sentinel = object()
+    runner = CancellableProcessRunner()  # a real ProcessRunner object
 
-    backend.transcribe("a.wav", process_runner=sentinel)
+    backend.transcribe("a.wav", process_runner=runner)
 
-    assert helper.runners == [sentinel]
+    assert helper.runners == [runner.run]
+    assert apple_speech._as_run_callable(None) is None
+
+
+def test_transcribe_accepts_a_plain_callable_process_runner() -> None:
+    """A plain subprocess.run-shaped callable still passes through the adapter
+    unchanged (the older or test seam)."""
+    helper = _FakeHelper()
+    backend = AppleSpeechBackend(helper)
+
+    def runner(cmd, *, capture_output=True, text=True, timeout=None):
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    backend.transcribe("a.wav", process_runner=runner)
+
+    assert helper.runners == [runner]
+
+
+def test_backend_transcribe_launches_the_helper_with_a_runner_object(
+    tmp_path, monkeypatch
+) -> None:
+    """End-to-end regression for the round-3 crash: the real helper path, driven
+    with a ProcessRunner object, must launch through .run and not raise an
+    object-is-not-callable TypeError."""
+    binary = tmp_path / "helper"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv(HELPER_ENV, str(binary))
+    runner = _RunnerObject()
+    backend = AppleSpeechBackend(AppleSpeechHelper(cache_dir=tmp_path / "cache"))
+
+    result = backend.transcribe("a.wav", language="en", process_runner=runner)
+
+    assert result.source == APPLE_SPEECH_BACKEND_ID
+    assert runner.calls
+    assert runner.calls[0][1:3] == ["transcribe", "--audio"]
 
 
 def test_transcribe_rejects_a_decoder_knob_it_declares_unsupported() -> None:

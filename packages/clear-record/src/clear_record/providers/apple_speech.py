@@ -280,6 +280,24 @@ def _segments_from_helper(
 RunCallable = Callable[..., Any]
 
 
+def _as_run_callable(runner: object | None) -> RunCallable | None:
+    """Adapt a backend ``ProcessRunner`` to the helper's callable contract.
+
+    The backend seam takes a ``ProcessRunner`` -- an *object* with ``run``
+    (``CancellableProcessRunner``, ``SubprocessRunner``; see
+    :mod:`clear_record.providers.process`) -- while :class:`AppleSpeechHelper`
+    launches through a plain ``subprocess.run``-shaped callable. Passing the
+    object straight through raised ``TypeError: ... object is not callable`` on
+    the real Apple path. A runner exposing a callable ``run`` is bound to it; a
+    plain callable (a test seam, or a caller using the older shape) passes
+    through unchanged.
+    """
+    if runner is None:
+        return None
+    run = getattr(runner, "run", None)
+    return run if callable(run) else runner
+
+
 class AppleSpeechHelper:
     """Compile/cache and drive :file:`apple_speech_helper.swift`.
 
@@ -687,7 +705,7 @@ class AppleSpeechBackend(BackendBase):
             audio_path,
             language=lang,
             terms=_glossary_terms(initial_prompt),
-            runner=process_runner,
+            runner=_as_run_callable(process_runner),
         )
         detected = data.get("language")
         if not isinstance(detected, str) or not detected:

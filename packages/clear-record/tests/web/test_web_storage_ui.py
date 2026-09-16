@@ -341,9 +341,9 @@ def test_the_panel_strings_go_through_tr(client) -> None:
 
     panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
 
-    assert "受管工作区" in panel.text  # managed workspace
+    assert "托管工作区" in panel.text  # managed workspace
     assert "上传录音" in panel.text  # Upload tape
-    assert "受管磁盘可用空间" in panel.text  # Free on the managed disk
+    assert "托管磁盘可用空间" in panel.text  # Free on the managed disk
 
 
 def test_the_upload_id_refusal_is_translated(client) -> None:

@@ -31,8 +31,8 @@ msgid ""
 "--backend auto: chose {backend!r} — first available in the native-first "
 "preference order ({candidates}); available here: {here}."
 msgstr ""
-"--backend auto：选择了 {backend!r} —— "
-"原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
+"--backend auto：选择了 "
+"{backend!r}——原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:153
 #, python-brace-format
@@ -55,7 +55,7 @@ msgstr "录音时长未知"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:231
 msgid "a long tape on a roomy machine"
-msgstr "宽裕机器上的长录音"
+msgstr "资源宽裕的机器上的长录音"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:233
 msgid "a long tape on a modest machine (quick first pass)"
@@ -118,7 +118,7 @@ msgstr "{vram:g} GB"
 #: packages/clear-record/src/clear_record/cli/auto.py:326
 #, python-brace-format
 msgid "profile {profile!r} ({why})"
-msgstr "配置 {profile!r}（{why}）"
+msgstr "预设 {profile!r}（{why}）"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:330
 #, python-brace-format
@@ -219,7 +219,7 @@ msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
-msgstr "生成干净场景 + 各设备的退化录音，并提供精确的真值"
+msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:903
 msgid "list which ASR backends are currently available"
@@ -280,7 +280,7 @@ msgid ""
 "{env}=off to accept the endpoint's bytes unchecked."
 msgstr ""
 "下载的模型 {name} 未通过 SHA-256 校验（期望 {expected}，实际 {actual}）；已将其丢弃。请重试下载，或设置 "
-"{env}=off，以不校验的方式接受端点的字节。"
+"{env}=off，以不校验的方式接受该端点返回的原始数据。"
 
 #: packages/clear-record/src/clear_record/service/agent_flow.py:273
 #, python-brace-format
@@ -304,7 +304,7 @@ msgid ""
 "no transcription model is on disk at {models_dir}; the first "
 "transcription run downloads one, or place a checkpoint there, then run "
 "the check again"
-msgstr "磁盘上的 {models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
+msgstr "{models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
 
 #: packages/clear-record/src/clear_record/service/agent_flow.py:404
 msgid "transcription produced no segments, so there is no transcript to show"
@@ -367,7 +367,7 @@ msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
-msgstr "此会议使用用户选择的工作区；此处只能删除受管理的录音"
+msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
 #: packages/clear-record/src/clear_record/service/managed.py:430
 msgid ""
@@ -408,14 +408,14 @@ msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
-msgstr "此会议使用用户选择的工作区，没有可上传到的受管理位置；请创建受管理的会议，或改为按路径设置录音"
+msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
 #: packages/clear-record/src/clear_record/service/managed.py:546
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
-msgstr "拒绝使用 {path}：它解析到受管理根目录 {root} 之外（是符号链接吗？）"
+msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
 #: packages/clear-record/src/clear_record/service/managed.py:559
 #, python-brace-format
@@ -436,7 +436,7 @@ msgid ""
 "about {needed} needed for this upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr ""
-"受管理工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
+"托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
 #: packages/clear-record/src/clear_record/service/managed.py:658
@@ -525,7 +525,7 @@ msgstr "配置文件 {path} 不是有效的 TOML（{detail}）"
 msgid ""
 "the config file {path} already has an [agent] table; edit it by hand, or "
 "remove it so setup can manage it"
-msgstr "配置文件 {path} 中已有 [agent] 表；请手动编辑，或将其删除，以便由设置功能管理"
+msgstr "配置文件 {path} 中已有 [agent] 表；请手动编辑，或将其删除，以便由初始设置管理"
 
 #: packages/clear-record/src/clear_record/service/setup.py:789
 #, python-brace-format
@@ -550,7 +550,7 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 #: packages/clear-record/src/clear_record/service/setup.py:929
 #, python-brace-format
 msgid "setup does not record {key!r}"
-msgstr "设置不记录 {key!r}"
+msgstr "初始设置不记录 {key!r}"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:36
 #, python-brace-format
@@ -744,7 +744,7 @@ msgstr "未配置"
 
 #: packages/clear-record/src/clear_record/web/app.py:552
 msgid "Configuration problem"
-msgstr "配置有问题"
+msgstr "配置问题"
 
 #: packages/clear-record/src/clear_record/web/app.py:554
 msgid "A delivery is failing"
@@ -905,15 +905,15 @@ msgstr "添加项目"
 
 #: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:18
 msgid "agent ready"
-msgstr "就绪"
+msgstr "智能体就绪"
 
 #: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:20
 msgid "agent config problem"
-msgstr "配置问题"
+msgstr "智能体配置问题"
 
 #: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:22
 msgid "no endpoint configured"
-msgstr "未配置"
+msgstr "未配置端点"
 
 #: packages/clear-record/src/clear_record/web/templates/_agent_setup.html:26
 msgid "Look for a local OpenAI-compatible server and test it"
@@ -1167,7 +1167,7 @@ msgid ""
 "{name} is not bundled, and this setup will not download one for you: get "
 "{name} (or any other MCP-capable client) the way you get software "
 "yourself, then point at it above."
-msgstr "{name} 未随本工具附带，此设置也不会替你下载：请按你惯常的方式获取 {name}（或任何其他支持 MCP 的客户端），然后在上方指向它。"
+msgstr "{name} 未随本工具附带，此初始设置也不会替你下载：请按你惯常的方式获取 {name}（或任何其他支持 MCP 的客户端），然后在上方指向它。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:15
 msgid ""
@@ -1223,7 +1223,7 @@ msgid ""
 "clear-record's MCP server exposes this read as the tool {tool}; a "
 "connected agent calls it with the project and meeting and receives the "
 "transcript above."
-msgstr "clear-record 的 MCP 服务器把这次读取暴露为工具 {tool}；连接的智能体用项目和会议调用它，即可收到上面的转写文本。"
+msgstr "clear-record 的 MCP 服务器把这次读取暴露为工具 {tool}；连接的智能体以项目和会议为参数调用它，即可收到上面的转写文本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:40
 #, python-brace-format
@@ -1263,14 +1263,14 @@ msgstr "尚未记录宿主；请在「宿主」一步中添加一个。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:61
 msgid "Agent round-trip"
-msgstr "智能体往返"
+msgstr "智能体往返验证"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:62
 #, python-brace-format
 msgid ""
 "Not verified by this check: only the optional real-agent drive {recipe} "
 "proves that a connected agent answers a question about the tape."
-msgstr "本次检查无法验证这一点：只有可选的真实智能体驱动 {recipe} 才能证明连接的智能体能就这段录音回答问题。"
+msgstr "本次检查无法验证这一点：只有可选的真实智能体演练 {recipe} 才能证明连接的智能体能就这段录音回答问题。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:68
 msgid "check stopped"
@@ -1303,7 +1303,7 @@ msgstr "客户端配置：{path}"
 msgid ""
 "No MCP client config has been pointed at yet, so no agent can launch "
 "clear-record's tools."
-msgstr "尚未指定 MCP 客户端配置，因此没有智能体能启动 clear-record 的工具。"
+msgstr "尚未指定 MCP 客户端配置，因此没有智能体能调用 clear-record 的工具。"
 
 #: packages/clear-record/src/clear_record/web/templates/_mcp_config.html:13
 #, python-brace-format
@@ -1329,8 +1329,8 @@ msgid ""
 "config. clear-record adds one entry to that file and leaves the rest of "
 "it alone — the command {command} with arguments {args}."
 msgstr ""
-"请自行选择路径：clear-record 无法知道你的客户端把配置放在哪里。clear-record 只在该文件中添加一个条目，其余内容保持原样 "
-"—— 命令 {command}，参数 {args}。"
+"请自行选择路径：clear-record 无法知道你的客户端把配置放在哪里。clear-record "
+"只在该文件中添加一个条目，其余内容保持原样——命令 {command}，参数 {args}。"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:13
 msgid "Back to the project"
@@ -1535,7 +1535,7 @@ msgstr "已解析参数"
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:16
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:69
 msgid "no preset — every knob stays as you set it."
-msgstr "无预设 — 各项参数保持你设定的值。"
+msgstr "无预设——各项参数保持你设定的值。"
 
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:20
 msgid ""
@@ -1654,7 +1654,7 @@ msgid ""
 "A run uses the largest checkpoint on disk that fits this machine, so "
 "downloading a size is how you switch. Downloads are verified against a "
 "pinned checksum."
-msgstr "运行会使用磁盘上适合本机的最大检查点，因此下载某个规格就是切换模型的方式。下载内容会按固定的校验和进行校验。"
+msgstr "运行会使用磁盘上适合本机的最大检查点，因此下载不同规格的模型就是切换方式。下载内容会按固定的校验和进行校验。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:23
@@ -1668,7 +1668,7 @@ msgstr "默认"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:41
 msgid "on disk"
-msgstr "已在磁盘"
+msgstr "已在本地"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:45
 msgid "Download"
@@ -1691,7 +1691,7 @@ msgstr "内置预设"
 msgid ""
 "These are the defaults a run uses when it sets nothing. Edit {path} or "
 "set them per run to change them."
-msgstr "这些是运行时未指定任何设置时使用的默认值。编辑 {path}，或在每次运行时单独设置即可更改。"
+msgstr "这些是一次运行未做任何设置时采用的默认值。编辑 {path}，或在每次运行时单独设置即可更改。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:7
 msgid "Version"
@@ -1721,15 +1721,15 @@ msgstr "初始设置"
 msgid ""
 "Walk the first-run path again, or open the wizard directly. Re-running "
 "forgets the marker only; your runner and MCP config are kept."
-msgstr "重新走一遍首次运行路径，或直接打开向导。重新运行只会清除标记；你的运行器和 MCP 配置会保留。"
+msgstr "重新走一遍首次运行路径，或直接打开向导。重新运行只会清除标记；你的智能体运行器和 MCP 配置会保留。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:34
 msgid "Open the setup wizard"
-msgstr "打开设置向导"
+msgstr "打开初始设置向导"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:36
 msgid "Walk setup again"
-msgstr "再次运行设置"
+msgstr "再次走一遍初始设置"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:40
 msgid "Backend availability"
@@ -1748,12 +1748,12 @@ msgstr "下载诊断"
 #: packages/clear-record/src/clear_record/web/templates/agent.html:17
 #: packages/clear-record/src/clear_record/web/templates/setup.html:56
 msgid "Hello-world check"
-msgstr "Hello-world 检查"
+msgstr "hello-world 检查"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:9
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:45
 msgid "Managed root"
-msgstr "受管根目录"
+msgstr "托管根目录"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:13
 msgid "Free space"
@@ -1867,7 +1867,7 @@ msgstr "跳过"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:13
 msgid "managed workspace"
-msgstr "受管工作区"
+msgstr "托管工作区"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:15
 msgid "user-chosen workspace"
@@ -1890,7 +1890,7 @@ msgstr "已上传录音：{size}"
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:40
 #, python-brace-format
 msgid "Free on the managed disk: {free}"
-msgstr "受管磁盘可用空间：{free}"
+msgstr "托管磁盘可用空间：{free}"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:47
 msgid ""
@@ -1974,7 +1974,7 @@ msgstr "添加术语"
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:27
 #: packages/clear-record/src/clear_record/web/templates/_tab_overview.html:16
 msgid "managed"
-msgstr "受管"
+msgstr "托管"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:12
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:31
@@ -1984,7 +1984,7 @@ msgstr "无工作区"
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:13
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:33
 msgid "Review"
-msgstr "审查"
+msgstr "审阅"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
 msgid "Tapes"
@@ -1992,7 +1992,7 @@ msgstr "录音"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:43
 msgid "Open the review"
-msgstr "打开审查"
+msgstr "打开审阅"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:46
 msgid "No transcript yet."
@@ -2275,11 +2275,11 @@ msgstr "在「智能体」一步中运行"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:58
 msgid "Finish setup"
-msgstr "完成设置"
+msgstr "完成初始设置"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:61
 msgid "Dismiss setup"
-msgstr "忽略设置"
+msgstr "忽略初始设置"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).

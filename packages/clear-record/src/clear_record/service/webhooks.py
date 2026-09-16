@@ -682,6 +682,23 @@ class WebhookEmitter:
                     self._condition.notify_all()
 
     def _deliver(self, event: WebhookEvent, endpoint: WebhookEndpoint) -> Delivery:
+        def _outcome(
+            status: str, attempts: int, http_status: int | None, error: str | None
+        ) -> Delivery:
+            """Record one delivery outcome for this event and endpoint."""
+            return self._record(
+                Delivery(
+                    event_id=event.id,
+                    type=event.type,
+                    url=endpoint.url,
+                    status=status,
+                    attempts=attempts,
+                    http_status=http_status,
+                    error=error,
+                    at=self._clock(),
+                )
+            )
+
         body = event.body(include_content=endpoint.include_content)
         secret = os.environ.get(endpoint.secret_env) if endpoint.secret_env else None
         if endpoint.secret_env and not secret:
@@ -693,18 +710,7 @@ class WebhookEmitter:
                 "which is not set: refusing to send unsigned"
             )
             _warn(problem)
-            return self._record(
-                Delivery(
-                    event_id=event.id,
-                    type=event.type,
-                    url=endpoint.url,
-                    status="failed",
-                    attempts=0,
-                    http_status=None,
-                    error=problem,
-                    at=self._clock(),
-                )
-            )
+            return _outcome("failed", 0, None, problem)
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "clear-record-webhooks/1",
@@ -732,18 +738,7 @@ class WebhookEmitter:
                     if close is not None:
                         close()
                 if 200 <= http_status < 300:
-                    return self._record(
-                        Delivery(
-                            event_id=event.id,
-                            type=event.type,
-                            url=endpoint.url,
-                            status="delivered",
-                            attempts=attempt,
-                            http_status=http_status,
-                            error=None,
-                            at=self._clock(),
-                        )
-                    )
+                    return _outcome("delivered", attempt, http_status, None)
                 last_error = f"HTTP {http_status}"
             except urllib.error.HTTPError as exc:
                 http_status = exc.code
@@ -753,18 +748,7 @@ class WebhookEmitter:
                 last_error = f"{type(exc).__name__}: {exc}"
             if attempt < self._max_attempts:
                 self._sleep(self._backoff_base * (2 ** (attempt - 1)))
-        return self._record(
-            Delivery(
-                event_id=event.id,
-                type=event.type,
-                url=endpoint.url,
-                status="failed",
-                attempts=self._max_attempts,
-                http_status=http_status,
-                error=last_error,
-                at=self._clock(),
-            )
-        )
+        return _outcome("failed", self._max_attempts, http_status, last_error)
 
     def _record(self, delivery: Delivery) -> Delivery:
         with self._condition:

@@ -45,10 +45,30 @@ from collections.abc import Mapping
 
 import json_repair
 
+from clear_record.core.i18n import deferred
+from clear_record.core.message import Message
 from clear_record.service.agent_prompts import INSTRUCTIONS
 
 #: The three task kinds (ADR-0018's structured generation, not agentic work).
 TASK_KINDS: tuple[str, ...] = ("glossary_collection", "transcript_check", "minutes")
+
+#: The one "unknown task kind" message ID: the task seam raises it as plain
+#: English, and the meeting surface raises the same ID for a presentation
+#: boundary to translate. :data:`TASK_KINDS` stays the only list either names.
+UNKNOWN_KIND_MSGID = deferred("unknown task kind {kind}; known kinds: {known}")
+
+
+def unknown_kind(kind: str) -> Message:
+    """The one error for an unrecognised task kind, naming the known kinds.
+
+    A :class:`~clear_record.core.message.Message` so the task seam can raise it
+    as English (``str``) and the meeting surface can raise its ID plus
+    parameters for the console's ``tr``.
+    """
+    return Message(
+        UNKNOWN_KIND_MSGID,
+        (("kind", kind), ("known", ", ".join(TASK_KINDS))),
+    )
 
 
 class AgentTaskError(Exception):
@@ -296,9 +316,7 @@ def contract_for(kind: str) -> OutputContract:
     try:
         return CONTRACTS[kind]
     except KeyError:
-        raise AgentTaskError(
-            f"unknown task kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
-        ) from None
+        raise AgentTaskError(str(unknown_kind(kind))) from None
 
 
 # --- fixed pipelines -------------------------------------------------------- #
@@ -337,9 +355,7 @@ def plan_for(kind: str) -> tuple[TaskStep, ...]:
     try:
         return PIPELINES[kind]
     except KeyError:
-        raise AgentTaskError(
-            f"unknown task kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
-        ) from None
+        raise AgentTaskError(str(unknown_kind(kind))) from None
 
 
 # --- the task and its packaged context -------------------------------------- #
@@ -363,9 +379,7 @@ class AgentTask:
 
     def __post_init__(self) -> None:
         if self.kind not in TASK_KINDS:
-            raise AgentTaskError(
-                f"unknown task kind {self.kind!r}; known kinds: {', '.join(TASK_KINDS)}"
-            )
+            raise AgentTaskError(str(unknown_kind(self.kind)))
         object.__setattr__(
             self, "inputs", {str(key): str(value) for key, value in self.inputs.items()}
         )
@@ -462,9 +476,7 @@ def build_task(
     """
     expected = TASK_INPUTS.get(kind)
     if expected is None:
-        raise AgentTaskError(
-            f"unknown task kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
-        )
+        raise AgentTaskError(str(unknown_kind(kind)))
     missing = [name for name in expected if name not in inputs]
     if missing:
         raise AgentTaskError(
@@ -543,6 +555,7 @@ __all__ = [
     "TASK_KINDS",
     "TaskStep",
     "TranscriptCheckContract",
+    "UNKNOWN_KIND_MSGID",
     "build_task",
     "canonical_payload",
     "context_hash",
@@ -553,4 +566,5 @@ __all__ = [
     "prompt_hash",
     "render_prompt",
     "transcript_check_task",
+    "unknown_kind",
 ]

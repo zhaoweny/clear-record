@@ -63,10 +63,10 @@ from clear_record.service.agent import (
     run_task,
 )
 from clear_record.service.agent_tasks import (
-    TASK_KINDS,
     glossary_collection_task,
     minutes_task,
     transcript_check_task,
+    unknown_kind,
 )
 from clear_record.service.glossary import project_snapshot
 from clear_record.service.models import Meeting
@@ -237,11 +237,8 @@ class MeetingAgent:
         """
         builder = TASKS.get(kind)
         if builder is None:
-            raise MeetingAgentError(
-                deferred("unknown task kind {kind}; known kinds: {known}"),
-                kind=kind,
-                known=", ".join(TASK_KINDS),
-            )
+            problem = unknown_kind(kind)
+            raise MeetingAgentError(problem.msgid, **dict(problem.params))
         transcript = self.transcript_text()
         glossary = project_snapshot(self.registry, self.meeting.project_slug).text
         return builder(

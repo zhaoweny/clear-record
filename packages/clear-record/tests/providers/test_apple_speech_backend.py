@@ -334,6 +334,35 @@ def test_helper_probe_parses_the_verdict(tmp_path, monkeypatch) -> None:
     assert probe.supported_locales == ("en_US", "zh_CN")
 
 
+def test_helper_probe_is_bounded_by_a_short_timeout(tmp_path, monkeypatch) -> None:
+    """availability() has no runner seam, so the probe is bounded in time
+    instead of inheriting the 24h run ceiling."""
+    seen: list[float] = []
+
+    def run(cmd, *, capture_output, text, timeout):
+        seen.append(timeout)
+        with open(cmd[cmd.index("--out") + 1], "w", encoding="utf-8") as fh:
+            json.dump({"isAvailable": True, "supportedLocales": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    helper = _cached_helper(tmp_path, monkeypatch, run)
+
+    helper.probe()
+
+    assert seen == [apple_speech._PROBE_TIMEOUT_S]
+    assert apple_speech._PROBE_TIMEOUT_S < apple_speech._RUN_TIMEOUT_S
+
+
+def test_helper_probe_timeout_names_the_short_bound(tmp_path, monkeypatch) -> None:
+    def run(cmd, *, capture_output, text, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    helper = _cached_helper(tmp_path, monkeypatch, run)
+
+    with pytest.raises(AppleSpeechError, match="30 seconds"):
+        helper.probe()
+
+
 def test_helper_transcribe_builds_the_expected_command(tmp_path, monkeypatch) -> None:
     seen: list[list[str]] = []
 

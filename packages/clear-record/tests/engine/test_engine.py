@@ -703,6 +703,20 @@ def test_anonymous_speakers_do_not_collide_with_an_explicit_label() -> None:
     assert len(set(names.values())) == len(names)
 
 
+def test_anonymous_speakers_reserve_labels_case_insensitively() -> None:
+    """An explicit 'speaker 1' must block the anonymous 'Speaker 1' too: the
+    two forms differ only in case and still read as one name."""
+    sources = [
+        Source(id="a", path="", label="speaker 1"),
+        Source(id="b", path="", label=None),
+    ]
+
+    names = source_speaker_names(sources)
+
+    assert names["a"] == "speaker 1"
+    assert names["b"] == "Speaker 2"
+
+
 def test_clean_segments_tidies_cjk_punctuation() -> None:
     """A stray leading 。 and a space before a CJK comma are not transcript."""
     from clear_record.engine import clean_segments

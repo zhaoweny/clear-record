@@ -96,6 +96,9 @@ _HELPER_SUBDIR = "apple-speech"
 _COMPILE_TIMEOUT_S = 300.0
 #: A long tape can transcribe for a while; this is a safety net, not a limit.
 _RUN_TIMEOUT_S = 24 * 60 * 60.0
+#: The availability probe has no runner seam, so it is bounded in-process and
+#: never inherits the 24h run ceiling.
+_PROBE_TIMEOUT_S = 30.0
 
 _PART_COUNTER = itertools.count()
 
@@ -425,7 +428,12 @@ class AppleSpeechHelper:
     def probe(self, *, runner: RunCallable | None = None) -> SpeechProbe:
         """``SpeechTranscriber.isAvailable`` (cached per process, no download)."""
         if self._probe is None:
-            data = self._result(["probe"], stream_stderr=False, runner=runner)
+            data = self._result(
+                ["probe"],
+                stream_stderr=False,
+                runner=runner,
+                timeout=_PROBE_TIMEOUT_S,
+            )
             supported = data.get("supportedLocales")
             self._probe = SpeechProbe(
                 is_available=bool(data.get("isAvailable")),
@@ -468,6 +476,7 @@ class AppleSpeechHelper:
         *,
         stream_stderr: bool,
         runner: RunCallable | None = None,
+        timeout: float = _RUN_TIMEOUT_S,
     ) -> dict:
         binary = self.ensure_binary(runner=runner)
         run = runner or self._run
@@ -479,7 +488,7 @@ class AppleSpeechHelper:
                     cmd,
                     capture_output=not stream_stderr,
                     text=True,
-                    timeout=_RUN_TIMEOUT_S,
+                    timeout=timeout,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise AppleSpeechError(
@@ -487,7 +496,7 @@ class AppleSpeechHelper:
                         deferred(
                             "the Apple speech helper timed out after {seconds} seconds"
                         ),
-                        (("seconds", int(_RUN_TIMEOUT_S)),),
+                        (("seconds", int(timeout)),),
                     )
                 ) from exc
             except OSError as exc:

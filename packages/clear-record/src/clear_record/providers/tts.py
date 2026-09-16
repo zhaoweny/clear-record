@@ -181,7 +181,7 @@ def synthesize_clip(
             "or use macOS say"
         )
 
-    requested = _normalize_lang(lang)
+    requested = _normalize_lang(lang) or "en"
     display_lang = (lang or "").strip() or "en"
     failures: list[str] = []
     for engine in writers:
@@ -226,9 +226,17 @@ def synthesize_clip(
 
 
 def _normalize_lang(lang: str) -> str:
-    """A language tag as ``en_us``/``zh``: strip encoding and unify separators."""
+    """A language tag as ``en_us``/``zh``: strip encoding and unify separators.
+
+    An empty tag normalises to ``""`` -- "no tag" -- so a caller that wants the
+    English default must apply it explicitly and a voice carrying no locale can
+    never be mistaken for an English one. ``C``/``POSIX`` is the process default
+    and keeps the English rendering.
+    """
     code = (lang or "").strip()
-    if not code or code in {"C", "POSIX"}:
+    if not code:
+        return ""
+    if code in {"C", "POSIX"}:
         return "en"
     code = code.split(".")[0].split("@")[0]
     return code.replace("-", "_").lower()
@@ -243,6 +251,8 @@ def _match_voice(voices: Sequence[TtsVoice], lang: str) -> TtsVoice | None:
     default.
     """
     target = _normalize_lang(lang)
+    if not target:
+        return None
     base = target.split("_")[0]
     for voice in voices:
         if _normalize_lang(voice.lang) == target:

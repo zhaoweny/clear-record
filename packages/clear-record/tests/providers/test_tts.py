@@ -333,7 +333,7 @@ def test_the_pinned_synthesize_returns_the_path(monkeypatch, tmp_path) -> None:
         ("zh-CN", "zh"),
         ("zh_CN.UTF-8", "zh"),
         ("C", "en"),
-        ("", "en"),
+        ("", ""),
         ("fr_FR@euro", "fr"),
     ],
 )
@@ -381,6 +381,18 @@ def test_match_voice_normalizes_hyphenated_voice_locales() -> None:
     assert tts._match_voice(voices, "en") == TtsVoice("brit", "en-GB")
     assert tts._match_voice(voices, "zh_hk") == TtsVoice("hk", "zh-HK")
     assert tts._match_voice(voices, "zh") == TtsVoice("hk", "zh-HK")
+
+
+def test_match_voice_ignores_an_untagged_voice() -> None:
+    """An empty voice locale is "no tag", not English: it must never satisfy an
+    English request (nor match an empty request) on its own."""
+    untagged = TtsVoice(name="mystery", lang="")
+    voices = (untagged, TtsVoice(name="brit", lang="en-GB"))
+
+    assert tts._normalize_lang("") == ""
+    assert tts._match_voice((untagged,), "en") is None
+    assert tts._match_voice(voices, "en") == TtsVoice("brit", "en-GB")
+    assert tts._match_voice(voices, "") is None
 
 
 def test_a_missing_language_without_an_english_voice_does_not_claim_english(

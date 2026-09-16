@@ -12,6 +12,7 @@ build.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -147,6 +148,62 @@ def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
     assert declared.get("mcp") == "clear_record.mcp:register", declared
 
 
+# Every template the console ships today. The rglob scan below covers a newly
+# added template (and flags a truncated one), but a *deleted* one simply drops
+# out of the scan — this frozen set is what makes a deletion fail instead.
+EXPECTED_WEB_TEMPLATES = frozenset(
+    {
+        "_add_project.html",
+        "_agent_setup.html",
+        "_archive_status.html",
+        "_archives.html",
+        "_backend_list.html",
+        "_detail.html",
+        "_harness_setup.html",
+        "_hello_check.html",
+        "_mcp_config.html",
+        "_mcp_setup.html",
+        "_meeting.html",
+        "_profile_options.html",
+        "_project_tabs.html",
+        "_projects.html",
+        "_run.html",
+        "_settings_agent.html",
+        "_settings_backends.html",
+        "_settings_mcp.html",
+        "_settings_models.html",
+        "_settings_status.html",
+        "_settings_storage.html",
+        "_settings_webhooks.html",
+        "_setup_transcription.html",
+        "_storage.html",
+        "_tab_glossary.html",
+        "_tab_media.html",
+        "_tab_meetings.html",
+        "_tab_overview.html",
+        "_upload.html",
+        "_webhooks.html",
+        "404.html",
+        "agent.html",
+        "base.html",
+        "index.html",
+        "meeting.html",
+        "project.html",
+        "settings.html",
+        "setup.html",
+    }
+)
+
+
+def _missing_web_templates(templates: Path) -> list[str]:
+    """Expected template names absent from a templates directory.
+
+    Split out so a test can prove a deletion is caught, not just assumed.
+    """
+    present = {path.name for path in templates.rglob("*.html")}
+    return sorted(EXPECTED_WEB_TEMPLATES - present)
+
+
 def test_web_console_assets_ship_with_the_package() -> None:
     """The console's templates and compiled assets are package data.
 
@@ -157,12 +214,15 @@ def test_web_console_assets_ship_with_the_package() -> None:
     """
     web = PACKAGE_DIRS[0] / "src" / "clear_record" / "web"
     templates = web / "templates"
-    # Derived from disk, not a hand-maintained allowlist: a template is covered
-    # the moment it lands, and a truncated one would render a blank page.
+    # Derived from disk: a template is covered the moment it lands, and a
+    # truncated one would render a blank page.
     committed = sorted(templates.rglob("*.html"))
     assert committed, f"no templates under {templates}"
     empty = [p.relative_to(REPO_ROOT) for p in committed if not p.read_text().strip()]
     assert not empty, f"empty web templates: {empty}"
+    # Deletion guard: the scan alone cannot notice a missing file.
+    missing_templates = _missing_web_templates(templates)
+    assert not missing_templates, f"missing web templates: {missing_templates}"
     # The page-level routes ADR-0027 names, so a wholesale rename is caught.
     for name in (
         "base.html",
@@ -178,6 +238,21 @@ def test_web_console_assets_ship_with_the_package() -> None:
         rel for rel in ("static/app.css", "static/app.js") if not (web / rel).is_file()
     ]
     assert not missing, f"missing web console assets: {missing}"
+
+
+def test_web_template_guard_catches_a_deleted_template(tmp_path: Path) -> None:
+    """Removing a non-anchor template must fail the guard, not pass silently.
+
+    _detail.html is a partial — not one of the page anchors — so only the
+    expected-set check can notice it is gone.
+    """
+    source = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
+    copied = tmp_path / "templates"
+    shutil.copytree(source, copied)
+    victim = "_detail.html"
+    assert victim in EXPECTED_WEB_TEMPLATES
+    (copied / victim).unlink()
+    assert _missing_web_templates(copied) == [victim]
 
 
 def _just_recipe(name: str) -> str:
@@ -446,11 +521,21 @@ def test_flatpak_lane_trigger_matches_its_documentation() -> None:
 
 
 def test_flatpak_generator_is_pinned_to_a_commit() -> None:
-    """The generator script is fetched from a commit, never master."""
+    """The generator is fetched from a commit, using the real script path.
+
+    The extensionless pip/flatpak-pip-generator is a git symlink; raw
+    .githubusercontent serves the link target text (flatpak-pip-generator.py),
+    so a pin to that path still downloads a non-script.
+    """
     workflow = FLATPAK_WORKFLOW.read_text()
     assert "flatpak-builder-tools/master" not in workflow, "fetched from master"
-    assert re.search(r"flatpak-builder-tools/[0-9a-f]{40}/", workflow), (
-        "flatpak-pip-generator is not commit-pinned"
+    script = r"flatpak-builder-tools/[0-9a-f]{40}/pip/flatpak-pip-generator\.py"
+    assert re.search(script, workflow), (
+        "flatpak-pip-generator must be the commit-pinned .py script"
+    )
+    symlink = r"flatpak-builder-tools/[0-9a-f]{40}/pip/flatpak-pip-generator(?!\.py)"
+    assert not re.search(symlink, workflow), (
+        "the extensionless path is a git symlink, not the script"
     )
 
 

@@ -3,7 +3,7 @@
 `clear-record`'s **code** is distributed under the [MIT License](LICENSE), and
 its **documentation and authored content/assets** under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-([ADR-0008](docs/adr/0008-content-and-asset-licensing.md)). Those licences cover
+([ADR-0008](docs/adr/0008-content-and-asset-licensing.md)). Those licenses cover
 **this repository's own material only**; they do not relicense any third-party
 component listed below. The licensing boundary — including how copyleft is
 consumed — is [ADR-0003](docs/adr/0003-license-boundary.md).

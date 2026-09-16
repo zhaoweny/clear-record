@@ -341,7 +341,9 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 
 Running `clear-record web` without the extra prints the exact install command.
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
-server binds **localhost only** and needs no account. The UI language comes from
+server binds `127.0.0.1` by default and needs no account — leave `--host` on
+loopback and let your proxy be the ingress
+([ADR-0021](docs/adr/0021-localhost-only-deployment.md)). The UI language comes from
 `--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the
 console also resolves this machine's tailnet name, runs a **foreground**
@@ -486,7 +488,10 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
   src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
+  src/clear_record/service    headless app service: SQLite registry, meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine
+  src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
+  src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
   frontend                    the console's front-end source (Vite + Tailwind; output committed into web/static)
 docs/architecture.md          (spec + provenance, the primary doc)
 docs/adr/                     (decision records 0001–0028)

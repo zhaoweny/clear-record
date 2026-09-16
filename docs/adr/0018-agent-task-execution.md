@@ -145,8 +145,10 @@ mcp service and let the agent to do the heavy lifting"*.
   iteration cheap on a multi-hour tape, a re-run has to be scoped — one source, or
   a time range — or the invalidation narrowed. Until the 2026-09-15 update below,
   the loop worked but cost a full re-decode per glossary edit.
-- [FACT] The shipped MCP surface (ADR-0017, 14 tools) is **not yet sufficient** for
-  the loop:
+- [FACT] The MCP surface as it stood on 2026-09-14 (ADR-0017, then 14 tools) was
+  **not yet sufficient** for the loop; ticket 21 closed all three gaps below (the
+  surface now carries 22 tools, including `read_transcript`, `update_project`
+  and option-carrying `start_run`):
   - **no transcript-read tool** — `list_artifacts` returns paths and metadata, so
     an agent cannot read the transcript it is meant to reason about;
   - **no `update_project`**, and meetings have no notes — so the **story** the

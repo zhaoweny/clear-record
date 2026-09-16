@@ -7,6 +7,10 @@ Date: 2026-09-14
   (2026-09-14): the console is now server-rendered htmx/Alpine with **package-data
   templates and vendored static assets**, not embedded Python string assets, and
   there is a PySide6 `tray` surface beside `web`.
+- Superseded in part by [ADR-0022](0022-adopt-click.md),
+  [ADR-0025](0025-platformdirs.md) and
+  [ADR-0028](0028-repair-llm-output.md): the base dist also carries `click`,
+  `platformdirs` and `json-repair`, not `numpy` + `soundfile` alone.
 
 ## Context
 
@@ -41,9 +45,10 @@ Date: 2026-09-14
   archive and agent tasks) and `clear_record.web` (the FastAPI app, the bundled
   no-build frontend, and the `web` subcommand). `uv_build`'s one-import-package
   rule makes this the only way to keep **one published wheel**.
-- [DECISION] The base dist's runtime dependencies stay **`numpy` + `soundfile`**
-  (ADR-0012 is *preserved*, not amended). The console's stack moves to an
-  optional extra:
+- [DECISION] The base dist's runtime dependencies were **`numpy` + `soundfile`**
+  at this record's date (ADR-0012 is *preserved*, not amended); see the
+  supersession note above for the later additions. The console's stack moves to
+  an optional extra:
   - `web = ["fastapi>=0.115", "uvicorn>=0.30"]`
 
   A CLI-only install therefore stays audio-only; a user who wants the console

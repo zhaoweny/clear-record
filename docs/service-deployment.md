@@ -491,8 +491,9 @@ the next boot, and the resumable chunk cache means resuming it is cheap
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
   Flatpak is the desktop bundle (ADR-0015), not the node.
-- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021; the UI uses relative URLs,
-  so a proxy that terminates TLS does not need them today.
+- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 (deferred, not built: no
+  code reads `X-Forwarded-*` or `CR_TRUSTED_PROXIES`); the UI uses relative
+  URLs, so a proxy that terminates TLS does not need them today.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
 

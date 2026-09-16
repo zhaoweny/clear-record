@@ -28,6 +28,8 @@ Date: 2026-09-15
   and which project is shown. Navigation uses `hx-boost` so a click is fast,
   while a plain link still works without JavaScript. No SPA, no client router.
 - [DECISION] The sitemap: `/` and `/projects/<slug>` (Projects);
+  `/projects/<slug>/meetings`, `/projects/<slug>/glossary` and
+  `/projects/<slug>/media` (the project's Meetings / Glossary / Media sub-tabs);
   `/projects/<slug>/meetings/<meeting>` (meeting review); `/settings` and
   `/settings/<section>` (Settings); `/setup` (first run / after update);
   `/setup/agent` (the agent wizard). `/ui/*` remains the in-page fragment

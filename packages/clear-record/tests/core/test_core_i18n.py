@@ -113,3 +113,18 @@ def test_install_if_unset_honours_the_environment_when_unset() -> None:
     i18n.reset()
     i18n.install_if_unset(environ={"CR_LANG": "zh_CN"})
     assert i18n.current_locale() == "zh_CN"
+
+
+def test_an_absent_catalog_is_not_reported_as_installed() -> None:
+    """``current_locale`` must not claim a locale whose catalog was not found."""
+    i18n.install("zz")
+    assert i18n.tr("Add project") == "Add project"
+    assert i18n.current_locale() is None
+
+
+def test_a_hyphenated_tag_finds_the_underscored_catalog() -> None:
+    """``zh-CN`` (BCP-47) normalizes to the ``zh_CN`` catalog directory."""
+    assert i18n.normalize_locale("zh-CN") == "zh_CN"
+    i18n.install("zh-CN")
+    assert i18n.current_locale() == "zh_CN"
+    assert i18n.tr("Add project") == "添加项目"

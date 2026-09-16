@@ -102,9 +102,10 @@ def enabled(level: str, environ: Mapping[str, str] | None = None) -> bool:
 def logs_dir(explicit: str | os.PathLike | None = None) -> Path:
     """Resolve the rotating log directory.
 
-    Precedence: explicit argument > ``CR_LOG_DIR`` > the platform-native log
-    directory. Delegates to the one resolver (:mod:`clear_record.core.paths`), so
-    a writer and a reader can never disagree about where the log lives.
+    Precedence: explicit argument > ``CR_LOG_DIR`` > the config file's
+    ``log_dir`` key > the platform-native log directory. Delegates to the one
+    resolver (:mod:`clear_record.core.paths`), so a writer and a reader can never
+    disagree about where the log lives.
     """
     return _resolve_logs_dir(explicit)
 

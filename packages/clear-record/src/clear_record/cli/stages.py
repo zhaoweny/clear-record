@@ -366,6 +366,11 @@ def transcribe(
         # A scope that cannot be honoured is a usage problem, not a crash: name
         # it and stop, rather than falling back to an unscoped full pass.
         raise SystemExit(str(exc)) from exc
+    except ValueError as exc:
+        # A decoder knob this backend cannot honour (see
+        # `transcription.transcribe`): a usage problem, so surface it as the CLI's
+        # actionable error rather than a traceback.
+        raise SystemExit(str(exc)) from exc
 
     meta: dict = {
         "backend": backend_id,

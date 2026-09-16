@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from clear_record.cli import stages
 from clear_record.cli.transcription import TranscriptionOptions, transcribe
 from clear_record.cli.workspace import Workspace, chunk_cache_key
 from clear_record.core import Segment, Source, TranscriptionResult
@@ -106,3 +107,17 @@ def test_chunk_cache_key_splits_on_a_set_decoder_knob() -> None:
     assert chunk_cache_key(**base, decoders={"beam_size": 5}) != chunk_cache_key(
         **base, decoders={"beam_size": 8}
     )
+
+
+def test_the_stage_turns_an_unsupported_knob_into_a_systemexit(
+    tmp_path, monkeypatch
+) -> None:
+    """The CLI must name the unsupported knob, not traceback out of the stage."""
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _wav(wd / "a.wav")
+    stages.ingest(str(wd), split="mix")
+    monkeypatch.setattr(stages, "get_backend", lambda _id: _NoKnobBackend())
+
+    with pytest.raises(SystemExit, match="cannot honour"):
+        stages.transcribe(str(wd), "noknob", beam_size=4)

@@ -342,6 +342,16 @@ _DIARIZE = _with_options(
         help="known number of speakers (default: estimate from the audio)",
     ),
 )
+# The standalone `diarize` command always diarizes, so it exposes only the knob
+# it acts on: a `--no-diarize` there would be accepted and then ignored.
+_DIARIZE_ONLY = _with_options(
+    click.option(
+        "--speakers",
+        type=int,
+        default=None,
+        help="known number of speakers (default: estimate from the audio)",
+    )
+)
 _ATTRIBUTE = _with_options(
     click.option(
         "--attribute-energy",
@@ -638,8 +648,8 @@ def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
             backend_choice = auto.resolve_backend(available_backend_ids())
         except auto.NoBackendAvailable as exc:
             log_event("error", "cli", "cli.auto.failed", reason=str(exc))
-            raise SystemExit(str(exc)) from exc
-        print(backend_choice.explanation)
+            raise SystemExit(exc.message.render(tr)) from exc
+        print(backend_choice.message.render(tr))
         options = dataclasses.replace(options, backend=backend_choice.backend)
 
     if not args.auto:
@@ -652,7 +662,7 @@ def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
             language=args.language,
         )
     )
-    print(choice.explanation)
+    print(choice.message.render(tr))
 
     if options.model is None:
         if not choice.model_on_disk:
@@ -781,8 +791,8 @@ def _cmd_transcribe(**kwargs: Any) -> int:
 
 
 def _cmd_diarize(**kwargs: Any) -> int:
-    # The flags are unused by the stage, but contradictory flags must still fail.
-    _do_diarize(kwargs["diarize"], kwargs["no_diarize"])
+    # The command is `diarize`; it has no on/off flag to read (see
+    # `_DIARIZE_ONLY`), so it simply runs the stage.
     stages.diarize(kwargs["directory"], speakers=kwargs["speakers"])
     return 0
 
@@ -873,7 +883,7 @@ _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
         "diarize",
         _cmd_diarize,
         deferred("assign speaker labels to already-transcribed segments"),
-        (_DIRECTORY, _DIARIZE),
+        (_DIRECTORY, _DIARIZE_ONLY),
     ),
     (
         "attribute",

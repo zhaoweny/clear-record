@@ -348,6 +348,27 @@ def test_a_successful_run_emits_started_finished_and_transcript_ready(tmp_path) 
     assert types == ["run.started", "run.finished", "transcript.ready"]
 
 
+def _wait_for_events(
+    receiver: _Receiver, expected: list[str], *, timeout: float = 5.0
+) -> list[str]:
+    """Poll the receiver until every expected event type has arrived.
+
+    ``emitter.flush()`` only reports that the queue is empty at that instant; a
+    run's terminal event is emitted by the run thread after the terminal state is
+    recorded, so it can be enqueued just after the flush returns. Waiting on the
+    real clock is what makes this deterministic.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with receiver._lock:
+            types = [
+                json.loads(body)["type"] for _headers, body in receiver.requests
+            ]
+        if all(name in types for name in expected) or time.monotonic() >= deadline:
+            return types
+        time.sleep(0.005)
+
+
 def test_a_failed_run_emits_run_failed(tmp_path) -> None:
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -369,7 +390,7 @@ def test_a_failed_run_emits_run_failed(tmp_path) -> None:
         finally:
             emitter.close(timeout=5)
 
-    types = [json.loads(body)["type"] for _headers, body in receiver.requests]
+    types = _wait_for_events(receiver, ["run.started", "run.failed"])
     assert types == ["run.started", "run.failed"]
 
 

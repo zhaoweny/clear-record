@@ -28,6 +28,15 @@
 <div class="empty">{{ tr("No runs queued or running.") }}</div>
 {% endif %}
 
+<h3>{{ tr("Setup") }}</h3>
+<p class="muted">{{ tr("Walk the first-run path again, or open the wizard directly. Re-running forgets the marker only; your runner and MCP config are kept.") }}</p>
+<div class="row">
+  <a class="btn btn-ghost" href="/setup">{{ tr("Open the setup wizard") }}</a>
+  <form method="post" action="/setup/restart">
+    <button type="submit" class="btn btn-ghost">{{ tr("Walk setup again") }}</button>
+  </form>
+</div>
+
 <h3>{{ tr("Backend availability") }}</h3>
 {% include "_backend_list.html" %}
 

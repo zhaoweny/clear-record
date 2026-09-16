@@ -52,20 +52,25 @@ test("a section is refresh-safe and an unknown one is a page 404", async ({ page
   await expect(page.getByRole("heading", { name: "Not found" })).toBeVisible();
 });
 
-test("the read sections carry no write control", async ({ page }) => {
-  for (const slug of ["models", "backends", "storage"]) {
+test("the read sections carry no write control, except the Models download", async ({ page }) => {
+  for (const slug of ["backends", "storage"]) {
     await page.goto("/settings/" + slug);
     await expect(page.locator("#detail [hx-post]")).toHaveCount(0);
     await expect(page.locator("#detail form")).toHaveCount(0);
   }
+  // Models is the one read section that writes: the user-triggered, verified
+  // model download. Every control there POSTs to that one route.
+  await page.goto("/settings/models");
+  const forms = page.locator('#detail form[hx-post="/ui/settings/models/download"]');
+  expect(await forms.count()).toBeGreaterThan(0);
 });
 
-test("status carries exactly the re-runnable hello-world check", async ({ page }) => {
+test("status carries the hello-world check and the setup knob", async ({ page }) => {
   await page.goto("/settings/status");
-  // The one write on Status is ticket 05's diagnostic, and it is a POST the
-  // check owns -- no other control.
+  // Two writes: ticket 05's diagnostic POST, and walking setup again (which
+  // only forgets the marker).
   await expect(page.locator('#detail [hx-post="/ui/hello-check"]')).toHaveCount(1);
-  await expect(page.locator("#detail form")).toHaveCount(1);
+  await expect(page.locator('#detail form[action="/setup/restart"]')).toHaveCount(1);
   await expect(page.locator("#hello-check")).toBeVisible();
 });
 

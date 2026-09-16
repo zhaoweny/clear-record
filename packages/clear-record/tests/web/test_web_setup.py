@@ -234,7 +234,8 @@ def test_the_transcription_step_offers_to_download_a_missing_checkpoint(
     # The remediation is explicit and user-triggered: a button that reuses the
     # pinned downloader, never a promise that some later run will fetch it.
     assert 'hx-post="/ui/setup/download-model"' in page
-    assert "Download the default model" in page
+    assert "Download the model" in page
+    assert '<select name="model">' in page
     assert "Models on disk: ggml-small.bin" in page
     assert "No model checkpoints are on disk yet." not in page
 
@@ -258,7 +259,7 @@ def test_downloading_the_default_model_refreshes_the_step_to_ready(
     monkeypatch.setattr(
         web_app,
         "download_transcription_model",
-        lambda **kwargs: calls.append(1) or "",
+        lambda *args, **kwargs: calls.append(1) or "",
     )
 
     def status(*args, **kwargs):
@@ -278,7 +279,7 @@ def test_downloading_the_default_model_refreshes_the_step_to_ready(
 
 
 def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
-    def boom(**kwargs):
+    def boom(*args, **kwargs):
         raise RuntimeError("no network")
 
     monkeypatch.setattr(web_app, "download_transcription_model", boom)
@@ -309,3 +310,20 @@ def test_the_setup_page_mounts_the_same_agent_panel_as_settings(tmp_path) -> Non
         page = client.get(path).text
         assert 'id="agent-setup"' in page, path
         assert 'hx-get="/ui/agent-setup"' in page, path
+
+
+@pytest.mark.own_setup_marker
+def test_status_offers_walking_setup_again(tmp_path) -> None:
+    """Walk setup again forgets the marker, so the nav Setup link returns."""
+    setup.record_seen_version()
+    client = _client(tmp_path)
+
+    page = client.get("/settings/status").text
+    assert "/setup/restart" in page
+    assert "Open the setup wizard" in page
+
+    response = client.post("/setup/restart")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/setup"
+    assert setup.seen_version() is None

@@ -1,49 +1,75 @@
-{# Models: the transcription defaults, read-only. Each value is the service's
-   own (the built-in checkpoint, the resolved models directory, what is on
-   disk) plus the config path a user would edit. Nothing here writes. #}
-<div class="settings-group">
-  <table class="table-settings">
-    <tbody>
-      <tr>
-        <th>{{ tr("Default model") }}</th>
-        <td><code>{{ default_model }}</code> <span class="muted">{{ tr("the built-in checkpoint") }}</span></td>
-      </tr>
-      <tr>
-        <th>{{ tr("Default language") }}</th>
-        <td><code>{{ default_language }}</code> <span class="muted">{{ tr("detected from the tape") }}</span></td>
-      </tr>
-      <tr>
-        <th>{{ tr("Model directory") }}</th>
-        <td><code>{{ models_dir }}</code></td>
-      </tr>
-      <tr>
-        <th>{{ tr("Config file") }}</th>
-        <td><code>{{ config_path }}</code></td>
-      </tr>
-    </tbody>
-  </table>
+{# Models: the transcription defaults, the checkpoint inventory and the picker.
+   The page reads the service's own values (the built-in checkpoint, the resolved
+   directory, what is on disk); the one write is a user-triggered download of a
+   chosen size, which reuses the pinned, checksum-verified fetch a normal run
+   performs. The wrapper is the htmx target so the section heading survives. #}
+<div id="models-panel">
+  <div class="settings-group">
+    <table class="table-settings">
+      <tbody>
+        <tr>
+          <th>{{ tr("Default model") }}</th>
+          <td><code>{{ default_model }}</code> <span class="muted">{{ tr("the built-in checkpoint") }}</span></td>
+        </tr>
+        <tr>
+          <th>{{ tr("Default language") }}</th>
+          <td><code>{{ default_language }}</code> <span class="muted">{{ tr("detected from the tape") }}</span></td>
+        </tr>
+        <tr>
+          <th>{{ tr("Model directory") }}</th>
+          <td><code>{{ models_dir }}</code></td>
+        </tr>
+        <tr>
+          <th>{{ tr("Config file") }}</th>
+          <td><code>{{ config_path }}</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>{{ tr("Choose a model") }}</h3>
+  <p class="muted">{{ tr("A run uses the largest checkpoint on disk that fits this machine, so downloading a size is how you switch. Downloads are verified against a pinned checksum.") }}</p>
+  {% if error %}
+  <p class="muted" role="alert">{{ tr("The download did not finish: {error}", error=error) }}</p>
+  {% endif %}
+  <ul class="settings-list model-ladder">
+    {% for name in model_ladder %}
+    <li class="row">
+      <code>{{ name }}</code>
+      {% if name == default_model %}<span class="muted">{{ tr("default") }}</span>{% endif %}
+      {% if name in models_present %}
+      <span class="badge status-ok">{{ tr("on disk") }}</span>
+      {% else %}
+      <form hx-post="/ui/settings/models/download" hx-target="#models-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="model" value="{{ name }}" />
+        <button class="btn btn-sm" type="submit">{{ tr("Download") }}</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h3>{{ tr("Models present") }}</h3>
+  {% if models_present %}
+  <ul class="chip-list">
+    {% for model in models_present %}<li><code>{{ model }}</code></li>{% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">{{ tr("No ggml checkpoints in the models directory.") }}</div>
+  {% endif %}
+
+  <h3>{{ tr("Built-in profiles") }}</h3>
+  <ul class="settings-list">
+    {% for profile in profiles %}
+    <li>
+      <span class="badge">{{ profile.profile }}</span>
+      {% if profile.knobs %}
+      {% for name, value in profile.knobs.items() %}<span class="knob">{{ name }}={{ value }}</span>{% endfor %}
+      {% else %}
+      <span class="muted">{{ tr("no preset — every knob stays as you set it.") }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="muted settings-note">{{ tr("These are the defaults a run uses when it sets nothing. Edit {path} or set them per run to change them.", path=config_path) }}</p>
 </div>
-
-<h3>{{ tr("Models present") }}</h3>
-{% if models_present %}
-<ul class="chip-list">
-  {% for model in models_present %}<li><code>{{ model }}</code></li>{% endfor %}
-</ul>
-{% else %}
-<div class="empty">{{ tr("No ggml checkpoints in the models directory.") }}</div>
-{% endif %}
-
-<h3>{{ tr("Built-in profiles") }}</h3>
-<ul class="settings-list">
-  {% for profile in profiles %}
-  <li>
-    <span class="badge">{{ profile.profile }}</span>
-    {% if profile.knobs %}
-    {% for name, value in profile.knobs.items() %}<span class="knob">{{ name }}={{ value }}</span>{% endfor %}
-    {% else %}
-    <span class="muted">{{ tr("no preset — every knob stays as you set it.") }}</span>
-    {% endif %}
-  </li>
-  {% endfor %}
-</ul>
-<p class="muted settings-note">{{ tr("These are the defaults a run uses when it sets nothing. Edit {path} or set them per run to change them.", path=config_path) }}</p>

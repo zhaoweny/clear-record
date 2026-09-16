@@ -43,7 +43,11 @@ from clear_record.cli import auto as _auto
 from clear_record.cli.auto import Message
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
-from clear_record.service.auto import available_backend_ids, model_paths_on_disk
+from clear_record.service.auto import (
+    MODEL_LADDER,
+    available_backend_ids,
+    model_paths_on_disk,
+)
 from clear_record.service.hello_tape import HelloTape, write_hello_tape
 from clear_record.service.models import Meeting
 from clear_record.service.paths import resolve_models_dir, resolve_state_dir
@@ -198,22 +202,32 @@ def transcription_status(
     )
 
 
-def download_transcription_model(*, model_dir: str | None = None) -> str:
-    """Download (and verify) the resolved backend's checkpoint, on request.
+def download_transcription_model(
+    model: str | None = None, *, model_dir: str | None = None
+) -> str:
+    """Download (and verify) a transcription checkpoint, on request.
 
-    The console's explicit remediation for the ``model`` readiness state. It
-    reuses the CLI's pinned, checksum-verified downloader, so a click here and
-    a first transcription install identical bytes -- and it is reached only by
-    a click: the acceptance check stays side-effect-free. Returns the model
-    path, or the empty string when a checkpoint is already present or no
-    backend needs one.
+    The console's explicit remediation for the ``model`` readiness state, and
+    its model picker. It reuses the CLI's pinned, checksum-verified downloader,
+    so a click here and a first transcription install identical bytes -- and it
+    is reached only by a click: the acceptance check stays side-effect-free.
+
+    ``model`` is a size from the ladder (tiny .. large-v3) or ``None`` for the
+    resolved backend's own default. Returns the model path, or the empty string
+    when no backend can transcribe here.
     """
     from clear_record.cli import stages
 
+    if model is not None and model not in MODEL_LADDER:
+        raise ValueError(
+            f"unknown model {model!r}; expected one of {chr(44).join(MODEL_LADDER)}"
+        )
     status = transcription_status(model_dir=model_dir)
-    if status.backend is None or status.state != LEG_MODEL:
+    if status.backend is None:
+        return ""
+    if model is None and status.state != LEG_MODEL:
         return status.model or ""
-    return stages.prepare_model(status.backend, None, model_dir)
+    return stages.prepare_model(status.backend, model, model_dir)
 
 
 def _run_pipeline(

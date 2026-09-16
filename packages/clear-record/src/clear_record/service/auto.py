@@ -26,6 +26,10 @@ from clear_record.core.i18n import deferred
 #: can name it without importing ``cli`` or ``providers``).
 BACKEND_AUTO = _auto.BACKEND_AUTO
 
+#: The ggml model sizes the picker and ``--auto`` share, smallest to largest
+#: (re-exported so ``web`` can list them without importing ``cli``).
+MODEL_LADDER = _auto.MODEL_LADDER
+
 #: The backend's own built-in checkpoint (providers.base.DEFAULT_MODEL),
 #: re-exported so web can name the default model without importing
 #: providers (the layering guard). It is still the backend's value.
@@ -185,6 +189,7 @@ __all__ = [
     "BACKEND_AUTO",
     "BackendChoice",
     "DEFAULT_MODEL",
+    "MODEL_LADDER",
     "ModelNotOnDisk",
     "NoBackendAvailable",
     "available_backend_ids",

@@ -202,3 +202,23 @@ guided path.
 - [DESIGN] The neutral hello-check badge is **Agent round-trip**, with the adjacent
   "Not verified by this check" copy, so the eye does not parse a contradiction.
 
+## Update — 2026-09-16: a Settings knob and the model picker
+
+Owner-requested. Two small controls, both deliberately adding a write to a
+previously read-only surface.
+
+- [DECISION] **Settings -> Models** gains a **model picker**: the ggml sizes
+  (`tiny` .. `large-v3`), which are already on disk, and a user-triggered
+  **Download** per size (`POST /ui/settings/models/download`). It reuses the
+  same pinned, checksum-verified downloader the wizard and a first run use.
+  The console keeps no persisted transcription default, and `--auto` already
+  prefers the largest checkpoint on disk that fits the machine, so downloading
+  a size *is* switching. The wizard's Transcription step offers the same choice
+  in its download action.
+- [DECISION] **Settings -> Status** gains a **walk-setup-again** knob
+  (`POST /setup/restart`): it forgets the setup marker and returns to `/setup`,
+  and writes no other key, so a returning user's runner and MCP config survive
+  it. A plain link to the wizard sits beside it.
+- [FACT] `MODEL_LADDER` is now public (`cli.auto`, re-exported by
+  `service.auto`) so the console can list the sizes without importing `cli`.
+

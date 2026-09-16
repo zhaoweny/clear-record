@@ -1,9 +1,10 @@
 """The Settings page: one section per URL, read-mostly, and one agent panel.
 
 Settings is the control plane (ADR-0027). Every section is its own real URL
-with the nav marked, an unknown section is a page 404, and the only writes are
-the two the console already had (the agent endpoint and the MCP client config).
-The read sections show the value and the config path; they never carry a write.
+with the nav marked, and an unknown section is a page 404. Most sections only
+read; the writes are the agent endpoint and the MCP client config, the Models
+download (a user-triggered, verified checkpoint fetch) and Status's
+walk-setup-again (which forgets the setup marker and nothing else).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from clear_record.service import Registry, paths
 from clear_record.service.setup import MCP_SERVER_NAME
+from clear_record.web import app as web_app
 from clear_record.web.app import SETTINGS_SECTIONS, create_app
 
 #: The slugs the pinned section list must expose, in order.
@@ -99,6 +101,43 @@ def test_the_models_section_lists_the_checkpoints_on_disk(tmp_path) -> None:
 
     assert "<code>small</code>" in page.text
     assert "ggml-small.bin" not in page.text
+
+
+def test_the_models_section_offers_the_picker_and_a_download(
+    tmp_path, monkeypatch
+) -> None:
+    """The one write on this page: a user-triggered, verified model download."""
+    monkeypatch.setattr(web_app, "models_on_disk", lambda *a, **k: frozenset())
+
+    page = _client(tmp_path).get("/settings/models")
+
+    assert "Choose a model" in page.text
+    for name in ("tiny", "base", "small", "medium", "large-v3"):
+        assert f"<code>{name}</code>" in page.text
+    assert 'hx-post="/ui/settings/models/download"' in page.text
+
+
+def test_downloading_a_model_from_settings_calls_the_pinned_downloader(
+    tmp_path, monkeypatch
+) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(
+        web_app,
+        "download_transcription_model",
+        lambda model=None, **kwargs: seen.append(model) or "",
+    )
+    monkeypatch.setattr(
+        web_app, "models_on_disk", lambda *a, **k: frozenset({"medium"})
+    )
+
+    response = _client(tmp_path).post(
+        "/ui/settings/models/download", data={"model": "medium"}
+    )
+
+    assert response.status_code == 200
+    assert seen == ["medium"]
+    assert "<code>medium</code>" in response.text
+    assert "on disk" in response.text
 
 
 def test_the_backends_section_lists_every_catalog_backend(tmp_path) -> None:

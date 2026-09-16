@@ -30,7 +30,13 @@
   {% endif %}
   {% if transcription.state == 'model' %}
   <form class="setup-download" hx-post="/ui/setup/download-model" hx-target="#setup-transcription" hx-swap="outerHTML" hx-disabled-elt="find button">
-    <button class="primary" type="submit">{{ tr("Download the default model") }}</button>
+    <label class="field">
+      <span>{{ tr("Model") }}</span>
+      <select name="model">
+        {% for name in model_ladder %}<option value="{{ name }}"{% if name == default_model %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="primary" type="submit">{{ tr("Download the model") }}</button>
     <span class="muted">{{ tr("It is fetched once and verified against a pinned checksum; this can take a few minutes.") }}</span>
   </form>
   {% endif %}

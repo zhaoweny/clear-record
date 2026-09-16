@@ -991,6 +991,22 @@ def record_seen_version(
     )
 
 
+def clear_seen_version(*, path: str | Path | None = None) -> dict:
+    """Forget the marker, so the Setup link returns and the wizard re-opens.
+
+    The Settings -> Status walk-setup-again action. No other key changes, and
+    the write is the same JSON record DISMISS and COMPLETE use.
+    """
+    document = read_setup_state(path=path)
+    document.pop("seen_version", None)
+    target = Path(path) if path is not None else setup_state_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return document
+
+
 # --- the view every surface renders ----------------------------------------- #
 
 #: The setup states a surface branches on. ``ready`` means a runner exists;
@@ -1111,6 +1127,7 @@ __all__ = [
     "TEST_CALL_PROMPT",
     "VERIFY_TIMEOUT",
     "Verification",
+    "clear_seen_version",
     "current_version",
     "detect",
     "find_harness",

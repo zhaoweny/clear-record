@@ -69,7 +69,7 @@ BACKEND_PREFERENCE: tuple[str, ...] = (
 #: Models ``--auto`` may choose, smallest to largest. These are the size names
 #: the ggml resolver accepts (``providers.backends._resolve_ggml_model``);
 #: quantisation is a backend detail, so the ladder is by size only.
-_MODEL_LADDER: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
+MODEL_LADDER: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
 
 #: A candidate model "fits" when the existing ``auto_jobs`` heuristic can afford
 #: at least this many concurrent workers. One worker is the floor ``auto_jobs``
@@ -331,10 +331,10 @@ def _choose_model(probe: AutoProbe) -> tuple[str, bool, str, Message]:
     is on disk is the preferred model returned with ``on_disk=False``.
     """
     fitting = [
-        model for model in _MODEL_LADDER if _fits(model, probe.vram_gb, probe.cpu_count)
+        model for model in MODEL_LADDER if _fits(model, probe.vram_gb, probe.cpu_count)
     ]
-    preferred = fitting[-1] if fitting else _MODEL_LADDER[0]
-    present = [model for model in _MODEL_LADDER if model in probe.models_on_disk]
+    preferred = fitting[-1] if fitting else MODEL_LADDER[0]
+    present = [model for model in MODEL_LADDER if model in probe.models_on_disk]
     present_fitting = [model for model in fitting if model in probe.models_on_disk]
 
     if present_fitting:
@@ -552,6 +552,7 @@ __all__ = [
     "BACKEND_AUTO",
     "BACKEND_PREFERENCE",
     "DEFAULT_MODEL",
+    "MODEL_LADDER",
     "AutoChoice",
     "AutoProbe",
     "BackendChoice",

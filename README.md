@@ -175,6 +175,16 @@ uv run --all-packages --extra apple clear-record run recordings --backend apple 
 `calibrate` prints `coverage`, `mean_confidence`, `wer` and `similarity` and
 writes `recordings/export/calibration.json`.
 
+`bench` shows one run on the four axes: accuracy (WER, or coverage and mean
+confidence), speed as x-realtime, the peak memory of the transcribe stage's
+decoder workers, and what `--auto` chose. Point it at a recorded run in the
+console's registry, or at a workspace (which has no speed/fit record):
+
+```sh
+uv run --all-packages clear-record bench --run-id 12     # or --meeting-id 3
+uv run --all-packages clear-record bench --directory recordings
+```
+
 ### Validate alignment (no real bad multi-track needed)
 
 Real "4-channel pre-mixed badness with a correct answer" is scarce, so the

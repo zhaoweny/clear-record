@@ -19,6 +19,51 @@
   {% for explanation in run.explanations %}
   <div class="muted run-message">{{ explanation }}</div>
   {% endfor %}
+  {# The four axes (BENCH-01), computed once in the service and rendered from
+     that value: accuracy, speed, memory, fit -- and no fifth. #}
+  {% if run.axes %}
+  <dl class="run-axes">
+    <dt>{{ tr("accuracy") }}</dt>
+    <dd>
+      {% if run.axes.accuracy.basis == "wer" %}
+      {{ tr("WER") }} {{ run.axes.accuracy.wer }}{% if run.axes.accuracy.similarity is not none %} &middot; {{ tr("similarity") }} {{ run.axes.accuracy.similarity }}{% endif %}
+      {% elif run.axes.accuracy.basis == "coverage" %}
+      {{ tr("coverage") }} {{ run.axes.accuracy.coverage }} &middot;
+      {{ tr("mean confidence") }} {{ run.axes.accuracy.mean_confidence }} &middot;
+      {{ trn("{count} word", "{count} words", run.axes.accuracy.words, count=run.axes.accuracy.words) }}
+      {% else %}
+      <span class="muted">{{ tr("unknown") }} &mdash; {{ tr(run.axes.accuracy.reason) }}</span>
+      {% endif %}
+    </dd>
+    <dt>{{ tr("speed") }}</dt>
+    <dd>
+      {% if run.axes.speed.x_realtime is not none %}
+      {{ run.axes.speed.x_realtime }}x {{ tr("realtime") }}
+      <span class="muted">{{ run.axes.speed.audio_seconds }}s / {{ run.axes.speed.wall_seconds }}s</span>
+      {% else %}
+      <span class="muted">{{ tr("unknown") }} &mdash; {{ tr(run.axes.speed.reason) }}</span>
+      {% endif %}
+    </dd>
+    <dt>{{ tr("memory") }}</dt>
+    <dd>
+      {% if run.axes.memory.peak_rss_bytes is not none %}
+      {{ (run.axes.memory.peak_rss_bytes / 1048576) | round(1) }} MiB
+      {% else %}
+      <span class="muted">{{ tr("unknown") }} &mdash; {{ tr(run.axes.memory.reason) }}</span>
+      {% endif %}
+    </dd>
+    <dt>{{ tr("fit") }}</dt>
+    <dd>
+      {% if run.axes.fit.reason %}
+      <span class="muted">{{ tr("unknown") }} &mdash; {{ tr(run.axes.fit.reason) }}</span>
+      {% else %}
+      {{ tr("auto chose") }}
+      {% for field in run.axes.fit.chose %}<span class="badge">{{ field }}</span>{% else %}{{ tr("nothing (chosen by hand)") }}{% endfor %}
+      <span class="muted">{{ run.axes.fit.facts.backend or "?" }} &middot; {{ run.axes.fit.facts.model or "?" }}{% if run.axes.fit.facts.jobs is not none %} &middot; {{ tr("jobs") }} {{ run.axes.fit.facts.jobs }}{% endif %}{% if run.axes.fit.facts.chunk_seconds is not none %} &middot; {{ run.axes.fit.facts.chunk_seconds }}s{% endif %}</span>
+      {% endif %}
+    </dd>
+  </dl>
+  {% endif %}
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
   {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}

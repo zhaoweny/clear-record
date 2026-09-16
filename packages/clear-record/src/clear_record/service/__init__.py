@@ -83,6 +83,7 @@ from clear_record.service.auto import (
     resolve_backend,
     resolve_run,
 )
+from clear_record.service.benchmark import run_axes
 from clear_record.service.diagnostics import (
     BUNDLE_FILENAME,
     BundleFacts,
@@ -150,6 +151,7 @@ from clear_record.service.paths import (
 from clear_record.service.runs import (
     PipelineOptions,
     RESTART_REASON,
+    TERMINAL_STATUSES,
     RunManager,
     RunState,
     collect_artifacts,
@@ -241,6 +243,7 @@ __all__ = [
     "RunState",
     "SCHEMA_VERSION",
     "SIGNATURE_HEADER",
+    "TERMINAL_STATUSES",
     "TASKS",
     "TERM_AUTHORS",
     "TERM_STATUSES",
@@ -286,6 +289,7 @@ __all__ = [
     "resolve_endpoints",
     "resolve_run",
     "resolve_workspace_root",
+    "run_axes",
     "sanitize_filename",
     "sign",
     "snapshot_from_text",

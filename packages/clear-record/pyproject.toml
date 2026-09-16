@@ -102,6 +102,7 @@ clear-record = "clear_record.cli:main"
 # not optional (the diagnostics code ships in the base dist), but it registers
 # the same way so `clear_record.cli` never imports the service surface either.
 [project.entry-points."clear_record.commands"]
+bench = "clear_record.service.benchmark:register"
 diagnose = "clear_record.service.diagnostics:register"
 web = "clear_record.web:register"
 tray = "clear_record.tray:register"

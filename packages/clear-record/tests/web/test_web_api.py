@@ -444,6 +444,21 @@ def test_the_other_ui_refusals_re_render_at_200(client) -> None:
     assert "meeting title must not be blank" in blank_title.text
 
 
+def test_the_add_project_form_clears_only_on_a_real_success(client) -> None:
+    """The add-project form sits outside the #projects swap target."""
+
+    # The swap does not replace it, so it is cleared on a success signal rather
+    # than on any 2xx: the refusal re-render carries no HX-Trigger.
+    created = client.post("/ui/projects", data={"name": "Weekly Ops"})
+    assert created.status_code == 200
+    assert created.headers.get("HX-Trigger") == "project-created"
+
+    refused = client.post("/ui/projects", data={"name": "   "})
+    assert refused.status_code == 200
+    assert refused.headers.get("HX-Trigger") is None
+    assert "must not be blank" in refused.text
+
+
 def test_run_form_offers_only_this_machines_backends(
     console, tmp_path, monkeypatch
 ) -> None:

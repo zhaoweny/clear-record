@@ -7,8 +7,7 @@
 <form class="stack"
       hx-post="/ui/projects/{{ project.slug }}/meetings"
       hx-target="#detail"
-      hx-swap="innerHTML"
-      hx-on::after:request="if (event.detail.ctx.response.status === 200) this.reset()">
+      hx-swap="innerHTML">
   <div class="row">
     <input name="title" placeholder="{{ tr("Meeting title") }}" required>
     <input name="workspace_path" placeholder="{{ tr("Workspace path") }}">

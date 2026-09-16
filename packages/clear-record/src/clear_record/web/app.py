@@ -425,16 +425,17 @@ async def _receive_tape(
     ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
     so each caller maps it to its own shape (a re-render, or an HTTP status).
     """
-    # Accepted cost (ADR-0024 true streaming deferred): Starlette spools the
-    # whole multipart body before we can see the file part, so a large upload
-    # transiently holds its size twice -- once in the process's TMPDIR and once
-    # in the managed .part file. precheck_upload already bounds the transfer
-    # against the managed root's free space using Content-Length before the body
-    # is read, and the .part writer maps a fill-the-disk ENOSPC to
-    # InsufficientSpace (service/managed.py), so the extra copy is a known,
-    # bounded cost. A TMPDIR on a different filesystem can still fill
-    # independently; removing that residual is what the deferred true streaming
-    # work does.
+    # Accepted deviation from ADR-0024:67-71 (which decides multipart -> a sibling
+    # .part on the managed root, and defers only resumability): Starlette 1.6
+    # parses the multipart body first, and each *file part* over 1 MB spools to a
+    # SpooledTemporaryFile under the process TMPDIR before managed.upload_tape
+    # streams it to the managed .part. A large upload therefore holds its bytes
+    # in TMPDIR as well as on the managed root, and TMPDIR (unlike the managed
+    # root) is not covered by precheck_upload's free-space guard. The cost is
+    # accepted: precheck_upload still caps the declared size against the managed
+    # root before the body is read, and the .part writer maps ENOSPC to
+    # InsufficientSpace. Removing the TMPDIR copy needs true streaming, which the
+    # ADR does not yet decide (it defers resumability only).
     try:
         form = await request.form()
     except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
@@ -1607,11 +1608,17 @@ def create_app(
             registry.create_project(name)
         except ValueError as exc:
             error = str(exc)
-        return TEMPLATES.TemplateResponse(
+        response = TEMPLATES.TemplateResponse(
             request,
             "_projects.html",
             {"projects": project_rows(), "active_slug": None, "error": error},
         )
+        if error is None:
+            # The add-project form sits outside the #projects swap target, so the
+            # swap does not replace it. Signal a real success so it clears; a
+            # refusal carries no signal and keeps the user's text.
+            response.headers["HX-Trigger"] = "project-created"
+        return response
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:

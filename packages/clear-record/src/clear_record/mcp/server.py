@@ -35,7 +35,6 @@ from mcp.server.mcpserver.exceptions import ToolError
 from clear_record.core import PipelineOptions
 from clear_record.service import (
     TASK_KINDS,
-    TERM_STATUSES,
     AgentConfig,
     AgentTaskError,
     GlossaryTerm,
@@ -94,7 +93,7 @@ class ServiceTools:
         config: AgentConfig | None = None,
     ) -> None:
         self.registry = registry
-        self.manager = manager or RunManager(registry)
+        self.manager = manager if manager is not None else RunManager(registry)
         # The agent-task seam's injection points (tests, embedders); with neither
         # a launch resolves the process config the same way the console does.
         self.runner = runner
@@ -168,13 +167,11 @@ class ServiceTools:
         """
         if project is not None:
             self._project(project)
-        if status is not None and status not in TERM_STATUSES:
-            raise ToolError(
-                f"status must be one of {list(TERM_STATUSES)}, got {status!r}"
-            )
-        return [
-            _as_dict(term) for term in self.registry.list_terms(project, status=status)
-        ]
+        try:
+            terms = self.registry.list_terms(project, status=status)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return [_as_dict(term) for term in terms]
 
     def add_glossary_term(
         self,
@@ -406,15 +403,12 @@ class ServiceTools:
         """Read a run's progress events after a cursor.
 
         Pass the previous response's ``next`` as ``after`` to page forward without
-        re-reading. Live state exists only for runs started by this server
-        process; use ``run_status`` for a finished run's recorded status.
+        re-reading. Events are the run's persisted stream, so a run started by an
+        earlier server process replays here too.
         """
         state: RunState | None = self.manager.state(run_id)
         if state is None:
-            raise ToolError(
-                f"no live events for run id {run_id}; "
-                "use run_status for a run from a previous process"
-            )
+            raise ToolError(f"unknown run id {run_id}")
         events = state.events_since(after)
         return {
             "run_id": run_id,
@@ -505,10 +499,6 @@ class ServiceTools:
         first. The result is a **draft**; review it with ``read_agent_draft`` and
         apply it with ``accept_agent_draft``.
         """
-        if kind not in TASK_KINDS:
-            raise ToolError(
-                f"unknown agent task kind {kind!r}; known kinds: {list(TASK_KINDS)}"
-            )
         agent = self._agent(project, meeting)
         try:
             draft = agent.launch(kind)

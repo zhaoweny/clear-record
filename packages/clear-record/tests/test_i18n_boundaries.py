@@ -291,3 +291,121 @@ def test_the_diagnostics_reason_stays_english(pseudo) -> None:
     )
     assert "requires macOS 26+ (this is Linux)" in bundle
     assert "«" not in bundle
+
+
+# --- the shipped catalog is translated, not just fresh ---------------------- #
+
+#: How many entries the zh_CN catalog may leave untranslated.
+#:
+#: ``just i18n-check`` guards *freshness* -- source ids vs catalog ids, and the
+#: compiled bytes -- never translation: a new ``tr()`` string lands with an
+#: empty ``msgstr`` and silently renders English under zh_CN. An earlier B1
+#: slice shipped exactly that, so it is a failing test here.
+#:
+#: An entry counts as untranslated when its ``msgstr`` is empty **or** it is
+#: flagged ``#, fuzzy``: Babel omits fuzzy entries from the compiled catalog,
+#: so at runtime they behave exactly like an empty one. The baseline is the
+#: eight pre-existing per-option ``--help`` entries the catalog header
+#: deliberately leaves English ("the terminal is not the interface", owner
+#: 2026-09-15); translate new ids rather than raising this number.
+UNTRANSLATED_BASELINE = 8
+
+#: The non-``[bench]`` ids this slice added, which the console and the terminal
+#: render directly. They stay pinned even if the baseline above is ever raised.
+BENCH_IDS = (
+    "accuracy",
+    "coverage",
+    "fit",
+    "jobs",
+    "mean confidence",
+    "memory",
+    "nothing (chosen by hand)",
+    "realtime",
+    "similarity",
+    "speed",
+    "WER",
+    "auto chose",
+    "the run has no workspace to measure",
+    "the workspace has no readable record to score",
+    "the run recorded no cost, so this axis is unknown",
+    "the run recorded no worker memory",
+    "there is no run record to explain",
+    "no decoder worker ran: every chunk was reused from the cache",
+    "no decoder worker's memory could be sampled during the transcribe stage",
+    "peak worker memory is not measurable on this platform",
+)
+
+
+def _po_entries(path) -> list[tuple[str, str, bool]]:
+    """``(msgid, msgstr, fuzzy)`` for every live entry in a ``.po`` file.
+
+    A deliberately small stdlib reader: this suite must not need Babel (it
+    lives only in the ``i18n`` dependency group, which ``just verify`` does not
+    install). Obsolete entries (``#~``) are skipped -- they are not compiled
+    and nothing renders them.
+    """
+    entries: list[tuple[str, str, bool]] = []
+    msgid: str | None = None
+    msgstr = ""
+    fuzzy = False
+    in_msgstr = False
+
+    def _unquote(line: str) -> str:
+        return json.loads(line[line.index('"') :])
+
+    for line in [*path.read_text(encoding="utf-8").splitlines(), ""]:
+        if not line.strip():
+            if msgid is not None:
+                entries.append((msgid, msgstr, fuzzy))
+            msgid, msgstr, fuzzy, in_msgstr = None, "", False, False
+            continue
+        if line.startswith("#"):
+            if line.startswith("#,") and "fuzzy" in line:
+                fuzzy = True
+            continue
+        if line.startswith("msgid "):
+            msgid = _unquote(line)
+        elif line.startswith("msgstr"):
+            msgstr = _unquote(line)
+            in_msgstr = True
+        elif line.startswith('"') and msgid is not None:
+            if in_msgstr:
+                msgstr += _unquote(line)
+            else:
+                msgid += _unquote(line)
+    return entries
+
+
+def test_every_new_string_is_translated_in_the_shipped_catalog() -> None:
+    """A message that renders English under zh_CN fails the gate.
+
+    The count is the guard; the explicit families are the evidence for exactly
+    the strings this slice introduced.
+    """
+    po = i18n.LOCALES_DIR / "zh_CN" / "LC_MESSAGES" / "messages.po"
+    entries = {
+        msgid: (msgstr, fuzzy) for msgid, msgstr, fuzzy in _po_entries(po) if msgid
+    }
+
+    untranslated = sorted(
+        msgid for msgid, (msgstr, fuzzy) in entries.items() if not msgstr or fuzzy
+    )
+    assert len(untranslated) <= UNTRANSLATED_BASELINE, (
+        f"zh_CN has {len(untranslated)} untranslated entries, over the "
+        f"{UNTRANSLATED_BASELINE} baseline; translate the new ids: "
+        f"{untranslated[:5]}"
+    )
+
+    missing = [
+        msgid
+        for msgid in BENCH_IDS
+        if msgid not in entries or not entries[msgid][0] or entries[msgid][1]
+    ]
+    assert missing == [], f"the bench ids lost their translation: {missing}"
+
+    terminal = [
+        msgid
+        for msgid, (msgstr, fuzzy) in entries.items()
+        if msgid.startswith("[bench] ") and (not msgstr or fuzzy)
+    ]
+    assert terminal == [], f"the bench renderer lost its translation: {terminal}"

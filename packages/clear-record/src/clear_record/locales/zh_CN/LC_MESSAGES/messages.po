@@ -253,15 +253,15 @@ msgstr "[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:573
 msgid "no decoder worker ran: every chunk was reused from the cache"
-msgstr ""
+msgstr "没有解码工作进程运行：所有分块均复用了缓存"
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:576
 msgid "no decoder worker's memory could be sampled during the transcribe stage"
-msgstr ""
+msgstr "转写阶段无法采样任何解码工作进程的内存"
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:579
 msgid "peak worker memory is not measurable on this platform"
-msgstr ""
+msgstr "该平台无法测量工作进程峰值内存"
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:847
 #, python-brace-format
@@ -526,57 +526,57 @@ msgstr "在 --auto 探测录音之前，运行需要一个工作区目录"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:47
 msgid "the run has no workspace to measure"
-msgstr ""
+msgstr "该运行没有可测量的工作区"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:48
 msgid "the workspace has no readable record to score"
-msgstr ""
+msgstr "工作区没有可读取的记录可用于评分"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:49
 msgid "the run recorded no cost, so this axis is unknown"
-msgstr ""
+msgstr "该运行未记录成本，因此该指标未知"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:50
 msgid "the run recorded no worker memory"
-msgstr ""
+msgstr "该运行未记录工作进程内存"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:51
 msgid "there is no run record to explain"
-msgstr ""
+msgstr "没有可解释的运行记录"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:217
 #, python-brace-format
 msgid "[bench] accuracy: WER {wer} (similarity {similarity})"
-msgstr ""
+msgstr "[bench] 准确度：WER {wer}（相似度 {similarity}）"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:225
 #, python-brace-format
 msgid ""
 "[bench] accuracy: coverage {coverage}, mean confidence {confidence}, "
 "{words} words"
-msgstr ""
+msgstr "[bench] 准确度：覆盖率 {coverage}，平均置信度 {confidence}，{words} 个词"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:239
 #, python-brace-format
 msgid "[bench] speed: {rate}x realtime ({audio}s audio / {wall}s wall)"
-msgstr ""
+msgstr "[bench] 速度：{rate} 倍速（音频 {audio} 秒 / 墙钟 {wall} 秒）"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:252
 #, python-brace-format
 msgid ""
 "[bench] memory: {mib} MiB peak across the transcribe stage's decoder "
 "workers"
-msgstr ""
+msgstr "[bench] 内存：转写阶段解码工作进程的峰值 {mib} MiB"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:266
 #, python-brace-format
 msgid "[bench] fit: --auto chose {chose}"
-msgstr ""
+msgstr "[bench] 适配：--auto 选择了 {chose}"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:267
 #: packages/clear-record/src/clear_record/web/templates/_run.html:61
 msgid "nothing (chosen by hand)"
-msgstr ""
+msgstr "无（人工选择）"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:273
 #, python-brace-format
@@ -584,61 +584,63 @@ msgid ""
 "[bench] fit facts: backend={backend} model={model} language={language} "
 "profile={profile} jobs={jobs} chunk={chunk}s"
 msgstr ""
+"[bench] 适配事实：backend={backend} model={model} language={language} "
+"profile={profile} jobs={jobs} chunk={chunk} 秒"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:290
 #, python-brace-format
 msgid "[bench] {axis}: unknown -- {reason}"
-msgstr ""
+msgstr "[bench] {axis}：未知 -- {reason}"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:292
 msgid "no reason was recorded"
-msgstr ""
+msgstr "未记录原因"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:316
 msgid "pass either --run-id or --meeting-id, not both"
-msgstr ""
+msgstr "请传入 --run-id 或 --meeting-id，二者不可同时使用"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:318
 msgid "pass --directory or a run id, not both"
-msgstr ""
+msgstr "请传入 --directory 或运行 ID，二者不可同时使用"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:321
 #, python-brace-format
 msgid "{path} is not a readable reference transcript"
-msgstr ""
+msgstr "{path} 不是可读取的参考转写文本"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:331
 #, python-brace-format
 msgid "no registry at {path}: there is no run to measure"
-msgstr ""
+msgstr "{path} 处没有注册表：没有可测量的运行"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:340
 msgid "no run found in the registry"
-msgstr ""
+msgstr "注册表中未找到运行"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:361
 msgid "show one run's four axes: accuracy, speed, memory, fit"
-msgstr ""
+msgstr "显示单次运行的四个指标：准确度、速度、内存、适配"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:363
 msgid "a run to measure"
-msgstr ""
+msgstr "要测量的运行"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:368
 msgid "the meeting whose latest run to measure"
-msgstr ""
+msgstr "要测量其最近一次运行的会议"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:374
 msgid "a workspace to measure without a run record"
-msgstr ""
+msgstr "在没有运行记录时测量的工作区"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:379
 msgid "a reference transcript file to compare (WER/similarity)"
-msgstr ""
+msgstr "用于对比的参考转写文本文件（WER/相似度）"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:387
 msgid "override the app data directory (default: CR_DATA_DIR / platform dir)"
-msgstr ""
+msgstr "覆盖应用数据目录（默认：CR_DATA_DIR / 平台目录）"
 
 #: packages/clear-record/src/clear_record/service/managed.py:108
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
@@ -1916,58 +1918,53 @@ msgstr "预计剩余"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:26
 msgid "accuracy"
-msgstr ""
+msgstr "准确度"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:29
 msgid "WER"
-msgstr ""
+msgstr "WER"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:29
 msgid "similarity"
-msgstr ""
+msgstr "相似度"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:31
-#, fuzzy
 msgid "coverage"
-msgstr "存储"
+msgstr "覆盖率"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:32
-#, fuzzy
 msgid "mean confidence"
-msgstr "依据"
+msgstr "平均置信度"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:33
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "{count} word"
 msgid_plural "{count} words"
-msgstr[0] "{count} 个术语"
+msgstr[0] "{count} 个词"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:38
 msgid "speed"
-msgstr ""
+msgstr "速度"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:41
-#, fuzzy
 msgid "realtime"
-msgstr "创建时间"
+msgstr "倍速"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:47
 msgid "memory"
-msgstr ""
+msgstr "内存"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:55
-#, fuzzy
 msgid "fit"
-msgstr "筛选"
+msgstr "适配"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:60
-#, fuzzy
 msgid "auto chose"
-msgstr "音频副本"
+msgstr "自动选择"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:62
 msgid "jobs"
-msgstr ""
+msgstr "并发任务"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:67
 msgid "Transcription progress"

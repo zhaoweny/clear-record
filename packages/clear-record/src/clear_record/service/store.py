@@ -801,9 +801,9 @@ class Registry:
     ) -> PipelineRun:
         """Update a run's mutable fields.
 
-        The progress summary is written for the run-progress work and has no
-        reader yet: the console reconstructs it from the durable event stream.
-        It stays write-only until that surface lands.
+        ``progress`` is the terminal summary written when a run ends. Its
+        ``cost`` is the run's raw cost record (RUN-01), which the console and
+        the history-based ETA read back through :class:`PipelineRun`.
         """
         fields: dict[str, object] = {}
         if status is not None:
@@ -862,18 +862,35 @@ class Registry:
             ).fetchone()
         return self._run(row) if row else None
 
-    def runs_with_status(self, *statuses: str) -> list[PipelineRun]:
-        """Every run in one of ``statuses``, oldest first (the FIFO order)."""
+    def runs_with_status(
+        self, *statuses: str, limit: int | None = None
+    ) -> list[PipelineRun]:
+        """Every run in one of ``statuses``, oldest first (the FIFO order).
+
+        ``limit`` bounds the query to the **newest** ``limit`` runs — read and
+        decoded in the database rather than in the caller — and still returns
+        them oldest first, so a caller that only needs recent history (the
+        history-based ETA) does not pay for the whole table.
+        """
         if not statuses:
             return []
         placeholders = ", ".join("?" for _ in statuses)
-        with self._connect() as conn:
-            rows = conn.execute(
+        if limit is None:
+            sql = (
                 "SELECT * FROM pipeline_run"
-                f" WHERE status IN ({placeholders}) ORDER BY id",
-                tuple(statuses),
-            ).fetchall()
-        return [self._run(row) for row in rows]
+                f" WHERE status IN ({placeholders}) ORDER BY id"
+            )
+            params: tuple = tuple(statuses)
+        else:
+            sql = (
+                "SELECT * FROM pipeline_run"
+                f" WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT ?"
+            )
+            params = (*statuses, limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        runs = [self._run(row) for row in rows]
+        return runs if limit is None else list(reversed(runs))
 
     def oldest_queued_run(self) -> PipelineRun | None:
         """The head of the node's FIFO: the oldest run still ``queued``."""
@@ -1168,6 +1185,7 @@ class Registry:
             error=row["error"],
             created_at=row["created_at"],
             run_options=json.loads(row["run_options"]) if row["run_options"] else None,
+            progress=json.loads(row["progress"]) if row["progress"] else None,
         )
 
     def _run_row(self, conn: sqlite3.Connection, run_id: int) -> PipelineRun:

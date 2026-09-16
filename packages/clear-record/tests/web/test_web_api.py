@@ -523,6 +523,23 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert client.get("/ui/runs/999").status_code == 404
 
 
+def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:
+    """RUN-01: a run recorded before the cost record existed renders as unknown.
+
+    The row has no ``progress`` at all. The fragment must still render, with no
+    ETA and no exception — a missing record is not an error.
+    """
+    registry = console.registry
+    meeting = _make_meeting(console, tmp_path)
+    run = registry.create_run(meeting["id"], backend="apple", model="small")
+    registry.update_run(run.id, status="done", ended_at="2026-01-01T00:01:00+00:00")
+
+    fragment = console.client.get(f"/ui/runs/{run.id}")
+    assert fragment.status_code == 200
+    assert f'id="run-{meeting["id"]}"' in fragment.text
+    assert "ETA" not in fragment.text
+
+
 # --- HTML surface: the transcription-profile picker ----------------------- #
 def test_profile_picker_lists_the_shared_profiles(console, tmp_path) -> None:
     """The picker's options are `core.options.PROFILES`, with `custom` the default.

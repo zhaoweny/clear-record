@@ -140,6 +140,12 @@ class PipelineRun:
     #: pick a queued run back up with the knobs the user chose (audio files are
     #: re-read from the meeting's latest tape set at execution time).
     run_options: dict | None = None
+    #: The terminal summary written when the run ends. Its ``cost`` holds the
+    #: run's **raw** cost primitives (RUN-01: per-stage wall-clock, audio
+    #: seconds, the chunk economy, backend/model/jobs/chunk seconds, the machine
+    #: description) — never a derived ratio. ``None`` means no record: a live
+    #: run, or one recorded before the record existed, both read as unknown.
+    progress: dict | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -65,6 +65,7 @@ from clear_record.service import (
     collect_bundle,
     default_config,
     describe_draft,
+    estimate_eta_s,
     managed,
     read_transcript,
     resolve_run,
@@ -503,15 +504,27 @@ def _auto_view(meta: dict | None) -> dict:
 
 
 def _run_context(
-    state: RunState | None, *, meeting_id: int, fallback=None, meta: dict | None = None
+    state: RunState | None,
+    *,
+    meeting_id: int,
+    fallback=None,
+    meta: dict | None = None,
+    history_eta_s: float | None = None,
 ) -> dict:
-    """The template context for one run fragment (live state, else the last row)."""
+    """The template context for one run fragment (live state, else the last row).
+
+    ``history_eta_s`` is the service's history-based estimate (RUN-01). When a
+    matching history produced one it replaces the stage-local estimate, which
+    stays the live fallback — and the only display — otherwise.
+    """
     if state is not None:
         context = state.summary()
         last = state.last
         context["meeting_id"] = state.meeting_id
         context["message"] = last.message if last else ""
         context["polling"] = state.status in ("queued", "running")
+        if history_eta_s is not None:
+            context["eta_s"] = history_eta_s
         context.update(_auto_view(meta))
         return context
     context = {
@@ -521,7 +534,7 @@ def _run_context(
         "stage": None,
         "index": 0,
         "total": 0,
-        "eta_s": None,
+        "eta_s": history_eta_s,
         "message": "",
         "error": fallback.error,
         "polling": False,
@@ -781,14 +794,21 @@ def create_app(
             tape_set = registry.latest_recording_set(meeting.id)
             latest = registry.list_runs(meeting.id)
             state = runs.state(latest[0].id) if latest else None
+            eta_s = estimate_eta_s(registry, latest[0]) if latest else None
             if state is not None:
-                run = _run_context(state, meeting_id=meeting.id, meta=latest[0].options)
+                run = _run_context(
+                    state,
+                    meeting_id=meeting.id,
+                    meta=latest[0].options,
+                    history_eta_s=eta_s,
+                )
             elif latest:
                 run = _run_context(
                     None,
                     meeting_id=meeting.id,
                     fallback=latest[0],
                     meta=latest[0].options,
+                    history_eta_s=eta_s,
                 )
             else:
                 run = None
@@ -827,6 +847,7 @@ def create_app(
                     state,
                     meeting_id=state.meeting_id,
                     meta=row.options if row else None,
+                    history_eta_s=estimate_eta_s(registry, row) if row else None,
                 )
             },
         )
@@ -834,6 +855,8 @@ def create_app(
     def render_run_error(
         request: Request, meeting_id: int, message: str
     ) -> HTMLResponse:
+        # A refusal, not a run: no run id exists yet, so there is nothing to
+        # project an estimate for and no record to read.
         return TEMPLATES.TemplateResponse(
             request,
             "_run.html",

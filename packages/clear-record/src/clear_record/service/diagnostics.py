@@ -205,6 +205,21 @@ def backend_status() -> dict[str, dict]:
 # --- bundle assembly ------------------------------------------------------ #
 
 
+def machine_description() -> str:
+    """The machine identity the run record stores (OQ-3).
+
+    A *description*, not a fingerprint: the hostname plus the CPU/accelerator
+    facts the diagnostics bundle already collects, composed from the same stdlib
+    ``platform`` probe. Nothing is uploaded anywhere (there is no telemetry), and
+    no dependency is added for it.
+    """
+    node = _platform.node() or "unknown host"
+    cpu = _platform.machine() or "unknown CPU"
+    processor = _platform.processor()
+    detail = f"{cpu} {processor}".strip() if processor else cpu
+    return f"{node} ({_platform.platform()}; {detail})"
+
+
 @dataclasses.dataclass(frozen=True)
 class BundleFacts:
     """Everything :func:`build_bundle` renders — assembled, never gathered here.

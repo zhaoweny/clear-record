@@ -153,6 +153,7 @@ from clear_record.service.runs import (
     RunManager,
     RunState,
     collect_artifacts,
+    estimate_eta_s,
 )
 from clear_record.service.store import SCHEMA_VERSION, Registry
 from clear_record.service.transcript import TranscriptSlice, read_transcript
@@ -265,6 +266,7 @@ __all__ = [
     "console_log_config",
     "delete_tape",
     "ensure_managed_workspace",
+    "estimate_eta_s",
     "is_managed",
     "load_webhook_config",
     "log_event",

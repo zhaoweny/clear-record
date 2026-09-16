@@ -14,11 +14,12 @@ from pathlib import Path
 import pytest
 
 from clear_record.cli.workspace import Workspace
-from clear_record.core import Progress, resolve_options
+from clear_record.core import JobEvent, Progress, resolve_options
 from clear_record.service import (
     PipelineOptions,
     Registry,
     RunManager,
+    estimate_eta_s,
     project_snapshot,
     snapshot_from_text,
 )
@@ -599,3 +600,331 @@ def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
 
     release.set()
     assert manager.wait(fresh.id, timeout=10).status == "done"
+
+
+# --- the run cost record (RUN-01) ------------------------------------------ #
+
+#: The pipeline stages a cost record times, in declared order.
+_COST_STAGES = ("ingest", "align", "transcribe", "reconcile", "export")
+
+
+def _fake_pipeline_with_transcript(directory, options, on_event) -> None:
+    """The shape the real pipeline leaves behind, with no stage executed.
+
+    One terminal event per stage (exactly what ``Progress`` emits) and the
+    transcript meta the transcribe stage persists: source durations, the chunk
+    report, the job count and the chunk size.
+    """
+    for stage in _COST_STAGES:
+        step = Progress(stage, 1, on_event)
+        step.start()
+        step.advance(source=stage)
+    Workspace.at(directory).write_segments(
+        {"a": [], "b": []},
+        meta={
+            "backend": "fake",
+            "model": "fake-model",
+            "jobs": 3,
+            "chunk_seconds": 30.0,
+            "sources": {"a": {"duration": 120.0}, "b": {"duration": 60.0}},
+            "chunk_report": {
+                "scoped": False,
+                "scope": "",
+                "reused": 7,
+                "redecoded": 2,
+                "carried_over": 0,
+                "guard_redecoded": 0,
+            },
+        },
+    )
+
+
+def test_a_completed_run_records_every_cost_primitive(tmp_path) -> None:
+    """RUN-01: the run record holds the raw primitives, never a ratio.
+
+    Wall-clock magnitudes are deliberately not asserted; the primitives that
+    are not time are, and every stage must have its own entry.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=_fake_pipeline_with_transcript)
+    run = manager.start(meeting)
+    assert manager.wait(run.id, timeout=10).status == "done"
+
+    cost = registry.get_run(run.id).progress["cost"]
+    assert set(cost["stages"]) == set(_COST_STAGES)
+    assert all(seconds is not None for seconds in cost["stages"].values())
+    assert cost["audio_seconds"] == 180.0
+    assert cost["chunks"] == 9
+    assert cost["chunks_reused"] == 7
+    assert cost["chunks_redecoded"] == 2
+    assert cost["backend"] == "fake"
+    assert cost["model"] == "fake-model"
+    assert cost["jobs"] == 3
+    assert cost["chunk_seconds"] == 30.0
+    assert cost["total_wall_seconds"] is not None
+    assert cost["machine"]
+    # A ratio is derived at display time; storing one would go stale.
+    assert not {"speed", "realtime", "x_realtime", "ratio"} & set(cost)
+
+
+def test_a_failed_run_records_the_stages_it_completed(tmp_path) -> None:
+    """RUN-01: a run that stopped early still says how far it got."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    def boom(directory, options, on_event) -> None:
+        step = Progress("ingest", 1, on_event)
+        step.start()
+        step.advance(source="a")
+        raise RuntimeError("backend unavailable")
+
+    # A previous run left its transcript in the workspace. It is not this run's
+    # measurement, so a run that failed before transcribe must not inherit it.
+    Workspace.at(meeting.workspace_path).write_segments(
+        {"a": []},
+        meta={
+            "backend": "fake",
+            "model": "fake-model",
+            "jobs": 3,
+            "chunk_seconds": 30.0,
+            "sources": {"a": {"duration": 120.0}},
+            "chunk_report": {"reused": 7, "redecoded": 2},
+        },
+    )
+
+    manager = RunManager(registry, pipeline=boom)
+    run = manager.start(meeting)
+    assert manager.wait(run.id, timeout=10).status == "failed"
+
+    cost = registry.get_run(run.id).progress["cost"]
+    assert cost["stages"]["ingest"] is not None
+    assert cost["stages"]["transcribe"] is None
+    assert cost["audio_seconds"] is None
+    assert cost["chunks"] is None
+    assert cost["jobs"] is None
+    assert cost["machine"]
+
+
+def test_a_run_that_fails_after_transcribe_reports_its_transcript(tmp_path) -> None:
+    """RUN-01: a failure after the transcribe write still measures the tape.
+
+    Reconcile runs strictly after transcribe wrote ``segments.json``, so the
+    transcript on disk is this run. The record must keep its real numbers even
+    though the run failed. The *other* window — transcribe finished but the
+    write never happened — is pinned by the sibling test below, not here: this
+    fake emits all five terminal events before it raises.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        _fake_pipeline_with_transcript(directory, options, on_event)
+        raise RuntimeError("reconcile exploded")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    run = manager.start(meeting)
+    assert manager.wait(run.id, timeout=10).status == "failed"
+
+    cost = registry.get_run(run.id).progress["cost"]
+    assert cost["audio_seconds"] == 180.0
+    assert cost["chunks"] == 9
+    assert cost["chunks_reused"] == 7
+    assert cost["chunks_redecoded"] == 2
+    assert cost["jobs"] == 3
+
+
+def test_a_run_that_dies_before_writing_the_transcript_ignores_a_stale_one(
+    tmp_path,
+) -> None:
+    """RUN-01: transcribe's terminal event precedes its ``segments.json`` write.
+
+    A previous run left numbers in the workspace. This run emits every
+    transcribe event (the last one is emitted by the chunk pool before the
+    write) and then fails before writing its own transcript, so the stale
+    numbers must not become this run record.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    Workspace.at(meeting.workspace_path).write_segments(
+        {"a": []},
+        meta={
+            "backend": "fake",
+            "model": "fake-model",
+            "jobs": 8,
+            "chunk_seconds": 30.0,
+            "sources": {"a": {"duration": 9999.0}},
+            "chunk_report": {"reused": 111, "redecoded": 222},
+        },
+    )
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        for stage in ("ingest", "align", "transcribe"):
+            step = Progress(stage, 1, on_event)
+            step.start()
+            step.advance(source=stage)
+        raise RuntimeError("crashed before writing the transcript")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    run = manager.start(meeting)
+    assert manager.wait(run.id, timeout=10).status == "failed"
+
+    cost = registry.get_run(run.id).progress["cost"]
+    assert cost["stages"]["transcribe"] is not None  # this run did transcribe
+    assert cost["audio_seconds"] is None
+    assert cost["chunks"] is None
+    assert cost["chunks_reused"] is None
+    assert cost["jobs"] is None
+    assert cost["backend"] == "apple"  # the row backend, not the stale meta
+
+
+def test_an_interrupted_run_keeps_the_stages_it_completed(tmp_path) -> None:
+    """Reconciliation records the cost of a run the process died in."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    orphan = registry.create_run(meeting.id, backend="apple")
+    registry.update_run(
+        orphan.id, status="running", started_at="2026-01-01T00:00:00+00:00"
+    )
+    registry.add_run_event(
+        orphan.id,
+        JobEvent(stage="ingest", index=1, total=1, done=True, elapsed_s=2.5),
+    )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        cost = registry.get_run(orphan.id).progress["cost"]
+        assert cost["stages"]["ingest"] == 2.5
+        assert cost["stages"]["align"] is None
+        assert cost["total_wall_seconds"] is not None
+    finally:
+        manager.shutdown()
+
+
+def _completed_run(
+    registry,
+    meeting,
+    *,
+    backend: str,
+    model: str,
+    chunk_seconds: float,
+    audio_seconds: float,
+    wall_seconds: float,
+):
+    """Seed one completed run with the cost record the manager would write."""
+    run = registry.create_run(
+        meeting.id,
+        backend=backend,
+        model=model,
+        run_options={"chunk_seconds": chunk_seconds},
+    )
+    registry.update_run(
+        run.id,
+        status="done",
+        started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-01T00:05:00+00:00",
+        progress={
+            "status": "done",
+            "cost": {
+                "audio_seconds": audio_seconds,
+                "total_wall_seconds": wall_seconds,
+                "chunk_seconds": chunk_seconds,
+                "backend": backend,
+                "model": model,
+            },
+        },
+    )
+    return run
+
+
+def test_the_eta_projects_matching_history_onto_the_same_tape(tmp_path) -> None:
+    """RUN-01: a second run of the same tape gets a history-based estimate.
+
+    Seeded rows only and an explicit ``elapsed_s``, so the assertion never
+    depends on how long anything actually took.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    _completed_run(
+        registry,
+        meeting,
+        backend="apple",
+        model="small",
+        chunk_seconds=30.0,
+        audio_seconds=600.0,
+        wall_seconds=300.0,
+    )
+    # A newer run of the same tape with another model is three times faster on
+    # paper; a mismatched model must not move the projection.
+    _completed_run(
+        registry,
+        meeting,
+        backend="apple",
+        model="large",
+        chunk_seconds=30.0,
+        audio_seconds=600.0,
+        wall_seconds=60.0,
+    )
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        run_options={"chunk_seconds": 30.0},
+    )
+
+    # 600 audio seconds at 2 audio-seconds per wall second = 300s projected.
+    assert estimate_eta_s(registry, run, elapsed_s=0.0) == 300.0
+    assert estimate_eta_s(registry, run, elapsed_s=150.0) == 150.0
+
+
+def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
+    """No match, a mismatched model, or a different chunk size: no estimate."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        run_options={"chunk_seconds": 30.0},
+    )
+    # Nothing has completed yet: there is nothing to project.
+    assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
+
+    # A completed run with another model is not history for this run.
+    _completed_run(
+        registry,
+        meeting,
+        backend="apple",
+        model="large",
+        chunk_seconds=30.0,
+        audio_seconds=600.0,
+        wall_seconds=60.0,
+    )
+    assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
+
+    # Nor is a matching run at another chunk size.
+    _completed_run(
+        registry,
+        meeting,
+        backend="apple",
+        model="small",
+        chunk_seconds=10.0,
+        audio_seconds=600.0,
+        wall_seconds=300.0,
+    )
+    assert estimate_eta_s(registry, run, elapsed_s=0.0) is None

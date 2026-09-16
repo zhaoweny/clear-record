@@ -37,6 +37,8 @@ from clear_record.cli.workspace import Workspace
 from clear_record.core import EventSink, JobEvent, PipelineOptions
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
+from clear_record.core.pipeline import pipeline_spec
+from clear_record.service.diagnostics import machine_description
 from clear_record.service.glossary import (
     project_snapshot,
     snapshot_from_text,
@@ -63,6 +65,13 @@ TERMINAL_STATUSES = ("done", "failed", "stopped", "interrupted")
 #: process. It is stored in the run's ``error`` column so the console (and a
 #: diagnostics bundle) can show *why* the run is interrupted, not just that it is.
 RESTART_REASON = "the console restarted while this run was in flight"
+
+#: The pipeline stages, in declared order: a run's cost record times each one
+#: (the spec's "render" is the pipeline's final ``export`` stage).
+_STAGES: tuple[str, ...] = tuple(step.value for step in pipeline_spec().steps)
+
+#: How many of the newest completed runs a history-based ETA draws on.
+_ETA_HISTORY_LIMIT = 50
 
 
 def _now() -> str:
@@ -96,6 +105,160 @@ def collect_artifacts(workspace: Path) -> list[tuple[str, Path]]:
             ("export", path) for path in sorted(export_dir.iterdir()) if path.is_file()
         )
     return found
+
+
+def _number_or_none(value: object) -> float | None:
+    """A JSON number as a float (``None`` for anything else, bools included)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _int_or_none(value: object) -> int | None:
+    """A JSON integer (``None`` for anything else, bools included)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _parse_time(value: str | None) -> _dt.datetime | None:
+    """An ISO-8601 registry timestamp as an aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        parsed = _dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_dt.UTC)
+
+
+def _wall_seconds(started_at: str | None, ended_at: str | None) -> float | None:
+    """Wall seconds between two registry timestamps (``None`` when unknown)."""
+    started = _parse_time(started_at)
+    ended = _parse_time(ended_at)
+    if started is None or ended is None:
+        return None
+    seconds = (ended - started).total_seconds()
+    return round(seconds, 3) if seconds >= 0 else None
+
+
+def _elapsed_since(started_at: str | None) -> float:
+    """Wall seconds since a run started (0.0 while it has not started yet)."""
+    started = _parse_time(started_at)
+    if started is None:
+        return 0.0
+    return max(0.0, (_dt.datetime.now(_dt.UTC) - started).total_seconds())
+
+
+def _audio_seconds(meta: dict) -> float | None:
+    """Audio seconds processed, summed from the durations transcribe recorded."""
+    sources = meta.get("sources")
+    if not isinstance(sources, dict):
+        return None
+    total = 0.0
+    known = False
+    for source in sources.values():
+        duration = (
+            _number_or_none(source.get("duration"))
+            if isinstance(source, dict)
+            else None
+        )
+        if duration is not None and duration > 0:
+            total += duration
+            known = True
+    return round(total, 3) if known else None
+
+
+def _cost_of(run: PipelineRun) -> dict:
+    """The cost record a run persisted (``{}`` when it has none)."""
+    progress = run.progress if isinstance(run.progress, dict) else None
+    cost = progress.get("cost") if progress else None
+    return cost if isinstance(cost, dict) else {}
+
+
+def _options_chunk_seconds(run: PipelineRun) -> float | None:
+    """The chunk size the run resolved (its queued options), if recorded."""
+    options = run.run_options if isinstance(run.run_options, dict) else {}
+    return _number_or_none(options.get("chunk_seconds"))
+
+
+def _run_chunk_seconds(run: PipelineRun) -> float | None:
+    """The chunk size a run executes with: its cost record, else its options."""
+    recorded = _number_or_none(_cost_of(run).get("chunk_seconds"))
+    return recorded if recorded is not None else _options_chunk_seconds(run)
+
+
+def _same_seconds(left: float | None, right: float | None) -> bool:
+    """Two durations equal within the rounding a JSON round-trip keeps."""
+    if left is None or right is None:
+        return left is None and right is None
+    return abs(left - right) <= 1e-6
+
+
+def _tape_seconds(registry: Registry, run: PipelineRun) -> float | None:
+    """The meeting's newest recorded audio seconds (the tape it re-runs)."""
+    for candidate in registry.list_runs(run.meeting_id):
+        if candidate.id == run.id:
+            continue
+        value = _number_or_none(_cost_of(candidate).get("audio_seconds"))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def estimate_eta_s(
+    registry: Registry,
+    run: PipelineRun,
+    *,
+    audio_seconds: float | None = None,
+    elapsed_s: float | None = None,
+) -> float | None:
+    """History-based seconds remaining for a queued or running run (RUN-01).
+
+    The projection is **derived here, at display time**, from raw primitives:
+    completed runs whose ``(backend, model, chunk_seconds)`` match this run's
+    contribute their audio seconds and total wall seconds, which give the
+    audio-seconds-per-wall-second this machine sustains for this configuration.
+    The run's own tape duration is projected through that rate; the caller may
+    supply it, otherwise it comes from the meeting's newest record (the re-run
+    case: the tape a run re-runs is the meeting's).
+
+    ``None`` means "no estimate" — no matching history, no known tape duration,
+    or a run that is already terminal. The caller keeps its live stage-local
+    estimate in that case; this function never invents one.
+    """
+    if run.status not in ("queued", "running"):
+        return None
+    chunk_seconds = _run_chunk_seconds(run)
+    history_audio = 0.0
+    history_wall = 0.0
+    for candidate in registry.runs_with_status("done", limit=_ETA_HISTORY_LIMIT):
+        if candidate.id == run.id:
+            continue
+        if candidate.backend != run.backend or candidate.model != run.model:
+            continue
+        if not _same_seconds(_run_chunk_seconds(candidate), chunk_seconds):
+            continue
+        cost = _cost_of(candidate)
+        candidate_audio = _number_or_none(cost.get("audio_seconds"))
+        candidate_wall = _number_or_none(cost.get("total_wall_seconds"))
+        if candidate_audio is None or candidate_wall is None:
+            continue
+        if candidate_audio <= 0 or candidate_wall <= 0:
+            continue
+        history_audio += candidate_audio
+        history_wall += candidate_wall
+    if history_audio <= 0 or history_wall <= 0:
+        return None
+    if audio_seconds is None:
+        audio_seconds = _tape_seconds(registry, run)
+    total_audio = _number_or_none(audio_seconds)
+    if total_audio is None or total_audio <= 0:
+        return None
+    if elapsed_s is None:
+        elapsed_s = _elapsed_since(run.started_at)
+    projected = total_audio / (history_audio / history_wall)
+    return round(max(0.0, projected - elapsed_s), 3)
 
 
 def _default_pipeline(
@@ -203,8 +366,18 @@ class RunManager:
         for run in self._registry.runs_with_status("running"):
             if run.id in self._live:
                 continue
+            # The run never reached its own terminal transition, so this is
+            # where an interrupted run gets its cost record: the stages it did
+            # complete are still in its persisted event stream.
+            ended_at = _now()
             self._registry.update_run(
-                run.id, status="interrupted", ended_at=_now(), error=RESTART_REASON
+                run.id,
+                status="interrupted",
+                ended_at=ended_at,
+                error=RESTART_REASON,
+                progress=self._progress(
+                    run.id, "interrupted", RESTART_REASON, ended_at=ended_at
+                ),
             )
             meeting = self._registry.meeting_by_id(run.meeting_id)
             if meeting is not None and meeting.status == "running":
@@ -465,12 +638,13 @@ class RunManager:
         except Exception as exc:  # noqa: BLE001 - a run must not strand; the queue lives on
             error = f"{type(exc).__name__}: {exc}"
             try:
+                ended_at = _now()
                 self._registry.update_run(
                     run.id,
                     status="failed",
-                    ended_at=_now(),
+                    ended_at=ended_at,
                     error=error,
-                    progress=self._progress(run.id, "failed", error),
+                    progress=self._progress(run.id, "failed", error, ended_at=ended_at),
                 )
                 # The pipeline's own failure path sets this; a failure raised
                 # around that path must not leave the meeting "running".
@@ -531,12 +705,13 @@ class RunManager:
             self._pipeline(meeting.workspace_path, options, sink)
         except Exception as exc:  # noqa: BLE001 - recorded for the console, not hidden
             error = f"{type(exc).__name__}: {exc}"
+            ended_at = _now()
             self._registry.update_run(
                 run.id,
                 status="failed",
-                ended_at=_now(),
+                ended_at=ended_at,
                 error=error,
-                progress=self._progress(run.id, "failed", error),
+                progress=self._progress(run.id, "failed", error, ended_at=ended_at),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
             log_event(
@@ -556,11 +731,12 @@ class RunManager:
             return
 
         artifacts = self._register_artifacts(meeting, run.id)
+        ended_at = _now()
         self._registry.update_run(
             run.id,
             status="done",
-            ended_at=_now(),
-            progress=self._progress(run.id, "done"),
+            ended_at=ended_at,
+            progress=self._progress(run.id, "done", ended_at=ended_at),
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
         log_event(
@@ -589,12 +765,13 @@ class RunManager:
         self, run: PipelineRun, meeting: Meeting | None, error: str
     ) -> None:
         """Fail a queued run that cannot execute at all (e.g. its tape set is gone)."""
+        ended_at = _now()
         self._registry.update_run(
             run.id,
             status="failed",
-            ended_at=_now(),
+            ended_at=ended_at,
             error=error,
-            progress=self._progress(run.id, "failed", error),
+            progress=self._progress(run.id, "failed", error, ended_at=ended_at),
         )
         if meeting is not None:
             self._registry.set_meeting_status(meeting.id, "failed")
@@ -613,8 +790,21 @@ class RunManager:
             error=error,
         )
 
-    def _progress(self, run_id: int, status: str, error: str | None = None) -> dict:
-        """The recorded progress summary for a terminal transition."""
+    def _progress(
+        self,
+        run_id: int,
+        status: str,
+        error: str | None = None,
+        *,
+        ended_at: str | None = None,
+    ) -> dict:
+        """The recorded progress summary for a terminal transition, with its cost.
+
+        The cost sub-record (RUN-01) is written for **every** terminal outcome
+        — done, failed, interrupted — so a run that stopped early still says
+        which stages it completed. Ratios are never stored here: a display
+        derives them (see :func:`estimate_eta_s`).
+        """
         events = self._registry.list_run_events(run_id)
         last = events[-1] if events else None
         return {
@@ -626,7 +816,82 @@ class RunManager:
             "total": last.total if last else 0,
             "eta_s": last.eta_s if last else None,
             "error": error,
+            "cost": self._cost_record(run_id, ended_at or _now(), events),
         }
+
+    def _cost_record(self, run_id: int, ended_at: str, events: list[JobEvent]) -> dict:
+        """The raw cost primitives of a run that stopped (RUN-01).
+
+        The per-stage wall-clock is read back from the terminal event each stage
+        already emits (``JobEvent.elapsed_s``), so no stage needed new
+        instrumentation; the chunk economy and the audio seconds come from the
+        transcript meta the transcribe stage persists. A primitive the run never
+        produced stays ``None`` — the record is a measurement, not a guess.
+        """
+        row = self._registry.get_run(run_id)
+        stages: dict[str, float | None] = dict.fromkeys(_STAGES)
+        finished: set[str] = set()
+        for event in events:
+            if event.stage not in stages or event.elapsed_s is None:
+                continue
+            stages[event.stage] = event.elapsed_s
+            if event.done:
+                finished.add(event.stage)
+            else:
+                finished.discard(event.stage)
+        # ``segments.json`` is written at the **end** of the transcribe stage,
+        # and transcribe's own terminal event is emitted by the chunk pool
+        # *before* that write (``cli/stages.py``). Only a stage that runs
+        # strictly after the write proves the transcript on disk is this run's:
+        # reconcile and export both do. A run that finished transcribe and then
+        # died before the write would otherwise report the previous run's
+        # transcript as its own.
+        meta = (
+            self._segments_meta(row)
+            if "reconcile" in finished or "export" in finished
+            else {}
+        )
+        report = meta.get("chunk_report")
+        report = report if isinstance(report, dict) else {}
+        reused = _int_or_none(report.get("reused"))
+        redecoded = _int_or_none(report.get("redecoded"))
+        chunk_seconds = _number_or_none(meta.get("chunk_seconds"))
+        if chunk_seconds is None and row is not None:
+            chunk_seconds = _options_chunk_seconds(row)
+        return {
+            "stages": stages,
+            "audio_seconds": _audio_seconds(meta),
+            "chunks": (
+                reused + redecoded
+                if reused is not None and redecoded is not None
+                else None
+            ),
+            "chunks_reused": reused,
+            "chunks_redecoded": redecoded,
+            "backend": meta.get("backend") or (row.backend if row else None),
+            "model": meta.get("model") or (row.model if row else None),
+            "jobs": _int_or_none(meta.get("jobs")),
+            "chunk_seconds": chunk_seconds,
+            "total_wall_seconds": _wall_seconds(
+                row.started_at if row else None, ended_at
+            ),
+            "machine": machine_description(),
+        }
+
+    def _segments_meta(self, row: PipelineRun | None) -> dict:
+        """The transcript meta the run's workspace holds (``{}`` when none)."""
+        if row is None:
+            return {}
+        meeting = self._registry.meeting_by_id(row.meeting_id)
+        if meeting is None or not meeting.workspace_path:
+            return {}
+        try:
+            _, meta = Workspace.at(meeting.workspace_path).load_segments()
+        except (OSError, ValueError, TypeError, AttributeError):
+            # No transcript yet (or none this process can read): every
+            # transcript-derived primitive is simply unknown.
+            return {}
+        return meta if isinstance(meta, dict) else {}
 
     def _register_artifacts(
         self, meeting: Meeting, run_id: int
@@ -702,4 +967,5 @@ __all__ = [
     "RunState",
     "TERMINAL_STATUSES",
     "collect_artifacts",
+    "estimate_eta_s",
 ]

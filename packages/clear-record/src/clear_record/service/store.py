@@ -407,6 +407,8 @@ class Registry:
     def list_terms(
         self, project_slug: str | None = None, status: str | None = None
     ) -> list[GlossaryTerm]:
+        if status is not None and status not in TERM_STATUSES:
+            raise ValueError(f"status must be one of {TERM_STATUSES}, got {status!r}")
         clauses: list[str] = []
         params: list[object] = []
         if project_slug is not None:

@@ -2269,7 +2269,11 @@ def create_app(
             registry.require_project(slug)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
-        return [_out(term) for term in registry.list_terms(slug, status=status)]
+        try:
+            terms = registry.list_terms(slug, status=status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [_out(term) for term in terms]
 
     @app.post("/api/projects/{slug}/glossary", status_code=201)
     def add_term(slug: str, body: TermCreate) -> dict:

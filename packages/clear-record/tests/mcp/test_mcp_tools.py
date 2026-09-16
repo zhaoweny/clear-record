@@ -14,63 +14,34 @@ back actionable rather than as crashes.
 
 from __future__ import annotations
 
-import asyncio
-import json
 from pathlib import Path
 
-from mcp import Client
-from mcp.server import MCPServer
+import pytest
 
-from clear_record.core import Progress, RecordDocument, Segment, write_json
-from clear_record.mcp.server import TOOL_NAMES, build_server
+from clear_record.core import (
+    PipelineOptions,
+    Progress,
+    RecordDocument,
+    Segment,
+    write_json,
+)
+from clear_record.mcp.server import TOOL_NAMES, ServiceTools, build_server
 from clear_record.service import (
     AutoProbe,
     Meeting,
+    ModelNotOnDisk,
     Registry,
     RunManager,
     project_snapshot,
+    resolve_run,
 )
+from mcp_client import error_text as _error_text
+from mcp_client import names as _names
+from mcp_client import payload as _payload
 
 
 def _registry(tmp_path: Path) -> Registry:
     return Registry.open(db_path=tmp_path / "registry.sqlite3")
-
-
-async def _list_tool_names(server: MCPServer) -> set[str]:
-    async with Client(server) as client:
-        result = await client.list_tools()
-        return {tool.name for tool in result.tools}
-
-
-async def _call(server: MCPServer, name: str, arguments: dict | None = None):
-    async with Client(server) as client:
-        return await client.call_tool(name, arguments or {})
-
-
-def _names(server: MCPServer) -> set[str]:
-    return asyncio.run(_list_tool_names(server))
-
-
-def _result(server: MCPServer, name: str, arguments: dict | None = None):
-    return asyncio.run(_call(server, name, arguments))
-
-
-def _payload(server: MCPServer, name: str, arguments: dict | None = None):
-    result = _result(server, name, arguments)
-    assert not result.is_error, result.content
-    # A tool returning `dict` yields that dict; a tool returning `list[dict]`
-    # yields `{"result": [...]}` (the SDK's structured-output convention). Both
-    # survive a JSON round-trip, which is what the agent actually reads.
-    data = json.loads(json.dumps(result.structured_content))
-    if isinstance(data, dict) and set(data) == {"result"}:
-        return data["result"]
-    return data
-
-
-def _error_text(server: MCPServer, name: str, arguments: dict | None = None) -> str:
-    result = _result(server, name, arguments)
-    assert result.is_error, f"{name} unexpectedly succeeded: {result.content}"
-    return result.content[0].text
 
 
 def test_tool_surface_is_registered(tmp_path: Path) -> None:
@@ -250,7 +221,7 @@ def test_backend_failure_is_reported_by_run_status(tmp_path: Path) -> None:
 def test_unknown_run_ids_are_actionable(tmp_path: Path) -> None:
     server = build_server(_registry(tmp_path))
     assert "unknown run id 99" in _error_text(server, "run_status", {"run_id": 99})
-    assert "run id 99" in _error_text(server, "run_events", {"run_id": 99})
+    assert "unknown run id 99" in _error_text(server, "run_events", {"run_id": 99})
 
 
 def test_update_project_and_meeting_notes(tmp_path: Path) -> None:
@@ -526,17 +497,19 @@ def test_start_run_auto_model_not_on_disk_is_actionable(
     registry, _ = _runnable_meeting(tmp_path)
     server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
 
+    # The refusal is the service's ModelNotOnDisk; its structured fields are the
+    # stable contract, so assert those rather than the service's sentence. The
+    # adapter only translates it, and the model it names is still a fact.
+    with pytest.raises(ModelNotOnDisk) as excinfo:
+        resolve_run(PipelineOptions(), auto=True, directory=str(tmp_path))
+    assert excinfo.value.model == "medium"
+
     message = _error_text(
         server,
         "start_run",
         {"project": "ops", "meeting": "kickoff", "auto": True},
     )
-    # The wording belongs to the service and MCP delegates to it, so assert the
-    # facts the error must carry rather than the sentence. Pinning another
-    # module's prose is how this test broke once already: the service reworded
-    # its message and this copy silently became a lie about the behaviour.
-    assert "'medium'" in message
-    assert "never downloads" in message
+    assert "'medium'" in message  # names the model; the sentence is the service's
 
 
 def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
@@ -631,3 +604,60 @@ def test_start_run_defaults_to_the_project_glossary_snapshot(tmp_path: Path) -> 
     # The recorded identity is still readable after the run finishes.
     status = _payload(server, "run_status", {"run_id": run["id"]})
     assert status["options"]["glossary_sha256"] == snapshot.sha256
+
+
+def test_list_glossary_terms_rejects_an_unknown_status(tmp_path: Path) -> None:
+    """The status enum is validated by the service (store.list_terms)."""
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    server = build_server(registry)
+
+    message = _error_text(
+        server, "list_glossary_terms", {"project": "ops", "status": "bogus"}
+    )
+    assert "status must be one of" in message
+    assert "bogus" in message
+
+
+def test_run_events_replay_for_a_later_process(tmp_path: Path) -> None:
+    """A fresh manager (the next server process) replays the persisted stream."""
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.set_recording_set(meeting.id, [str(tape)])
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        progress = Progress("transcribe", 1, on_event)
+        progress.start()
+        progress.advance(source="a")
+
+    first = RunManager(registry, pipeline=fake_pipeline)
+    run = _payload(
+        build_server(registry, first),
+        "start_run",
+        {"project": "ops", "meeting": "kickoff"},
+    )
+    first.wait(run["id"], timeout=10)
+
+    # A second manager over the same registry models the next server process:
+    # the events are persisted, so run_events still pages them.
+    second = RunManager(registry, pipeline=fake_pipeline)
+    events = _payload(
+        build_server(registry, second), "run_events", {"run_id": run["id"]}
+    )
+    assert events["status"] == "done"
+    assert events["events"]
+
+
+def test_an_injected_manager_is_kept_even_when_falsy(tmp_path: Path) -> None:
+    """A falsy injected dependency must not be silently replaced."""
+
+    class FalsyManager:
+        def __bool__(self) -> bool:
+            return False
+
+    injected = FalsyManager()
+    tools_obj = ServiceTools(_registry(tmp_path), injected)  # type: ignore[arg-type]
+    assert tools_obj.manager is injected

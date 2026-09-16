@@ -8,16 +8,15 @@ outcome, and a bad kind or unknown draft comes back as an actionable
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
-
-from mcp import Client
-from mcp.server import MCPServer
 
 from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.mcp.server import TOOL_NAMES, build_server
 from clear_record.service import Registry, Runner, RunnerOutput, RunnerRequest
+from mcp_client import error_text as _error
+from mcp_client import names as _names
+from mcp_client import payload as _payload
 
 _ANSWERS: dict[str, dict] = {
     "glossary_collection": {
@@ -72,32 +71,12 @@ def _registry(tmp_path: Path) -> Registry:
     return registry
 
 
-async def _call(server: MCPServer, name: str, arguments: dict | None = None):
-    async with Client(server) as client:
-        return await client.call_tool(name, arguments or {})
-
-
-def _payload(server: MCPServer, name: str, arguments: dict | None = None):
-    result = asyncio.run(_call(server, name, arguments))
-    assert not result.is_error, result.content
-    data = json.loads(json.dumps(result.structured_content))
-    if isinstance(data, dict) and set(data) == {"result"}:
-        return data["result"]
-    return data
-
-
-def _error(server: MCPServer, name: str, arguments: dict | None = None) -> str:
-    result = asyncio.run(_call(server, name, arguments))
-    assert result.is_error, f"{name} unexpectedly succeeded: {result.content}"
-    return result.content[0].text
-
-
-def _server(tmp_path: Path) -> MCPServer:
+def _server(tmp_path: Path):
     return build_server(_registry(tmp_path), runner=StubRunner())
 
 
 def test_the_agent_tools_are_registered(tmp_path: Path) -> None:
-    names = asyncio.run(_tool_names(_server(tmp_path)))
+    names = _names(_server(tmp_path))
     for name in (
         "list_agent_drafts",
         "read_agent_draft",
@@ -106,12 +85,6 @@ def test_the_agent_tools_are_registered(tmp_path: Path) -> None:
         "reject_agent_draft",
     ):
         assert name in TOOL_NAMES and name in names
-
-
-async def _tool_names(server: MCPServer) -> set[str]:
-    async with Client(server) as client:
-        result = await client.list_tools()
-        return {tool.name for tool in result.tools}
 
 
 def test_list_agent_drafts_reports_the_kinds_and_an_empty_start(
@@ -210,7 +183,11 @@ def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
         "run_agent_task",
         {"project": "ops", "meeting": "kickoff", "kind": "summarize"},
     )
-    assert "unknown agent task kind" in text
+    # The service's own AgentTaskError carries the kind and the known kinds;
+    # the adapter no longer pre-checks, so assert those facts, not its sentence.
+    assert "unknown task kind" in text
+    assert "summarize" in text
+    assert "glossary_collection" in text
 
     text = _error(
         server,

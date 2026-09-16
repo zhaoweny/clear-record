@@ -39,12 +39,15 @@ Date: 2026-09-15
   mitigation.
 - [DECISION] Deployment shapes (systemd / launchd / container) are documented as
   **how to run the backend**, never as an auth story.
-- [DECISION: owner, 2026-09-15] **Honour `X-Forwarded-*`, but only from a
-  configured trusted proxy** (`CR_TRUSTED_PROXIES`) — with a **quick path for
+- [OPEN: owner, 2026-09-15] **Honour `X-Forwarded-*` only from a configured
+  trusted proxy (`CR_TRUSTED_PROXIES`) — deferred, not built.** The owner's steer
+  was to accept forwarded headers from a declared proxy, with a **quick path for
   Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
-  instead of asking the operator to declare it. Trusting forwarded headers from
-  *anything else* remains a risk to the request guard, and the bind stays
-  localhost-only; the UI's relative URLs mean nothing is lost by refusing.
+  instead of asking the operator to declare it. No code reads `X-Forwarded-*` or
+  `CR_TRUSTED_PROXIES` today, so trusting forwarded headers from *anything else*
+  remains a risk to the request guard; the bind stays localhost-only, and the UI's
+  relative URLs mean nothing is lost by refusing. Revisit when a proxy deployment
+  genuinely needs the client's scheme or host.
 
 ## Rationale
 

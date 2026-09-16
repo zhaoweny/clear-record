@@ -57,13 +57,15 @@ Date: 2026-09-14
 - [DECISION] The server is a **thin adapter over `clear_record.service`**. Each
   tool is one service call plus argument marshalling; validation, status
   transitions and event recording stay in the service. The surface:
-  - projects: `list_projects`, `get_project`;
+  - projects: `list_projects`, `get_project`, `update_project`;
   - glossary: `list_glossary_terms`, `add_glossary_term`,
     `update_glossary_term`;
   - meetings: `list_meetings`, `get_meeting`, `create_meeting`,
-    `set_meeting_tapes`;
+    `update_meeting`, `set_meeting_tapes`;
   - runs: `start_run`, `list_runs`, `run_status`, `run_events`;
-  - artifacts: `list_artifacts`.
+  - artifacts: `list_artifacts`, `read_transcript`;
+  - agent drafts (ADR-0018): `list_agent_drafts`, `read_agent_draft`,
+    `run_agent_task`, `accept_agent_draft`, `reject_agent_draft`.
 - [DECISION] Tools return **structured, JSON-serialisable** values (annotated
   `dict`/`list[dict]`), so the SDK publishes an output schema and an agent gets
   machine-readable data. Anticipated failures (unknown project/meeting, no tape
@@ -134,8 +136,9 @@ Date: 2026-09-14
   No-backend-available and `--auto`'s model-not-on-disk come back as
   `ToolError`s. Closes the earlier open question on run options.
 - [OPEN] Run **stop** is not exposed: `RunManager` has no stop operation yet.
-- [OPEN] Agent-task tools (create/list, fetch context, submit result) are not in
-  this slice because the service's agent runner (ticket 07) and tasks (08–10)
-  are not built yet; they join this surface when they land.
+- [FACT] The agent-task tools (**run a task, list/read a draft, accept or
+  reject it**) **landed**: the service's runner and the three tasks (ADR-0018)
+  are built and exposed above. This closes the earlier `[OPEN]` that had them
+  "join this surface when they land".
 - Revisit if a client needs a network transport, or if the extra proves to be
   friction.

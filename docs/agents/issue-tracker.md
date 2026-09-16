@@ -52,5 +52,5 @@ path:
 Enforced by `packages/clear-record/tests/test_tracker_refs.py` — the
 `test_layering.py` pattern, so `just verify` and CI reject a new reference with
 no separate job. Extending the guard to another gitignored class is one entry in
-that test's `IGNORED_PREFIXES`, plus a ruling on which files may legitimately
+that test's `IGNORED_PATH_ROOTS`, plus a ruling on which files may legitimately
 name it.

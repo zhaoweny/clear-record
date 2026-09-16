@@ -100,6 +100,7 @@ def _seed(
     With ``cost`` the run is ``done`` and carries the RUN-01 record; without it
     the run stays ``queued`` with no cost record (the old-run case).
     """
+    tmp_path.mkdir(parents=True, exist_ok=True)
     registry = registry or Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project("Ops")
     workspace = _workspace(tmp_path, memory=memory)
@@ -119,10 +120,12 @@ def _seed(
 
 
 def test_the_four_axes_are_present_and_correctly_shaped(tmp_path) -> None:
+    # The workspace meta holds a LATER run's peak; the axis must report this
+    # run's own cost-record measurement, not the workspace's.
     registry, run, workspace = _seed(
         tmp_path,
-        memory={"peak_rss_bytes": 512 * 1024 * 1024},
-        cost=dict(COST),
+        memory={"peak_rss_bytes": 1024 * 1024 * 1024},
+        cost={**COST, "peak_rss_bytes": 512 * 1024 * 1024},
         meta=dict(AUTO_META),
     )
 
@@ -184,21 +187,42 @@ def test_accuracy_is_wer_when_a_reference_is_configured(tmp_path) -> None:
 
 
 def test_an_unmeasurable_memory_axis_is_none_with_a_reason_not_zero(tmp_path) -> None:
-    # A recorded zero is not a measurement: the axis must stay unknown.
-    _registry, run, workspace = _seed(tmp_path, memory={"peak_rss_bytes": 0})
+    # A recorded zero is not a measurement: both the run's own cost record
+    # and the workspace meta must stay unknown.
+    _registry, run, workspace = _seed(
+        tmp_path,
+        memory={"peak_rss_bytes": 512 * 1024 * 1024},
+        cost={**COST, "peak_rss_bytes": 0},
+    )
     axes = run_axes(run, directory=str(workspace.root))
     assert axes["memory"]["peak_rss_bytes"] is None
     assert axes["memory"]["peak_rss_bytes"] != 0
     assert axes["memory"]["reason"] == benchmark.NO_MEMORY
 
+    _registry, run, workspace = _seed(tmp_path / "dir", memory={"peak_rss_bytes": 0})
+    directory_axes = run_axes(None, directory=str(workspace.root))
+    assert directory_axes["memory"]["peak_rss_bytes"] is None
+    assert directory_axes["memory"]["reason"] == benchmark.NO_MEMORY
+
 
 def test_the_stages_own_memory_reason_is_passed_through(tmp_path) -> None:
     reason = "no decoder worker ran: every chunk was reused from the cache"
+    # Run-scoped: the cost record carries the reason (and the workspace holds
+    # a stale peak, which must not win).
     _registry, run, workspace = _seed(
-        tmp_path, memory={"peak_rss_bytes": None, "peak_rss_reason": reason}
+        tmp_path,
+        memory={"peak_rss_bytes": 512 * 1024 * 1024},
+        cost={**COST, "peak_rss_reason": reason},
     )
     axes = run_axes(run, directory=str(workspace.root))
     assert axes["memory"] == {"peak_rss_bytes": None, "reason": reason}
+
+    # No run: the same reason is read from the workspace meta.
+    _registry, run, workspace = _seed(
+        tmp_path / "dir", memory={"peak_rss_reason": reason}
+    )
+    directory_axes = run_axes(None, directory=str(workspace.root))
+    assert directory_axes["memory"] == {"peak_rss_bytes": None, "reason": reason}
 
 
 def test_a_run_with_no_cost_record_yields_unknown_axes_and_never_raises(
@@ -229,6 +253,102 @@ def test_a_run_with_no_cost_record_yields_unknown_axes_and_never_raises(
     broken.mkdir()
     (broken / "record.json").write_text("{not json", encoding="utf-8")
     assert run_axes(None, directory=broken)["accuracy"]["reason"] == benchmark.NO_RECORD
+
+
+def test_a_run_that_failed_does_not_borrow_a_stale_workspace_peak(tmp_path) -> None:
+    """F1: the memory axis is the RUN's measurement, never the workspace's.
+
+    A run that died before transcribe has no peak of its own; the workspace
+    still holds the previous run's meta, and the axis must say unknown rather
+    than show that number next to its own failure.
+    """
+    _registry, run, workspace = _seed(
+        tmp_path,
+        memory={"peak_rss_bytes": 512 * 1024 * 1024},
+        cost={
+            "stages": {"ingest": 1.0},
+            "peak_rss_bytes": None,
+            "peak_rss_reason": None,
+        },
+    )
+
+    axes = run_axes(run, directory=str(workspace.root))
+
+    assert axes["memory"]["peak_rss_bytes"] is None
+    assert axes["memory"]["reason"] == benchmark.NO_MEMORY
+    assert axes["memory"]["peak_rss_bytes"] != 512 * 1024 * 1024
+
+
+def test_a_later_run_does_not_erase_an_earlier_runs_memory(tmp_path) -> None:
+    """F1: two runs over one workspace each report their own measurement.
+
+    A scoped re-run that reused every chunk writes peak_rss_bytes=None + a
+    reason over the first run's meta; the first run's axis must keep its own
+    peak from its own cost record.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    registry.create_project("Ops")
+    first_workspace = _workspace(tmp_path)
+    meeting = registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(first_workspace.root)
+    )
+    first = registry.create_run(meeting.id, backend="apple", model="small")
+    registry.update_run(
+        first.id,
+        status="done",
+        progress={"cost": {**COST, "peak_rss_bytes": 512 * 1024 * 1024}},
+    )
+    reason = "no decoder worker ran: every chunk was reused from the cache"
+    # The re-run overwrites segments.json with its own (unknown) measurement.
+    first_workspace.write_segments(
+        {"a": []}, {"sources": {}, "peak_rss_bytes": None, "peak_rss_reason": reason}
+    )
+    second = registry.create_run(meeting.id, backend="apple", model="small")
+    registry.update_run(
+        second.id,
+        status="done",
+        progress={"cost": {**COST, "peak_rss_reason": reason}},
+    )
+
+    first_axes = run_axes(
+        registry.get_run(first.id), directory=str(first_workspace.root)
+    )
+    second_axes = run_axes(
+        registry.get_run(second.id), directory=str(first_workspace.root)
+    )
+
+    assert first_axes["memory"] == {"peak_rss_bytes": 512 * 1024 * 1024, "reason": None}
+    assert second_axes["memory"] == {"peak_rss_bytes": None, "reason": reason}
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [[], {}, "not a document", {"sources": "not a mapping"}],
+    ids=["list", "no-sources", "string", "sources-not-a-mapping"],
+)
+def test_a_malformed_workspace_yields_unknown_axes_and_never_raises(
+    tmp_path, segments
+) -> None:
+    """F4: a readable-but-malformed workspace is a reason, not a traceback.
+
+    ``segments.json = []`` (or a bare string) and ``record.json = []`` used to
+    raise AttributeError inside the axes -- a 500 on the meetings tab.
+    """
+    import json
+
+    directory = tmp_path / "bad"
+    directory.mkdir()
+    (directory / "record.json").write_text("[]", encoding="utf-8")
+    (directory / "segments.json").write_text(json.dumps(segments), encoding="utf-8")
+
+    axes = run_axes(None, directory=directory)
+
+    assert set(axes) == {"accuracy", "speed", "memory", "fit"}
+    assert axes["accuracy"]["reason"] == benchmark.NO_RECORD
+    assert axes["memory"]["peak_rss_bytes"] is None
+    assert axes["memory"]["reason"] == benchmark.NO_MEMORY
+    assert axes["speed"]["reason"] == benchmark.NO_RUN
+    assert axes["fit"]["reason"] == benchmark.NO_RUN
 
 
 class _FakeBackend(BackendBase):
@@ -310,11 +430,14 @@ def test_a_fake_backend_run_yields_every_axis(tmp_path, monkeypatch) -> None:
     assert axes["fit"]["reason"] is None
     assert axes["fit"]["facts"]["backend"] == "fake"
 
-    # The transcribe stage recorded the same unknown-with-reason pair the axis
-    # reads -- the CLI-side measurement is what the service renders.
+    # The transcribe stage recorded the unknown-with-reason pair in the
+    # workspace, and the run-scoped cost record carries that same pair --
+    # which is what the axis reads (F1: never another run's workspace meta).
     _per_source, meta = Workspace.at(directory).load_segments()
     assert meta["peak_rss_bytes"] is None
     assert meta["peak_rss_reason"] == axes["memory"]["reason"]
+    assert row.progress["cost"]["peak_rss_bytes"] is None
+    assert row.progress["cost"]["peak_rss_reason"] == axes["memory"]["reason"]
 
 
 def test_the_worker_sampler_measures_a_live_process(tmp_path) -> None:
@@ -350,8 +473,9 @@ def test_the_bench_command_renders_the_service_values(tmp_path) -> None:
     _registry, run, workspace = _seed(
         tmp_path,
         registry=registry,
-        memory={"peak_rss_bytes": 64 * 1024 * 1024},
-        cost=dict(COST),
+        # A stale workspace peak: the CLI must print the run's own 64 MiB.
+        memory={"peak_rss_bytes": 512 * 1024 * 1024},
+        cost={**COST, "peak_rss_bytes": 64 * 1024 * 1024},
         meta=dict(AUTO_META),
     )
     axes = run_axes(registry.get_run(run.id), directory=str(workspace.root))
@@ -365,6 +489,7 @@ def test_the_bench_command_renders_the_service_values(tmp_path) -> None:
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == benchmark.render_axes(axes)
     assert "3.00x realtime" in result.output
+    assert "64.0 MiB" in result.output
     assert "--auto chose model, profile" in result.output
 
 
@@ -377,9 +502,17 @@ def test_the_bench_command_reports_a_workspace_without_a_run(tmp_path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "accuracy: coverage 0.9000" in result.output
-    # No run record: speed and fit say so instead of inventing a number.
-    assert "speed: unknown" in result.output
-    assert "fit: unknown" in result.output
+    # No run record: speed and fit say so -- with neutral wording, not as if
+    # a run existed and simply lacked a cost record.
+    assert (
+        "speed: unknown -- there is no run record, so this axis is unknown"
+        in result.output
+    )
+    assert "the run recorded no cost" not in result.output
+    assert (
+        "fit: unknown -- there is no run record, so this axis is unknown"
+        in result.output
+    )
 
     missing = CliRunner().invoke(
         group,
@@ -392,6 +525,28 @@ def test_the_bench_command_reports_a_workspace_without_a_run(tmp_path) -> None:
         ],
     )
     assert missing.exit_code == 2
+
+
+def test_a_missing_chunk_size_renders_a_bare_dash(tmp_path) -> None:
+    """F6: a unit must never be glued to a dash ("chunk=-s")."""
+    data_dir = tmp_path / "data"
+    registry = Registry.open(data_dir=data_dir)
+    _registry, run, _workspace_dir = _seed(
+        tmp_path,
+        registry=registry,
+        cost={key: value for key, value in COST.items() if key != "chunk_seconds"},
+        meta=dict(AUTO_META),
+    )
+    group = click.Group("clear-record")
+    benchmark.register(group)
+
+    result = CliRunner().invoke(
+        group, ["bench", "--run-id", str(run.id), "--data-dir", str(data_dir)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "chunk=-" in result.output
+    assert "chunk=-s" not in result.output
 
 
 def test_the_bench_command_is_declared_as_an_entry_point() -> None:

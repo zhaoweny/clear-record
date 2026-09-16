@@ -562,9 +562,11 @@ def _empty_scope_message(scope: ChunkScope, durations: dict[str, float]) -> str:
 
 # --- what the stage's workers cost in memory ------------------------------- #
 #: How often the transcribe stage reads its live worker processes' RSS while
-#: the chunk pool runs. The workers are process-isolated and long-lived (one
-#: chunk takes seconds of wall time), so a sample every fraction of a second is
-#: cheap and still catches each worker's plateau.
+#: the chunk pool runs. Each read is a high-water mark as of that read, so the
+#: running maximum over samples is what tracks a worker's peak; growth in the
+#: last fraction of a second before a worker exits is missed. The workers are
+#: long-lived (one chunk takes seconds of wall time), so a sample every
+#: fraction of a second is cheap.
 _RSS_SAMPLE_INTERVAL_S = 0.2
 
 #: Why the stage's peak worker memory is unknown. These are message IDs
@@ -581,8 +583,9 @@ _UNMEASURABLE_PLATFORM = deferred(
 
 
 #: macOS answers through libproc -- the same kernel call ps itself makes. The
-#: v4 flavor carries the process's **lifetime** peak, so one successful read is
-#: the worker's peak and a sampling gap cannot hide it.
+#: v4 flavor carries the process's **lifetime** high-water mark as of the read,
+#: so a read late in the worker's life is close to its peak; the maximum over
+#: the sampler's reads is what tracks the true peak.
 _RUSAGE_INFO_V4 = 4
 #: libproc writes the whole v4 struct; the buffer is deliberately larger than
 #: the fields declared below, so a longer or padded tail cannot overrun it.
@@ -598,8 +601,9 @@ _LIBPROC_RESOLVED = False
 class _RusageInfoV4(ctypes.Structure):
     """The macOS ``rusage_info_v4`` fields this module reads.
 
-    Declared through ``ri_lifetime_max_phys_footprint`` -- the process's peak
-    physical footprint, macOS's answer to a worker's peak RSS. The struct's
+    Declared through ``ri_lifetime_max_phys_footprint`` -- the process's
+    physical-footprint high-water mark as of the read, macOS's answer to a
+    worker's peak RSS. The struct's
     tail is deliberately not declared: the call writes into a buffer this
     module sizes (:data:`_RUSAGE_BUFFER_BYTES`), never into ``sizeof`` of this.
     """
@@ -659,7 +663,7 @@ def _libproc_rusage():
 
 
 def _linux_worker_rss_bytes(pid: int) -> int | None:
-    """A Linux worker's peak resident memory: /proc's own high-water mark."""
+    """A Linux worker's resident high-water mark as of the read (VmHWM)."""
     try:
         status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
     except OSError:
@@ -674,7 +678,7 @@ def _linux_worker_rss_bytes(pid: int) -> int | None:
 
 
 def _darwin_worker_rss_bytes(pid: int) -> int | None:
-    """A macOS worker's peak physical footprint, through libproc."""
+    """A macOS worker's footprint high-water mark as of the read, via libproc."""
     rusage = _libproc_rusage()
     if rusage is None:
         return None
@@ -691,13 +695,15 @@ def _darwin_worker_rss_bytes(pid: int) -> int | None:
 
 
 def worker_rss_bytes(pid: int) -> int | None:
-    """One live worker process's peak memory (bytes), if the OS reports it.
+    """One live worker process's memory high-water mark (bytes), if reported.
 
     Both supported platforms read the kernel directly, so this measurement adds
     no child process of its own: Linux's /proc carries the process's own
     high-water mark (VmHWM), and macOS answers with libproc's lifetime peak
-    physical footprint. Either way one successful read is the worker's peak. A
-    platform with neither returns None, and the stage reports the axis as
+    physical footprint. **Both are the mark as of the read**, not the final
+    peak of a process that is still running: growth after the last read of a
+    worker is not seen, so the stage's value is the maximum over its reads.
+    A platform with neither returns None, and the stage reports the axis as
     unknown rather than as zero.
     """
     if sys.platform.startswith("linux"):
@@ -719,11 +725,13 @@ class WorkerRssSampler:
     through the pool's own :class:`CancellableProcessRunner`, so reading that
     runner's live children measures the **transcribe stage** and nothing else --
     never another pool's work and never the parent process's own memory. Each
-    read is the worker's own peak (see :func:`worker_rss_bytes`), so the
-    sampler exists to read every worker before it exits, not to track a
-    plateau. It never records a zero: a read that comes back empty (a worker
-    that already exited, a platform that cannot measure) contributes nothing,
-    and the stage reports the axis as unknown with a reason instead.
+    read is a worker's high-water mark as of that read (see
+    :func:`worker_rss_bytes`), so the **maximum over reads** is what tracks
+    the peak; the point of reading repeatedly is to see every worker before it
+    exits, since the mark of a gone process cannot be read. It never records a
+    zero: a read that comes back empty (a worker that already exited, a
+    platform that cannot measure) contributes nothing, and the stage reports
+    the axis as unknown with a reason instead.
     """
 
     def __init__(
@@ -741,7 +749,7 @@ class WorkerRssSampler:
 
     @property
     def peak_bytes(self) -> int | None:
-        """The largest worker RSS read so far (None: nothing measured yet)."""
+        """The largest worker high-water mark read so far (None: unmeasured)."""
         with self._lock:
             return self._peak_bytes
 

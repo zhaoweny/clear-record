@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 21:11+0800\n"
+"POT-Creation-Date: 2026-09-16 21:33+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -251,19 +251,19 @@ msgid ""
 "would re-decode nothing. Widen the range or drop the scope."
 msgstr "[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的任何片段；不会重新解码任何内容。请放宽范围或去掉该范围。"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:573
+#: packages/clear-record/src/clear_record/cli/transcription.py:575
 msgid "no decoder worker ran: every chunk was reused from the cache"
 msgstr "没有解码工作进程运行：所有分块均复用了缓存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:576
+#: packages/clear-record/src/clear_record/cli/transcription.py:578
 msgid "no decoder worker's memory could be sampled during the transcribe stage"
 msgstr "转写阶段无法采样任何解码工作进程的内存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:579
+#: packages/clear-record/src/clear_record/cli/transcription.py:581
 msgid "peak worker memory is not measurable on this platform"
 msgstr "该平台无法测量工作进程峰值内存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:847
+#: packages/clear-record/src/clear_record/cli/transcription.py:855
 #, python-brace-format
 msgid ""
 "[transcribe] backend '{backend}' cannot honour decoder option(s): "
@@ -541,104 +541,104 @@ msgid "the run recorded no worker memory"
 msgstr "该运行未记录工作进程内存"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:51
-msgid "there is no run record to explain"
-msgstr "没有可解释的运行记录"
+msgid "there is no run record, so this axis is unknown"
+msgstr "没有运行记录，因此该指标未知"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:217
+#: packages/clear-record/src/clear_record/service/benchmark.py:263
 #, python-brace-format
 msgid "[bench] accuracy: WER {wer} (similarity {similarity})"
 msgstr "[bench] 准确度：WER {wer}（相似度 {similarity}）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:225
+#: packages/clear-record/src/clear_record/service/benchmark.py:271
 #, python-brace-format
 msgid ""
 "[bench] accuracy: coverage {coverage}, mean confidence {confidence}, "
 "{words} words"
 msgstr "[bench] 准确度：覆盖率 {coverage}，平均置信度 {confidence}，{words} 个词"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:239
+#: packages/clear-record/src/clear_record/service/benchmark.py:285
 #, python-brace-format
 msgid "[bench] speed: {rate}x realtime ({audio}s audio / {wall}s wall)"
 msgstr "[bench] 速度：{rate} 倍速（音频 {audio} 秒 / 墙钟 {wall} 秒）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:252
+#: packages/clear-record/src/clear_record/service/benchmark.py:298
 #, python-brace-format
 msgid ""
 "[bench] memory: {mib} MiB peak across the transcribe stage's decoder "
 "workers"
 msgstr "[bench] 内存：转写阶段解码工作进程的峰值 {mib} MiB"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:266
+#: packages/clear-record/src/clear_record/service/benchmark.py:312
 #, python-brace-format
 msgid "[bench] fit: --auto chose {chose}"
 msgstr "[bench] 适配：--auto 选择了 {chose}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:267
+#: packages/clear-record/src/clear_record/service/benchmark.py:313
 #: packages/clear-record/src/clear_record/web/templates/_run.html:61
 msgid "nothing (chosen by hand)"
 msgstr "无（人工选择）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:273
+#: packages/clear-record/src/clear_record/service/benchmark.py:319
 #, python-brace-format
 msgid ""
 "[bench] fit facts: backend={backend} model={model} language={language} "
-"profile={profile} jobs={jobs} chunk={chunk}s"
+"profile={profile} jobs={jobs} chunk={chunk}"
 msgstr ""
 "[bench] 适配事实：backend={backend} model={model} language={language} "
-"profile={profile} jobs={jobs} chunk={chunk} 秒"
+"profile={profile} jobs={jobs} chunk={chunk}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:290
+#: packages/clear-record/src/clear_record/service/benchmark.py:336
 #, python-brace-format
 msgid "[bench] {axis}: unknown -- {reason}"
 msgstr "[bench] {axis}：未知 -- {reason}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:292
+#: packages/clear-record/src/clear_record/service/benchmark.py:338
 msgid "no reason was recorded"
 msgstr "未记录原因"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:316
+#: packages/clear-record/src/clear_record/service/benchmark.py:363
 msgid "pass either --run-id or --meeting-id, not both"
 msgstr "请传入 --run-id 或 --meeting-id，二者不可同时使用"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:318
+#: packages/clear-record/src/clear_record/service/benchmark.py:365
 msgid "pass --directory or a run id, not both"
 msgstr "请传入 --directory 或运行 ID，二者不可同时使用"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:321
+#: packages/clear-record/src/clear_record/service/benchmark.py:368
 #, python-brace-format
 msgid "{path} is not a readable reference transcript"
 msgstr "{path} 不是可读取的参考转写文本"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:331
+#: packages/clear-record/src/clear_record/service/benchmark.py:378
 #, python-brace-format
 msgid "no registry at {path}: there is no run to measure"
 msgstr "{path} 处没有注册表：没有可测量的运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:340
+#: packages/clear-record/src/clear_record/service/benchmark.py:387
 msgid "no run found in the registry"
 msgstr "注册表中未找到运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:361
+#: packages/clear-record/src/clear_record/service/benchmark.py:408
 msgid "show one run's four axes: accuracy, speed, memory, fit"
 msgstr "显示单次运行的四个指标：准确度、速度、内存、适配"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:363
+#: packages/clear-record/src/clear_record/service/benchmark.py:410
 msgid "a run to measure"
 msgstr "要测量的运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:368
+#: packages/clear-record/src/clear_record/service/benchmark.py:415
 msgid "the meeting whose latest run to measure"
 msgstr "要测量其最近一次运行的会议"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:374
+#: packages/clear-record/src/clear_record/service/benchmark.py:421
 msgid "a workspace to measure without a run record"
 msgstr "在没有运行记录时测量的工作区"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:379
+#: packages/clear-record/src/clear_record/service/benchmark.py:426
 msgid "a reference transcript file to compare (WER/similarity)"
 msgstr "用于对比的参考转写文本文件（WER/相似度）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:387
+#: packages/clear-record/src/clear_record/service/benchmark.py:434
 msgid "override the app data directory (default: CR_DATA_DIR / platform dir)"
 msgstr "覆盖应用数据目录（默认：CR_DATA_DIR / 平台目录）"
 
@@ -1021,188 +1021,188 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:173
-#: packages/clear-record/src/clear_record/web/app.py:1309
+#: packages/clear-record/src/clear_record/web/app.py:183
+#: packages/clear-record/src/clear_record/web/app.py:1319
 msgid "Models"
 msgstr "模型"
 
-#: packages/clear-record/src/clear_record/web/app.py:174
+#: packages/clear-record/src/clear_record/web/app.py:184
 msgid "Backends"
 msgstr "后端"
 
-#: packages/clear-record/src/clear_record/web/app.py:175
+#: packages/clear-record/src/clear_record/web/app.py:185
 #: packages/clear-record/src/clear_record/web/templates/setup.html:36
 msgid "Agent"
 msgstr "智能体"
 
-#: packages/clear-record/src/clear_record/web/app.py:176
+#: packages/clear-record/src/clear_record/web/app.py:186
 msgid "MCP"
 msgstr "MCP"
 
-#: packages/clear-record/src/clear_record/web/app.py:177
+#: packages/clear-record/src/clear_record/web/app.py:187
 msgid "Webhooks"
 msgstr "Webhook"
 
-#: packages/clear-record/src/clear_record/web/app.py:178
+#: packages/clear-record/src/clear_record/web/app.py:188
 msgid "Storage"
 msgstr "存储"
 
-#: packages/clear-record/src/clear_record/web/app.py:179
+#: packages/clear-record/src/clear_record/web/app.py:189
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
 msgid "Status"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/app.py:460
+#: packages/clear-record/src/clear_record/web/app.py:470
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:465
+#: packages/clear-record/src/clear_record/web/app.py:475
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:609
+#: packages/clear-record/src/clear_record/web/app.py:619
 msgid "Not configured"
 msgstr "未配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:611
+#: packages/clear-record/src/clear_record/web/app.py:621
 msgid "Configuration problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:613
+#: packages/clear-record/src/clear_record/web/app.py:623
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:615
-#: packages/clear-record/src/clear_record/web/app.py:626
+#: packages/clear-record/src/clear_record/web/app.py:625
+#: packages/clear-record/src/clear_record/web/app.py:636
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
 msgid "No delivery yet"
 msgstr "尚未投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:616
+#: packages/clear-record/src/clear_record/web/app.py:626
 msgid "Configured"
 msgstr "已配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:621
+#: packages/clear-record/src/clear_record/web/app.py:631
 msgid "Config problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:623
+#: packages/clear-record/src/clear_record/web/app.py:633
 msgid "Failing"
 msgstr "投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:625
-#: packages/clear-record/src/clear_record/web/app.py:661
+#: packages/clear-record/src/clear_record/web/app.py:635
+#: packages/clear-record/src/clear_record/web/app.py:671
 msgid "Delivered"
 msgstr "已投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:663
+#: packages/clear-record/src/clear_record/web/app.py:673
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:1019
+#: packages/clear-record/src/clear_record/web/app.py:1029
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:1021
+#: packages/clear-record/src/clear_record/web/app.py:1031
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/app.py:1023
+#: packages/clear-record/src/clear_record/web/app.py:1033
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/app.py:1025
+#: packages/clear-record/src/clear_record/web/app.py:1035
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/app.py:1027
+#: packages/clear-record/src/clear_record/web/app.py:1037
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/app.py:1029
+#: packages/clear-record/src/clear_record/web/app.py:1039
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/app.py:1030
+#: packages/clear-record/src/clear_record/web/app.py:1040
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:1056
+#: packages/clear-record/src/clear_record/web/app.py:1066
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/app.py:1170
+#: packages/clear-record/src/clear_record/web/app.py:1180
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1305
+#: packages/clear-record/src/clear_record/web/app.py:1315
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/app.py:1306
+#: packages/clear-record/src/clear_record/web/app.py:1316
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/app.py:1307
+#: packages/clear-record/src/clear_record/web/app.py:1317
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/app.py:1308
+#: packages/clear-record/src/clear_record/web/app.py:1318
 msgid "Config"
 msgstr "配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:1436
+#: packages/clear-record/src/clear_record/web/app.py:1446
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1487
+#: packages/clear-record/src/clear_record/web/app.py:1497
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1518
+#: packages/clear-record/src/clear_record/web/app.py:1528
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1753
+#: packages/clear-record/src/clear_record/web/app.py:1763
 #, python-brace-format
 msgid "No draft {run_id} for this meeting."
 msgstr "此会议没有草稿 {run_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1933
-#: packages/clear-record/src/clear_record/web/app.py:1952
+#: packages/clear-record/src/clear_record/web/app.py:1943
+#: packages/clear-record/src/clear_record/web/app.py:1962
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:2151
-#: packages/clear-record/src/clear_record/web/app.py:2195
+#: packages/clear-record/src/clear_record/web/app.py:2161
+#: packages/clear-record/src/clear_record/web/app.py:2205
 msgid "The endpoint did not answer a test call."
 msgstr "该端点未响应测试调用。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2163
+#: packages/clear-record/src/clear_record/web/app.py:2173
 #, python-brace-format
 msgid "Recorded {endpoint} in {path}."
 msgstr "已将 {endpoint} 记录到 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2187
+#: packages/clear-record/src/clear_record/web/app.py:2197
 msgid "The model could not be pulled."
 msgstr "无法拉取该模型。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2205
+#: packages/clear-record/src/clear_record/web/app.py:2215
 #, python-brace-format
 msgid "Pulled {model} and recorded it."
 msgstr "已拉取 {model} 并记录。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2233
+#: packages/clear-record/src/clear_record/web/app.py:2243
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2265
+#: packages/clear-record/src/clear_record/web/app.py:2275
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
@@ -2818,4 +2818,7 @@ msgstr "忽略初始设置"
 
 #~ msgid "derived"
 #~ msgstr "已投递"
+
+#~ msgid "there is no run record to explain"
+#~ msgstr "没有可解释的运行记录"
 

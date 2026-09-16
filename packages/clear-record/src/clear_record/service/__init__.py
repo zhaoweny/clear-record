@@ -83,7 +83,13 @@ from clear_record.service.auto import (
     resolve_backend,
     resolve_run,
 )
-from clear_record.service.benchmark import run_axes
+from clear_record.service.benchmark import (
+    format_mib,
+    format_rate,
+    format_ratio,
+    format_seconds,
+    run_axes,
+)
 from clear_record.service.diagnostics import (
     BUNDLE_FILENAME,
     BundleFacts,
@@ -270,6 +276,10 @@ __all__ = [
     "delete_tape",
     "ensure_managed_workspace",
     "estimate_eta_s",
+    "format_mib",
+    "format_rate",
+    "format_ratio",
+    "format_seconds",
     "is_managed",
     "load_webhook_config",
     "log_event",

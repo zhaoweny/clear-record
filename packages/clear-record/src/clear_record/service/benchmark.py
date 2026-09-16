@@ -48,7 +48,7 @@ NO_WORKSPACE = deferred("the run has no workspace to measure")
 NO_RECORD = deferred("the workspace has no readable record to score")
 NO_COST_RECORD = deferred("the run recorded no cost, so this axis is unknown")
 NO_MEMORY = deferred("the run recorded no worker memory")
-NO_RUN = deferred("there is no run record to explain")
+NO_RUN = deferred("there is no run record, so this axis is unknown")
 
 
 def run_axes(
@@ -72,8 +72,8 @@ def run_axes(
     cost = cost_of(run) if run is not None else {}
     return {
         "accuracy": _accuracy_axis(directory, reference),
-        "speed": _speed_axis(cost),
-        "memory": _memory_axis(directory),
+        "speed": _speed_axis(cost, has_run=run is not None),
+        "memory": _memory_axis(directory, cost if run is not None else None),
         "fit": _fit_axis(run, cost),
     }
 
@@ -101,7 +101,9 @@ def _accuracy_axis(directory: str | Path | None, reference: str | Path | None) -
         report = stages.calibration_report(
             str(directory), str(reference) if reference else None
         )
-    except (OSError, ValueError, KeyError, TypeError):
+    # AttributeError is in the tuple on purpose: a readable but malformed
+    # document (a list, a bare string) is a reason, not a 500 on the tab.
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         axis["reason"] = NO_RECORD
         return axis
     axis.update(
@@ -116,12 +118,13 @@ def _accuracy_axis(directory: str | Path | None, reference: str | Path | None) -
     return axis
 
 
-def _speed_axis(cost: dict) -> dict:
+def _speed_axis(cost: dict, *, has_run: bool) -> dict:
     """Audio seconds per wall second, presented as x-realtime.
 
     Both primitives are the run's own recorded measurement; the ratio is
     derived here and never stored. Either primitive missing (an old record, a
-    run that never started) means the axis is unknown.
+    run that never started) means the axis is unknown -- and with no run at
+    all the reason says so instead of blaming a missing cost record.
     """
     audio = number_or_none(cost.get("audio_seconds"))
     wall = number_or_none(cost.get("total_wall_seconds"))
@@ -132,26 +135,38 @@ def _speed_axis(cost: dict) -> dict:
         "reason": None,
     }
     if audio is None or wall is None or audio <= 0 or wall <= 0:
-        axis["reason"] = NO_COST_RECORD
+        axis["reason"] = NO_COST_RECORD if has_run else NO_RUN
         return axis
     axis["x_realtime"] = round(audio / wall, 3)
     return axis
 
 
-def _memory_axis(directory: str | Path | None) -> dict:
+def _memory_axis(directory: str | Path | None, cost: dict | None) -> dict:
     """Peak RSS of the transcribe stage's decoder workers.
 
-    The value is the one the stage measured and persisted; a stage that could
-    not measure it wrote its reason instead, and this axis passes that reason
-    through. A zero is never treated as a measurement.
+    The measurement is **run-scoped**. With a run (``cost`` is that run's cost
+    record, empty or not) both the value and the reason come from the record,
+    because ``segments.json`` belongs to whichever run wrote it last: a failed
+    run must not show a previous run's peak, and a later all-reused re-run
+    must not erase an earlier run's measurement. Only a caller with no run at
+    all (``cost is None``) reads the workspace meta. A zero is never a
+    measurement on either path.
     """
     axis: dict = {"peak_rss_bytes": None, "reason": None}
+    if cost is not None:
+        peak = int_or_none(cost.get("peak_rss_bytes"))
+        if peak is not None and peak > 0:
+            axis["peak_rss_bytes"] = peak
+            return axis
+        reason = cost.get("peak_rss_reason")
+        axis["reason"] = reason if isinstance(reason, str) and reason else NO_MEMORY
+        return axis
     if directory is None:
         axis["reason"] = NO_WORKSPACE
         return axis
     try:
         _, meta = Workspace.at(directory).load_segments()
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         meta = {}
     peak = int_or_none(meta.get("peak_rss_bytes"))
     if peak is not None and peak > 0:
@@ -203,6 +218,37 @@ def _fit_axis(run: PipelineRun | None, cost: dict) -> dict:
     return axis
 
 
+# --- display formatting ---------------------------------------------------- #
+#
+# One implementation per rendered figure, shared by the terminal renderer and
+# the console template: a null figure is the same dash in both, and a number
+# is rounded the same way. Neither surface formats an axis value itself.
+
+
+def format_ratio(value: float | None) -> str:
+    """A fraction for display: four decimals, or a dash when unknown."""
+    return "-" if value is None else f"{value:.4f}"
+
+
+def format_rate(value: float | None) -> str:
+    """An x-realtime rate for display: two decimals, or a dash when unknown."""
+    return "-" if value is None else f"{value:.2f}"
+
+
+def format_seconds(value: float | None) -> str:
+    """Seconds for display: one decimal, or a dash when unknown."""
+    return "-" if value is None else f"{value:.1f}"
+
+
+def format_mib(value: int | None) -> str:
+    """Bytes as mebibytes for display: one decimal, or a dash when unknown.
+
+    The bytes-to-MiB conversion lives here, not in a template: it is a display
+    unit, and the axis carries bytes because that is what was measured.
+    """
+    return "-" if value is None else f"{value / (1 << 20):.1f}"
+
+
 def render_axes(axes: dict) -> list[str]:
     """The terminal lines for a :func:`run_axes` value.
 
@@ -215,8 +261,8 @@ def render_axes(axes: dict) -> list[str]:
         lines.append(
             tr(
                 "[bench] accuracy: WER {wer} (similarity {similarity})",
-                wer=_ratio(accuracy["wer"]),
-                similarity=_ratio(accuracy["similarity"]),
+                wer=format_ratio(accuracy["wer"]),
+                similarity=format_ratio(accuracy["similarity"]),
             )
         )
     elif accuracy["basis"] == "coverage":
@@ -224,8 +270,8 @@ def render_axes(axes: dict) -> list[str]:
             tr(
                 "[bench] accuracy: coverage {coverage}, mean confidence "
                 "{confidence}, {words} words",
-                coverage=_ratio(accuracy["coverage"]),
-                confidence=_ratio(accuracy["mean_confidence"]),
+                coverage=format_ratio(accuracy["coverage"]),
+                confidence=format_ratio(accuracy["mean_confidence"]),
                 words=_text(accuracy["words"]),
             )
         )
@@ -237,9 +283,9 @@ def render_axes(axes: dict) -> list[str]:
         lines.append(
             tr(
                 "[bench] speed: {rate}x realtime ({audio}s audio / {wall}s wall)",
-                rate=f"{speed['x_realtime']:.2f}",
-                audio=f"{speed['audio_seconds']:.1f}",
-                wall=f"{speed['wall_seconds']:.1f}",
+                rate=format_rate(speed["x_realtime"]),
+                audio=format_seconds(speed["audio_seconds"]),
+                wall=format_seconds(speed["wall_seconds"]),
             )
         )
     else:
@@ -251,7 +297,7 @@ def render_axes(axes: dict) -> list[str]:
             tr(
                 "[bench] memory: {mib} MiB peak across the transcribe stage's "
                 "decoder workers",
-                mib=f"{memory['peak_rss_bytes'] / (1 << 20):.1f}",
+                mib=format_mib(memory["peak_rss_bytes"]),
             )
         )
     else:
@@ -271,13 +317,13 @@ def render_axes(axes: dict) -> list[str]:
     lines.append(
         tr(
             "[bench] fit facts: backend={backend} model={model} language={language} "
-            "profile={profile} jobs={jobs} chunk={chunk}s",
+            "profile={profile} jobs={jobs} chunk={chunk}",
             backend=_text(facts.get("backend")),
             model=_text(facts.get("model")),
             language=_text(facts.get("language")),
             profile=_text(facts.get("profile")),
             jobs=_text(facts.get("jobs")),
-            chunk=_text(facts.get("chunk_seconds")),
+            chunk=_chunk_text(facts.get("chunk_seconds")),
         )
     )
     lines.extend(f"  {explanation}" for explanation in fit["explanations"])
@@ -298,9 +344,10 @@ def _text(value: object) -> str:
     return "-" if value is None else str(value)
 
 
-def _ratio(value: float | None) -> str:
-    """A fraction as terminal text (four decimals, or a dash when unknown)."""
-    return "-" if value is None else f"{value:.4f}"
+def _chunk_text(value: object) -> str:
+    """A chunk size as terminal text with its unit, or a bare dash."""
+    seconds = number_or_none(value)
+    return "-" if seconds is None else f"{seconds:.1f}s"
 
 
 def run_bench(
@@ -397,6 +444,10 @@ __all__ = [
     "NO_RECORD",
     "NO_RUN",
     "NO_WORKSPACE",
+    "format_mib",
+    "format_rate",
+    "format_ratio",
+    "format_seconds",
     "register",
     "render_axes",
     "run_axes",

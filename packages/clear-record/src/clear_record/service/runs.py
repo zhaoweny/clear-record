@@ -870,6 +870,18 @@ class RunManager:
             "model": meta.get("model") or (row.model if row else None),
             "jobs": int_or_none(meta.get("jobs")),
             "chunk_seconds": chunk_seconds,
+            # The transcribe stage's worker-memory measurement, read from
+            # the same guarded meta as the transcript: segments.json belongs
+            # to whichever run wrote it last, so the axis needs this run's
+            # own copy (BENCH-01). A run that never reached the guarded meta
+            # carries None/None and reports unknown -- never a previous
+            # run's peak.
+            "peak_rss_bytes": int_or_none(meta.get("peak_rss_bytes")),
+            "peak_rss_reason": (
+                meta.get("peak_rss_reason")
+                if isinstance(meta.get("peak_rss_reason"), str)
+                else None
+            ),
             "total_wall_seconds": _wall_seconds(
                 row.started_at if row else None, ended_at
             ),

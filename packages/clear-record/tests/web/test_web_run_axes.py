@@ -18,7 +18,13 @@ COST = {
 }
 
 
-def _seeded(tmp_path, *, memory: dict | None = None, cost: dict | None = None):
+def _seeded(
+    tmp_path,
+    *,
+    memory: dict | None = None,
+    cost: dict | None = None,
+    confidence: float | None = 0.9,
+):
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
     registry.create_project("Ops")
@@ -28,7 +34,9 @@ def _seeded(tmp_path, *, memory: dict | None = None, cost: dict | None = None):
     source = Source(id="a", path=str(directory / "a.wav"), label="mic")
     workspace.write_manifest([source])
     segments = [
-        Segment(start=0.0, end=4.0, text="hello there", source="a", confidence=0.9)
+        Segment(
+            start=0.0, end=4.0, text="hello there", source="a", confidence=confidence
+        )
     ]
     workspace.write_segments(
         {"a": segments},
@@ -56,8 +64,10 @@ def _seeded(tmp_path, *, memory: dict | None = None, cost: dict | None = None):
 def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
     _registry, client, run = _seeded(
         tmp_path,
-        memory={"peak_rss_bytes": 512 * 1024 * 1024},
-        cost=dict(COST),
+        # The run's own cost carries the peak; the workspace holds a later
+        # run's larger one, which must not be shown (F1).
+        memory={"peak_rss_bytes": 1024 * 1024 * 1024},
+        cost={**COST, "peak_rss_bytes": 512 * 1024 * 1024},
     )
 
     fragment = client.get(f"/ui/runs/{run.id}")
@@ -66,7 +76,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
     text = fragment.text
     assert "run-axes" in text
     assert "coverage" in text and "0.4" in text  # accuracy, from the record
-    assert "3.0x" in text  # speed, as x-realtime
+    assert "3.00x" in text  # speed, as x-realtime (the CLI's rounding)
     assert "512.0 MiB" in text  # peak decoder-worker memory
     assert "auto chose" in text and "model" in text  # fit, from the run meta
     assert "unknown" not in text
@@ -89,3 +99,14 @@ def test_an_unmeasured_run_says_unknown_with_the_records_reason(tmp_path) -> Non
     assert "unknown" in finished
     assert "the run recorded no cost, so this axis is unknown" in finished
     assert "the run recorded no worker memory" in finished
+
+
+def test_a_null_accuracy_figure_renders_a_dash_not_none(tmp_path) -> None:
+    """F2: a missing confidence is a dash, and figures round like the CLI's."""
+    _registry, client, run = _seeded(tmp_path, cost=dict(COST), confidence=None)
+
+    text = client.get(f"/ui/runs/{run.id}").text
+
+    assert "None" not in text
+    assert "mean confidence -" in text
+    assert "coverage 0.4000" in text

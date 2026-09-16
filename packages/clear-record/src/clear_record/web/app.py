@@ -67,6 +67,10 @@ from clear_record.service import (
     default_config,
     describe_draft,
     estimate_eta_s,
+    format_mib,
+    format_rate,
+    format_ratio,
+    format_seconds,
     managed,
     read_transcript,
     resolve_run,
@@ -137,6 +141,12 @@ TEMPLATES.env.globals["trn"] = trn
 #: The message-node renderer, so a template can render a ``Message`` (an ID plus
 #: parameters) composed in a lower layer with the same ``tr`` lookup.
 TEMPLATES.env.globals["render_message"] = render_service_message
+#: The service's display formatters, so a figure the axes carry (a ratio, a
+#: rate, seconds, bytes) renders exactly as the terminal renderer prints it.
+TEMPLATES.env.globals["format_ratio"] = format_ratio
+TEMPLATES.env.globals["format_rate"] = format_rate
+TEMPLATES.env.globals["format_seconds"] = format_seconds
+TEMPLATES.env.globals["format_mib"] = format_mib
 
 #: The cookie that persists the console's explicit language choice: the one new
 #: piece of state the switcher adds, and it carries a language tag and **nothing

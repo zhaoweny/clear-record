@@ -17,6 +17,16 @@ prompt is a machine surface, like the JSON API and the logs
 
 from __future__ import annotations
 
+#: The output-language rule every task carries. A prompt is otherwise
+#: language-neutral, so a Chinese meeting came back with English minutes; the
+#: model must answer in the language of its inputs, never its own default.
+_OUTPUT_LANGUAGE = (
+    "Write every field of your answer in the dominant language of the inputs "
+    "(the `transcript` is the meeting's own language); never translate the "
+    "meeting into another language. Verbatim quotations, and the spellings of "
+    "names and terms, stay exactly as they appear.\n"
+)
+
 #: The glossary-collection task: a transcript plus the current glossary → a list
 #: of candidate terms with evidence. The model is told to prefer a few
 #: well-evidenced candidates over speculation, and to treat the glossary as
@@ -43,7 +53,8 @@ GLOSSARY_COLLECTION_INSTRUCTIONS = (
     "candidates to speculation: every candidate must carry transcript evidence, "
     "and a term the transcript never shows is not a candidate.\n"
     "\n"
-    "Answer only with the JSON object the output contract requires."
+    "Answer only with the JSON object the output contract requires.\n"
+    "\n" + _OUTPUT_LANGUAGE
 )
 
 #: The transcript-check task: a transcript, the glossary snapshot and the
@@ -73,7 +84,8 @@ TRANSCRIPT_CHECK_INSTRUCTIONS = (
     "segments. A change you cannot justify from the glossary or the "
     "transcript's own context is not a change.\n"
     "\n"
-    "Answer only with the JSON object the output contract requires."
+    "Answer only with the JSON object the output contract requires.\n"
+    "\n" + _OUTPUT_LANGUAGE
 )
 
 #: The minutes task: the transcript, the glossary and the meeting/project
@@ -101,7 +113,8 @@ MINUTES_INSTRUCTIONS = (
     "`body` must be a complete Markdown document that stands on its own, under "
     "a heading, and must not repeat the structured fields as a data block.\n"
     "\n"
-    "Answer only with the JSON object the output contract requires."
+    "Answer only with the JSON object the output contract requires.\n"
+    "\n" + _OUTPUT_LANGUAGE
 )
 
 #: The instructions one task kind leads with, keyed by kind — the one place a

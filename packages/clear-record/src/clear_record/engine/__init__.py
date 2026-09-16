@@ -24,7 +24,7 @@ from clear_record.engine.chunk import (
     write_chunk,
 )
 from clear_record.engine.diarize import diarize, logmel_stats
-from clear_record.engine.merge import reconcile
+from clear_record.engine.merge import reconcile, source_speaker_names
 from clear_record.engine.synth import DEFAULT_F0_HZ
 from clear_record.engine.synth import SR as SYNTH_SR
 from clear_record.engine.synth import (
@@ -74,6 +74,7 @@ __all__ = [
     "reconcile",
     "record",
     "rms",
+    "source_speaker_names",
     "term_could_affect",
     "write_chunk",
 ]

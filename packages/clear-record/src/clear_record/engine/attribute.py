@@ -59,6 +59,7 @@ import numpy as np
 
 from clear_record.core import Segment, Source
 from clear_record.engine.audio import ASR_SAMPLE_RATE, read_audio
+from clear_record.engine.merge import source_speaker_names
 
 __all__ = [
     "attribute_by_source",
@@ -234,8 +235,8 @@ def attribute_segments(
     ``segments`` carry **source-local** times (as produced by ``transcribe``);
     ``offsets`` maps a source id to ``reference_time - source_time`` so every
     candidate can be read in the segment's reference window. ``sources`` supplies
-    the caller-provided source -> speaker identity via ``Source.label`` (falling
-    back to the id). With ``mixed`` given, its room energy gates weak candidate
+    the caller-provided source -> speaker identity via ``Source.label`` (a
+    source with no speaker label gets a generic ``Speaker N``). With ``mixed`` given, its room energy gates weak candidate
     claims (see the module docstring) and any entry in ``sources`` with the same
     id is skipped as a candidate, so the room is never emitted as a speaker.
     Segments that no candidate can claim keep their incoming speaker.
@@ -253,7 +254,7 @@ def attribute_segments(
         _level(mixed_data, mixed_sr, frame_s) if mixed_data is not None else 1e-12
     )
 
-    label = {src.id: (src.label or src.id) for src in sources}
+    label = source_speaker_names(sources)
 
     out: list[Segment] = []
     for seg in segments:
@@ -355,7 +356,7 @@ def attribute_segments_windowed(
         _level(mixed_data, mixed_sr, frame_s) if mixed_data is not None else 1e-12
     )
 
-    label = {src.id: (src.label or src.id) for src in sources}
+    label = source_speaker_names(sources)
 
     out: list[Segment] = []
     for seg in segments:

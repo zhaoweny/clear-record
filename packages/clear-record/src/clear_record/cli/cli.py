@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
 
@@ -257,6 +258,26 @@ def _do_diarize(diarize: bool, no_diarize: bool) -> bool | None:
     return None
 
 
+def _validate_directory(ctx: click.Context, param: click.Parameter, value: str | None):
+    """Reject a file where a directory is expected, before any stage runs.
+
+    A novice's first instinct is `clear-record run meeting.m4a`; without this the
+    command walks into the workspace code and fails with an unrelated ingest
+    error. A path that does not exist yet is fine (`synth` creates it).
+    """
+    if value and Path(value).is_file():
+        raise click.BadParameter(
+            tr(
+                "{path} is a file, not a directory: this command expects a "
+                "directory of audio files.",
+                path=value,
+            ),
+            ctx=ctx,
+            param=param,
+        )
+    return value
+
+
 def _rerun_range(ctx: click.Context, param: click.Parameter, value: str | None):
     """Validate ``--rerun-range`` at parse time, so a typo is a usage error.
 
@@ -273,9 +294,9 @@ def _rerun_range(ctx: click.Context, param: click.Parameter, value: str | None):
     return value
 
 
-_DIRECTORY = _with_options(click.argument("directory"))
+_DIRECTORY = _with_options(click.argument("directory", callback=_validate_directory))
 _PATHS = _with_options(
-    click.argument("directory"),
+    click.argument("directory", callback=_validate_directory),
     click.argument("inputs", nargs=-1),
 )
 _REFERENCE = _with_options(
@@ -792,6 +813,13 @@ def _cmd_export(**kwargs: Any) -> int:
 
 def _cmd_run(**kwargs: Any) -> int:
     stages.run(kwargs["directory"], _options(kwargs))
+    print(
+        tr(
+            "[next] the record is in {directory}/export; review it and accept "
+            "the minutes in the console: `clear-record web`",
+            directory=kwargs["directory"],
+        )
+    )
     return 0
 
 

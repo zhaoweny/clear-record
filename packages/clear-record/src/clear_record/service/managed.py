@@ -433,7 +433,9 @@ def sanitize_filename(filename: str | None) -> str:
         )
     if name in {".", ".."} or ".." in Path(name).parts:
         raise UnsafeFilename(
-            deferred("refusing the filename {name!r}: it contains a path traversal"),
+            deferred(
+                "refusing the filename {name!r}: it contains a path-traversal component"
+            ),
             name=name,
         )
     if (

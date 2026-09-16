@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 08:36+0800\n"
+"POT-Creation-Date: 2026-09-16 09:10+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -127,7 +127,7 @@ msgstr "模型 {model!r}（{why}；每个 worker 约 {vram:g} GB）"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:333
 #, python-brace-format
-msgid "up to {jobs} worker(s)"
+msgid "up to {jobs} workers"
 msgstr "最多 {jobs} 个 worker"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:338
@@ -149,29 +149,36 @@ msgstr ""
 msgid "--auto: chose {decisions}; inputs: {inputs}."
 msgstr "--auto：选择了 {decisions}；输入：{inputs}。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:75
+#: packages/clear-record/src/clear_record/cli/cli.py:76
 msgid "clear-record: from many recordings to one clear record."
 msgstr "clear-record：从众多录音到一份清晰的记录。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#: packages/clear-record/src/clear_record/cli/cli.py:78
+#: packages/clear-record/src/clear_record/cli/cli.py:79
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/cli/cli.py:234
+#: packages/clear-record/src/clear_record/cli/cli.py:235
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:250
+#: packages/clear-record/src/clear_record/cli/cli.py:251
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
 msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:646
+#: packages/clear-record/src/clear_record/cli/cli.py:271
+#, python-brace-format
+msgid ""
+"{path} is a file, not a directory: this command expects a directory of "
+"audio files."
+msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:669
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -183,31 +190,38 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:832
+#: packages/clear-record/src/clear_record/cli/cli.py:820
+#, python-brace-format
+msgid ""
+"[next] the record is in {directory}/export; review it and accept the "
+"minutes in the console: `clear-record web`"
+msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:862
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:847
+#: packages/clear-record/src/clear_record/cli/cli.py:877
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:854
+#: packages/clear-record/src/clear_record/cli/cli.py:884
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:861
+#: packages/clear-record/src/clear_record/cli/cli.py:891
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:868
+#: packages/clear-record/src/clear_record/cli/cli.py:898
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的退化录音，并提供精确的真值"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:875
+#: packages/clear-record/src/clear_record/cli/cli.py:905
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
@@ -249,11 +263,11 @@ msgstr "在 PATH 上找不到 whisper-cli（请设置 CR_WHISPER_CLI）"
 msgid "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
 msgstr "找不到 ggml {families} 插件（参见 CR_GGML_BACKEND_DIRS）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:741
+#: packages/clear-record/src/clear_record/providers/backends.py:742
 msgid "no matching GPU device found"
 msgstr "找不到匹配的 GPU 设备"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:746
+#: packages/clear-record/src/clear_record/providers/backends.py:748
 #, python-brace-format
 msgid "whisper-cli + ggml {families} plugin"
 msgstr "whisper-cli + ggml {families} 插件"
@@ -361,61 +375,61 @@ msgid ""
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:436
+#: packages/clear-record/src/clear_record/service/managed.py:437
 #, python-brace-format
-msgid "refusing the filename {name!r}: it contains a path traversal"
-msgstr "拒绝文件名 {name!r}：其中包含路径穿越"
+msgid "refusing the filename {name!r}: it contains a path-traversal component"
+msgstr "拒绝文件名 {name!r}：其中包含路径穿越组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:447
+#: packages/clear-record/src/clear_record/service/managed.py:449
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:454
+#: packages/clear-record/src/clear_record/service/managed.py:456
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:460
+#: packages/clear-record/src/clear_record/service/managed.py:462
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 characters"
 msgstr "拒绝文件名 {name!r}：长度超过 255 个字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:481
+#: packages/clear-record/src/clear_record/service/managed.py:483
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:524
+#: packages/clear-record/src/clear_record/service/managed.py:526
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的受管理位置；请创建受管理的会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:544
+#: packages/clear-record/src/clear_record/service/managed.py:546
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到受管理根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:557
+#: packages/clear-record/src/clear_record/service/managed.py:559
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:632
+#: packages/clear-record/src/clear_record/service/managed.py:634
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:643
+#: packages/clear-record/src/clear_record/service/managed.py:645
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -425,7 +439,7 @@ msgstr ""
 "受管理工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:656
+#: packages/clear-record/src/clear_record/service/managed.py:658
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "

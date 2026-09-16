@@ -42,6 +42,7 @@ from clear_record.engine import (
     prepare_16k_wav,
     record as synth_record,
     reconcile as reconcile_segments,
+    source_speaker_names,
 )
 from clear_record.engine.audio import read_audio
 from clear_record.providers import get_backend, probe_ggml_plugin_load
@@ -89,6 +90,11 @@ def ingest(
 
     progress = Progress(Step.INGEST.value, len(files), on_event)
     progress.start(f"decoding {len(files)} file(s)")
+    # A source's ``label`` is the speaker name ``reconcile``/``attribute`` fall
+    # back to. Never derive it from the file name: a tape's name is not a person,
+    # and the minutes must not list one as an attendee. Channels are speaker-like,
+    # so every source gets a positional ``Speaker N`` (an explicit caller label
+    # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
     for p in files:
         base = _source_id(p, d)
@@ -106,7 +112,7 @@ def ingest(
                     Source(
                         id=sid,
                         path=str(norm),
-                        label=f"{p.stem} ch{ch + 1}",
+                        label=f"Speaker {len(sources) + 1}",
                         clock_domain="wall",
                     )
                 )
@@ -115,7 +121,12 @@ def ingest(
             print(f"[ingest] decode {p.name} -> {norm.name}")
             prepare_16k_wav(p, norm)
             sources.append(
-                Source(id=base, path=str(norm), label=p.stem, clock_domain="wall")
+                Source(
+                    id=base,
+                    path=str(norm),
+                    label=f"Speaker {len(sources) + 1}",
+                    clock_domain="wall",
+                )
             )
         progress.advance(source=base)
     w.write_manifest(sources)
@@ -355,17 +366,27 @@ def transcribe(
         # is the loop's economics, recorded so a later pass can show it.
         "chunk_report": dataclasses.asdict(result.chunk_report),
     }
-    w.write_segments(result.per_source, meta)
+    # Stamp each raw segment with its source's speaker name before it is
+    # written: the agent flow can read ``segments.json`` without a reconcile
+    # pass, and the transcript must never present a tape's file name as a person.
+    names = source_speaker_names(sources)
+    per_source = {
+        sid: [
+            dataclasses.replace(seg, speaker=seg.speaker or names[sid]) for seg in segs
+        ]
+        for sid, segs in result.per_source.items()
+    }
+    w.write_segments(per_source, meta)
     log_event(
         "info",
         "transcribe",
         "transcribe.finished",
         backend=backend_id,
         model=result.model,
-        sources=len(result.per_source),
+        sources=len(per_source),
     )
-    _print_transcription(result.per_source, meta)
-    return result.per_source
+    _print_transcription(per_source, meta)
+    return per_source
 
 
 def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> None:

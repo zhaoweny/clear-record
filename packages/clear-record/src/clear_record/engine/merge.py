@@ -6,7 +6,8 @@ alignment offsets, then collapse the overlapping set into a single, attributable
 timeline. Because each source is its own recorded channel, **speaker ~= source**
 (the record's whole point: with dedicated channels, diarization nearly
 disappears as an ML problem). ``source.label`` (when present) is used as the
-speaker name.
+speaker name; a source with no speaker label gets a generic ``Speaker N`` so a
+tape's file name never becomes a person in the minutes.
 """
 
 from __future__ import annotations
@@ -16,7 +17,10 @@ from collections.abc import Sequence
 from clear_record.core import Alignment, Segment, Source
 from clear_record.engine.text import clean_segments
 
-# Treat same-source segments within this gap as continuous.
+# The longest pause between two same-speaker cues that is still bridged. Only a
+# *positive* gap (a real pause) joins: ASR emits distinct sentences as touching
+# cues (``end == start``), and merging those produced multi-sentence 25-30 s
+# cues that were useless as subtitles.
 _JOIN_GAP_S = 0.5
 # Maximum length of a single cue; a longer continuous run is split so SRT/VTT
 # cues stay playable.
@@ -42,9 +46,34 @@ def _weighted_conf(a: Segment, b: Segment) -> float | None:
     return round((ca + cb) / 2.0, 4)
 
 
+def source_speaker_names(sources: Sequence[Source]) -> dict[str, str]:
+    """Map each source id to the speaker name its segments carry.
+
+    A caller-provided ``label`` wins. A source with no label -- or a label that
+    is just its id, which an older ``ingest`` copied from the file name -- is
+    not a person: it gets a stable anonymous ``Speaker N``. Minutes and exports
+    then never present a tape's file name as an attendee.
+    """
+    names: dict[str, str] = {}
+    anonymous = 0
+    for src in sources:
+        label = (src.label or "").strip()
+        if label and label != src.id:
+            names[src.id] = label
+        else:
+            anonymous += 1
+            names[src.id] = f"Speaker {anonymous}"
+    return names
+
+
 def _join_continuous(segments: Sequence[Segment], max_cue_s: float) -> list[Segment]:
-    """Join same-source/speaker segments separated by <= the join gap, never
-    letting a joined cue exceed ``max_cue_s``."""
+    """Bridge a same-source/speaker pair separated by a real pause, never
+    letting a joined cue exceed ``max_cue_s``.
+
+    Touching segments (``seg.start <= cur.end``) are *not* joined: the decoder
+    deliberately ended a sentence there, and joining them merged distinct
+    sentence cues into one 25-30 s block.
+    """
     out: list[Segment] = []
     cur: Segment | None = None
     for seg in segments:
@@ -52,7 +81,8 @@ def _join_continuous(segments: Sequence[Segment], max_cue_s: float) -> list[Segm
             cur is not None
             and seg.source == cur.source
             and (seg.speaker or "") == (cur.speaker or "")
-            and seg.start <= cur.end + _JOIN_GAP_S
+            and seg.start > cur.end + 1e-9
+            and seg.start - cur.end <= _JOIN_GAP_S
             and (max(cur.end, seg.end) - cur.start) <= max_cue_s
         ):
             cur = Segment(
@@ -104,7 +134,7 @@ def reconcile(
     timebase. The reference source keeps its time; other sources are shifted by
     their alignment offset (default 0 when unaligned or for the reference)."""
     order = {s.id: i for i, s in enumerate(sources)}
-    label = {s.id: (s.label or s.id) for s in sources}
+    label = source_speaker_names(sources)
 
     shifted: list[Segment] = []
     for src in sources:
@@ -132,4 +162,4 @@ def reconcile(
     return [s for s in resolved if s.text.strip()]
 
 
-__all__ = ["reconcile"]
+__all__ = ["reconcile", "source_speaker_names"]

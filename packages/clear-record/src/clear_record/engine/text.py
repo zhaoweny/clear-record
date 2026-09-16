@@ -13,6 +13,7 @@ widen an explicit scope but can never skip a chunk that should have changed.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Sequence
 
@@ -23,6 +24,13 @@ _MARKER_RE = re.compile(r"^\s*[\[\(（【]\s*[^\[\]\(\)（）【】]*\s*[\]\)）
 # A token made only of music/symbol/punctuation characters.
 _MUSIC_RE = re.compile(r"^[\s♪♫♬♩#*\-–—._]+$")
 _MARKER_MAX_LEN = 40
+# A run of full-width sentence punctuation and whitespace at the very start of a
+# segment. ASR occasionally begins a cue with the previous sentence's full stop
+# ("。我认为..."); it carries no meaning and must not become transcript.
+_LEADING_CJK_PUNCT_RE = re.compile(r"^[\s，。！？；：、]+")
+# Whitespace the decoder inserted before full-width punctuation ("就个人而言 ，需要"):
+# CJK punctuation hugs the character before it.
+_SPACE_BEFORE_CJK_PUNCT_RE = re.compile(r"\s+([，。！？；：、）】》」』])")
 
 
 def is_non_speech(text: str) -> bool:
@@ -59,9 +67,21 @@ def collapse_repetitions(segments: Sequence[Segment]) -> list[Segment]:
     return out
 
 
+def _tidy(text: str) -> str:
+    """Drop a stray leading sentence mark and the spaces before CJK punctuation."""
+    tidy = _LEADING_CJK_PUNCT_RE.sub("", text)
+    tidy = _SPACE_BEFORE_CJK_PUNCT_RE.sub(r"\1", tidy)
+    return tidy.strip()
+
+
 def clean_segments(segments: Iterable[Segment]) -> list[Segment]:
-    """Remove non-speech markers and collapse repetition loops (order preserved)."""
-    kept = [s for s in segments if not is_non_speech(s.text)]
+    """Remove non-speech markers and collapse repetition loops (order preserved).
+
+    Each segment's text is tidied first, so a stray leading ``。`` or a space
+    before a CJK comma never reaches the transcript, the export or the minutes.
+    """
+    tidied = [dataclasses.replace(seg, text=_tidy(seg.text)) for seg in segments]
+    kept = [s for s in tidied if not is_non_speech(s.text)]
     return collapse_repetitions(kept)
 
 

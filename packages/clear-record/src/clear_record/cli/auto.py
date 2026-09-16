@@ -330,7 +330,7 @@ def resolve_auto(probe: AutoProbe) -> AutoChoice:
             deferred("model {model!r} ({why}; ~{vram:g} GB per worker)"),
             (("model", model), ("why", model_why), ("vram", model_vram_gb(model))),
         ),
-        Message(deferred("up to {jobs} worker(s)"), (("jobs", jobs),)),
+        Message(deferred("up to {jobs} workers"), (("jobs", jobs),)),
     ]
     if diarize:
         decisions.append(

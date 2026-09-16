@@ -622,13 +622,15 @@ def test_reconcile_keeps_bridged_but_distinct_segments() -> None:
 
 
 def test_reconcile_caps_cue_length() -> None:
-    """A long continuous same-speaker run is split so no cue exceeds the cap."""
+    """A long same-speaker run bridged across real pauses is split at the cap."""
     sources = [Source(id="s0", path="", label="Alice")]
     alignment = Alignment(reference="s0", offsets={"s0": 0.0})
-    # 50 s of contiguous 5 s utterances (distinct text: not a repetition loop)
+    # 50 s of 4.9 s utterances with a 0.1 s real pause between them (distinct
+    # text, so not a repetition loop): only a real pause joins, so the run
+    # merges and is then split by the cap.
     per_source = {
         "s0": [
-            Segment(i * 5.0, (i + 1) * 5.0, f"word {i}", "s0", confidence=0.5)
+            Segment(i * 5.0, i * 5.0 + 4.9, f"word {i}", "s0", confidence=0.5)
             for i in range(10)
         ]
     }
@@ -636,6 +638,61 @@ def test_reconcile_caps_cue_length() -> None:
     merged = reconcile(per_source, alignment, sources, max_cue_s=30.0)
     assert len(merged) > 1  # the run was actually split
     assert all(s.end - s.start <= 30.0 + 1e-9 for s in merged)
+    # The join actually happened: the first cue spans several 5 s utterances.
+    assert merged[0].end - merged[0].start > 10.0
+
+
+def test_reconcile_keeps_touching_sentence_cues_separate() -> None:
+    """Regression: contiguous ASR cues are distinct sentences.
+
+    The observed bug: ``_join_continuous`` bridged touching cues
+    (``end == start``) and collapsed eight sentence cues into one 26 s cue --
+    useless as an SRT/VTT subtitle and a blur of the transcript's timeline.
+    """
+    sources = [Source(id="s0", path="", label="Speaker 1")]
+    alignment = Alignment(reference="s0", offsets={"s0": 0.0})
+    per_source = {
+        "s0": [
+            Segment(0.0, 4.8, "第一句", "s0"),
+            Segment(4.8, 7.68, "第二句", "s0"),
+            Segment(7.68, 12.12, "第三句", "s0"),
+        ]
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    assert [s.text for s in merged] == ["第一句", "第二句", "第三句"]
+
+
+def test_reconcile_never_names_a_speaker_after_the_tape() -> None:
+    """An unlabelled source gets a generic speaker, never its file-name id."""
+    sources = [Source(id="wuhe-16k", path="", label="wuhe-16k")]
+    alignment = Alignment(reference="wuhe-16k", offsets={"wuhe-16k": 0.0})
+    per_source = {"wuhe-16k": [Segment(0.0, 4.8, "你好", "wuhe-16k")]}
+
+    merged = reconcile(per_source, alignment, sources)
+    assert merged[0].speaker == "Speaker 1"
+
+
+def test_reconcile_keeps_an_explicit_speaker_label() -> None:
+    sources = [Source(id="mic-a", path="", label="Alice")]
+    alignment = Alignment(reference="mic-a", offsets={"mic-a": 0.0})
+    per_source = {"mic-a": [Segment(0.0, 4.8, "hi", "mic-a")]}
+
+    merged = reconcile(per_source, alignment, sources)
+    assert merged[0].speaker == "Alice"
+
+
+def test_clean_segments_tidies_cjk_punctuation() -> None:
+    """A stray leading 。 and a space before a CJK comma are not transcript."""
+    from clear_record.engine import clean_segments
+
+    out = clean_segments([Segment(0.0, 1.0, "。我认为应当这样", "s0")])
+    assert out[0].text == "我认为应当这样"
+
+    spaced = clean_segments([Segment(0.0, 1.0, "就个人而言 ，需要", "s0")])
+    assert spaced[0].text == "就个人而言，需要"
+
+    assert clean_segments([Segment(0.0, 1.0, "。", "s0")]) == []
 
 
 def test_diarize_auto_keeps_single_speaker() -> None:

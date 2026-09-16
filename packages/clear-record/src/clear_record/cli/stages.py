@@ -386,6 +386,10 @@ def transcribe(
         # re-run, how many reused chunks still carry an earlier glossary). This
         # is the loop's economics, recorded so a later pass can show it.
         "chunk_report": dataclasses.asdict(result.chunk_report),
+        # Peak RSS of this stage's decoder workers, or None with the reason it
+        # could not be measured (never zero) -- the record's memory axis.
+        "peak_rss_bytes": result.peak_rss_bytes,
+        "peak_rss_reason": result.peak_rss_reason,
     }
     # Stamp each raw segment with its source's speaker name before it is
     # written: the agent flow can read ``segments.json`` without a reconcile
@@ -817,7 +821,17 @@ def run(
     log_event("info", "cli", "cli.run.finished")
 
 
-def calibrate_report(directory: str, reference: str | None = None) -> dict:
+def calibration_report(directory: str, reference: str | None = None) -> dict:
+    """The raw calibration numbers a workspace yields, with no side effects.
+
+    This is the one implementation of the accuracy arithmetic: the CLI's
+    ``calibrate`` report writes it out, and the console's accuracy axis reads
+    it (through :func:`clear_record.service.benchmark.run_axes`), so the two
+    surfaces cannot disagree. ``coverage`` is the transcript span over the
+    longest source; ``mean_confidence`` is over the segments that carry one;
+    ``wer``/``similarity`` appear only when ``reference`` names a reference
+    transcript file.
+    """
     w = Workspace.at(directory)
     record = w.load_record()
     per_source, meta = w.load_segments()
@@ -856,7 +870,13 @@ def calibrate_report(directory: str, reference: str | None = None) -> dict:
         report["wer"] = err["wer"]
         report["similarity"] = err["similarity"]
 
-    out = w.export_file("calibration.json")
+    return report
+
+
+def calibrate_report(directory: str, reference: str | None = None) -> dict:
+    """Write the workspace calibration.json and print the raw report."""
+    report = calibration_report(directory, reference)
+    out = Workspace.at(directory).export_file("calibration.json")
     write_json(out, report)
     print("\n[calibrate] report:")
     for k, v in report.items():
@@ -936,6 +956,7 @@ __all__ = [
     "align",
     "attribute",
     "calibrate_report",
+    "calibration_report",
     "diarize",
     "export",
     "glossary",

@@ -20,11 +20,15 @@ into a private helper.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import dataclasses
 import glob
 import os
 import shutil
 import subprocess
+import sys
+import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
@@ -42,7 +46,7 @@ from clear_record.core import (
     Segment,
     Source,
 )
-from clear_record.core.i18n import tr
+from clear_record.core.i18n import deferred, tr
 from clear_record.engine import (
     changed_terms,
     clean_segments,
@@ -141,6 +145,12 @@ class Transcription:
     jobs: int
     model: str
     chunk_report: ChunkReport = dataclasses.field(default_factory=ChunkReport)
+    #: Peak resident memory (bytes) of the decoder **worker processes** this
+    #: stage ran, or None with :attr:`peak_rss_reason` saying why it is unknown.
+    #: It is never zero: a worker that could not be read is unknown, not empty.
+    #: A backend that decodes in-process ran no worker processes at all.
+    peak_rss_bytes: int | None = None
+    peak_rss_reason: str | None = None
 
 
 def _duration(path: str | Path) -> float:
@@ -550,6 +560,251 @@ def _empty_scope_message(scope: ChunkScope, durations: dict[str, float]) -> str:
     )
 
 
+# --- what the stage's workers cost in memory ------------------------------- #
+#: How often the transcribe stage reads its live worker processes' RSS while
+#: the chunk pool runs. Each read is a high-water mark as of that read, so the
+#: running maximum over samples is what tracks a worker's peak; growth in the
+#: last fraction of a second before a worker exits is missed. The workers are
+#: long-lived (one chunk takes seconds of wall time), so a sample every
+#: fraction of a second is cheap.
+_RSS_SAMPLE_INTERVAL_S = 0.2
+
+#: Why the stage's peak worker memory is unknown. These are message IDs
+#: (:func:`deferred`), translated by whichever surface renders the axis.
+_NO_WORKER_RAN = deferred(
+    "no decoder worker ran: every chunk was reused from the cache"
+)
+_NO_WORKER_SAMPLED = deferred(
+    "no decoder worker's memory could be sampled during the transcribe stage"
+)
+_UNMEASURABLE_PLATFORM = deferred(
+    "peak worker memory is not measurable on this platform"
+)
+
+
+#: macOS answers through libproc -- the same kernel call ps itself makes. The
+#: v4 flavor carries the process's **lifetime** high-water mark as of the read,
+#: so a read late in the worker's life is close to its peak; the maximum over
+#: the sampler's reads is what tracks the true peak.
+_RUSAGE_INFO_V4 = 4
+#: libproc writes the whole v4 struct; the buffer is deliberately larger than
+#: the fields declared below, so a longer or padded tail cannot overrun it.
+_RUSAGE_BUFFER_BYTES = 512
+
+#: The resolved libproc ``proc_pid_rusage`` (``_LIBPROC_RESOLVED`` records that
+#: the lookup ran, so a missing library is not retried on every sample).
+_LIBPROC_LOCK = threading.Lock()
+_LIBPROC_RUSAGE = None
+_LIBPROC_RESOLVED = False
+
+
+class _RusageInfoV4(ctypes.Structure):
+    """The macOS ``rusage_info_v4`` fields this module reads.
+
+    Declared through ``ri_lifetime_max_phys_footprint`` -- the process's
+    physical-footprint high-water mark as of the read, macOS's answer to a
+    worker's peak RSS. The struct's
+    tail is deliberately not declared: the call writes into a buffer this
+    module sizes (:data:`_RUSAGE_BUFFER_BYTES`), never into ``sizeof`` of this.
+    """
+
+    _fields_ = [
+        ("ri_uuid", ctypes.c_uint8 * 16),
+        ("ri_user_time", ctypes.c_uint64),
+        ("ri_system_time", ctypes.c_uint64),
+        ("ri_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_interrupt_wkups", ctypes.c_uint64),
+        ("ri_pageins", ctypes.c_uint64),
+        ("ri_wired_size", ctypes.c_uint64),
+        ("ri_resident_size", ctypes.c_uint64),
+        ("ri_phys_footprint", ctypes.c_uint64),
+        ("ri_proc_start_abstime", ctypes.c_uint64),
+        ("ri_proc_exit_abstime", ctypes.c_uint64),
+        ("ri_child_user_time", ctypes.c_uint64),
+        ("ri_child_system_time", ctypes.c_uint64),
+        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_child_interrupt_wkups", ctypes.c_uint64),
+        ("ri_child_pageins", ctypes.c_uint64),
+        ("ri_child_elapsed_abstime", ctypes.c_uint64),
+        ("ri_diskio_bytesread", ctypes.c_uint64),
+        ("ri_diskio_byteswritten", ctypes.c_uint64),
+        ("ri_cpu_time_qos_default", ctypes.c_uint64),
+        ("ri_cpu_time_qos_maintenance", ctypes.c_uint64),
+        ("ri_cpu_time_qos_background", ctypes.c_uint64),
+        ("ri_cpu_time_qos_utility", ctypes.c_uint64),
+        ("ri_cpu_time_qos_legacy", ctypes.c_uint64),
+        ("ri_cpu_time_qos_user_initiated", ctypes.c_uint64),
+        ("ri_cpu_time_qos_user_interactive", ctypes.c_uint64),
+        ("ri_billed_system_time", ctypes.c_uint64),
+        ("ri_serviced_system_time", ctypes.c_uint64),
+        ("ri_logical_writes", ctypes.c_uint64),
+        ("ri_lifetime_max_phys_footprint", ctypes.c_uint64),
+    ]
+
+
+def _libproc_rusage():
+    """The libproc ``proc_pid_rusage`` function, or None when unavailable."""
+    global _LIBPROC_RESOLVED, _LIBPROC_RUSAGE
+    with _LIBPROC_LOCK:
+        if _LIBPROC_RESOLVED:
+            return _LIBPROC_RUSAGE
+        _LIBPROC_RESOLVED = True
+        try:
+            library = ctypes.CDLL(
+                ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+            )
+            function = library.proc_pid_rusage
+            function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            function.restype = ctypes.c_int
+            _LIBPROC_RUSAGE = function
+        except (OSError, AttributeError):
+            _LIBPROC_RUSAGE = None
+        return _LIBPROC_RUSAGE
+
+
+def _linux_worker_rss_bytes(pid: int) -> int | None:
+    """A Linux worker's resident high-water mark as of the read (VmHWM)."""
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmHWM:"):
+            try:
+                return int(line.split()[1]) * 1024
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _darwin_worker_rss_bytes(pid: int) -> int | None:
+    """A macOS worker's footprint high-water mark as of the read, via libproc."""
+    rusage = _libproc_rusage()
+    if rusage is None:
+        return None
+    buffer = ctypes.create_string_buffer(_RUSAGE_BUFFER_BYTES)
+    try:
+        result = rusage(pid, _RUSAGE_INFO_V4, ctypes.byref(buffer))
+    except (OSError, ValueError):
+        return None
+    if result != 0:
+        return None
+    info = ctypes.cast(buffer, ctypes.POINTER(_RusageInfoV4)).contents
+    peak = int(info.ri_lifetime_max_phys_footprint)
+    return peak if peak > 0 else None
+
+
+def worker_rss_bytes(pid: int) -> int | None:
+    """One live worker process's memory high-water mark (bytes), if reported.
+
+    Both supported platforms read the kernel directly, so this measurement adds
+    no child process of its own: Linux's /proc carries the process's own
+    high-water mark (VmHWM), and macOS answers with libproc's lifetime peak
+    physical footprint. **Both are the mark as of the read**, not the final
+    peak of a process that is still running: growth after the last read of a
+    worker is not seen, so the stage's value is the maximum over its reads.
+    A platform with neither returns None, and the stage reports the axis as
+    unknown rather than as zero.
+    """
+    if sys.platform.startswith("linux"):
+        return _linux_worker_rss_bytes(pid)
+    if sys.platform == "darwin":
+        return _darwin_worker_rss_bytes(pid)
+    return None
+
+
+def _rss_measurable_platform() -> bool:
+    """Whether :func:`worker_rss_bytes` can report anything on this platform."""
+    return sys.platform.startswith("linux") or sys.platform == "darwin"
+
+
+class WorkerRssSampler:
+    """The peak memory (bytes) of one transcribe pool's workers.
+
+    The pool's workers are process-isolated and every one of them is launched
+    through the pool's own :class:`CancellableProcessRunner`, so reading that
+    runner's live children measures the **transcribe stage** and nothing else --
+    never another pool's work and never the parent process's own memory. Each
+    read is a worker's high-water mark as of that read (see
+    :func:`worker_rss_bytes`), so the **maximum over reads** is what tracks
+    the peak; the point of reading repeatedly is to see every worker before it
+    exits, since the mark of a gone process cannot be read. It never records a
+    zero: a read that comes back empty (a worker that already exited, a
+    platform that cannot measure) contributes nothing, and the stage reports
+    the axis as unknown with a reason instead.
+    """
+
+    def __init__(
+        self,
+        runner: CancellableProcessRunner,
+        interval_s: float = _RSS_SAMPLE_INTERVAL_S,
+    ) -> None:
+        self._runner = runner
+        self._interval_s = interval_s
+        self._lock = threading.Lock()
+        self._peak_bytes: int | None = None
+        self._samples = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def peak_bytes(self) -> int | None:
+        """The largest worker high-water mark read so far (None: unmeasured)."""
+        with self._lock:
+            return self._peak_bytes
+
+    @property
+    def samples(self) -> int:
+        """Live-worker readings that landed (0 means nothing was measured)."""
+        with self._lock:
+            return self._samples
+
+    def start(self) -> None:
+        """Begin sampling in the background until :meth:`stop`."""
+        self._thread = threading.Thread(target=self._loop, name="cr-rss", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop sampling (bounded: the loop waits at most one interval)."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def sample(self) -> None:
+        """Read every live worker once (the loop calls this in its own thread)."""
+        for pid in self._runner.live_pids():
+            rss = worker_rss_bytes(pid)
+            if rss is None or rss <= 0:
+                continue
+            with self._lock:
+                self._samples += 1
+                self._peak_bytes = (
+                    rss if self._peak_bytes is None else max(self._peak_bytes, rss)
+                )
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self.sample()
+            self._stop.wait(self._interval_s)
+
+
+def _worker_memory(
+    sampler: WorkerRssSampler | None, *, had_work: bool
+) -> tuple[int | None, str | None]:
+    """The stage's (peak worker RSS, reason it is unknown) pair.
+
+    Exactly one side is set: a measured peak in bytes, or the message ID saying
+    why the measurement could not be made. Never a zero.
+    """
+    if not had_work:
+        return None, _NO_WORKER_RAN
+    if sampler is not None and sampler.peak_bytes is not None:
+        return sampler.peak_bytes, None
+    if not _rss_measurable_platform():
+        return None, _UNMEASURABLE_PLATFORM
+    return None, _NO_WORKER_SAMPLED
+
+
 def transcribe(
     sources: Sequence[Source],
     backend,
@@ -793,7 +1048,17 @@ def transcribe(
         )
         return task.source_id, task.index, shifted
 
-    _run_pending(pending, plan_by_id, workers, _run_chunk, runner)
+    # The workers are the stage's memory cost; sample them only while the
+    # pool actually has work, and never let the sampler outlive it.
+    sampler: WorkerRssSampler | None = None
+    if pending:
+        sampler = WorkerRssSampler(runner)
+        sampler.start()
+    try:
+        _run_pending(pending, plan_by_id, workers, _run_chunk, runner)
+    finally:
+        if sampler is not None:
+            sampler.stop()
     if total_chunks == 0:
         progress.finish("no chunks to transcribe")
 
@@ -828,12 +1093,15 @@ def transcribe(
             "language": None,
             "chunks": len(plan.chunks),
         }
+    peak_rss_bytes, peak_rss_reason = _worker_memory(sampler, had_work=bool(pending))
     return Transcription(
         per_source=per_source,
         source_meta=source_meta,
         jobs=workers,
         model=chosen_model,
         chunk_report=report,
+        peak_rss_bytes=peak_rss_bytes,
+        peak_rss_reason=peak_rss_reason,
     )
 
 
@@ -841,10 +1109,12 @@ __all__ = [
     "ChunkReport",
     "Transcription",
     "TranscriptionOptions",
+    "WorkerRssSampler",
     "auto_jobs",
     "detect_vram_gb",
     "merge_chunk_segments",
     "model_vram_gb",
     "resolve_jobs",
     "transcribe",
+    "worker_rss_bytes",
 ]

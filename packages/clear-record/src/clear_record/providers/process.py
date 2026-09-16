@@ -117,6 +117,20 @@ class CancellableProcessRunner:
         self._forget(proc)
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
+    def live_pids(self) -> tuple[int, ...]:
+        """PIDs of the children this runner launched and is still waiting on.
+
+        The transcribe pool samples its decoder workers' resident memory through
+        this: a child is listed from its launch until its communicate() call
+        returns, and only this runner launched it, so a caller samples exactly
+        one pool's work and never an unrelated process. A child that has already
+        exited is reaped here and left out, so a caller can never read a
+        zombie's empty /proc entry and mistake it for zero memory.
+        """
+        with self._lock:
+            procs = list(self._procs)
+        return tuple(proc.pid for proc in procs if proc.poll() is None)
+
     def terminate_all(self, grace: float = DEFAULT_CANCEL_GRACE_S) -> None:
         """Ask tracked children to stop, then hard-kill any survivors.
 

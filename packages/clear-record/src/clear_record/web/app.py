@@ -49,6 +49,7 @@ from clear_record.service import (
     BUNDLE_FILENAME,
     TASK_KINDS,
     TERM_STATUSES,
+    TERMINAL_STATUSES,
     AgentConfig,
     AgentTaskError,
     Meeting,
@@ -66,9 +67,14 @@ from clear_record.service import (
     default_config,
     describe_draft,
     estimate_eta_s,
+    format_mib,
+    format_rate,
+    format_ratio,
+    format_seconds,
     managed,
     read_transcript,
     resolve_run,
+    run_axes,
     run_hello_check,
     verify_archive,
 )
@@ -135,6 +141,12 @@ TEMPLATES.env.globals["trn"] = trn
 #: The message-node renderer, so a template can render a ``Message`` (an ID plus
 #: parameters) composed in a lower layer with the same ``tr`` lookup.
 TEMPLATES.env.globals["render_message"] = render_service_message
+#: The service's display formatters, so a figure the axes carry (a ratio, a
+#: rate, seconds, bytes) renders exactly as the terminal renderer prints it.
+TEMPLATES.env.globals["format_ratio"] = format_ratio
+TEMPLATES.env.globals["format_rate"] = format_rate
+TEMPLATES.env.globals["format_seconds"] = format_seconds
+TEMPLATES.env.globals["format_mib"] = format_mib
 
 #: The cookie that persists the console's explicit language choice: the one new
 #: piece of state the switcher adds, and it carries a language tag and **nothing
@@ -503,6 +515,19 @@ def _auto_view(meta: dict | None) -> dict:
     }
 
 
+def _run_axes(row, meeting) -> dict | None:
+    """The four axes (BENCH-01) for a **terminal** run, else ``None``.
+
+    The axes are workspace reads (the record and the transcript meta), so a
+    live run -- which has no cost record yet -- is not measured: the axes
+    appear when the run stops, and while it runs the fragment stays a progress
+    view. This is the only console call site; the template renders this dict.
+    """
+    if row is None or row.status not in TERMINAL_STATUSES:
+        return None
+    return run_axes(row, directory=meeting.workspace_path if meeting else None)
+
+
 def _run_context(
     state: RunState | None,
     *,
@@ -510,12 +535,16 @@ def _run_context(
     fallback=None,
     meta: dict | None = None,
     history_eta_s: float | None = None,
+    axes: dict | None = None,
 ) -> dict:
     """The template context for one run fragment (live state, else the last row).
 
     ``history_eta_s`` is the service's history-based estimate (RUN-01). When a
     matching history produced one it replaces the stage-local estimate, which
     stays the live fallback — and the only display — otherwise.
+
+    ``axes`` is the service's four-axis dict (BENCH-01), present only for a
+    terminal run; the template renders it verbatim.
     """
     if state is not None:
         context = state.summary()
@@ -523,6 +552,7 @@ def _run_context(
         context["meeting_id"] = state.meeting_id
         context["message"] = last.message if last else ""
         context["polling"] = state.status in ("queued", "running")
+        context["axes"] = axes
         if history_eta_s is not None:
             context["eta_s"] = history_eta_s
         context.update(_auto_view(meta))
@@ -538,6 +568,7 @@ def _run_context(
         "message": "",
         "error": fallback.error,
         "polling": False,
+        "axes": axes,
     }
     context.update(_auto_view(meta if meta is not None else fallback.options))
     return context
@@ -795,12 +826,14 @@ def create_app(
             latest = registry.list_runs(meeting.id)
             state = runs.state(latest[0].id) if latest else None
             eta_s = estimate_eta_s(registry, latest[0]) if latest else None
+            axes = _run_axes(latest[0], meeting) if latest else None
             if state is not None:
                 run = _run_context(
                     state,
                     meeting_id=meeting.id,
                     meta=latest[0].options,
                     history_eta_s=eta_s,
+                    axes=axes,
                 )
             elif latest:
                 run = _run_context(
@@ -809,6 +842,7 @@ def create_app(
                     fallback=latest[0],
                     meta=latest[0].options,
                     history_eta_s=eta_s,
+                    axes=axes,
                 )
             else:
                 run = None
@@ -839,6 +873,7 @@ def create_app(
 
     def render_run(request: Request, state: RunState) -> HTMLResponse:
         row = registry.get_run(state.run_id)
+        meeting = registry.meeting_by_id(state.meeting_id)
         return TEMPLATES.TemplateResponse(
             request,
             "_run.html",
@@ -848,6 +883,7 @@ def create_app(
                     meeting_id=state.meeting_id,
                     meta=row.options if row else None,
                     history_eta_s=estimate_eta_s(registry, row) if row else None,
+                    axes=_run_axes(row, meeting),
                 )
             },
         )

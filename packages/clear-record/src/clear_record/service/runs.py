@@ -107,14 +107,14 @@ def collect_artifacts(workspace: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _number_or_none(value: object) -> float | None:
+def number_or_none(value: object) -> float | None:
     """A JSON number as a float (``None`` for anything else, bools included)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
 
 
-def _int_or_none(value: object) -> int | None:
+def int_or_none(value: object) -> int | None:
     """A JSON integer (``None`` for anything else, bools included)."""
     if isinstance(value, bool) or not isinstance(value, int):
         return None
@@ -159,9 +159,7 @@ def _audio_seconds(meta: dict) -> float | None:
     known = False
     for source in sources.values():
         duration = (
-            _number_or_none(source.get("duration"))
-            if isinstance(source, dict)
-            else None
+            number_or_none(source.get("duration")) if isinstance(source, dict) else None
         )
         if duration is not None and duration > 0:
             total += duration
@@ -169,7 +167,7 @@ def _audio_seconds(meta: dict) -> float | None:
     return round(total, 3) if known else None
 
 
-def _cost_of(run: PipelineRun) -> dict:
+def cost_of(run: PipelineRun) -> dict:
     """The cost record a run persisted (``{}`` when it has none)."""
     progress = run.progress if isinstance(run.progress, dict) else None
     cost = progress.get("cost") if progress else None
@@ -179,12 +177,12 @@ def _cost_of(run: PipelineRun) -> dict:
 def _options_chunk_seconds(run: PipelineRun) -> float | None:
     """The chunk size the run resolved (its queued options), if recorded."""
     options = run.run_options if isinstance(run.run_options, dict) else {}
-    return _number_or_none(options.get("chunk_seconds"))
+    return number_or_none(options.get("chunk_seconds"))
 
 
 def _run_chunk_seconds(run: PipelineRun) -> float | None:
     """The chunk size a run executes with: its cost record, else its options."""
-    recorded = _number_or_none(_cost_of(run).get("chunk_seconds"))
+    recorded = number_or_none(cost_of(run).get("chunk_seconds"))
     return recorded if recorded is not None else _options_chunk_seconds(run)
 
 
@@ -200,7 +198,7 @@ def _tape_seconds(registry: Registry, run: PipelineRun) -> float | None:
     for candidate in registry.list_runs(run.meeting_id):
         if candidate.id == run.id:
             continue
-        value = _number_or_none(_cost_of(candidate).get("audio_seconds"))
+        value = number_or_none(cost_of(candidate).get("audio_seconds"))
         if value is not None and value > 0:
             return value
     return None
@@ -239,9 +237,9 @@ def estimate_eta_s(
             continue
         if not _same_seconds(_run_chunk_seconds(candidate), chunk_seconds):
             continue
-        cost = _cost_of(candidate)
-        candidate_audio = _number_or_none(cost.get("audio_seconds"))
-        candidate_wall = _number_or_none(cost.get("total_wall_seconds"))
+        cost = cost_of(candidate)
+        candidate_audio = number_or_none(cost.get("audio_seconds"))
+        candidate_wall = number_or_none(cost.get("total_wall_seconds"))
         if candidate_audio is None or candidate_wall is None:
             continue
         if candidate_audio <= 0 or candidate_wall <= 0:
@@ -252,7 +250,7 @@ def estimate_eta_s(
         return None
     if audio_seconds is None:
         audio_seconds = _tape_seconds(registry, run)
-    total_audio = _number_or_none(audio_seconds)
+    total_audio = number_or_none(audio_seconds)
     if total_audio is None or total_audio <= 0:
         return None
     if elapsed_s is None:
@@ -853,9 +851,9 @@ class RunManager:
         )
         report = meta.get("chunk_report")
         report = report if isinstance(report, dict) else {}
-        reused = _int_or_none(report.get("reused"))
-        redecoded = _int_or_none(report.get("redecoded"))
-        chunk_seconds = _number_or_none(meta.get("chunk_seconds"))
+        reused = int_or_none(report.get("reused"))
+        redecoded = int_or_none(report.get("redecoded"))
+        chunk_seconds = number_or_none(meta.get("chunk_seconds"))
         if chunk_seconds is None and row is not None:
             chunk_seconds = _options_chunk_seconds(row)
         return {
@@ -870,8 +868,20 @@ class RunManager:
             "chunks_redecoded": redecoded,
             "backend": meta.get("backend") or (row.backend if row else None),
             "model": meta.get("model") or (row.model if row else None),
-            "jobs": _int_or_none(meta.get("jobs")),
+            "jobs": int_or_none(meta.get("jobs")),
             "chunk_seconds": chunk_seconds,
+            # The transcribe stage's worker-memory measurement, read from
+            # the same guarded meta as the transcript: segments.json belongs
+            # to whichever run wrote it last, so the axis needs this run's
+            # own copy (BENCH-01). A run that never reached the guarded meta
+            # carries None/None and reports unknown -- never a previous
+            # run's peak.
+            "peak_rss_bytes": int_or_none(meta.get("peak_rss_bytes")),
+            "peak_rss_reason": (
+                meta.get("peak_rss_reason")
+                if isinstance(meta.get("peak_rss_reason"), str)
+                else None
+            ),
             "total_wall_seconds": _wall_seconds(
                 row.started_at if row else None, ended_at
             ),
@@ -967,5 +977,8 @@ __all__ = [
     "RunState",
     "TERMINAL_STATUSES",
     "collect_artifacts",
+    "cost_of",
     "estimate_eta_s",
+    "int_or_none",
+    "number_or_none",
 ]

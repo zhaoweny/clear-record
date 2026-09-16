@@ -291,3 +291,175 @@ def test_the_diagnostics_reason_stays_english(pseudo) -> None:
     )
     assert "requires macOS 26+ (this is Linux)" in bundle
     assert "«" not in bundle
+
+
+# --- the shipped catalog is translated, not just fresh ---------------------- #
+
+#: The ids the zh_CN catalog deliberately leaves untranslated: the pre-existing
+#: per-option --help text the catalog header keeps English ("the terminal is
+#: not the interface", owner 2026-09-15).
+#:
+#: This is an **exact set**, not a count budget. i18n-check guards *freshness*
+#: -- source ids vs catalog ids, and the compiled bytes -- never translation: a
+#: new tr() string lands with an empty msgstr and silently renders English
+#: under zh_CN. An earlier B1 slice shipped exactly that. A count alone would
+#: hide a swap (a reworded msgid drops one known id while a new untranslated id
+#: takes its place), so every untranslated id must be one of these, and each of
+#: these must still be untranslated.
+#:
+#: An entry counts as untranslated when its msgstr is empty, when **any** plural
+#: form is empty, or when it is flagged fuzzy: Babel omits fuzzy entries from
+#: the compiled catalog, so at runtime they behave exactly like an empty one.
+UNTRANSLATED_IDS = frozenset(
+    {
+        "bind address (default localhost)",
+        "do not open a browser window",
+        "override the app data directory (default: CR_DATA_DIR / the platform "
+        "data directory)",
+        "port (default 8765)",
+        "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
+        "log is written to the app state directory, never to stdout",
+        "set up Tailscale Serve for this port, trust this machine's tailnet "
+        "name, and print its https URL. Serve runs in the foreground alongside "
+        "the console and stops with it. The tailnet is the authentication: "
+        "anyone on your tailnet can reach the console.",
+        "the tailnet HTTPS port Serve exposes (default: the same as --port); "
+        "requires --tailscale",
+        "trust NAME instead of the machine's resolved tailnet name (requires "
+        "--tailscale)",
+    }
+)
+
+#: The non-[bench] ids this slice added, which the console and the terminal
+#: render directly. They stay pinned even if UNTRANSLATED_IDS grows.
+BENCH_IDS = (
+    "accuracy",
+    "coverage",
+    "fit",
+    "jobs",
+    "mean confidence",
+    "memory",
+    "nothing (chosen by hand)",
+    "realtime",
+    "similarity",
+    "speed",
+    "WER",
+    "auto chose",
+    "the run has no workspace to measure",
+    "the workspace has no readable record to score",
+    "the run recorded no cost, so this axis is unknown",
+    "the run recorded no worker memory",
+    "there is no run record, so this axis is unknown",
+    "no decoder worker ran: every chunk was reused from the cache",
+    "no decoder worker's memory could be sampled during the transcribe stage",
+    "peak worker memory is not measurable on this platform",
+)
+
+
+def _po_entries(path) -> list[tuple[str, tuple[str, ...], bool]]:
+    """(msgid, msgstrs, fuzzy) for every live entry in a .po file.
+
+    msgstrs holds one value per plural form (a singular entry has exactly one).
+    A deliberately small stdlib reader: this suite must not need Babel (it
+    lives only in the i18n dependency group, which just verify does not
+    install). Obsolete entries are skipped -- they are not compiled and nothing
+    renders them.
+    """
+    entries: list[tuple[str, tuple[str, ...], bool]] = []
+    msgid: str | None = None
+    forms: list[str] = []
+    current = ""
+    fuzzy = False
+    in_msgstr = False
+    target = "id"
+
+    def _unquote(line: str) -> str:
+        return json.loads(line[line.index('"') :])
+
+    def _flush_form() -> None:
+        nonlocal current
+        forms.append(current)
+        current = ""
+
+    for line in [*path.read_text(encoding="utf-8").splitlines(), ""]:
+        if not line.strip():
+            if msgid is not None:
+                if in_msgstr:
+                    _flush_form()
+                entries.append((msgid, tuple(forms), fuzzy))
+            msgid, forms, current, fuzzy, in_msgstr, target = (
+                None,
+                [],
+                "",
+                False,
+                False,
+                "id",
+            )
+            continue
+        if line.startswith("#"):
+            if line.startswith("#,") and "fuzzy" in line:
+                fuzzy = True
+            continue
+        if line.startswith("msgid "):
+            msgid = _unquote(line)
+            target = "id"
+        elif line.startswith("msgid_plural "):
+            target = "id_plural"  # the plural text is not needed here
+        elif line.startswith("msgstr"):
+            if in_msgstr:
+                _flush_form()
+            current = _unquote(line)
+            in_msgstr = True
+            target = "str"
+        elif line.startswith('"') and msgid is not None:
+            if target == "str":
+                current += _unquote(line)
+            elif target == "id":
+                msgid += _unquote(line)
+    return entries
+
+
+def test_the_catalogs_untranslated_set_is_exactly_the_documented_one() -> None:
+    """The untranslated set is pinned by id, never by a count budget.
+
+    A count can hide a swap: a reworded msgid drops one known-English id while
+    a new untranslated id takes its place, and the total is unchanged. So every
+    untranslated id must be one of the documented per-option --help entries,
+    and each of those must still be there. A plural entry counts as
+    untranslated when any of its forms is empty. The bench ids and the bench
+    renderer lines are pinned separately as the evidence for this slice.
+    """
+    po = i18n.LOCALES_DIR / "zh_CN" / "LC_MESSAGES" / "messages.po"
+    entries = {
+        msgid: (forms, fuzzy) for msgid, forms, fuzzy in _po_entries(po) if msgid
+    }
+
+    untranslated = {
+        msgid
+        for msgid, (forms, fuzzy) in entries.items()
+        if fuzzy or not forms or any(not form for form in forms)
+    }
+    difference = sorted(untranslated ^ set(UNTRANSLATED_IDS))
+    assert untranslated == set(UNTRANSLATED_IDS), (
+        f"the zh_CN untranslated set changed ({difference}): translate the new "
+        "id, or -- if one of the deliberately English per-option --help ids was "
+        "translated or reworded -- update UNTRANSLATED_IDS"
+    )
+
+    missing = [
+        msgid
+        for msgid in BENCH_IDS
+        if msgid not in entries
+        or entries[msgid][1]
+        or not entries[msgid][0]
+        or any(not form for form in entries[msgid][0])
+    ]
+    assert missing == [], f"the bench ids lost their translation: {missing}"
+
+    terminal = [
+        msgid
+        for msgid, (forms, fuzzy) in entries.items()
+        if msgid.startswith("[bench] ")
+        and (fuzzy or not forms or any(not form for form in forms))
+    ]
+    assert terminal == [], f"the bench renderer lost its translation: {terminal}"

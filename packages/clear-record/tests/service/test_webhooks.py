@@ -361,9 +361,7 @@ def _wait_for_events(
     deadline = time.monotonic() + timeout
     while True:
         with receiver._lock:
-            types = [
-                json.loads(body)["type"] for _headers, body in receiver.requests
-            ]
+            types = [json.loads(body)["type"] for _headers, body in receiver.requests]
         if all(name in types for name in expected) or time.monotonic() >= deadline:
             return types
         time.sleep(0.005)

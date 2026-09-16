@@ -67,17 +67,6 @@ class HelloTape:
     voice: str | None = None
     fallback: bool = False
 
-    def as_dict(self) -> dict:
-        """The JSON-safe view (paths and machine facts, so English stays English)."""
-        return {
-            "path": str(self.path),
-            "engine": self.engine,
-            "lang": self.lang,
-            "phrase": self.phrase,
-            "voice": self.voice,
-            "fallback": self.fallback,
-        }
-
 
 def _base_lang(lang: str) -> str:
     """The base language code of ``lang`` (``zh_CN`` -> ``zh``), or ``en``."""

@@ -324,6 +324,24 @@ def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
     assert "The download did not finish: RuntimeError: no network" in response.text
 
 
+def test_an_unknown_model_shows_the_translated_error(tmp_path, monkeypatch) -> None:
+    """A SetupError Message renders in the request locale, not as English text."""
+    monkeypatch.setattr(
+        web_app, "transcription_status", lambda *args, **kwargs: _status(LEG_MODEL)
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/ui/setup/download-model",
+        data={"model": "gigantic"},
+        headers={"Accept-Language": "zh-CN"},
+    )
+
+    assert response.status_code == 200
+    assert "未知模型" in response.text
+    assert "gigantic" in response.text
+
+
 def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:
     setup.update_setup_state(seen_version="0.0.0-old")
 

@@ -237,15 +237,33 @@ def test_instructions_change_the_context_hash_but_not_vice_versa() -> None:
 
 def test_prompt_hash_covers_the_prompt_program_not_the_context() -> None:
     plan = plan_for("glossary_collection")
-    assert prompt_hash(plan) == prompt_hash(plan_for("glossary_collection"))
+    assert prompt_hash(plan, "glossary_collection") == prompt_hash(
+        plan_for("glossary_collection"), "glossary_collection"
+    )
 
     edited = (TaskStep("collect", "A different instruction."),)
-    assert prompt_hash(plan) != prompt_hash(edited)
+    assert prompt_hash(plan, "glossary_collection") != prompt_hash(
+        edited, "glossary_collection"
+    )
 
     # Two tasks with different inputs, same prompt program: prompt hash matches.
     other_context = _task({"transcript": "different"})
     assert context_hash(_task({"transcript": "a"})) != context_hash(other_context)
-    assert prompt_hash(plan) == prompt_hash(plan_for(other_context.kind))
+    assert prompt_hash(plan, "glossary_collection") == prompt_hash(
+        plan_for(other_context.kind), other_context.kind
+    )
+
+
+def test_prompt_hash_covers_the_resolved_output_contract() -> None:
+    """render_prompt sends the contract, so a contract edit changes the hash."""
+    step = TaskStep("draft", "Write the minutes.")
+    same_step_other_contract = TaskStep(
+        "draft", "Write the minutes.", contract=contract_for("glossary_collection")
+    )
+
+    assert prompt_hash((step,), "minutes") != prompt_hash(
+        (same_step_other_contract,), "minutes"
+    )
 
 
 def test_render_prompt_carries_context_and_chains_a_previous_step() -> None:
@@ -448,6 +466,30 @@ def test_a_bad_placeholder_is_surfaced_and_skipped(tmp_path: Path, capsys) -> No
     assert any("unknown placeholder" in problem for problem in resolved.problems)
     assert not resolved.ok
     assert "unknown placeholder" in capsys.readouterr().err
+
+
+def test_a_stray_brace_template_is_a_problem_not_a_crash(tmp_path, capsys) -> None:
+    """A format string Formatter().parse cannot read is a config problem.
+
+    Regression: it used to raise ValueError out of load_agent_config, escaping
+    its "never raises" contract and 500ing every page that renders setup.
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[agent.commands]\nminutes = "agent --label { --in {input_json}"\n',
+        encoding="utf-8",
+    )
+
+    resolved = load_agent_config(environ={}, config_file=config)
+
+    assert resolved.commands == {}
+    assert any("not a valid format string" in problem for problem in resolved.problems)
+    assert "not a valid format string" in capsys.readouterr().err
+
+
+def test_a_stray_brace_template_is_refused_at_construction() -> None:
+    with pytest.raises(AgentConfigError, match="not a valid format string"):
+        CommandRunner("agent --label { --in {input_json}")
 
 
 def test_an_unknown_kind_in_commands_is_surfaced(tmp_path: Path) -> None:

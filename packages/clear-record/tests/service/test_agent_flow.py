@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.service import agent_flow
 from clear_record.service.hello_tape import HelloTape
+from clear_record.service.setup import SetupError
 from clear_record.service.transcript import TranscriptSlice
 
 
@@ -378,3 +381,43 @@ def test_a_named_download_targets_the_ggml_checkpoint_not_the_backend(
     assert (called_model, called_name) == ("medium", "ggml-medium.bin")
     assert candidate == result
     assert result.endswith("ggml-medium.bin")
+
+
+def test_an_unknown_model_is_a_setup_error_not_a_value_error(tmp_path) -> None:
+    """Regression: it raised an untranslated ValueError, not a SetupError."""
+    with pytest.raises(SetupError) as excinfo:
+        agent_flow.download_transcription_model("gigantic", model_dir=str(tmp_path))
+
+    message = str(excinfo.value.message)
+    assert "unknown model" in message
+    assert "tiny, base, small, medium, large-v3" in message
+
+
+def test_readiness_carries_the_clis_own_missing_backend_message(tmp_path) -> None:
+    status = agent_flow.transcription_status(
+        backends=lambda: (),
+        checkpoint=lambda: None,
+        model_dir=str(tmp_path / "models"),
+    )
+
+    assert status.state == agent_flow.LEG_BACKEND
+    assert status.message is not None
+    assert "no ASR backend is available" in str(status.message)
+
+
+def test_the_check_reuses_the_wizards_readiness_for_a_model_free_backend(
+    tmp_path,
+) -> None:
+    """Regression: one resolver decides "needs no checkpoint" for both."""
+    calls: list[dict] = []
+    deps = _success_deps(tmp_path, calls)
+    deps["backends"] = lambda: ("apple-speech",)
+
+    def no_checkpoint_probe():
+        raise AssertionError("a model-free backend must not probe for a checkpoint")
+
+    deps["checkpoint"] = no_checkpoint_probe
+    result = agent_flow.run_hello_check(destination=tmp_path / "ws", **deps)
+
+    assert result.leg == agent_flow.LEG_OK
+    assert calls[0]["model"] is None

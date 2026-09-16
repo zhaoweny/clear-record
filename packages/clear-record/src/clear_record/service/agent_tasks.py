@@ -412,13 +412,19 @@ def context_hash(task: AgentTask) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def prompt_hash(steps: tuple[TaskStep, ...]) -> str:
+def prompt_hash(steps: tuple[TaskStep, ...], kind: str) -> str:
     """The identity of the *prompt program* — what a prompt edit changes.
 
-    It covers the step names and their instructions, not the substituted
-    context, so prompt identity and input identity stay separable.
+    It covers the step names, their instructions and the output contract each
+    step's answer must satisfy (the same text :func:`render_prompt` appends),
+    but not the substituted context, so prompt identity and input identity
+    stay separable. A contract edit is a prompt edit: without it, a changed
+    ``describe()`` would send a different prompt under the same hash.
     """
-    program = "\n\n".join(f"# {step.name}\n{step.instructions}" for step in steps)
+    program = "\n\n".join(
+        f"# {step.name}\n{step.instructions}\n{step.resolved_contract(kind).describe()}"
+        for step in steps
+    )
     return hashlib.sha256(program.encode("utf-8")).hexdigest()
 
 

@@ -386,6 +386,28 @@ def test_ui_create_meeting_and_save_tapes(console, tmp_path) -> None:
     assert f"{tmp_path}/b.wav" in saved.text
 
 
+def test_run_form_offers_only_this_machines_backends(
+    console, tmp_path, monkeypatch
+) -> None:
+    """The picker is derived from availability, not a hardcoded catalog.
+
+    The machine that can run ``apple-speech`` must offer it; a backend this
+    machine lacks (``nvidia``/``amd`` here) must not appear. ``auto`` stays.
+    """
+    monkeypatch.setattr(
+        "clear_record.web.app.available_backend_ids", lambda: ("apple-speech",)
+    )
+    _make_meeting(console, tmp_path)
+
+    detail = console.client.get("/ui/projects/ops/meetings")
+
+    assert detail.status_code == 200
+    assert '<option value="apple-speech"' in detail.text
+    assert '<option value="nvidia"' not in detail.text
+    assert '<option value="amd"' not in detail.text
+    assert '<option value="auto"' in detail.text
+
+
 def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     client = console.client
     meeting = _make_meeting(console, tmp_path)

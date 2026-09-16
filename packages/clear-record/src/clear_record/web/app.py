@@ -51,6 +51,7 @@ from clear_record.service import (
     TERM_STATUSES,
     AgentConfig,
     AgentTaskError,
+    Meeting,
     MeetingAgent,
     ModelNotOnDisk,
     NoBackendAvailable,
@@ -59,6 +60,7 @@ from clear_record.service import (
     Runner,
     RunManager,
     RunState,
+    Tape,
     archive_meeting,
     collect_bundle,
     default_config,
@@ -77,6 +79,7 @@ from clear_record.service.archive import tool_version
 from clear_record.service.auto import (
     DEFAULT_MODEL,
     MODEL_LADDER,
+    available_backend_ids,
     models_on_disk,
     render_message as render_service_message,
 )
@@ -156,7 +159,8 @@ TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
 #: The Settings page's sections (ADR-0027): each is a real URL,
 #: ``/settings/<slug>``. This is the control plane's spine, not the project
 #: navigation. The pinned sections (ticket 03): each is one job at a time.
-#: Only agent and MCP write; every other section shows its config path.
+#: Agent and MCP write the config; Status writes the setup marker (walk setup
+#: again) and Models can download a checkpoint. The rest show their config path.
 #: Each entry is ``(slug, label, template)``; the template is the partial
 #: ``settings.html`` includes for that section, so the slug -> template mapping
 #: lives here once rather than as an if/elif in the page.
@@ -259,12 +263,17 @@ def resolve_web_locale(
     return i18n.resolve_locale(environ=environ)
 
 
-#: The ASR backend ids the run form offers, in catalog order, with the
-#: capability-driven ``auto`` sentinel last (never the default). A literal, not
-#: an import of ``clear_record.providers``: the web layer may import only
-#: ``core``/``service`` (layering guard), so it does not probe availability here
-#: — ``service.auto`` resolves ``auto`` at submit time.
-BACKEND_CHOICES = ("apple", "nvidia", "amd", BACKEND_AUTO)
+def run_backend_choices() -> tuple[str, ...]:
+    """The run form's backend ids: what this machine can run, then ``auto``.
+
+    Availability is the service's own probe (``service.auto``'s
+    ``available_backend_ids``, re-exported from the providers), so the picker
+    offers ``apple-speech`` where it exists and never offers a backend this
+    machine cannot run — the same set ``--backend auto`` chooses from. The
+    capability-driven ``auto`` sentinel stays last (never the default).
+    """
+    return available_backend_ids() + (BACKEND_AUTO,)
+
 
 #: The picker's choices, derived from the shared ``core`` table (never restated),
 #: with ``custom`` — "no preset" — last. A profile added to ``PROFILES`` shows up
@@ -398,6 +407,44 @@ def _upload_status(exc: managed.UploadRejected) -> int:
         if isinstance(exc, kind):
             return status
     return 400
+
+
+async def _receive_tape(
+    registry: Registry,
+    meeting: Meeting,
+    request: Request,
+    *,
+    declared: int | None,
+    upload_id: str | None,
+) -> Tape:
+    """Read one multipart tape body and store it, for both upload surfaces.
+
+    The form parse, the ``file`` part check and the threadpool
+    :func:`managed.upload_tape` call are identical on the HTML and JSON routes;
+    only how a refusal is presented differs. A malformed body or a missing
+    ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
+    so each caller maps it to its own shape (a re-render, or an HTTP status).
+    """
+    try:
+        form = await request.form()
+    except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
+        raise managed.UploadRejected(
+            deferred("could not read the multipart upload: {error}"), error=exc
+        ) from exc
+    upload = form.get("file")
+    if not isinstance(upload, UploadFile) or not upload.filename:
+        raise managed.UploadRejected(
+            deferred("attach the tape as a multipart file part named 'file'")
+        )
+    return await run_in_threadpool(
+        managed.upload_tape,
+        registry,
+        meeting,
+        upload.file,
+        filename=upload.filename,
+        declared_bytes=declared,
+        upload_id=upload_id,
+    )
 
 
 def _auto_view(meta: dict | None) -> dict:
@@ -610,7 +657,8 @@ def create_app(
     # the shared one), so the console reports on the same delivery the runs make.
     # Injecting one lets a test drive the status surface with no config file.
     emitter = webhooks if webhooks is not None else default_emitter()
-    if agent_runner is None and agent_config is None:
+    config_from_process = agent_runner is None and agent_config is None
+    if config_from_process:
         agent_config = default_config()
     app = FastAPI(
         title="clear-record",
@@ -625,6 +673,10 @@ def create_app(
     app.state.webhooks = emitter
     app.state.agent_runner = agent_runner
     app.state.agent_config = agent_config
+    # Whether this app pinned the process config (no injected runner/config).
+    # Only then may a settings write refresh it; an injected config is the
+    # caller's and is never replaced (tests, embedders).
+    app.state.agent_config_from_process = config_from_process
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -791,7 +843,7 @@ def create_app(
         if tab == "meetings":
             context.update(
                 meetings=meeting_rows(slug),
-                backends=BACKEND_CHOICES,
+                backends=run_backend_choices(),
                 profiles=PROFILE_CHOICES,
                 profile_default=PROFILE_CUSTOM,
                 profile_options=profile_preview(PROFILE_CUSTOM),
@@ -989,6 +1041,18 @@ def create_app(
             runner=app.state.agent_runner,
             config=app.state.agent_config,
         )
+
+    def refresh_agent_config() -> None:
+        """Re-resolve the pinned agent config after a settings write.
+
+        ``write_agent_settings`` drops the process-wide default, but this app
+        captured the old object at startup; without this the panel reads
+        "agent ready" from the config file while a meeting launch still reports
+        "no agent configured" until the server restarts. An injected config is
+        the caller's and stays pinned.
+        """
+        if app.state.agent_config_from_process:
+            app.state.agent_config = default_config()
 
     def agent_ready() -> bool:
         """Whether a launch has a runner at all (a display hint, not a guard)."""
@@ -1733,25 +1797,8 @@ def create_app(
             meeting = managed.precheck_upload(
                 registry, meeting, declared, upload_id=upload_id
             )
-            try:
-                form = await request.form()
-            except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
-                raise managed.UploadRejected(
-                    deferred("could not read the multipart upload: {error}"), error=exc
-                ) from exc
-            upload = form.get("file")
-            if not isinstance(upload, UploadFile) or not upload.filename:
-                raise managed.UploadRejected(
-                    deferred("attach the tape as a multipart file part named 'file'")
-                )
-            await run_in_threadpool(
-                managed.upload_tape,
-                registry,
-                meeting,
-                upload.file,
-                filename=upload.filename,
-                declared_bytes=declared,
-                upload_id=upload_id,
+            await _receive_tape(
+                registry, meeting, request, declared=declared, upload_id=upload_id
             )
         except managed.UploadRejected as exc:
             return render_storage(
@@ -2001,6 +2048,7 @@ def create_app(
             path = write_agent_settings(
                 endpoint, model=model or None, api_key_env=api_key_env or None
             )
+            refresh_agent_config()
         except SetupError as exc:
             return agent_setup_panel(
                 request, error=exc.message.render(tr), status_code=400
@@ -2045,6 +2093,7 @@ def create_app(
             return agent_setup_panel(request, error=shown, status_code=400)
         try:
             write_agent_settings(endpoint, model=pulled.model)
+            refresh_agent_config()
         except SetupError as exc:
             return agent_setup_panel(
                 request, error=exc.message.render(tr), status_code=400
@@ -2402,27 +2451,8 @@ def create_app(
             ) from exc
 
         try:
-            form = await request.form()
-        except Exception as exc:  # noqa: BLE001 - a malformed body is a 400
-            raise HTTPException(
-                status_code=400,
-                detail=f"could not read the multipart upload: {exc}",
-            ) from exc
-        upload = form.get("file")
-        if not isinstance(upload, UploadFile) or not upload.filename:
-            raise HTTPException(
-                status_code=400,
-                detail="attach the tape as a multipart file part named 'file'",
-            )
-        try:
-            tape = await run_in_threadpool(
-                managed.upload_tape,
-                registry,
-                meeting,
-                upload.file,
-                filename=upload.filename,
-                declared_bytes=declared,
-                upload_id=upload_id,
+            tape = await _receive_tape(
+                registry, meeting, request, declared=declared, upload_id=upload_id
             )
         except managed.UploadRejected as exc:
             raise HTTPException(

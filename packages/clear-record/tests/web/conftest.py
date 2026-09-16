@@ -57,3 +57,20 @@ def _stub_transcription_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
             models_present=(),
         ),
     )
+
+
+@pytest.fixture(autouse=True)
+def _stub_backend_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Meetings tab off the real provider probes.
+
+    The run form derives its backend options from the service's
+    ``available_backend_ids`` (it must show ``apple-speech`` here and must not
+    show a backend this machine lacks). That probe can compile/run the Apple
+    Speech helper, so pin it; a test that asserts the derivation overrides
+    this with its own list.
+    """
+    from clear_record.web import app as web_app
+
+    monkeypatch.setattr(
+        web_app, "available_backend_ids", lambda: ("apple", "apple-speech")
+    )

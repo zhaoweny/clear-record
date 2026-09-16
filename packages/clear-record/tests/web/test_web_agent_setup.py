@@ -227,6 +227,38 @@ def test_a_key_value_never_reaches_the_console_or_the_config(
     assert "CR_SETUP_SECRET" in client.get("/api/agent/setup").json()["api_key_env"]
 
 
+def test_recording_the_endpoint_reaches_a_meeting_without_a_restart(
+    tmp_path, monkeypatch
+) -> None:
+    """A settings write refreshes the app's pinned config in place.
+
+    ``write_agent_settings`` drops the process-wide default, but the app pinned
+    the old object at startup. Without a refresh the setup panel reads "agent
+    ready" from the config file while a meeting still reports "No agent is
+    configured." until the server restarts -- the novice's dead end.
+    """
+    from clear_record.service import reset_default_config
+
+    monkeypatch.setattr(web_app, "verify_endpoint", _verifier(FakeEndpoint(), {}))
+    reset_default_config()
+    client = _client(tmp_path)
+    client.post("/api/projects", json={"name": "Ops"})
+    meeting = client.post(
+        "/api/projects/ops/meetings",
+        json={"title": "Kickoff", "workspace_path": str(tmp_path)},
+    ).json()
+    agent_url = f"/api/meetings/{meeting['id']}/agent"
+    assert client.get(agent_url).json()["configured"] is False
+
+    response = client.post(
+        "/ui/agent-setup/use",
+        data={"endpoint": FAKE.base_url, "model": "qwen2.5:1.5b", "api_key_env": ""},
+    )
+
+    assert response.status_code == 200
+    assert client.get(agent_url).json()["configured"] is True
+
+
 # --- the MCP rung: point at a harness, write its client config --------------- #
 
 

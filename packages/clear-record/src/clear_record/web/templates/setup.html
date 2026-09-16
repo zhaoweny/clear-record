@@ -22,7 +22,7 @@
       <div class="setup-step-head">
         <h3>{{ tr("Welcome") }}</h3>
       </div>
-      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Nothing here is required before you start; this path gets transcription ready, connects an MCP harness, and ends with an acceptance test.") }}</p>
+      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Your own tape becomes a transcript under Projects → Meetings, and — once an agent endpoint is connected — minutes under that project's Minutes. Nothing here is required before you start; this path gets transcription ready, connects an MCP harness, and ends with an acceptance test.") }}</p>
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-transcription">{{ tr("Next: Transcription") }}</a>
         <a class="btn btn-sm btn-ghost" href="#setup-agent">{{ tr("Skip") }}</a>
@@ -53,7 +53,7 @@
       <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription, shown back as the transcript an MCP agent receives. Run it in the Agent step's Try it stage, or from Settings → Status.") }}</p>
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-agent">{{ tr("Run it in the Agent step") }}</a>
-        <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("hello-world check") }}</a>
+        <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("Hello-world check") }}</a>
         <form method="post" action="/setup/complete">
           <button type="submit" class="primary">{{ tr("Finish setup") }}</button>
         </form>

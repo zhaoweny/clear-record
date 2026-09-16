@@ -40,6 +40,7 @@
       <p class="muted">{{ tr("Endpoint: {endpoint}", endpoint=setup.endpoint or tr("the configured command template")) }}</p>
       {% if setup.model %}<p class="muted">{{ tr("Model: {model}", model=setup.model) }}</p>{% endif %}
       {% if setup.api_key_env %}<p class="muted">{{ tr("Key read from the environment variable {name}; never stored.", name=setup.api_key_env) }}</p>{% endif %}
+      {% if setup.api_key_env %}<pre class="agent-setup-secret"><code>export {{ setup.api_key_env }}='your-key'</code></pre>{% endif %}
       {% if setup.commands %}<p class="muted">{{ tr("Command templates: {kinds}", kinds=setup.commands | join(', ')) }}</p>{% endif %}
       {% else %}
       <p class="muted agent-setup-note">{{ tr("No agent endpoint is configured yet, so agent tasks cannot run. Start a local OpenAI-compatible server (Ollama, LM Studio or llama.cpp) and detect it, or enter an address below.") }}</p>
@@ -116,6 +117,8 @@
         <button class="primary" type="submit">{{ tr("Verify and record") }}</button>
       </form>
       <p class="muted agent-setup-secret">{{ tr("clear-record never stores a key: a hosted endpoint names the environment variable that holds it, and a local endpoint needs none.") }}</p>
+      <pre class="agent-setup-secret"><code>export MY_KEY='your-key'</code></pre>
+      <p class="muted agent-setup-secret">{{ tr("Run that export in the shell that launches clear-record (or restart the server after setting it), then type the same variable name in the field above. A local endpoint needs no key.") }}</p>
       {% endif %}
     </li>
 

@@ -28,6 +28,10 @@
       <p class="muted">{{ check.message.render(tr) }}</p>
       {% if check.tape %}
       <p class="muted hello-tape">{{ tr("Tape: {path} (engine {engine}, language {lang})", path=check.tape.path, engine=check.tape.engine, lang=check.tape.lang) }}</p>
+      <p class="muted hello-tape">
+        {% if check.tape.voice %}{{ tr("Voice: {voice}", voice=check.tape.voice) }} &middot; {% endif %}
+        {{ tr("Phrase: {phrase}", phrase=check.tape.phrase) }}{% if check.tape.fallback %} &middot; {{ tr("language fallback") }}{% endif %}
+      </p>
       {% endif %}
       <pre class="hello-transcript">{{ check.transcript }}</pre>
 

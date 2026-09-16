@@ -109,7 +109,7 @@ def test_the_setup_wizard_agent_step_embeds_the_flow(tmp_path) -> None:
     # The Try it step points at the acceptance test, not a second copy.
     assert 'id="setup-try"' in page
     assert 'href="/settings/status"' in page
-    assert "hello-world check" in page
+    assert "Hello-world check" in page
 
 
 # --- the standalone MCP section is unchanged --------------------------------- #

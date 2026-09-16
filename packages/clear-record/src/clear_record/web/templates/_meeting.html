@@ -81,7 +81,7 @@
 <h3>{{ tr("Agent tasks") }}</h3>
 {% if not agent_ready %}
 <div class="empty">
-  {{ tr("No agent is configured. Set CR_AGENT_ENDPOINT to an OpenAI-compatible endpoint, or an [agent.commands] template for a task kind, then reload.") }}
+  {{ tr("No agent is configured. Set CR_AGENT_ENDPOINT to an OpenAI-compatible endpoint, or an [agent.commands] template for a task kind, then restart the clear-record server so it reads the variable.") }}
 </div>
 {% endif %}
 <div class="row agent-launchers">

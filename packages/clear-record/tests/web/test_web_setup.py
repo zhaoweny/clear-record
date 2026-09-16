@@ -13,6 +13,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.service import Registry, setup
+from clear_record.service.agent_flow import (
+    LEG_BACKEND,
+    LEG_MODEL,
+    LEG_OK,
+    TranscriptionStatus,
+)
+from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 
 
@@ -133,21 +140,99 @@ def test_the_setup_page_renders_the_numbered_steps(tmp_path) -> None:
     page = TestClient(_app(tmp_path)).get("/setup").text
 
     assert page.count('class="setup-step"') == 4
-    for step in ("setup-welcome", "setup-models", "setup-agent", "setup-first-record"):
+    for step in ("setup-welcome", "setup-transcription", "setup-agent", "setup-try"):
         assert f'id="{step}"' in page
-    for label in ("Welcome", "Next: Models", "Next: Agent", "Next: First record"):
+    for label in ("Welcome", "Next: Transcription", "Next: Agent", "Next: Try it"):
         assert label in page
     # Every step is skippable: setup never blocks the workspace.
     assert page.count(">Skip<") >= 3
     # The agent step is the one shared panel, mounted by the same htmx URL.
     assert 'id="agent-setup"' in page
     assert 'hx-get="/ui/agent-setup"' in page
-    # First record is ticket 05: it points at the one acceptance test (the flow's
-    # Try it stage) and the permanent copy in Settings -> Status.
+    # Try it is ticket 05: it points at the one acceptance test (the flow's Try it
+    # stage) and the permanent copy in Settings -> Status.
     assert "Run it in the Agent step" in page
     assert 'href="/settings/status"' in page
     assert "/setup/complete" in page
     assert "/setup/dismiss" in page
+
+
+# --- the Transcription step states readiness from the service ---------------- #
+
+
+def _status(state, *, backend="apple", model=None, models_present=()):
+    return TranscriptionStatus(
+        state=state,
+        backend=backend,
+        model=model,
+        models_dir="/home/u/models",
+        models_present=models_present,
+    )
+
+
+def test_the_transcription_step_says_a_model_free_backend_needs_no_checkpoint(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: _status(LEG_OK, backend="apple-speech"),
+    )
+
+    page = TestClient(_app(tmp_path)).get("/setup").text
+
+    assert 'id="setup-transcription"' in page
+    assert "Transcription is ready here: the apple-speech backend" in page
+    assert "needs no checkpoint on this system" in page
+    # The old step conflated the ASR checkpoint with the Agent step's LLM and
+    # claimed read-only Models settings could fetch one. Neither may return.
+    assert "The Agent step can pull" not in page
+    assert "fetch one from Models settings" not in page
+
+
+def test_the_transcription_step_shows_the_checkpoint_for_a_ggml_backend(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
+    )
+
+    page = TestClient(_app(tmp_path)).get("/setup").text
+
+    assert "Transcription is ready here: the apple backend" in page
+    assert "Checkpoint on disk: /home/u/models/ggml-small.bin." in page
+
+
+def test_the_transcription_step_names_a_missing_backend(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: _status(LEG_BACKEND, backend=None),
+    )
+
+    page = TestClient(_app(tmp_path)).get("/setup").text
+
+    assert "No ASR backend is available on this machine yet" in page
+    assert "/home/u/models" in page
+
+
+def test_the_transcription_step_says_the_first_run_downloads_a_missing_checkpoint(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: _status(LEG_MODEL, models_present=("ggml-small.bin",)),
+    )
+
+    page = TestClient(_app(tmp_path)).get("/setup").text
+
+    assert "The apple backend needs a model checkpoint" in page
+    assert "downloads one from Hugging Face" in page
+    assert "Models on disk: ggml-small.bin" in page
+    assert "No model checkpoints are on disk yet." not in page
 
 
 def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:

@@ -4,10 +4,13 @@
    is rendered inside a host element with id="hello-check" and swapped back into
    it by the POST.
 
-   On success it shows the transcript the connected MCP agent receives, and the
-   exact client entry. On a finding it names the leg that stopped -- no system
-   voice, no ASR backend, no model, or a failed transcription -- which is the
-   diagnostic's whole value. #}
+   On success it splits what is actually proven into three plainly-labelled
+   states: the local chain reached a transcript ("Transcription ready"), the MCP
+   client config and harness are present ("Agent integration configured"), and
+   the agent round-trip, which this check cannot prove and never shows as a green
+   badge. On a finding it names the leg that stopped -- no system voice, no ASR
+   backend, no model, or a failed transcription -- which is the diagnostic's
+   whole value. #}
 <div class="hello">
   <p class="muted hello-intro">{{ tr("This creates a hello-world tape with the system voice, transcribes it, and reads it back the way an MCP agent would. A failure names the leg that stopped, so a re-run localizes the fault.") }}</p>
   <form class="hello-run" hx-post="/ui/hello-check" hx-target="#hello-check"
@@ -19,7 +22,7 @@
     {% if check.ok %}
     <div class="hello-result" data-leg="{{ check.leg }}">
       <div class="row hello-result-head">
-        <span class="badge status-ok">{{ tr("the whole system worked once") }}</span>
+        <span class="badge status-ok">{{ tr("Transcription ready") }}</span>
         <span class="muted">{{ trn("{count} segment", "{count} segments", check.segments, count=check.segments) }}</span>
       </div>
       <p class="muted">{{ check.message.render(tr) }}</p>
@@ -31,15 +34,29 @@
       <h3>{{ tr("Exposed over MCP") }}</h3>
       <p class="muted">{{ tr("clear-record's MCP server exposes this read as the tool {tool}; a connected agent calls it with the project and meeting and receives the transcript above.", tool=check.tool) }}</p>
       <p class="muted">{{ tr("Client entry: {command} {args}", command=check.entry.command, args=check.entry.args | join(' ')) }}</p>
-      {% if check.mcp_config %}
-      <p class="muted">{{ tr("Registered in {path}.", path=check.mcp_config) }}</p>
+
+      {% if check.mcp_config and check.harness %}
+      <p class="muted hello-integration">
+        <span class="badge status-ok">{{ tr("Agent integration configured") }}</span>
+        {{ tr("The MCP client config {config} and the harness {harness} are both in place.", config=check.mcp_config, harness=check.harness) }}
+      </p>
       {% else %}
-      <p class="muted">{{ tr("No MCP client config is pointed at yet; register one in the MCP config step, then point the harness at clear-record.") }}</p>
+      <p class="muted hello-integration">
+        <span class="badge status-missing">{{ tr("Agent integration not configured") }}</span>
+        {% if not check.mcp_config and not check.harness %}
+        {{ tr("Neither an MCP client config nor a harness is recorded yet; both are needed before a connected agent can answer anything about the tape.") }}
+        {% elif not check.mcp_config %}
+        {{ tr("No MCP client config is pointed at yet; register one in the MCP config step, then point the harness at clear-record.") }}
+        {% else %}
+        {{ tr("No harness is recorded yet; add one in the Harness step.") }}
+        {% endif %}
+      </p>
       {% endif %}
-      {% if check.harness %}
-      <p class="muted">{{ tr("Harness: {path}", path=check.harness) }}</p>
-      {% endif %}
-      <p class="muted">{{ tr("To prove a real agent answers a question about the tape, run {recipe} against an endpoint you bring; it is deliberately not part of the offline test suite.", recipe="just agent-drive") }}</p>
+
+      <p class="muted hello-roundtrip">
+        <span class="badge status-neutral">{{ tr("Agent round-trip verified") }}</span>
+        {{ tr("Not verified by this check: only the optional real-agent drive {recipe} proves that a connected agent answers a question about the tape.", recipe="just agent-drive") }}
+      </p>
     </div>
     {% else %}
     <div class="hello-result hello-finding" data-leg="{{ check.leg }}">

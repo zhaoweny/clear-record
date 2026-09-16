@@ -69,6 +69,7 @@ from clear_record.service import (
     run_hello_check,
     verify_archive,
 )
+from clear_record.service.agent_flow import transcription_status
 from clear_record.service.archive import tool_version
 from clear_record.service.auto import (
     DEFAULT_MODEL,
@@ -1373,18 +1374,19 @@ def create_app(
     def page_setup(request: Request) -> HTMLResponse:
         """Setup: system readiness, a numbered sequence (ticket 04).
 
-        The Agent step embeds the one agent flow (the same #agent-setup mount
-        Settings -> Agent uses), and the First record step points at that flow's
-        Try it check and at the permanent copy in Settings -> Status. Nothing
-        here is a second tape implementation.
+        The Transcription step states ASR backend and checkpoint readiness from
+        the service (transcription_status), so the wizard says what is actually
+        ready instead of describing theory. The Agent step embeds the one agent
+        flow (the same #agent-setup mount Settings -> Agent uses), and the Try it
+        step points at that flow's Try it check and at the permanent copy in
+        Settings -> Status. Nothing here is a second tape implementation.
         """
         return page(
             request,
             "setup.html",
             nav="setup",
             reason=request.query_params.get("reason", ""),
-            models_dir=str(resolve_models_dir()),
-            models_present=sorted(models_on_disk()),
+            transcription=transcription_status(),
         )
 
     @app.get("/setup/agent", response_class=HTMLResponse)

@@ -5,10 +5,11 @@
 {% block body %}
 {# Setup is system readiness (installed -> usable), not the daily workspace. The
    steps are a real sequence, so they are numbered and each is skippable: setup
-   never blocks a returning user. The agent step reuses the one
-   `/ui/agent-setup` panel Settings -> Agent mounts, so there is no second
-   implementation. The last step is ticket 05's acceptance test and is shown as a
-   clear "coming next" state here. #}
+   never blocks a returning user. The Transcription step owns ASR backend and
+   checkpoint readiness and states it from service.agent_flow.transcription_status;
+   it never points at the Agent step or at Models settings for a fetch. The agent
+   step reuses the one `/ui/agent-setup` panel Settings -> Agent mounts, so there
+   is no second implementation. The last step is ticket 05's acceptance test. #}
 <section class="content setup">
   <h2>{{ tr("Setup") }}</h2>
   <p class="muted setup-intro">{{ tr("Setup is system readiness: get clear-record from installed to usable. Every step can be skipped — you can return whenever you like.") }}</p>
@@ -23,26 +24,36 @@
       </div>
       <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Nothing here is required before you start; this path only gets a working runner and an MCP harness in place.") }}</p>
       <div class="setup-step-actions">
-        <a class="btn btn-sm" href="#setup-models">{{ tr("Next: Models") }}</a>
+        <a class="btn btn-sm" href="#setup-transcription">{{ tr("Next: Transcription") }}</a>
         <a class="btn btn-sm btn-ghost" href="#setup-agent">{{ tr("Skip") }}</a>
       </div>
     </li>
 
-    <li class="setup-step" id="setup-models">
+    <li class="setup-step" id="setup-transcription">
       <div class="setup-step-head">
-        <h3>{{ tr("Models") }}</h3>
+        <h3>{{ tr("Transcription") }}</h3>
       </div>
-      <p class="muted">{{ tr("Transcription needs a model checkpoint on disk. The Agent step can pull a small one where the server supports it, or you can fetch one from Models settings.") }}</p>
-      <p class="muted"><code>{{ models_dir }}</code></p>
-      {% if models_present %}
-      <p class="muted">{{ tr("Models on disk: {models}", models=models_present | join(', ')) }}</p>
+      {% if transcription.state == 'ok' %}
+      <p class="muted">{{ tr("Transcription is ready here: the {backend} backend runs on this machine.", backend=transcription.backend) }}</p>
+      {% if transcription.backend == 'apple-speech' %}
+      <p class="muted">{{ tr("That backend is model-free: it needs no checkpoint on this system.") }}</p>
+      {% else %}
+      <p class="muted">{{ tr("Checkpoint on disk: {model}.", model=transcription.model) }}</p>
+      {% endif %}
+      {% elif transcription.state == 'backend' %}
+      <p class="muted">{{ tr("No ASR backend is available on this machine yet. Install one, then reload this page; Settings → Backends names what each backend needs.") }}</p>
+      {% else %}
+      <p class="muted">{{ tr("The {backend} backend needs a model checkpoint, and none is on disk yet. The first transcription run downloads one from Hugging Face, or you can place a ggml checkpoint in the directory below.", backend=transcription.backend) }}</p>
+      {% endif %}
+      <p class="muted">{{ tr("Models directory: {models_dir}", models_dir=transcription.models_dir) }}</p>
+      {% if transcription.models_present %}
+      <p class="muted">{{ tr("Models on disk: {models}", models=transcription.models_present | join(', ')) }}</p>
       {% else %}
       <p class="muted">{{ tr("No model checkpoints are on disk yet.") }}</p>
       {% endif %}
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-agent">{{ tr("Next: Agent") }}</a>
-        <a class="btn btn-sm btn-ghost" href="#setup-first-record">{{ tr("Skip") }}</a>
-        <a class="btn btn-sm btn-ghost" href="/settings/models">{{ tr("Open Models settings") }}</a>
+        <a class="btn btn-sm btn-ghost" href="#setup-try">{{ tr("Skip") }}</a>
       </div>
     </li>
 
@@ -56,14 +67,14 @@
         <div class="muted">{{ tr("Loading agent setup…") }}</div>
       </div>
       <div class="setup-step-actions">
-        <a class="btn btn-sm" href="#setup-first-record">{{ tr("Next: First record") }}</a>
-        <a class="btn btn-sm btn-ghost" href="#setup-first-record">{{ tr("Skip") }}</a>
+        <a class="btn btn-sm" href="#setup-try">{{ tr("Next: Try it") }}</a>
+        <a class="btn btn-sm btn-ghost" href="#setup-try">{{ tr("Skip") }}</a>
       </div>
     </li>
 
-    <li class="setup-step" id="setup-first-record">
+    <li class="setup-step" id="setup-try">
       <div class="setup-step-head">
-        <h3>{{ tr("First record") }}</h3>
+        <h3>{{ tr("Try it") }}</h3>
       </div>
       <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription, shown back as the transcript an MCP agent receives. Run it in the Agent step's Try it stage, or from Settings → Status.") }}</p>
       <div class="setup-step-actions">

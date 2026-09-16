@@ -32,3 +32,28 @@ def _setup_marker_seen(request, _hermetic_english_environment) -> None:
     if request.node.get_closest_marker("own_setup_marker"):
         return
     setup.update_setup_state(seen_version=setup.current_version())
+
+
+@pytest.fixture(autouse=True)
+def _stub_transcription_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep setup-page renders off the real ASR backend probes.
+
+    ``/setup`` now states transcription readiness from
+    ``service.agent_flow.transcription_status()``. That call probes the machine
+    (and can compile/run the Apple Speech helper), which is neither hermetic nor
+    fast per test. The readiness-specific tests override this stub.
+    """
+    from clear_record.service.agent_flow import TranscriptionStatus
+    from clear_record.web import app as web_app
+
+    monkeypatch.setattr(
+        web_app,
+        "transcription_status",
+        lambda *args, **kwargs: TranscriptionStatus(
+            state="ok",
+            backend="apple-speech",
+            model=None,
+            models_dir="/models",
+            models_present=(),
+        ),
+    )

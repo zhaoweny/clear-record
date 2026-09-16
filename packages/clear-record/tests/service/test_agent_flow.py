@@ -260,3 +260,78 @@ def test_the_default_language_comes_from_the_request_locale(tmp_path) -> None:
     )
     assert result.ok
     assert calls[0]["language"] == "zh_CN"
+
+
+# --- transcription readiness (the setup wizard's second step) ---------------- #
+
+
+def test_readiness_is_ok_for_a_model_free_backend_with_no_checkpoint(tmp_path) -> None:
+    status = agent_flow.transcription_status(
+        backends=lambda: ("apple-speech",),
+        checkpoint=lambda: None,
+        model_dir=str(tmp_path / "models"),
+    )
+
+    assert status.state == agent_flow.LEG_OK
+    assert status.ready is True
+    assert status.backend == "apple-speech"
+    assert status.model is None
+    assert status.models_dir == str(tmp_path / "models")
+
+
+def test_readiness_is_a_backend_state_when_none_is_available(tmp_path) -> None:
+    status = agent_flow.transcription_status(
+        backends=lambda: (),
+        checkpoint=lambda: None,
+        model_dir=str(tmp_path / "models"),
+    )
+
+    assert status.state == agent_flow.LEG_BACKEND
+    assert status.ready is False
+    assert status.backend is None
+    assert status.model is None
+
+
+def test_readiness_is_a_model_state_when_a_ggml_backend_has_no_checkpoint(
+    tmp_path,
+) -> None:
+    status = agent_flow.transcription_status(
+        backends=lambda: ("apple",),
+        checkpoint=lambda: None,
+        model_dir=str(tmp_path / "models"),
+    )
+
+    assert status.state == agent_flow.LEG_MODEL
+    assert status.ready is False
+    assert status.backend == "apple"
+    assert status.model is None
+
+
+def test_readiness_names_the_checkpoint_for_a_ggml_backend(tmp_path) -> None:
+    checkpoint = tmp_path / "models" / "ggml-small.bin"
+
+    status = agent_flow.transcription_status(
+        backends=lambda: ("apple",),
+        checkpoint=lambda: checkpoint,
+        model_dir=str(tmp_path / "models"),
+    )
+
+    assert status.state == agent_flow.LEG_OK
+    assert status.ready is True
+    assert status.backend == "apple"
+    assert status.model == str(checkpoint)
+
+
+def test_readiness_lists_what_is_on_disk(tmp_path) -> None:
+    models = tmp_path / "models"
+    models.mkdir()
+    for name in ("ggml-small.bin", "ggml-large-v3-q5_0.bin"):
+        (models / name).write_bytes(b"m")
+
+    status = agent_flow.transcription_status(
+        backends=lambda: ("apple",),
+        checkpoint=lambda: models / "ggml-small.bin",
+        model_dir=str(models),
+    )
+
+    assert status.models_present == ("ggml-large-v3-q5_0.bin", "ggml-small.bin")

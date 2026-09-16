@@ -146,3 +146,40 @@ honestly assert:
   `/setup/agent` and `/settings/agent` render the one four-stage flow
   (Endpoint → Harness → MCP config → Try it).
 
+## Update — 2026-09-16: one job per setup step, and the hello-check truth split
+
+A follow-up refinement to the ticket-04/05 console work (owner-approved).
+
+- [FACT] The setup wizard's second step was named **Models** and its copy
+  presented a checkpoint as a hard prerequisite, conflating two different
+  models: the **ASR checkpoint** this step is about and the small *LLM* the
+  Agent step can pull into Ollama (`DEFAULT_SMALL_MODEL` = `qwen2.5:1.5b`). It
+  also pointed at read-only Models settings as somewhere to "fetch" a
+  checkpoint, and it was conditionally false on macOS 26, where the preferred
+  backend (`apple-speech`) is model-free.
+- [DECISION] The wizard is **one job per step**: Welcome → Transcription →
+  Agent → Try it, every step still skippable. The second step is renamed
+  **Transcription** (id `setup-transcription`) and owns ASR backend and
+  checkpoint readiness. It renders three states from
+  `service.agent_flow.transcription_status()` — **ready** (`state == "ok"`),
+  **needs backend** (`state == "backend"`), **needs model** (`state == "model"`)
+  — and shows the resolved backend, the models directory and what is on disk.
+- [DECISION] Its copy states what is true per state: a model-free backend needs
+  no checkpoint on this system; a missing checkpoint is downloaded by the first
+  transcription run (ggml models come from Hugging Face on first use) or can be
+  placed in the directory. It never points at the Agent step or claims Models
+  settings can fetch. The `/setup` route passes
+  `transcription=transcription_status()`; it no longer passes
+  `models_dir`/`models_present`.
+- [DECISION] The last step is renamed **Try it** (id `setup-try`) and still
+  points at the one acceptance check: Settings → Status, or the Agent step's
+  Try it stage.
+- [DESIGN] The hello-check success screen is split into what the check actually
+  proves: **Transcription ready** (the local chain reached a transcript, with
+  its segment count), **Agent integration configured** (the MCP client config
+  and harness are present; otherwise the screen names what is missing), and
+  **Agent round-trip verified**, which the console cannot prove and therefore
+  never shows as a green badge — it points at the optional `just agent-drive`
+  workflow. The old "the whole system worked once" badge was re-scoped to what
+  the check actually proves.
+

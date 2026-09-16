@@ -8,6 +8,7 @@ asserted with no system voice, no ASR backend and no model.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -58,6 +59,7 @@ def _ok() -> HelloCheck:
         transcript="00:00:00.000 [mic] hello world",
         segments=1,
         mcp_config="/home/u/mcp.json",
+        harness="/usr/bin/pi-agent",
         tool=TRANSCRIPT_TOOL,
         entry={"command": "clear-record", "args": ["mcp"]},
     )
@@ -104,7 +106,8 @@ def test_the_setup_wizard_agent_step_embeds_the_flow(tmp_path) -> None:
 
     assert 'id="agent-setup"' in page
     assert 'hx-get="/ui/agent-setup"' in page
-    # The First record step points at the acceptance test, not a second copy.
+    # The Try it step points at the acceptance test, not a second copy.
+    assert 'id="setup-try"' in page
     assert 'href="/settings/status"' in page
     assert "hello-world check" in page
 
@@ -147,6 +150,56 @@ def test_running_the_check_shows_the_transcript_and_the_mcp_leg(
     assert "clear-record mcp" in response.text
     # The run control survives the swap, so a returning user can re-run.
     assert 'hx-post="/ui/hello-check"' in response.text
+
+
+def test_the_success_result_labels_only_what_the_check_proved(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: _ok())
+
+    text = _client(tmp_path).post("/ui/hello-check").text
+
+    # Three plainly-labelled states: the local chain, the integration config,
+    # and the round-trip the console cannot prove.
+    assert "Transcription ready" in text
+    assert "Agent integration configured" in text
+    assert "Agent round-trip verified" in text
+    # The round-trip is never a green badge from this check.
+    assert 'status-ok">Agent round-trip verified' not in text
+    assert 'status-neutral">Agent round-trip verified' in text
+    assert "just agent-drive" in text
+    # The badge that overclaimed the whole system is gone.
+    assert "the whole system worked once" not in text
+
+
+def test_a_missing_mcp_config_is_named_not_overclaimed(tmp_path, monkeypatch) -> None:
+    result = dataclasses.replace(_ok(), mcp_config=None)
+    monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
+
+    text = _client(tmp_path).post("/ui/hello-check").text
+
+    assert "Agent integration not configured" in text
+    assert "No MCP client config is pointed at yet" in text
+    assert "Agent integration configured" not in text
+
+
+def test_a_missing_harness_is_named(tmp_path, monkeypatch) -> None:
+    result = dataclasses.replace(_ok(), harness=None)
+    monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
+
+    text = _client(tmp_path).post("/ui/hello-check").text
+
+    assert "Agent integration not configured" in text
+    assert "No harness is recorded yet" in text
+
+
+def test_a_missing_config_and_harness_are_both_named(tmp_path, monkeypatch) -> None:
+    result = dataclasses.replace(_ok(), mcp_config=None, harness=None)
+    monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
+
+    text = _client(tmp_path).post("/ui/hello-check").text
+
+    assert "Neither an MCP client config nor a harness is recorded yet" in text
 
 
 def test_a_finding_names_the_leg_that_stopped(tmp_path, monkeypatch) -> None:

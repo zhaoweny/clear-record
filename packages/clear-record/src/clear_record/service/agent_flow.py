@@ -144,6 +144,60 @@ def _on_disk_checkpoint() -> Path | None:
     return candidates[0]
 
 
+@dataclasses.dataclass(frozen=True)
+class TranscriptionStatus:
+    """Whether transcription can run here, and what is missing when it cannot.
+
+    ``state`` is one of the check's legs: ``ok`` (a backend is available and,
+    where one is needed, a checkpoint is on disk), ``backend`` (no ASR backend),
+    or ``model`` (the backend needs a checkpoint and none is on disk). It is the
+    decision :func:`run_hello_check` makes before it transcribes, exposed on its
+    own so the setup wizard can state readiness instead of describing theory.
+    """
+
+    state: str
+    backend: str | None
+    model: str | None
+    models_dir: str
+    models_present: tuple[str, ...]
+
+    @property
+    def ready(self) -> bool:
+        """True when a run could transcribe without fetching anything."""
+        return self.state == LEG_OK
+
+
+def transcription_status(
+    *,
+    backends: Backends = available_backend_ids,
+    checkpoint: Checkpoint = _on_disk_checkpoint,
+    model_dir: str | None = None,
+) -> TranscriptionStatus:
+    """Report transcription readiness without running the pipeline.
+
+    Never downloads: a missing checkpoint is the ``model`` state, not a fetch.
+    Mirrors the backend/model choice in :func:`run_hello_check`, so the wizard
+    and the acceptance check cannot disagree about what is ready.
+    """
+    models_dir = resolve_models_dir(model_dir)
+    present = tuple(sorted(path.name for path in model_paths_on_disk(model_dir)))
+    try:
+        choice = _auto.resolve_backend(backends())
+    except _auto.NoBackendAvailable:
+        return TranscriptionStatus(LEG_BACKEND, None, None, str(models_dir), present)
+    backend_id = choice.backend
+    if backend_id == _auto.APPLE_SPEECH_BACKEND_ID:
+        return TranscriptionStatus(LEG_OK, backend_id, None, str(models_dir), present)
+    found = checkpoint()
+    return TranscriptionStatus(
+        LEG_OK if found is not None else LEG_MODEL,
+        backend_id,
+        str(found) if found is not None else None,
+        str(models_dir),
+        present,
+    )
+
+
 def _run_pipeline(
     workspace: Path,
     tape: Path,
@@ -270,7 +324,8 @@ def run_hello_check(
                     Message(
                         deferred(
                             "no transcription model is on disk at {models_dir}; "
-                            "fetch one from Models settings, then run the check again"
+                            "the first transcription run downloads one, or place a "
+                            "checkpoint there, then run the check again"
                         ),
                         (("models_dir", str(resolve_models_dir())),),
                     ),
@@ -352,6 +407,8 @@ __all__ = [
     "LEG_TRANSCRIBE",
     "LEG_TTS",
     "TRANSCRIPT_TOOL",
+    "TranscriptionStatus",
     "hello_check_workspace",
     "run_hello_check",
+    "transcription_status",
 ]

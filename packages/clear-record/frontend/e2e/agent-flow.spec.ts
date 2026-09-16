@@ -62,5 +62,5 @@ test("the setup wizard's Agent step mounts the same four-stage flow", async ({ p
   await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(4);
   await expect(page.locator("#setup-agent #hello-check")).toBeVisible();
   // The final step points at the permanent check, not a second implementation.
-  await expect(page.locator('#setup-first-record a[href="/settings/status"]')).toBeVisible();
+  await expect(page.locator('#setup-try a[href="/settings/status"]')).toBeVisible();
 });

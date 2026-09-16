@@ -4,7 +4,7 @@
       hx-post="/ui/projects"
       hx-target="#projects"
       hx-swap="innerHTML"
-      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
+      hx-on::after:request="if (event.detail.ctx.response.status === 200) this.reset()">
   <input name="name" placeholder="{{ tr('New project name') }}" required>
   <button class="primary" type="submit">{{ tr("Add project") }}</button>
 </form>

@@ -416,6 +416,34 @@ def test_a_blank_project_name_re_renders_at_200(client) -> None:
     assert "must not be blank" in refused.text
 
 
+def test_the_other_ui_refusals_re_render_at_200(client) -> None:
+    """The remaining UI mutations obey the same noSwap rule."""
+
+    # A blank term, an invalid status and a blank title are all fixable form
+    # mistakes, so each re-renders its #detail fragment at 200 with the
+    # service's message (htmx does not swap a 4xx; base.html sets noSwap).
+    _make_project(client)
+
+    blank_term = client.post("/ui/projects/weekly-ops/glossary", data={"term": "   "})
+    assert blank_term.status_code == 200
+    assert 'class="run-error"' in blank_term.text
+    assert "term must not be blank" in blank_term.text
+
+    added = client.post("/ui/projects/weekly-ops/glossary", data={"term": "Falcon"})
+    assert added.status_code == 200
+    term_id = client.get("/api/projects/weekly-ops/glossary").json()[0]["id"]
+
+    bad_status = client.post(f"/ui/glossary/{term_id}/status", data={"status": "nope"})
+    assert bad_status.status_code == 200
+    assert 'class="run-error"' in bad_status.text
+    assert "status must be one of" in bad_status.text
+
+    blank_title = client.post("/ui/projects/weekly-ops/meetings", data={"title": "   "})
+    assert blank_title.status_code == 200
+    assert 'class="run-error"' in blank_title.text
+    assert "meeting title must not be blank" in blank_title.text
+
+
 def test_run_form_offers_only_this_machines_backends(
     console, tmp_path, monkeypatch
 ) -> None:

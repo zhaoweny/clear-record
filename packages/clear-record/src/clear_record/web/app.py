@@ -425,6 +425,16 @@ async def _receive_tape(
     ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
     so each caller maps it to its own shape (a re-render, or an HTTP status).
     """
+    # Accepted cost (ADR-0024 true streaming deferred): Starlette spools the
+    # whole multipart body before we can see the file part, so a large upload
+    # transiently holds its size twice -- once in the process's TMPDIR and once
+    # in the managed .part file. precheck_upload already bounds the transfer
+    # against the managed root's free space using Content-Length before the body
+    # is read, and the .part writer maps a fill-the-disk ENOSPC to
+    # InsufficientSpace (service/managed.py), so the extra copy is a known,
+    # bounded cost. A TMPDIR on a different filesystem can still fill
+    # independently; removing that residual is what the deferred true streaming
+    # work does.
     try:
         form = await request.form()
     except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
@@ -1714,19 +1724,24 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            # A bad term is fixable in the form, so re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, slug, tab="glossary", error=str(exc))
         return detail(request, slug, tab="glossary")
 
     @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
         request: Request, term_id: int, status: str = Form(...)
     ) -> HTMLResponse:
+        term = registry.get_term(term_id)
+        if term is None:
+            raise HTTPException(status_code=404, detail=f"no term {term_id}")
         try:
             term = registry.update_term(term_id, status=status)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # An invalid status is fixable in the form; re-render the tab with
+            # the service's message at 200 (htmx does not swap a 4xx).
+            return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
     @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
@@ -1768,7 +1783,9 @@ def create_app(
             # re-render the tab with the service's message.
             return detail(request, slug, tab="meetings", error=str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            # A bad title is fixable in the form; re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, slug, tab="meetings", error=str(exc))
         return detail(request, slug, tab="meetings")
 
     @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)

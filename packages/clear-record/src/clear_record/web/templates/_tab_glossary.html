@@ -60,7 +60,7 @@
       hx-post="/ui/projects/{{ project.slug }}/glossary"
       hx-target="#detail"
       hx-swap="innerHTML"
-      hx-on::after:request="if (event.detail.ctx.response.status < 400) this.reset()">
+      hx-on::after:request="if (event.detail.ctx.response.status === 200) this.reset()">
   <div class="row">
     <input name="term" placeholder="{{ tr("Term") }}" required>
     <input name="reading" placeholder="{{ tr("Reading / pronunciation") }}">

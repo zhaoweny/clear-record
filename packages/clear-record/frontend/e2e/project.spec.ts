@@ -42,6 +42,39 @@ test("the meetings tab keeps the run form and the review links", async ({ page }
   expect(errors).toEqual([]);
 });
 
+test("a chosen tape survives a storage re-render", async ({ page }) => {
+  const errors = watch(page);
+  await page.goto("/projects/q3-sync/meetings");
+
+  const storage = page.locator("#detail .meeting", { hasText: "Kickoff" })
+    .locator("[id^='storage-']");
+  const input = storage.locator("input[type=file]");
+  await expect(input).toBeVisible();
+
+  // Choose a file the guard will refuse, so the submit re-renders the panel
+  // without changing anything on disk.
+  await input.setInputFiles({
+    name: "not-audio.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("not audio"),
+  });
+  const chosen = () => input.evaluate((el) => {
+    const files = (el as HTMLInputElement).files;
+    return files && files.length === 1 ? files[0].name : null;
+  });
+  expect(await chosen()).toBe("not-audio.txt");
+
+  await storage.getByRole("button", { name: /Upload tape/ }).click();
+
+  // The refusal comes back as a 200 re-render of the panel. htmx keys
+  // hx-preserve on the element id, so the same chosen file rides through the
+  // swap; without the id it would be discarded and files would be empty.
+  await expect(storage.locator(".run-error").first()).toBeVisible();
+  await expect(input).toBeVisible();
+  expect(await chosen()).toBe("not-audio.txt");
+  expect(errors).toEqual([]);
+});
+
 test("the media tab inventories tapes and transcripts", async ({ page }) => {
   const errors = watch(page);
   await page.goto("/projects/q3-sync/media");

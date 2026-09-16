@@ -1,15 +1,20 @@
 # Local temp folder — per-session scratch, handoff notes, state (see .local/)
-.local/
+#
+# Directory entries below deliberately carry NO trailing slash. Git treats a
+# symlink as a file, so a directory-only pattern like "node_modules/" does NOT
+# ignore a *symlinked* node_modules -- one was committed before the tracker-refs
+# guard caught it. Matching the bare name ignores both a directory and a symlink.
+.local
 
 # Agent worktrees (see docs/agents/git-worktree.toml when adopted)
-.wt/
+.wt
 wt-*
 
 # Local issue tracker (see docs/agents/issue-tracker.md)
-.scratch/
+.scratch
 
 # Local pipeline workspace (sources + derived artifacts; environment-local only)
-workspace/
+workspace
 
 # Environment files (keep .env.example if added)
 .env
@@ -19,11 +24,11 @@ workspace/
 # Audio / dataset / model artifacts are environment-local data, never git.
 # Large recordings, downloaded model weights, caches and intermediate
 # artifacts do not belong in the repository. See docs/architecture.md §6 & §8.
-recordings/
-data/
-models/
-cache/
-artifacts/
+recordings
+data
+models
+cache
+artifacts
 *.wav
 *.flac
 *.ogg
@@ -38,23 +43,23 @@ artifacts/
 *.vtt
 
 # Python
-__pycache__/
+__pycache__
 *.py[cod]
 *$py.class
 *.so
 .Python
-.venv/
-venv/
-.smoke-venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
+.venv
+venv
+.smoke-venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
 .coverage
-htmlcov/
-build/
-dist/
-*.egg-info/
-.eggs/
+htmlcov
+build
+dist
+*.egg-info
+.eggs
 
 # Editors / OS noise
 .vscode/*
@@ -67,4 +72,4 @@ Thumbs.db
 
 # Front-end toolchain: dependencies are installed from the committed bun.lock;
 # only the build output under clear_record/web/static/ is committed (ADR-0023).
-node_modules/
+node_modules

@@ -142,6 +142,9 @@ def test_meeting_tape_set_run_and_artifacts_roundtrip(tmp_path: Path) -> None:
     ] == ["kickoff"]
 
     run = _payload(server, "start_run", {"project": "ops", "meeting": "kickoff"})
+    # RUN-02: an MCP-started run says so, so the console's status data can show
+    # where the work came from.
+    assert run["origin"] == "mcp"
     manager.wait(run["id"], timeout=10)
 
     status = _payload(server, "run_status", {"run_id": run["id"]})

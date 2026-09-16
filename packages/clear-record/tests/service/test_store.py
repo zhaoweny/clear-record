@@ -211,6 +211,12 @@ def test_run_and_artifact_rows(tmp_path) -> None:
     with pytest.raises(ValueError):
         reg.update_run(run.id, status="bogus")
 
+    # RUN-02: origin is one of the four surfaces, and only a start path has one.
+    assert run.origin is None
+    with pytest.raises(ValueError):
+        reg.create_run(meeting.id, origin="grafana")
+    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+
     artifact = reg.add_artifact(
         meeting.id, run_id=run.id, kind="record", path="/ws/record.json", sha256="ab"
     )
@@ -245,7 +251,7 @@ def test_v1_registry_upgrades_forward(tmp_path) -> None:
 
 
 def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
-    """An existing v3 database gains the v4 notes column and the v5 tape table."""
+    """An existing v3 database gains every later column and table on open."""
     import sqlite3
 
     from clear_record.service.store import (
@@ -272,7 +278,7 @@ def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
     conn.close()
 
     reg = Registry(db)
-    assert SCHEMA_VERSION == 6
+    assert SCHEMA_VERSION == 7
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
@@ -284,3 +290,10 @@ def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
     run = reg.create_run(meeting.id, run_options={"backend": "apple"})
     assert reg.get_run(run.id).run_options == {"backend": "apple"}
     assert reg.count_run_events(run.id) == 0
+    # v7: a run records where it came from, and the claim records its owner.
+    assert reg.get_run(run.id).origin is None  # a seeded row has no origin
+    queued = reg.create_run(meeting.id, origin="console")
+    claimed = reg.claim_run(queued.id, owner="peer:1")
+    assert claimed is not None
+    assert (claimed.origin, claimed.owner) == ("console", "peer:1")
+    assert claimed.heartbeat_at is not None

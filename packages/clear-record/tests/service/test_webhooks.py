@@ -349,7 +349,9 @@ def test_a_successful_run_emits_started_finished_and_transcript_ready(tmp_path) 
         )
         try:
             manager = RunManager(registry, pipeline=pipeline, webhooks=emitter)
-            state = manager.wait(manager.start(meeting).id, timeout=10)
+            state = manager.wait(
+                manager.start(meeting, origin="console").id, timeout=10
+            )
             assert state.status == "done"
             assert emitter.flush(timeout=5)
         finally:
@@ -393,7 +395,9 @@ def test_a_failed_run_emits_run_failed(tmp_path) -> None:
         )
         try:
             manager = RunManager(registry, pipeline=boom, webhooks=emitter)
-            state = manager.wait(manager.start(meeting).id, timeout=10)
+            state = manager.wait(
+                manager.start(meeting, origin="console").id, timeout=10
+            )
             assert state.status == "failed"
             assert emitter.flush(timeout=5)
         finally:
@@ -419,7 +423,9 @@ def test_delivery_failure_leaves_the_runs_own_status_untouched(tmp_path) -> None
         )
         try:
             manager = RunManager(registry, pipeline=pipeline, webhooks=emitter)
-            state = manager.wait(manager.start(meeting).id, timeout=10)
+            state = manager.wait(
+                manager.start(meeting, origin="console").id, timeout=10
+            )
             assert emitter.flush(timeout=5)
         finally:
             emitter.close(timeout=5)
@@ -573,7 +579,7 @@ def test_a_bad_config_still_lets_a_run_complete(tmp_path, capsys) -> None:
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
     manager = RunManager(registry, pipeline=lambda *args: None, webhooks=emitter)
-    state = manager.wait(manager.start(meeting).id, timeout=10)
+    state = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
 
     assert state.status == "done"
     assert registry.get_run(state.run_id).status == "done"

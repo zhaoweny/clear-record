@@ -375,7 +375,9 @@ class ServiceTools:
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         try:
-            run = self.manager.start(found, resolved.options, auto=resolved.meta)
+            run = self.manager.start(
+                found, resolved.options, auto=resolved.meta, origin="mcp"
+            )
         except ValueError as exc:
             raise ToolError(
                 f"cannot start a run for {project}/{meeting}: {exc}"

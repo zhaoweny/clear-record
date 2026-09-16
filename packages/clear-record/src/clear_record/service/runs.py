@@ -14,12 +14,14 @@ Two properties make the node trustworthy across restarts:
 
 * **The registry is the truth, not process memory.** A run's status and its
   event stream live in SQLite, so after the console restarts the run view still
-  replays and the "one run per meeting" guard still holds. A run the process
-  died in the middle of is reconciled to ``interrupted`` at startup (distinct
-  from ``failed`` — the node died, the work did not necessarily fail).
-* **One run per node.** :meth:`RunManager.start` **enqueues** a run (``queued``);
-  a single scheduler drains the FIFO, so two meetings can no longer fight over
-  one GPU. The queue is the registry's, so a restart does not lose queued work.
+  replays and the "one run per meeting" guard still holds. A run whose owner
+  died is reconciled to ``interrupted`` (distinct from ``failed`` — the node
+  died, the work did not necessarily fail).
+* **One run per node, one claim.** :meth:`RunManager.start` **enqueues** a run
+  (``queued``); a scheduler drains the FIFO, and the move to ``running`` is a
+  single conditional update in the registry, so the console, an agent's MCP
+  server and a CLI all share one queue and exactly one of them executes a run.
+  The queue is the registry's, so a restart does not lose queued work.
 """
 
 from __future__ import annotations
@@ -27,6 +29,9 @@ from __future__ import annotations
 import dataclasses
 import datetime as _dt
 import hashlib
+import os
+import platform as _platform
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -44,7 +49,7 @@ from clear_record.service.glossary import (
     snapshot_from_text,
     write_snapshot,
 )
-from clear_record.service.models import Meeting, PipelineRun
+from clear_record.service.models import RUN_ORIGINS, Meeting, PipelineRun
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
     RUN_FAILED,
@@ -73,9 +78,28 @@ _STAGES: tuple[str, ...] = tuple(step.value for step in pipeline_spec().steps)
 #: How many of the newest completed runs a history-based ETA draws on.
 _ETA_HISTORY_LIMIT = 50
 
+#: How often an executing manager refreshes its run's liveness heartbeat, and how
+#: old a heartbeat may be before another process reads the run as left by a dead
+#: owner (RUN-02). The interval is short against the deadline, so a loaded machine
+#: — one whose pipeline is holding the GIL — still beats many times inside it.
+#: The deadline is the one judgement call here: too short and a live run gets
+#: reaped, too long and a dead writer leaves the node waiting.
+HEARTBEAT_INTERVAL_S = 2.0
+HEARTBEAT_STALE_S = 30.0
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
+
+
+def _process_identity() -> str:
+    """This process's claim identity: host + pid, written on every run it claims.
+
+    It is an identity, not a fingerprint: enough to say *which* process owns a
+    run in the status data, to recognize this process's own earlier life (the OS
+    hands a pid back after a crash), and to grow a node column from later (Q15).
+    """
+    return f"{_platform.node() or 'unknown'}:{os.getpid()}"
 
 
 def _sha256(path: Path) -> str:
@@ -307,11 +331,19 @@ class RunManager:
     **enqueued or running** run per meeting (the dedupe). Both are read from the
     registry, so a restart cannot break either invariant.
 
-    A run's live state belongs to the manager that started it: the web app and
-    the MCP server each construct exactly one manager per process, so the
-    scheduler and the live set are per-process. Opening a second manager over
-    the same registry is therefore not supported — its startup reconciliation
-    would read the first manager's in-flight run as dead and interrupt it.
+    The queue is **cross-process** (RUN-02): a queued run is claimed by one
+    conditional update (:meth:`~clear_record.service.store.Registry.claim_run`),
+    so the console, an agent's MCP server and a CLI can all write to the same
+    registry and exactly one of them executes a run. The in-process pieces are a
+    fast path, not the guarantee: :attr:`_pending` saves re-reading what this
+    process just wrote, and :attr:`_live` says what this process is executing.
+
+    An executing manager **beats** (:attr:`_heartbeat`), refreshing its run's
+    liveness heartbeat; reconciliation respects that heartbeat, so a second
+    manager — another process, or another manager in this process — leaves the
+    first's live run alone, while a run whose owner died still becomes
+    ``interrupted``. The claim decides who executes; the heartbeat decides who is
+    still alive.
     """
 
     def __init__(
@@ -325,19 +357,24 @@ class RunManager:
         # Delivery is opt-in (no configured endpoints = inert) and off-thread, so
         # a webhook can never fail or stall a run.
         self._webhooks = webhooks if webhooks is not None else default_emitter()
+        #: Who this manager claims runs as; the string stored on the run
+        #: (``owner``) and compared by reconciliation.
+        self._owner = _process_identity()
         self._lock = threading.Lock()
         #: Serializes event appends from a run's worker threads (a chunk pool
         #: reports from several at once), so the persisted stream has one order.
         self._events_lock = threading.Lock()
         #: Runs this manager is executing, so a waiter does not return on a run's
-        #: terminal status before its synchronous effects finish. Owned per
-        #: manager by design: the web app and the MCP server each construct
-        #: exactly one manager per process, so it is not shared with another
-        #: manager over the same registry.
+        #: terminal status before its synchronous effects finish, and so
+        #: reconciliation never reaps a run of its own as dead.
         self._live: set[int] = set()
         #: Meeting + options for runs enqueued in this process, so a live run
         #: does not pay to re-read what it just wrote.
         self._pending: dict[int, tuple[Meeting, PipelineOptions]] = {}
+        #: The thread that keeps :attr:`_live` runs' heartbeats fresh while they
+        #: execute, and the runs whose beat failed (reported once each).
+        self._heartbeat: threading.Thread | None = None
+        self._beat_failed: set[int] = set()
         self._wake = threading.Condition()
         self._scheduler: threading.Thread | None = None
         self._stopping = False
@@ -347,36 +384,71 @@ class RunManager:
 
     # --- startup reconciliation -------------------------------------------- #
     def reconcile(self) -> list[int]:
-        """Move every ``running`` run this process did not start to ``interrupted``.
+        """Move every ``running`` run no live owner holds to ``interrupted``.
 
         Returns the reconciled run ids. The reason is recorded on the run (its
         ``error``) and logged; a meeting left ``running`` follows its run. Then
         the queue is drained, so **queued** work from a previous process is not
         lost by the restart.
 
-        Startup-only: :meth:`__init__` calls this before any run of this manager
-        is live. A run's live state belongs to the manager that started it, and
-        each process constructs exactly one manager (the web app and the MCP
-        server), so a second manager's reconciliation is the unsupported case the
-        live guard cannot cover.
+        A run is left alone when a **live owner** holds it (RUN-02): this manager
+        is executing it, or its owner is still beating — the heartbeat is within
+        :data:`HEARTBEAT_STALE_S` of now (see :meth:`_is_dead` for what counts as
+        evidence). Everything else is an orphan and becomes ``interrupted``: no
+        heartbeat at all (a run recorded before the heartbeat existed, or one
+        whose owner died before its first beat) or a heartbeat its owner stopped
+        refreshing when it died. Without that rule a second manager's startup
+        would read the first process's in-flight run as dead; with it, a dead
+        process's run still becomes honest.
+
+        Staleness is a *deadline*, so a process killed a second ago leaves a run
+        that is reaped once its heartbeat goes stale — by the drain loop's own
+        tick or by a later reconciliation — not the instant it died. The
+        alternative, believing a beat only once its owner is provably gone, needs
+        a node-level liveness probe that one queue on one node does not.
         """
+        interrupted = self._reap_dead_runs(self._registry.runs_with_status("running"))
+        if interrupted:
+            log_event(
+                "warning",
+                "runs",
+                "run.reconciled",
+                count=len(interrupted),
+                run_ids=",".join(str(run_id) for run_id in interrupted),
+            )
+        self._ensure_scheduler()
+        return interrupted
+
+    def _reap_dead_runs(self, running: list[PipelineRun]) -> list[int]:
+        """Mark every run in ``running`` with no live owner ``interrupted``.
+
+        The one place that transition happens, shared by startup reconciliation
+        and the drain loop — the loop reaps too, because a run left ``running``
+        by a peer that died would otherwise block the node behind a run nobody
+        is executing.
+        """
+        now = _dt.datetime.now(_dt.UTC)
         interrupted: list[int] = []
-        for run in self._registry.runs_with_status("running"):
-            if run.id in self._live:
+        for run in running:
+            if not self._is_dead(run, now):
                 continue
+            ended_at = _now()
             # The run never reached its own terminal transition, so this is
             # where an interrupted run gets its cost record: the stages it did
             # complete are still in its persisted event stream.
-            ended_at = _now()
-            self._registry.update_run(
+            reaped = self._registry.interrupt_run(
                 run.id,
-                status="interrupted",
                 ended_at=ended_at,
                 error=RESTART_REASON,
                 progress=self._progress(
                     run.id, "interrupted", RESTART_REASON, ended_at=ended_at
                 ),
             )
+            if reaped is None:
+                # The owner finished in the meantime: the run is not an orphan,
+                # and its own terminal record (and the meeting status that
+                # followed it) is the truth, not this snapshot's verdict.
+                continue
             meeting = self._registry.meeting_by_id(run.meeting_id)
             if meeting is not None and meeting.status == "running":
                 self._registry.set_meeting_status(run.meeting_id, "interrupted")
@@ -389,16 +461,38 @@ class RunManager:
                 reason=RESTART_REASON,
             )
             interrupted.append(run.id)
-        if interrupted:
-            log_event(
-                "warning",
-                "runs",
-                "run.reconciled",
-                count=len(interrupted),
-                run_ids=",".join(str(run_id) for run_id in interrupted),
-            )
-        self._ensure_scheduler()
         return interrupted
+
+    def _is_dead(self, run: PipelineRun, now: _dt.datetime) -> bool:
+        """Whether no live process holds ``run`` (RUN-02's ownership evidence).
+
+        The evidence is the **heartbeat**, not the owner string. A process that
+        is alive keeps refreshing its run's heartbeat; one that is not cannot.
+        That is what makes the rule work across writers — an owner string says
+        nothing about whether that process still exists, while a beat seconds old
+        does — and it needs no process table, no pid liveness test, and no
+        assumption that the owner is a well-behaved peer.
+
+        A beat is evidence only while it is *near* now, in either direction: this
+        registry belongs to one node, so every writer reads one clock, and a beat
+        far ahead of `now` means the clock stepped **backwards** after it was
+        written. Reading that as life would pin the run — and, through the claim's
+        one-run guard, the whole queue — in ``running`` until the clock caught up.
+
+        The owner string is deliberately *not* compared here: this process's own
+        identity on a row it is not executing means either a previous life of
+        this process (a recycled pid) or a second manager in this same process,
+        and those two must not be treated alike. Both are covered anyway — the
+        first by the staleness rule below (a dead process stops beating), the
+        second by its live manager's heartbeats.
+        """
+        with self._lock:
+            if run.id in self._live:
+                return False
+        beat = _parse_time(run.heartbeat_at)
+        if beat is None:
+            return True
+        return abs((now - beat).total_seconds()) > HEARTBEAT_STALE_S
 
     # --- reading ----------------------------------------------------------- #
     def state(self, run_id: int) -> RunState | None:
@@ -435,6 +529,7 @@ class RunManager:
         options: PipelineOptions | None = None,
         *,
         auto: dict | None = None,
+        origin: str,
     ) -> PipelineRun:
         """Enqueue a run at the back of the node's FIFO and return its row.
 
@@ -444,12 +539,19 @@ class RunManager:
         concurrently — but a *different* meeting now waits honestly instead of
         fighting for the one GPU.
 
+        ``origin`` says which surface started it, one of :data:`RUN_ORIGINS`
+        (RUN-02). It is required — a start path that does not name itself would
+        record a run whose provenance nobody can trust — and recorded with the
+        row, so it survives the restart that ends this process.
+
         ``auto`` is the meta the opt-in ``--auto`` / ``--backend auto``
         resolvers produced (see :func:`clear_record.service.auto.resolve_run`):
         the explanations and which fields were chosen automatically. It is
         merged into the run meta, which always records the **resolved** profile
         and decoder knobs, so a finished run is explainable after the fact.
         """
+        if origin not in RUN_ORIGINS:
+            raise ValueError(f"origin must be one of {RUN_ORIGINS}, got {origin!r}")
         if not meeting.workspace_path:
             self._refuse(meeting, "meeting has no workspace path")
             raise ValueError(
@@ -476,6 +578,7 @@ class RunManager:
             language=options.language,
             options=self._run_meta(options, run_meta, auto),
             run_options=dataclasses.asdict(options),
+            origin=origin,
         )
         with self._lock:
             self._pending[run.id] = (meeting, options)
@@ -485,6 +588,7 @@ class RunManager:
             "run.enqueued",
             run_id=run.id,
             meeting_id=meeting.id,
+            origin=origin,
             backend=options.backend,
             model=options.model,
             language=options.language,
@@ -598,13 +702,23 @@ class RunManager:
         The wait has a timeout so a run enqueued *outside* this manager (another
         writer of the same registry) is still noticed; the normal path wakes the
         thread immediately.
+
+        What the reads here decide is only **what to try next**: whether the node
+        looks free and which run is the head of the FIFO. Who executes is decided
+        by the claim in :meth:`_execute_run`, so a stale read costs a lost claim,
+        never a second executor. A ``running`` row no live process holds is reaped
+        here as well as at startup — otherwise a peer that died mid-run would
+        block the node behind a run nobody is executing.
         """
         while True:
             with self._wake:
                 while True:
                     if self._stopping:
                         return
-                    if not self._registry.runs_with_status("running"):
+                    running = self._registry.runs_with_status("running")
+                    if running and self._reap_dead_runs(running):
+                        running = self._registry.runs_with_status("running")
+                    if not running:
                         run = self._registry.oldest_queued_run()
                         if run is not None:
                             break
@@ -612,9 +726,27 @@ class RunManager:
             self._execute_run(run)
 
     def _execute_run(self, run: PipelineRun) -> None:
+        claimed = self._registry.claim_run(run.id, owner=self._owner)
         with self._lock:
             pending = self._pending.pop(run.id, None)
-            self._live.add(run.id)
+            lost = claimed is None
+            if not lost:
+                self._live.add(run.id)
+        if lost:
+            # Another process got the claim in between, or is already running a
+            # run on this node: the loser moves on and the winner's row stands.
+            # Nothing of ours was written, so nothing needs undoing — only the
+            # in-process options are dropped.
+            log_event(
+                "info",
+                "runs",
+                "run.claim_lost",
+                run_id=run.id,
+                meeting_id=run.meeting_id,
+            )
+            return
+        run = claimed
+        self._beat_while_live()
         try:
             meeting = (
                 pending[0]
@@ -661,6 +793,54 @@ class RunManager:
             with self._lock:
                 self._live.discard(run.id)
 
+    # --- the liveness heartbeat (RUN-02) ------------------------------------ #
+    def _beat_while_live(self) -> None:
+        """Keep the heartbeat of this manager's live runs fresh (one thread).
+
+        Started at the claim and retired when the last live run leaves
+        :attr:`_live`. The claim wrote the first heartbeat itself, so a claimed
+        run is never in a state another process could read as dead.
+        """
+        with self._lock:
+            if self._heartbeat is not None and self._heartbeat.is_alive():
+                return
+            self._heartbeat = threading.Thread(
+                target=self._beat, name="cr-run-heartbeat", daemon=True
+            )
+            self._heartbeat.start()
+
+    def _beat(self) -> None:
+        """Refresh every live run's heartbeat until none is left."""
+        while True:
+            with self._lock:
+                live = sorted(self._live)
+                if not live:
+                    # Retire inside the critical section: a claim that ran
+                    # between the check above and this assignment would
+                    # otherwise find a thread that is alive and about to exit,
+                    # and its run would never be beaten at all.
+                    self._heartbeat = None
+                    return
+            for run_id in live:
+                try:
+                    self._registry.heartbeat_run(run_id)
+                except sqlite3.Error as exc:
+                    # A liveness thread must not die on a transient registry
+                    # error: another process would then read this run as dead and
+                    # reap it while it is still executing. Report it once per run
+                    # and keep beating — the error says the node cannot *prove*
+                    # the run is alive, not that it is not.
+                    if run_id not in self._beat_failed:
+                        self._beat_failed.add(run_id)
+                        log_event(
+                            "warning",
+                            "runs",
+                            "run.heartbeat_failed",
+                            run_id=run_id,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+            time.sleep(HEARTBEAT_INTERVAL_S)
+
     def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
         """Rebuild the queued run's options from the registry (after a restart)."""
         if not run.run_options:
@@ -676,7 +856,9 @@ class RunManager:
         self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
     ) -> None:
         assert meeting.workspace_path is not None
-        self._registry.update_run(run.id, status="running", started_at=_now())
+        # The row is already ``running``: the claim wrote that status, its
+        # ``started_at`` and its first heartbeat in one conditional update. A
+        # second write here would be a second, unconditional source of truth.
         self._registry.set_meeting_status(meeting.id, "running")
         log_event(
             "info",
@@ -970,6 +1152,8 @@ class RunManager:
 
 
 __all__ = [
+    "HEARTBEAT_INTERVAL_S",
+    "HEARTBEAT_STALE_S",
     "PipelineCallable",
     "PipelineOptions",
     "RESTART_REASON",

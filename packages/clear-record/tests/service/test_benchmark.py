@@ -407,7 +407,9 @@ def test_a_fake_backend_run_yields_every_axis(tmp_path, monkeypatch) -> None:
 
     manager = RunManager(registry)
     try:
-        run = manager.start(meeting, PipelineOptions(backend="fake", jobs=1))
+        run = manager.start(
+            meeting, PipelineOptions(backend="fake", jobs=1), origin="console"
+        )
         state = manager.wait(run.id, timeout=120)
     finally:
         manager.shutdown(timeout=5)

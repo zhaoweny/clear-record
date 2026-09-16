@@ -133,6 +133,7 @@ from clear_record.service.managed import (
 )
 from clear_record.service.models import (
     MEETING_STATUSES,
+    RUN_ORIGINS,
     RUN_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
@@ -155,6 +156,8 @@ from clear_record.service.paths import (
     resolve_workspace_root,
 )
 from clear_record.service.runs import (
+    HEARTBEAT_INTERVAL_S,
+    HEARTBEAT_STALE_S,
     PipelineOptions,
     RESTART_REASON,
     TERMINAL_STATUSES,
@@ -223,6 +226,8 @@ __all__ = [
     "FUTURE_EVENTS",
     "GlossarySnapshot",
     "GlossaryTerm",
+    "HEARTBEAT_INTERVAL_S",
+    "HEARTBEAT_STALE_S",
     "HELLO_PHRASES",
     "HelloTape",
     "InsufficientSpace",
@@ -241,6 +246,7 @@ __all__ = [
     "RESTART_REASON",
     "RUN_FAILED",
     "RUN_FINISHED",
+    "RUN_ORIGINS",
     "RUN_STARTED",
     "RUN_STATUSES",
     "RecordingSet",

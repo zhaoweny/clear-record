@@ -2038,7 +2038,9 @@ def create_app(
         except ValueError as exc:
             return render_run_error(request, meeting_id, tr(str(exc)))
         try:
-            run = runs.start(meeting, resolved.options, auto=resolved.meta)
+            run = runs.start(
+                meeting, resolved.options, auto=resolved.meta, origin="console"
+            )
         except ValueError as exc:
             # A conflict while a run is live: re-render the live fragment so its
             # polling is not torn down by an error response (htmx skips 4xx swaps).
@@ -2639,7 +2641,9 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            run = runs.start(meeting, resolved.options, auto=resolved.meta)
+            run = runs.start(
+                meeting, resolved.options, auto=resolved.meta, origin="api"
+            )
         except ValueError as exc:
             # No workspace or no tape set: a bad request, not a conflict.
             raise HTTPException(status_code=400, detail=str(exc)) from exc

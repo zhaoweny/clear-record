@@ -245,7 +245,7 @@ def test_run_lifecycle_is_logged(tmp_path) -> None:
     meeting = _meeting_with_tapes(registry, tmp_path)
 
     manager = RunManager(registry, pipeline=lambda *args: None)
-    run = manager.start(meeting)
+    run = manager.start(meeting, origin="console")
     manager.wait(run.id, timeout=10)
 
     events = [json.loads(line) for line in read_recent(100)]
@@ -264,7 +264,7 @@ def test_a_failing_run_logs_the_reason(tmp_path) -> None:
         raise RuntimeError("backend exploded")
 
     manager = RunManager(registry, pipeline=boom)
-    run = manager.start(meeting)
+    run = manager.start(meeting, origin="console")
     manager.wait(run.id, timeout=10)
 
     failures = [json.loads(line) for line in read_recent(100) if '"run.failed"' in line]
@@ -281,7 +281,7 @@ def test_a_refused_start_is_logged(tmp_path) -> None:
 
     manager = RunManager(registry, pipeline=lambda *args: None)
     with pytest.raises(ValueError):
-        manager.start(meeting)
+        manager.start(meeting, origin="console")
 
     events = [json.loads(line)["event"] for line in read_recent(100)]
     assert "run.refused" in events

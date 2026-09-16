@@ -30,6 +30,7 @@ from pathlib import Path
 from clear_record.core.events import JobEvent
 from clear_record.service.models import (
     MEETING_STATUSES,
+    RUN_ORIGINS,
     RUN_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
@@ -44,7 +45,7 @@ from clear_record.service.models import (
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -193,6 +194,19 @@ CREATE INDEX IF NOT EXISTS run_event_run ON run_event (run_id);
 ALTER TABLE pipeline_run ADD COLUMN run_options TEXT;
 """
 
+# RUN-02: who a run belongs to. ``origin`` is the surface that started it;
+# ``owner`` the process that claimed it (the conditional transition that makes
+# the queue cross-process); ``heartbeat_at`` the owner's last proof of life,
+# refreshed while it executes. All three are NULL for a run recorded before this
+# version — read as unknown, never guessed.
+_SCHEMA_V7 = """
+ALTER TABLE pipeline_run ADD COLUMN origin TEXT;
+
+ALTER TABLE pipeline_run ADD COLUMN owner TEXT;
+
+ALTER TABLE pipeline_run ADD COLUMN heartbeat_at TEXT;
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -202,6 +216,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (4, _SCHEMA_V4),
     (5, _SCHEMA_V5),
     (6, _SCHEMA_V6),
+    (7, _SCHEMA_V7),
 )
 
 
@@ -251,6 +266,16 @@ class Registry:
     # --- connection / schema ---------------------------------------------- #
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        """A connection for one operation, committed on a clean exit.
+
+        ``timeout`` is left at :mod:`sqlite3`'s default, which is also the busy
+        timeout: a second *process* (the console and an agent's MCP server share
+        one registry, RUN-02) that meets a writer waits for it instead of raising
+        ``database is locked``. The one shape SQLite refuses to wait for is a
+        write that has to upgrade a read transaction, so every write here is
+        write-first — one statement, or a write before any read on that
+        connection.
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -762,21 +787,27 @@ class Registry:
         language: str | None = None,
         options: dict | None = None,
         run_options: dict | None = None,
+        origin: str | None = None,
     ) -> PipelineRun:
         """Create a **queued** run at the back of the node's FIFO.
 
         ``options`` is run meta (e.g. the glossary snapshot identity) recorded so
         a re-run can be explained later. ``run_options`` is the resolved
         :class:`~clear_record.core.PipelineOptions` the run will execute with,
-        recorded so a queued run is picked back up after a restart.
+        recorded so a queued run is picked back up after a restart. ``origin`` is
+        the surface that started it, one of :data:`RUN_ORIGINS` (RUN-02); it is
+        ``None`` only for a caller that is not a start path (a seeded row).
         """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
+        if origin is not None and origin not in RUN_ORIGINS:
+            raise ValueError(f"origin must be one of {RUN_ORIGINS}, got {origin!r}")
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO pipeline_run"
-                " (meeting_id, status, backend, model, language, options, run_options, created_at)"
-                " VALUES (?, 'queued', ?, ?, ?, ?, ?, ?)",
+                " (meeting_id, status, backend, model, language, options,"
+                "  run_options, created_at, origin)"
+                " VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
                 (
                     meeting_id,
                     backend,
@@ -785,6 +816,7 @@ class Registry:
                     json.dumps(options) if options else None,
                     json.dumps(run_options) if run_options else None,
                     _now(),
+                    origin,
                 ),
             )
             return self._run_row(conn, cur.lastrowid)
@@ -896,6 +928,83 @@ class Registry:
         """The head of the node's FIFO: the oldest run still ``queued``."""
         runs = self.runs_with_status("queued")
         return runs[0] if runs else None
+
+    def claim_run(self, run_id: int, *, owner: str) -> PipelineRun | None:
+        """Claim a ``queued`` run for ``owner``: the node's one write for ``running``.
+
+        Returns the claimed row, or ``None`` when the claim is lost — either
+        another process claimed this run first, or the node already has a
+        ``running`` run (the queue's one-at-a-time rule, enforced by the same
+        statement rather than by the read that chose the run).
+
+        This is deliberately **one statement**. SQLite's write lock decides the
+        winner *inside* it, so two claimants that both read ``queued`` cannot both
+        write ``running``. It also means the write lock is taken before any row of
+        this run is read: a claimant can never hold a read snapshot from before
+        the other's commit, which is the upgrade SQLite refuses to wait for (it
+        returns ``SQLITE_BUSY`` without consulting the busy handler). Contention
+        therefore waits on the connection's busy timeout instead of failing, and
+        a crude read-then-update — the shape this replaces — has no such promise.
+
+        ``started_at`` and the first heartbeat are written here, together with the
+        status: a claimed run is provably alive from the instant it is claimed.
+        """
+        at = _now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pipeline_run"
+                " SET status = 'running', started_at = ?, owner = ?, heartbeat_at = ?"
+                " WHERE id = ? AND status = 'queued'"
+                " AND NOT EXISTS (SELECT 1 FROM pipeline_run WHERE status = 'running')",
+                (at, owner, at, run_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            return self._run_row(conn, run_id)
+
+    def heartbeat_run(self, run_id: int, *, at: str | None = None) -> bool:
+        """Refresh a running run's liveness heartbeat; ``False`` when it did not land.
+
+        A ``False`` is not an error to act on: it means the row is not ``running``
+        any more (a peer reaped it, believing the owner dead) or does not exist.
+        The executing process keeps working either way — a pipeline has no
+        cancellation contract — and its own terminal write is what the run finally
+        says. The value returned is for the caller (and its tests) to see which of
+        the two happened.
+        """
+        at = at or _now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pipeline_run SET heartbeat_at = ?"
+                " WHERE id = ? AND status = 'running'",
+                (at, run_id),
+            )
+            landed = cur.rowcount == 1
+        return landed
+
+    def interrupt_run(
+        self, run_id: int, *, ended_at: str, error: str, progress: dict
+    ) -> PipelineRun | None:
+        """Move a ``running`` run whose owner is gone to ``interrupted``.
+
+        The conditional counterpart of :meth:`claim_run`, and conditional for the
+        same reason: a reaper decides from a **snapshot** — a heartbeat that had
+        gone stale — and writes afterwards, so the owner may have finished and
+        recorded its own outcome in between. ``None`` means the transition lost
+        that race; the caller then leaves the row (and the meeting) alone,
+        because a run that reached its own end is not an orphan, whatever its
+        heartbeat said a moment ago.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pipeline_run SET status = 'interrupted', ended_at = ?,"
+                " error = ?, progress = ?"
+                " WHERE id = ? AND status = 'running'",
+                (ended_at, error, json.dumps(progress), run_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            return self._run_row(conn, run_id)
 
     def queue_position(self, run_id: int) -> int:
         """A queued run's 1-based place in the FIFO (``0`` when not queued).
@@ -1186,6 +1295,9 @@ class Registry:
             created_at=row["created_at"],
             run_options=json.loads(row["run_options"]) if row["run_options"] else None,
             progress=json.loads(row["progress"]) if row["progress"] else None,
+            origin=row["origin"],
+            owner=row["owner"],
+            heartbeat_at=row["heartbeat_at"],
         )
 
     def _run_row(self, conn: sqlite3.Connection, run_id: int) -> PipelineRun:

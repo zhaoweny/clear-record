@@ -310,6 +310,8 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     assert started.status_code == 202
     run_id = started.json()["run"]["id"]
     assert started.json()["state"]["status"] in {"queued", "running"}
+    # RUN-02: the JSON API is not the console, and the run says so.
+    assert started.json()["run"]["origin"] == "api"
 
     console.gate.set()
     state = console.manager.wait(run_id, timeout=10)
@@ -502,6 +504,8 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     )
     assert started.status_code == 200
     run_id = console.registry.list_runs(meeting["id"])[0].id
+    # RUN-02: the console is the surface that started it, and it is recorded.
+    assert console.registry.get_run(run_id).origin == "console"
     assert "<progress" in started.text
     assert 'hx-trigger="every 1s"' in started.text
     assert f'hx-get="/ui/runs/{run_id}"' in started.text

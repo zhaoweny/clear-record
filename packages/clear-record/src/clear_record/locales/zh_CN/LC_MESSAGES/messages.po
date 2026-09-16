@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 09:17+0800\n"
+"POT-Creation-Date: 2026-09-16 09:40+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -1646,15 +1646,15 @@ msgid "Config file"
 msgstr "配置文件"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:30
-msgid "Choose a model"
-msgstr "选择模型"
+msgid "Available checkpoints"
+msgstr "可用检查点"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:31
 msgid ""
-"A run uses the largest checkpoint on disk that fits this machine, so "
-"downloading a size is how you switch. Downloads are verified against a "
-"pinned checksum."
-msgstr "运行会使用磁盘上适合本机的最大检查点，因此下载不同规格的模型就是切换方式。下载内容会按固定的校验和进行校验。"
+"Downloading a size puts that checkpoint on disk. --auto uses the largest "
+"checkpoint already on disk that fits this machine; a specific size is "
+"forced per run. Downloads are verified against a pinned checksum."
+msgstr "下载某个规格会把对应检查点放到磁盘上。--auto 会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:23
@@ -1842,8 +1842,8 @@ msgid "No model checkpoints are on disk yet."
 msgstr "磁盘上还没有模型检查点。"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:34
-msgid "Model"
-msgstr "模型"
+msgid "Checkpoint to download"
+msgstr "要下载的检查点"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:39
 msgid "Download the model"
@@ -2364,4 +2364,10 @@ msgstr "忽略初始设置"
 
 #~ msgid "hello-world check"
 #~ msgstr "hello-world 检查"
+
+#~ msgid "Choose a model"
+#~ msgstr "选择模型"
+
+#~ msgid "Model"
+#~ msgstr "模型"
 

@@ -1483,7 +1483,7 @@ def create_app(
         chosen = str(form.get("model") or "").strip() or None
         error = ""
         try:
-            download_transcription_model(chosen)
+            await run_in_threadpool(download_transcription_model, chosen)
         except Exception as exc:  # noqa: BLE001 - a failed download is a state
             error = f"{type(exc).__name__}: {exc}"
         return TEMPLATES.TemplateResponse(
@@ -1504,7 +1504,7 @@ def create_app(
         chosen = str(form.get("model") or "").strip() or None
         error = ""
         try:
-            download_transcription_model(chosen)
+            await run_in_threadpool(download_transcription_model, chosen)
         except Exception as exc:  # noqa: BLE001 - a failed download is a state
             error = f"{type(exc).__name__}: {exc}"
         return TEMPLATES.TemplateResponse(

@@ -235,6 +235,8 @@ def test_the_transcription_step_offers_to_download_a_missing_checkpoint(
     # pinned downloader, never a promise that some later run will fetch it.
     assert 'hx-post="/ui/setup/download-model"' in page
     assert "Download the model" in page
+    # The select names what is fetched, not a persisted model choice.
+    assert "Checkpoint to download" in page
     assert '<select name="model">' in page
     assert "Models on disk: ggml-small.bin" in page
     assert "No model checkpoints are on disk yet." not in page
@@ -276,6 +278,35 @@ def test_downloading_the_default_model_refreshes_the_step_to_ready(
     assert calls == [1]
     assert "Transcription is ready here" in response.text
     assert "Checkpoint on disk: /home/u/models/ggml-small.bin." in response.text
+
+
+def test_downloading_the_model_offloads_the_synchronous_fetch(
+    tmp_path, monkeypatch
+) -> None:
+    """The pinned fetch can run for minutes; it must not hold the event loop.
+
+    transcription_status renders the refreshed step after the fetch and runs
+    on the event loop, so it names the loop thread for comparison.
+    """
+    import threading
+
+    seen: dict[str, threading.Thread] = {}
+
+    def fake_download(*args, **kwargs):
+        seen["download"] = threading.current_thread()
+        return ""
+
+    def fake_status(*args, **kwargs):
+        seen["status"] = threading.current_thread()
+        return _status(LEG_MODEL)
+
+    monkeypatch.setattr(web_app, "download_transcription_model", fake_download)
+    monkeypatch.setattr(web_app, "transcription_status", fake_status)
+
+    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+
+    assert response.status_code == 200
+    assert seen["download"] is not seen["status"]
 
 
 def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:

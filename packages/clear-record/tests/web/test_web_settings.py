@@ -111,10 +111,76 @@ def test_the_models_section_offers_the_picker_and_a_download(
 
     page = _client(tmp_path).get("/settings/models")
 
-    assert "Choose a model" in page.text
+    assert "Available checkpoints" in page.text
     for name in ("tiny", "base", "small", "medium", "large-v3"):
         assert f"<code>{name}</code>" in page.text
     assert 'hx-post="/ui/settings/models/download"' in page.text
+
+
+def test_the_models_section_describes_checkpoints_truthfully(
+    tmp_path, monkeypatch
+) -> None:
+    """A download adds a checkpoint; it does not persist a selection.
+
+    --auto picks the largest suitable checkpoint already on disk, and a
+    specific size is forced per run, so the old "downloading is how you
+    switch" copy was false and must not come back.
+    """
+    monkeypatch.setattr(web_app, "models_on_disk", lambda *a, **k: frozenset())
+
+    page = _client(tmp_path).get("/settings/models").text
+
+    assert "Available checkpoints" in page
+    assert "Choose a model" not in page
+    assert "downloading a size is how you switch" not in page
+    assert "--auto uses the largest checkpoint already on disk" in page
+    assert "a specific size is forced per run" in page
+
+
+def test_the_settings_download_runs_off_the_event_loop(tmp_path, monkeypatch) -> None:
+    """The pinned fetch is synchronous and can run for minutes.
+
+    The route must hand it to a worker thread rather than call it on the event
+    loop, which would stall every other request (and the local console).
+    """
+    import threading
+
+    seen: dict[str, threading.Thread] = {}
+
+    def fake_download(model=None, **kwargs):
+        seen["download"] = threading.current_thread()
+        return ""
+
+    def on_disk(*args, **kwargs):
+        # models_context renders after the fetch and runs on the event loop,
+        # so this names the loop thread for comparison.
+        seen["event_loop"] = threading.current_thread()
+        return frozenset()
+
+    monkeypatch.setattr(web_app, "download_transcription_model", fake_download)
+    monkeypatch.setattr(web_app, "models_on_disk", on_disk)
+
+    response = _client(tmp_path).post(
+        "/ui/settings/models/download", data={"model": "small"}
+    )
+
+    assert response.status_code == 200
+    assert seen["download"] is not seen["event_loop"]
+
+
+def test_the_models_checkpoint_copy_is_translated_in_a_chinese_console(
+    tmp_path, monkeypatch
+) -> None:
+    """The new copy ships translated, not as an English fallback."""
+    monkeypatch.setattr(web_app, "models_on_disk", lambda *a, **k: frozenset())
+
+    client = _client(tmp_path)
+    client.cookies.set(LANG_COOKIE, "zh_CN")
+    page = client.get("/settings/models").text
+
+    assert "可用检查点" in page
+    assert "下载某个规格会把对应检查点放到磁盘上" in page
+    assert "Available checkpoints" not in page
 
 
 def test_downloading_a_model_from_settings_calls_the_pinned_downloader(

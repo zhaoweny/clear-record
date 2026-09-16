@@ -27,8 +27,8 @@
     </table>
   </div>
 
-  <h3>{{ tr("Choose a model") }}</h3>
-  <p class="muted">{{ tr("A run uses the largest checkpoint on disk that fits this machine, so downloading a size is how you switch. Downloads are verified against a pinned checksum.") }}</p>
+  <h3>{{ tr("Available checkpoints") }}</h3>
+  <p class="muted">{{ tr("Downloading a size puts that checkpoint on disk. --auto uses the largest checkpoint already on disk that fits this machine; a specific size is forced per run. Downloads are verified against a pinned checksum.") }}</p>
   {% if error %}
   <p class="muted" role="alert">{{ tr("The download did not finish: {error}", error=error) }}</p>
   {% endif %}

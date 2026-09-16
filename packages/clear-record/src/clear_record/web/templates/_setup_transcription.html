@@ -31,7 +31,7 @@
   {% if transcription.state == 'model' %}
   <form class="setup-download" hx-post="/ui/setup/download-model" hx-target="#setup-transcription" hx-swap="outerHTML" hx-disabled-elt="find button">
     <label class="field">
-      <span>{{ tr("Model") }}</span>
+      <span>{{ tr("Checkpoint to download") }}</span>
       <select name="model">
         {% for name in model_ladder %}<option value="{{ name }}"{% if name == default_model %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>

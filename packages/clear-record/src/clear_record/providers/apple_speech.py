@@ -96,15 +96,37 @@ _HELPER_SUBDIR = "apple-speech"
 _COMPILE_TIMEOUT_S = 300.0
 #: A long tape can transcribe for a while; this is a safety net, not a limit.
 _RUN_TIMEOUT_S = 24 * 60 * 60.0
+#: The availability probe has no runner seam, so it is bounded in-process and
+#: never inherits the 24h run ceiling.
+_PROBE_TIMEOUT_S = 30.0
 
 _PART_COUNTER = itertools.count()
 
 
-class AppleSpeechUnavailable(RuntimeError):
+class _AppleSpeechProblem(RuntimeError):
+    """An Apple-speech failure with an English rendering and a translatable Message.
+
+    ``str(exc)`` stays the English sentence (the terminal and logs print it);
+    ``exc.message`` is the stable message ID plus parameters a boundary (the
+    console, ``Availability.reason``) renders in the user's locale. A caller that
+    passes a plain string still gets a Message wrapping it, so a dynamic detail
+    is carried but never mistaken for a catalog ID.
+    """
+
+    message: Message
+
+    def __init__(self, message: Message | str) -> None:
+        self.message = (
+            message if isinstance(message, Message) else Message(str(message))
+        )
+        super().__init__(str(self.message))
+
+
+class AppleSpeechUnavailable(_AppleSpeechProblem):
     """The helper cannot be built here (absent toolchain) or the OS cannot serve it."""
 
 
-class AppleSpeechError(RuntimeError):
+class AppleSpeechError(_AppleSpeechProblem):
     """The helper ran and failed (bad locale, analysis error, unreadable output)."""
 
 
@@ -211,15 +233,25 @@ def _segments_from_helper(
     """
     if not isinstance(entries, list):
         raise AppleSpeechError(
-            f"Apple SpeechTranscriber ({source}) returned non-list 'segments': "
-            f"{type(entries).__name__}."
+            Message(
+                deferred(
+                    "Apple SpeechTranscriber ({source}) returned non-list "
+                    "'segments': {type}."
+                ),
+                (("source", source), ("type", type(entries).__name__)),
+            )
         )
     out: list[Segment] = []
     for entry in entries:
         if not isinstance(entry, dict):
             raise AppleSpeechError(
-                f"Apple SpeechTranscriber ({source}) returned a non-object "
-                f"segment: {entry!r}."
+                Message(
+                    deferred(
+                        "Apple SpeechTranscriber ({source}) returned a "
+                        "non-object segment: {entry}."
+                    ),
+                    (("source", source), ("entry", repr(entry))),
+                )
             )
         try:
             start = float(entry.get("start", 0.0))
@@ -246,6 +278,24 @@ def _segments_from_helper(
 
 
 RunCallable = Callable[..., Any]
+
+
+def _as_run_callable(runner: object | None) -> RunCallable | None:
+    """Adapt a backend ``ProcessRunner`` to the helper's callable contract.
+
+    The backend seam takes a ``ProcessRunner`` -- an *object* with ``run``
+    (``CancellableProcessRunner``, ``SubprocessRunner``; see
+    :mod:`clear_record.providers.process`) -- while :class:`AppleSpeechHelper`
+    launches through a plain ``subprocess.run``-shaped callable. Passing the
+    object straight through raised ``TypeError: ... object is not callable`` on
+    the real Apple path. A runner exposing a callable ``run`` is bound to it; a
+    plain callable (a test seam, or a caller using the older shape) passes
+    through unchanged.
+    """
+    if runner is None:
+        return None
+    run = getattr(runner, "run", None)
+    return run if callable(run) else runner
 
 
 class AppleSpeechHelper:
@@ -301,11 +351,13 @@ class AppleSpeechHelper:
             return self._binary
         return None
 
-    def ensure_binary(self) -> str:
+    def ensure_binary(self, *, runner: RunCallable | None = None) -> str:
         """Return the helper path, compiling the shipped Swift source if needed.
 
-        Raises :class:`AppleSpeechUnavailable` with an actionable reason when the
-        Swift toolchain is absent or compilation fails.
+        ``runner`` is the caller's process runner (the pool's cancellable one),
+        so an aborted compile is killed with the rest of the run. Raises
+        :class:`AppleSpeechUnavailable` with an actionable reason when the Swift
+        toolchain is absent or compilation fails.
         """
         existing = self.binary_path()
         if existing:
@@ -313,22 +365,34 @@ class AppleSpeechHelper:
         compiler = _swift_compiler()
         if compiler is None:
             raise AppleSpeechUnavailable(
-                "Apple SpeechTranscriber is reachable only through its Swift-only "
-                "API, so clear-record compiles a small helper on first use. "
-                "Install the Swift toolchain with `xcode-select --install`, or "
-                f"set {HELPER_ENV} to a prebuilt helper."
+                Message(
+                    deferred(
+                        "Apple SpeechTranscriber is reachable only through its "
+                        "Swift-only API, so clear-record compiles a small helper "
+                        "on first use. Install the Swift toolchain with "
+                        "`xcode-select --install`, or set {env} to a prebuilt helper."
+                    ),
+                    (("env", HELPER_ENV),),
+                )
             )
         cache = self._cache_root()
         try:
             cache.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise AppleSpeechUnavailable(
-                f"could not create the helper cache directory {cache}: {exc}"
+                Message(
+                    deferred(
+                        "could not create the Apple speech helper cache "
+                        "directory {path}: {error}"
+                    ),
+                    (("path", str(cache)), ("error", str(exc))),
+                )
             ) from exc
         dest = cache / f"helper-{self._source_hash()}"
         temp = cache / f".helper-{os.getpid()}-{next(_PART_COUNTER)}.tmp"
+        run = runner or self._run
         try:
-            proc = self._run(
+            proc = run(
                 [
                     *compiler,
                     "-O",
@@ -344,14 +408,23 @@ class AppleSpeechHelper:
         except (OSError, subprocess.SubprocessError) as exc:
             _remove(temp)
             raise AppleSpeechUnavailable(
-                f"could not compile the Apple speech helper: {exc}"
+                Message(
+                    deferred("could not compile the Apple speech helper: {detail}"),
+                    (("detail", str(exc)),),
+                )
             ) from exc
         if proc.returncode != 0 or not temp.is_file():
             detail = _tail(proc.stderr)
             _remove(temp)
             raise AppleSpeechUnavailable(
-                "could not compile the Apple speech helper"
-                + (f": {detail}" if detail else "")
+                Message(
+                    deferred("could not compile the Apple speech helper")
+                    if not detail
+                    else deferred(
+                        "could not compile the Apple speech helper: {detail}"
+                    ),
+                    () if not detail else (("detail", detail),),
+                )
             )
         try:
             os.chmod(temp, 0o755)
@@ -359,16 +432,26 @@ class AppleSpeechHelper:
         except OSError as exc:
             _remove(temp)
             raise AppleSpeechUnavailable(
-                f"could not install the compiled Apple speech helper: {exc}"
+                Message(
+                    deferred(
+                        "could not install the compiled Apple speech helper: {error}"
+                    ),
+                    (("error", str(exc)),),
+                )
             ) from exc
         self._binary = str(dest)
         return self._binary
 
     # --- the subcommands ---------------------------------------------------- #
-    def probe(self) -> SpeechProbe:
+    def probe(self, *, runner: RunCallable | None = None) -> SpeechProbe:
         """``SpeechTranscriber.isAvailable`` (cached per process, no download)."""
         if self._probe is None:
-            data = self._result(["probe"], stream_stderr=False)
+            data = self._result(
+                ["probe"],
+                stream_stderr=False,
+                runner=runner,
+                timeout=_PROBE_TIMEOUT_S,
+            )
             supported = data.get("supportedLocales")
             self._probe = SpeechProbe(
                 is_available=bool(data.get("isAvailable")),
@@ -380,12 +463,14 @@ class AppleSpeechHelper:
             )
         return self._probe
 
-    def prepare(self, language: str | None) -> dict:
+    def prepare(
+        self, language: str | None, *, runner: RunCallable | None = None
+    ) -> dict:
         """Install/reserve ``language``'s asset (streaming progress to stderr)."""
         argv = ["prepare"]
         if language:
             argv += ["--locale", language]
-        return self._result(argv, stream_stderr=True)
+        return self._result(argv, stream_stderr=True, runner=runner)
 
     def transcribe(
         self,
@@ -393,6 +478,7 @@ class AppleSpeechHelper:
         *,
         language: str | None = None,
         terms: tuple[str, ...] = (),
+        runner: RunCallable | None = None,
     ) -> dict:
         """Transcribe ``audio_path``; return the helper's JSON payload."""
         argv = ["transcribe", "--audio", str(audio_path)]
@@ -400,49 +486,86 @@ class AppleSpeechHelper:
             argv += ["--locale", language]
         for term in terms:
             argv += ["--term", term]
-        return self._result(argv, stream_stderr=False)
+        return self._result(argv, stream_stderr=False, runner=runner)
 
-    def _result(self, argv: list[str], *, stream_stderr: bool) -> dict:
-        binary = self.ensure_binary()
+    def _result(
+        self,
+        argv: list[str],
+        *,
+        stream_stderr: bool,
+        runner: RunCallable | None = None,
+        timeout: float = _RUN_TIMEOUT_S,
+    ) -> dict:
+        binary = self.ensure_binary(runner=runner)
+        run = runner or self._run
         with tempfile.TemporaryDirectory(prefix="cr-apple-speech-") as tmp:
             out = Path(tmp) / "result.json"
             cmd = [binary, *argv, "--out", str(out)]
             try:
-                proc = self._run(
+                proc = run(
                     cmd,
                     capture_output=not stream_stderr,
                     text=True,
-                    timeout=_RUN_TIMEOUT_S,
+                    timeout=timeout,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise AppleSpeechError(
-                    f"the Apple speech helper timed out after {_RUN_TIMEOUT_S:.0f}s"
+                    Message(
+                        deferred(
+                            "the Apple speech helper timed out after {seconds} seconds"
+                        ),
+                        (("seconds", int(timeout)),),
+                    )
                 ) from exc
             except OSError as exc:
                 raise AppleSpeechUnavailable(
-                    f"could not run the Apple speech helper: {exc}"
+                    Message(
+                        deferred("could not run the Apple speech helper: {error}"),
+                        (("error", str(exc)),),
+                    )
                 ) from exc
             if proc.returncode != 0:
                 detail = _tail(getattr(proc, "stderr", None))
                 raise AppleSpeechError(
-                    f"the Apple speech helper failed (exit {proc.returncode})"
-                    + (f": {detail}" if detail else "")
+                    Message(
+                        deferred(
+                            "the Apple speech helper failed (exit {code}): {detail}"
+                        )
+                        if detail
+                        else deferred("the Apple speech helper failed (exit {code})"),
+                        (("code", proc.returncode), ("detail", detail))
+                        if detail
+                        else (("code", proc.returncode),),
+                    )
                 )
             if not out.is_file():
                 raise AppleSpeechError(
-                    "the Apple speech helper produced no result "
-                    "(it may not support SpeechAnalyzer on this OS)"
+                    Message(
+                        deferred(
+                            "the Apple speech helper produced no result "
+                            "(it may not support SpeechAnalyzer on this OS)"
+                        )
+                    )
                 )
             try:
                 data = json.loads(out.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise AppleSpeechError(
-                    f"the Apple speech helper returned unreadable JSON: {exc}"
+                    Message(
+                        deferred(
+                            "the Apple speech helper returned unreadable JSON: {error}"
+                        ),
+                        (("error", str(exc)),),
+                    )
                 ) from exc
             if not isinstance(data, dict):
                 raise AppleSpeechError(
-                    "the Apple speech helper returned non-object JSON: "
-                    f"{type(data).__name__}"
+                    Message(
+                        deferred(
+                            "the Apple speech helper returned non-object JSON: {type}"
+                        ),
+                        (("type", type(data).__name__),),
+                    )
                 )
             return data
 
@@ -508,7 +631,7 @@ class AppleSpeechBackend(BackendBase):
                 False,
                 Message(
                     deferred("Apple Speech is unavailable: {detail}"),
-                    (("detail", str(exc)),),
+                    (("detail", exc.message),),
                 ),
             )
         except AppleSpeechError as exc:
@@ -516,7 +639,7 @@ class AppleSpeechBackend(BackendBase):
                 False,
                 Message(
                     deferred("Apple Speech probe failed: {detail}"),
-                    (("detail", str(exc)),),
+                    (("detail", exc.message),),
                 ),
             )
         if not probe.is_available:
@@ -560,11 +683,29 @@ class AppleSpeechBackend(BackendBase):
         max_context: int | None = None,
         threads: int | None = None,
     ) -> TranscriptionResult:
+        requested = {
+            "beam_size": beam_size,
+            "best_of": best_of,
+            "temperature": temperature,
+            "entropy_thold": entropy_thold,
+            "no_speech_thold": no_speech_thold,
+            "max_context": max_context,
+            "threads": threads,
+        }
+        unsupported = sorted(
+            name for name, value in requested.items() if value is not None
+        )
+        if unsupported:
+            raise ValueError(
+                f"{self.info.id} cannot honour decoder option(s): "
+                f"{', '.join(unsupported)}."
+            )
         lang = language if language and language not in ("", "auto") else None
         data = self._helper.transcribe(
             audio_path,
             language=lang,
             terms=_glossary_terms(initial_prompt),
+            runner=_as_run_callable(process_runner),
         )
         detected = data.get("language")
         if not isinstance(detected, str) or not detected:

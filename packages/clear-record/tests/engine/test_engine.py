@@ -8,7 +8,7 @@ import soundfile as sf
 
 from clear_record.core import Alignment, Segment, Source
 from clear_record.engine.align import cross_correlate, estimate_offset
-from clear_record.engine.merge import reconcile
+from clear_record.engine.merge import reconcile, source_speaker_names
 
 
 def _event(duration_s: float = 4.0, sr: int = 8000) -> np.ndarray:
@@ -680,6 +680,41 @@ def test_reconcile_keeps_an_explicit_speaker_label() -> None:
 
     merged = reconcile(per_source, alignment, sources)
     assert merged[0].speaker == "Alice"
+
+
+def test_anonymous_speakers_do_not_collide_with_an_explicit_label() -> None:
+    """Regression: an unlabelled source beside an explicit 'Speaker 1' must
+    not also be named 'Speaker 1' (two people, one name)."""
+    sources = [
+        Source(id="a", path="", label="Speaker 1"),
+        Source(id="b", path="", label=None),
+        Source(id="c", path="", label="Speaker 3"),
+        Source(id="d", path="", label=""),
+    ]
+
+    names = source_speaker_names(sources)
+
+    assert names == {
+        "a": "Speaker 1",
+        "b": "Speaker 2",
+        "c": "Speaker 3",
+        "d": "Speaker 4",
+    }
+    assert len(set(names.values())) == len(names)
+
+
+def test_anonymous_speakers_reserve_labels_case_insensitively() -> None:
+    """An explicit 'speaker 1' must block the anonymous 'Speaker 1' too: the
+    two forms differ only in case and still read as one name."""
+    sources = [
+        Source(id="a", path="", label="speaker 1"),
+        Source(id="b", path="", label=None),
+    ]
+
+    names = source_speaker_names(sources)
+
+    assert names["a"] == "speaker 1"
+    assert names["b"] == "Speaker 2"
 
 
 def test_clean_segments_tidies_cjk_punctuation() -> None:

@@ -26,6 +26,7 @@ from clear_record.providers import (
     AppleSpeechError,
     AppleSpeechHelper,
     AppleSpeechUnavailable,
+    CancellableProcessRunner,
     SpeechProbe,
     get_backend,
     probe_ggml_plugin_load,
@@ -57,6 +58,7 @@ class _FakeHelper:
         self.probe_calls = 0
         self.prepared: list[str | None] = []
         self.calls: list[tuple[str, str | None, tuple[str, ...]]] = []
+        self.runners: list[object | None] = []
 
     def probe(self) -> SpeechProbe:
         self.probe_calls += 1
@@ -71,12 +73,35 @@ class _FakeHelper:
         return {"locale": "en_US", "installed": True, "reserved": True}
 
     def transcribe(
-        self, audio_path: str, *, language: str | None, terms: tuple[str, ...]
+        self,
+        audio_path: str,
+        *,
+        language: str | None,
+        terms: tuple[str, ...],
+        runner: object | None = None,
     ) -> dict:
+        self.runners.append(runner)
         if self._transcribe_error is not None:
             raise self._transcribe_error
         self.calls.append((audio_path, language, terms))
         return self._transcribe or {"language": "en", "segments": []}
+
+
+class _RunnerObject:
+    """A ``ProcessRunner``-shaped object: it has ``.run`` but no ``__call__``.
+
+    ``providers.process.CancellableProcessRunner`` is exactly this shape, so a
+    test driving this object exercises the contract the pipeline passes.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd, *, capture_output=True, text=True, timeout=None):
+        self.calls.append(cmd)
+        with open(cmd[cmd.index("--out") + 1], "w", encoding="utf-8") as fh:
+            json.dump({"language": "en", "segments": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
 def _macos_26(monkeypatch) -> None:
@@ -147,6 +172,30 @@ def test_unavailable_when_the_helper_cannot_be_built(monkeypatch) -> None:
     assert status.available is False
     assert "xcode-select --install" in str(status.reason)
     assert backend.available() is False
+
+
+def test_toolchain_missing_reason_is_a_translated_message(tmp_path, monkeypatch):
+    """Issue-08: the availability detail is a message ID, not raw English.
+
+    The reason template is already a Message; before the fix its ``detail``
+    parameter was ``str(exc)``, so a zh-CN console showed the English Swift
+    guidance inside a translated frame.
+    """
+    from clear_record.core import i18n
+
+    _macos_26(monkeypatch)
+    monkeypatch.delenv(HELPER_ENV, raising=False)
+    monkeypatch.setattr(apple_speech, "_swift_compiler", lambda: None)
+    backend = AppleSpeechBackend(AppleSpeechHelper(cache_dir=tmp_path / "cache"))
+
+    status = backend.availability()
+
+    assert status.available is False
+    assert "xcode-select --install" in str(status.reason)
+    i18n.install("zh_CN")
+    translated = status.reason.render(i18n.tr)
+    assert "工具链" in translated
+    assert "Install the Swift toolchain" not in translated
 
 
 def test_unavailable_when_speech_transcriber_says_so(monkeypatch) -> None:
@@ -247,6 +296,62 @@ def test_transcribe_surfaces_an_actionable_language_error() -> None:
         backend.transcribe("a.wav", language="xx-XX")
 
 
+def test_transcribe_adapts_a_process_runner_object_for_the_helper() -> None:
+    """The pool passes a ProcessRunner object (it has .run, not __call__); the
+    backend must forward the bound .run, not the object itself, which is not
+    callable and crashed the helper."""
+    helper = _FakeHelper()
+    backend = AppleSpeechBackend(helper)
+    runner = CancellableProcessRunner()  # a real ProcessRunner object
+
+    backend.transcribe("a.wav", process_runner=runner)
+
+    assert helper.runners == [runner.run]
+    assert apple_speech._as_run_callable(None) is None
+
+
+def test_transcribe_accepts_a_plain_callable_process_runner() -> None:
+    """A plain subprocess.run-shaped callable still passes through the adapter
+    unchanged (the older or test seam)."""
+    helper = _FakeHelper()
+    backend = AppleSpeechBackend(helper)
+
+    def runner(cmd, *, capture_output=True, text=True, timeout=None):
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    backend.transcribe("a.wav", process_runner=runner)
+
+    assert helper.runners == [runner]
+
+
+def test_backend_transcribe_launches_the_helper_with_a_runner_object(
+    tmp_path, monkeypatch
+) -> None:
+    """End-to-end regression for the round-3 crash: the real helper path, driven
+    with a ProcessRunner object, must launch through .run and not raise an
+    object-is-not-callable TypeError."""
+    binary = tmp_path / "helper"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv(HELPER_ENV, str(binary))
+    runner = _RunnerObject()
+    backend = AppleSpeechBackend(AppleSpeechHelper(cache_dir=tmp_path / "cache"))
+
+    result = backend.transcribe("a.wav", language="en", process_runner=runner)
+
+    assert result.source == APPLE_SPEECH_BACKEND_ID
+    assert runner.calls
+    assert runner.calls[0][1:3] == ["transcribe", "--audio"]
+
+
+def test_transcribe_rejects_a_decoder_knob_it_declares_unsupported() -> None:
+    """decoder_knobs=() means a directly-supplied knob fails loudly, not
+    silently (the pipeline guard only covers the pipeline path)."""
+    backend = AppleSpeechBackend(_FakeHelper())
+
+    with pytest.raises(ValueError, match="beam_size"):
+        backend.transcribe("a.wav", beam_size=5)
+
+
 # --------------------------------------------------------------------------- #
 # the helper's subprocess contract (still no real OS call)
 # --------------------------------------------------------------------------- #
@@ -281,6 +386,35 @@ def test_helper_probe_parses_the_verdict(tmp_path, monkeypatch) -> None:
 
     assert probe.is_available is True
     assert probe.supported_locales == ("en_US", "zh_CN")
+
+
+def test_helper_probe_is_bounded_by_a_short_timeout(tmp_path, monkeypatch) -> None:
+    """availability() has no runner seam, so the probe is bounded in time
+    instead of inheriting the 24h run ceiling."""
+    seen: list[float] = []
+
+    def run(cmd, *, capture_output, text, timeout):
+        seen.append(timeout)
+        with open(cmd[cmd.index("--out") + 1], "w", encoding="utf-8") as fh:
+            json.dump({"isAvailable": True, "supportedLocales": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    helper = _cached_helper(tmp_path, monkeypatch, run)
+
+    helper.probe()
+
+    assert seen == [apple_speech._PROBE_TIMEOUT_S]
+    assert apple_speech._PROBE_TIMEOUT_S < apple_speech._RUN_TIMEOUT_S
+
+
+def test_helper_probe_timeout_names_the_short_bound(tmp_path, monkeypatch) -> None:
+    def run(cmd, *, capture_output, text, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    helper = _cached_helper(tmp_path, monkeypatch, run)
+
+    with pytest.raises(AppleSpeechError, match="30 seconds"):
+        helper.probe()
 
 
 def test_helper_transcribe_builds_the_expected_command(tmp_path, monkeypatch) -> None:
@@ -342,6 +476,31 @@ def test_helper_requires_the_swift_toolchain(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(AppleSpeechUnavailable, match="xcode-select --install"):
         helper.ensure_binary()
+
+
+def test_helper_transcribe_routes_through_a_supplied_runner(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression: the caller's runner must launch the helper, not the default
+    ``subprocess.run`` (which cancellation cannot reach)."""
+    seen: list[list[str]] = []
+
+    def default_run(cmd, *, capture_output, text, timeout):
+        raise AssertionError("the injected runner must be used")
+
+    def runner(cmd, *, capture_output=True, text=True, timeout=None):
+        seen.append(cmd)
+        out = cmd[cmd.index("--out") + 1]
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump({"language": "en", "segments": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    helper = _cached_helper(tmp_path, monkeypatch, default_run)
+
+    helper.transcribe("a.wav", language="en", runner=runner)
+
+    assert seen
+    assert seen[0][1:3] == ["transcribe", "--audio"]
 
 
 # --------------------------------------------------------------------------- #

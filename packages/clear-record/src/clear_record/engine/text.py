@@ -127,6 +127,8 @@ def term_could_affect(term: str, transcript: str) -> bool:
       removed. A one-character term must occur outright; a term of two to four
       characters must share a two-character run; a longer term a three-character
       run. (A partial run is a plausible mis-decode of the still-unknown term.)
+      A same-length window within one edit is also accepted, so a single
+      homophone substitution (``张三`` decoded as ``张山``) is not missed.
     - Any other term is compared token by token (case-folded). A term token of
       two or more characters must equal a transcript token; one of three or more
       characters also matches a transcript token within one edit (a mis-spelled
@@ -143,9 +145,17 @@ def term_could_affect(term: str, transcript: str) -> bool:
         if not tight_term or not tight_text:
             return False
         run = 1 if len(tight_term) <= 1 else (2 if len(tight_term) <= 4 else 3)
-        return any(
+        if any(
             tight_term[i : i + run] in tight_text
             for i in range(len(tight_term) - run + 1)
+        ):
+            return True
+        # A single homophone substitution destroys every run above (张三 -> 张山),
+        # so compare the whole term against each equally long transcript window.
+        width = len(tight_term)
+        return any(
+            _within_one_edit(tight_term, tight_text[j : j + width])
+            for j in range(len(tight_text) - width + 1)
         )
 
     tokens = [token for token in _WORD_RE.findall(term.casefold()) if len(token) >= 2]

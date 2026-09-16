@@ -31,6 +31,16 @@ def test_a_plausible_match_is_found(term: str, transcript: str) -> None:
     assert term_could_affect(term, transcript) is True
 
 
+def test_a_single_cjk_homophone_substitution_still_matches() -> None:
+    """Regression: a one-character name mis-decode must not be skipped.
+
+    ``张三`` and ``张山`` share no two-character run, so the run rule alone
+    returned False and a scoped re-run would carry a stale transcript.
+    """
+    assert term_could_affect("张三", "今天张山来了") is True
+    assert term_could_affect("王小明", "王大明") is True
+
+
 @pytest.mark.parametrize(
     ("term", "transcript"),
     [

@@ -52,17 +52,29 @@ def source_speaker_names(sources: Sequence[Source]) -> dict[str, str]:
     A caller-provided ``label`` wins. A source with no label -- or a label that
     is just its id, which an older ``ingest`` copied from the file name -- is
     not a person: it gets a stable anonymous ``Speaker N``. Minutes and exports
-    then never present a tape's file name as an attendee.
+    then never present a tape's file name as an attendee. An anonymous name is
+    allocated around any explicit label already in use, so ``Speaker 1`` beside
+    an unlabelled source cannot name two different people. The reservation is
+    case-insensitive: an explicit ``speaker 1`` blocks the anonymous form too.
     """
     names: dict[str, str] = {}
-    anonymous = 0
+    used: set[str] = set()
+    anonymous: list[Source] = []
     for src in sources:
         label = (src.label or "").strip()
         if label and label != src.id:
             names[src.id] = label
+            used.add(label.casefold())
         else:
-            anonymous += 1
-            names[src.id] = f"Speaker {anonymous}"
+            anonymous.append(src)
+    next_n = 0
+    for src in anonymous:
+        next_n += 1
+        while f"Speaker {next_n}".casefold() in used:
+            next_n += 1
+        name = f"Speaker {next_n}"
+        names[src.id] = name
+        used.add(name.casefold())
     return names
 
 

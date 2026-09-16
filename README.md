@@ -128,8 +128,8 @@ available on this machine. See
   offline/manual route. On a
   restricted network, set `HF_ENDPOINT=https://hf-mirror.com` (any Hugging
   Face-compatible endpoint works); the default is `https://huggingface.co`.
-  A size `clear-record` knows is also **verified against a pinned SHA-256**
-  before it is installed: a mismatch is discarded and reported rather than fed
+  A model size that `clear-record` knows is also checked against a pinned
+  SHA-256 before it is installed: a mismatch is discarded and reported rather than fed
   to `whisper-cli`. A mirror or self-hosted endpoint that serves different bytes
   under a pinned name can be accepted with `CR_MODEL_CHECKSUM=off`; a name with
   no pinned digest is downloaded unchecked.
@@ -389,7 +389,7 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 > managed workspace, and the archive view. The **agent tasks** (glossary
 > collection, transcript check, minutes) run on the runner seam and land as
 > reviewable drafts (ADR-0018), and the setup path's hello-world acceptance test
-> proves tape → transcription → transcript, localising a failure to a leg (`tts`,
+> proves tape → transcription → transcript, localizing a failure to a leg (`tts`,
 > `backend`, `model`, `transcribe`). The real agent round-trip over MCP is proven
 > by the optional `just agent-drive` — see [docs/architecture.md](docs/architecture.md).
 
@@ -402,12 +402,13 @@ console into a double-clickable app with **PyInstaller** (see
 
 | Artifact | What it is |
 |---|---|
-| `clear-record-web` / `clear-record.app` | double-click to open the console in a browser |
+| `clear-record-tray` / `clear-record.app` | double-click opens the menu-bar tray, which supervises the console |
 | `clear-record` | the full console CLI |
 
 The `build-app` CI workflow produces macOS and Windows artifacts. The builds are
-**unsigned**, so first launch needs a right-click → Open (macOS) or More info →
-Run anyway (Windows); signing is a documented future step. No model weights or
+**unsigned**, so on macOS 15+ the first launch goes through System Settings →
+Privacy & Security → Open Anyway (on Windows, More info → Run anyway); signing
+is a documented future step. No model weights or
 keys are bundled — the app drives the machine's own `whisper-cli` and downloads a
 ggml model on first use, exactly like the CLI.
 
@@ -488,7 +489,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine
   frontend                    the console's front-end source (Vite + Tailwind; output committed into web/static)
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0026)
+docs/adr/                     (decision records 0001–0028)
 ```
 
 ## License

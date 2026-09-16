@@ -38,7 +38,7 @@ subscription.
 |---|---|
 | Architecture + provenance (the primary doc) | `docs/architecture.md` |
 | Owner voice (what the owner actually wants) | `docs/vox/voice-of-owner.md` |
-| Decision records (0001–0026) | `docs/adr/` |
+| Decision records (0001–0028) | `docs/adr/` |
 | Agent workflow / landing geometry | `AGENTS.md`, `docs/agents/git-worktree.toml` |
 | Issue tracker + triage | `docs/agents/` |
 
@@ -53,7 +53,7 @@ without evidence. The owner's authoritative words live in
 
 ## Current status
 
-**v0.2 development trunk** (`0.2.0.dev0`; `releases/v0.1.x` is the 0.1
+**v0.2 development trunk** (`0.2.0rc3`; `releases/v0.1.x` is the 0.1
 maintenance line — ADR-0011's 2026-09-14 Update). The repo does real work
 end-to-end:
 

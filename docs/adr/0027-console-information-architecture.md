@@ -75,7 +75,7 @@ Date: 2026-09-15
   write-guard surface before the pages exist.
 - **Committed per-locale clips instead of system TTS** — no voice dependency, but
   it fixes the set of supported languages and ships audio we would have to
-  licence and prove we generated; kept as the fallback when no system voice
+  license and prove we generated; kept as the fallback when no system voice
   exists.
 - **A tone-only smoke test** — deterministic, but it does not prove
   transcription, which is the one thing the walkthrough is for.

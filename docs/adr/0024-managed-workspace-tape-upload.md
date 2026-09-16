@@ -71,7 +71,7 @@ Date: 2026-09-15
   upload never becomes a tape (the scratch file is removed).
 - [DECISION] **Guards, because this is a write surface.** Each failure is an
   actionable message, never a traceback:
-  - filename sanitisation — a bare name only (no `..` traversal, no absolute
+  - filename sanitization — a bare name only (no `..` traversal, no absolute
     path, no separator, no control character);
   - an audio-extension allow-list, reusing `workspace.is_audio` (one list, not
     two);
@@ -142,10 +142,8 @@ Date: 2026-09-15
   environment surface; the deployment guide gains an upload section.
 - The registry schema advances to v5 (a `tape` table with `sha256`/`bytes`),
   forward-only like every other migration.
-- The console **UI** for upload (an upload control on the meeting view, the
-  storage panel, a delete button) is a **follow-up slice**: this ADR and the
-  endpoint land first, with `web/templates/**` deliberately untouched to avoid
-  colliding with the i18n pass.
+- The console **UI** for upload **ships**: an upload control on the meeting's
+  storage panel, with per-tape delete.
 - Revisit if a real multi-GB upload over a flaky link becomes common — then
   chunked/resumable upload is the next decision, not a patch.
 - Revisit the single-user assumption if the node ever serves more than one

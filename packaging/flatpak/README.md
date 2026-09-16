@@ -157,7 +157,7 @@ belong to a build, not to source.
   prior-art repo; no domain hosting is needed.
 - whisper.cpp and ggml are **MIT** (ADR-0003), so bundling them is clean.
 - **[OPEN]** the metainfo file is licensed `CC-BY-4.0` to match the repo's content
-  licence (ADR-0008); Flathub normally prefers a permissive metadata licence
+  license (ADR-0008); Flathub normally prefers a permissive metadata license
   (FSFAP/CC0-1.0). Revisit at submission time.
 
 ## 7. The `ffmpeg` gap (found while writing this)
@@ -211,6 +211,6 @@ It does **not** sign, publish to Flathub/OSTree, or touch PyPI.
 - **[OPEN]** Add ffmpeg (codecs extension or module) for mp3/m4a ingest (§7).
 - **[OPEN]** Ship an icon; Flathub needs one (`Icon=` is a forward reference).
 - **[OPEN]** Replace the `dir` source with a pinned git + wheel source for a real
-  submission, and decide the metadata licence.
+  submission, and decide the metadata license.
 - **[OPEN]** Decide the filesystem strategy: `--filesystem=home` now, portals
   later (§3).

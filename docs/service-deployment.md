@@ -270,7 +270,7 @@ clear-record serve --tailscale      # for a service unit (no browser)
 ```
 
 It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
-normalised), runs
+normalized), runs
 `tailscale serve --https=<port> http://127.0.0.1:<console-port>`, and prints the
 URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
 port is not 443).
@@ -404,9 +404,9 @@ tape until you archive the meeting.
 [DESIGN] Upload writes files, so it is guarded by construction. Each refusal is
 an actionable message, not a traceback:
 
-| Guard | Refuses | Raise |
+| Guard | Refuses | Status |
 |---|---|---|
-| filename sanitisation | `..` traversal, absolute paths, separators, control characters | 400 |
+| filename sanitization | `..` traversal, absolute paths, separators, control characters | 400 |
 | audio extension allow-list (`workspace.is_audio`) | a name that is not an audio type | 415 |
 | size cap (`CR_MAX_UPLOAD_BYTES`, default 8 GiB) | a body over the cap — checked before the transfer, again while streaming | 413 |
 | disk-space precheck | less free space than the declared body + headroom, checked **before** the body is read | 507 |
@@ -495,8 +495,6 @@ the next boot, and the resumable chunk cache means resuming it is cheap
   so a proxy that terminates TLS does not need them today.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
-- **The upload UI.** The upload endpoint, storage report and delete endpoint are
-  built; the console's upload control is a follow-up slice.
 
 ## 7. Read more
 

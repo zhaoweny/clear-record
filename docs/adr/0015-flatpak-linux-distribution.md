@@ -116,4 +116,4 @@ Date: 2026-09-14
   explicit grant before they happen (standing rules).
 - Revisit when one of the stated reasons appears; the review must confirm the
   bundled Vulkan plugin actually loads under `--device=dri`, resolve the ffmpeg
-  gap, and settle the metadata licence and icon before submission.
+  gap, and settle the metadata license and icon before submission.

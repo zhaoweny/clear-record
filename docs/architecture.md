@@ -1,6 +1,6 @@
 # clear-record — Architecture & Provenance
 
-Status: **v0.2 development trunk** (`0.2.0.dev0`; `releases/v0.1.x` is the 0.1
+Status: **v0.2 development trunk** (`0.2.0rc3`; `releases/v0.1.x` is the 0.1
 maintenance line — ADR-0011's 2026-09-14 Update) · Updated: 2026-09-14
 
 This document distills the original concept into an architecture + provenance
@@ -330,7 +330,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0027
+docs/adr/                     decision records 0001–0028
 docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
 docs/vox/voice-of-owner.md    owner voice
 ```
@@ -370,7 +370,7 @@ workspace and the **archive view**; the **MCP surface** carries the **tuning
 loop** and the **agent tasks** (ADR-0017, ADR-0018). The **agent tasks**' runner
 seam, prompts, drafts, accept/reject states, their **console wiring** and the
 guided **agent setup** have all landed, and the setup path's **hello-world
-acceptance test** proves tape → transcription → transcript while localising a
+acceptance test** proves tape → transcription → transcript while localizing a
 failure to a leg (`tts`, `backend`, `model`, `transcribe`). The real agent
 round-trip over MCP is proven by the optional `just agent-drive`.
 

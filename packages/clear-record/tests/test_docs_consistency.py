@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Every relative markdown link in the docs corpus must resolve to a real file.
 _DOC_GLOBS = ("docs/**/*.md", "README.md", "CONTEXT.md", "SECURITY.md", "AGENTS.md")
 _LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-_TICK = chr(96)
+_TICK = "`"  # a backtick, written literally rather than via chr(96)
 _FENCE = re.compile(_TICK * 3 + ".*?" + _TICK * 3, re.DOTALL)
 _CODE = re.compile(_TICK + "[^" + _TICK + "]*" + _TICK)
 
@@ -50,8 +50,15 @@ def _tool_names() -> list[str]:
     return re.findall(r'"([a-z_]+)"', block)
 
 
+def _adr_0017_surface() -> list[str]:
+    """The tools listed in ADR-0017's Decision surface block."""
+    adr = _text("docs/adr/0017-mcp-server.md")
+    block = adr.split("The surface:", 1)[1].split("\n- [DECISION]", 1)[0]
+    return re.findall(r"`([a-z_]+)`", block)
+
+
 def test_adr_0017_documents_the_agent_task_tools() -> None:
-    """The five agent-task tools ship, so the surface and the code agree."""
+    """The surface the ADR lists is exactly the surface the server registers."""
     adr = _text("docs/adr/0017-mcp-server.md")
     tools = _tool_names()
     for tool in (
@@ -62,7 +69,10 @@ def test_adr_0017_documents_the_agent_task_tools() -> None:
         "reject_agent_draft",
     ):
         assert tool in tools, f"{tool} is not registered in TOOL_NAMES"
-        assert tool in adr, f"{tool} is missing from ADR-0017's surface"
+    surface = _adr_0017_surface()
+    drift = set(tools) ^ set(surface)
+    assert not drift, f"ADR-0017's surface list drifted from TOOL_NAMES: {drift}"
+    assert sorted(surface) == sorted(tools)
     assert "[OPEN] Agent-task tools" not in adr
     assert "landed" in adr
 
@@ -98,7 +108,10 @@ def test_adr_0027_sitemap_lists_the_project_subroutes() -> None:
 def test_readme_documents_the_bind_and_the_layers() -> None:
     readme = _text("README.md")
     assert "server binds **localhost only**" not in readme
-    assert "127.0.0.1" in readme
+    source = _text("packages/clear-record/src/clear_record/web/__init__.py")
+    default = re.search(r'DEFAULT_HOST = "([^"]+)"', source)
+    assert default is not None, "web/__init__.py no longer defines DEFAULT_HOST"
+    assert f"binds `{default.group(1)}` by default" in readme
     for layer in ("service", "tray", "mcp"):
         assert f"src/clear_record/{layer}" in readme, f"{layer} missing from the layout"
 

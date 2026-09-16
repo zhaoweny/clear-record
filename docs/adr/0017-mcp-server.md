@@ -57,11 +57,11 @@ Date: 2026-09-14
 - [DECISION] The server is a **thin adapter over `clear_record.service`**. Each
   tool is one service call plus argument marshalling; validation, status
   transitions and event recording stay in the service. The surface:
-  - projects: `list_projects`, `get_project`;
+  - projects: `list_projects`, `get_project`, `update_project`;
   - glossary: `list_glossary_terms`, `add_glossary_term`,
     `update_glossary_term`;
   - meetings: `list_meetings`, `get_meeting`, `create_meeting`,
-    `set_meeting_tapes`;
+    `update_meeting`, `set_meeting_tapes`;
   - runs: `start_run`, `list_runs`, `run_status`, `run_events`;
   - artifacts: `list_artifacts`, `read_transcript`;
   - agent drafts (ADR-0018): `list_agent_drafts`, `read_agent_draft`,

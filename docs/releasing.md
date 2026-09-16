@@ -117,7 +117,7 @@ Two lines exist as of 2026-09-14 (ADR-0011's Update "the release train is cut"):
 A **0.1.x patch release** is made from `releases/v0.1.x`: `just set-version
 0.1.<next>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
 automatically from the branch. Both lines and the released tags are on `origin`
-today — `main`, `releases/v0.1.x`, and `v0.1.0` / `v0.1.1` / `v0.2.0rc1` —
+today — `main`, `releases/v0.1.x`, and `v0.1.0` / `v0.1.1` / `v0.1.1rc2` / `v0.2.0rc1` —
 and `v0.1.1` is live on PyPI.
 
 `main` is the **0.2.x trunk**; the dev / rc / stable tiers below are unchanged.

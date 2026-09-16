@@ -12,6 +12,7 @@ build.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -147,6 +148,62 @@ def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
     assert declared.get("mcp") == "clear_record.mcp:register", declared
 
 
+# Every template the console ships today. The rglob scan below covers a newly
+# added template (and flags a truncated one), but a *deleted* one simply drops
+# out of the scan — this frozen set is what makes a deletion fail instead.
+EXPECTED_WEB_TEMPLATES = frozenset(
+    {
+        "_add_project.html",
+        "_agent_setup.html",
+        "_archive_status.html",
+        "_archives.html",
+        "_backend_list.html",
+        "_detail.html",
+        "_harness_setup.html",
+        "_hello_check.html",
+        "_mcp_config.html",
+        "_mcp_setup.html",
+        "_meeting.html",
+        "_profile_options.html",
+        "_project_tabs.html",
+        "_projects.html",
+        "_run.html",
+        "_settings_agent.html",
+        "_settings_backends.html",
+        "_settings_mcp.html",
+        "_settings_models.html",
+        "_settings_status.html",
+        "_settings_storage.html",
+        "_settings_webhooks.html",
+        "_setup_transcription.html",
+        "_storage.html",
+        "_tab_glossary.html",
+        "_tab_media.html",
+        "_tab_meetings.html",
+        "_tab_overview.html",
+        "_upload.html",
+        "_webhooks.html",
+        "404.html",
+        "agent.html",
+        "base.html",
+        "index.html",
+        "meeting.html",
+        "project.html",
+        "settings.html",
+        "setup.html",
+    }
+)
+
+
+def _missing_web_templates(templates: Path) -> list[str]:
+    """Expected template names absent from a templates directory.
+
+    Split out so a test can prove a deletion is caught, not just assumed.
+    """
+    present = {path.name for path in templates.rglob("*.html")}
+    return sorted(EXPECTED_WEB_TEMPLATES - present)
+
+
 def test_web_console_assets_ship_with_the_package() -> None:
     """The console's templates and compiled assets are package data.
 
@@ -156,30 +213,46 @@ def test_web_console_assets_ship_with_the_package() -> None:
     ADR-0023 and docs/frontend-assets.md.
     """
     web = PACKAGE_DIRS[0] / "src" / "clear_record" / "web"
-    required = (
-        "templates/base.html",
-        "templates/index.html",
-        "templates/project.html",
-        "templates/settings.html",
-        "templates/setup.html",
-        "templates/agent.html",
-        "templates/404.html",
-        "templates/_projects.html",
-        "templates/_detail.html",
-        "templates/_agent_setup.html",
-        "templates/_harness_setup.html",
-        "templates/_mcp_config.html",
-        "templates/_mcp_setup.html",
-        "templates/_hello_check.html",
-        "templates/_settings_models.html",
-        "templates/_settings_backends.html",
-        "templates/_settings_storage.html",
-        "templates/_settings_status.html",
-        "static/app.css",
-        "static/app.js",
-    )
-    missing = [rel for rel in required if not (web / rel).is_file()]
+    templates = web / "templates"
+    # Derived from disk: a template is covered the moment it lands, and a
+    # truncated one would render a blank page.
+    committed = sorted(templates.rglob("*.html"))
+    assert committed, f"no templates under {templates}"
+    empty = [p.relative_to(REPO_ROOT) for p in committed if not p.read_text().strip()]
+    assert not empty, f"empty web templates: {empty}"
+    # Deletion guard: the scan alone cannot notice a missing file.
+    missing_templates = _missing_web_templates(templates)
+    assert not missing_templates, f"missing web templates: {missing_templates}"
+    # The page-level routes ADR-0027 names, so a wholesale rename is caught.
+    for name in (
+        "base.html",
+        "index.html",
+        "project.html",
+        "meeting.html",
+        "settings.html",
+        "setup.html",
+        "agent.html",
+    ):
+        assert (templates / name).is_file(), f"missing web page template: {name}"
+    missing = [
+        rel for rel in ("static/app.css", "static/app.js") if not (web / rel).is_file()
+    ]
     assert not missing, f"missing web console assets: {missing}"
+
+
+def test_web_template_guard_catches_a_deleted_template(tmp_path: Path) -> None:
+    """Removing a non-anchor template must fail the guard, not pass silently.
+
+    _detail.html is a partial — not one of the page anchors — so only the
+    expected-set check can notice it is gone.
+    """
+    source = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
+    copied = tmp_path / "templates"
+    shutil.copytree(source, copied)
+    victim = "_detail.html"
+    assert victim in EXPECTED_WEB_TEMPLATES
+    (copied / victim).unlink()
+    assert _missing_web_templates(copied) == [victim]
 
 
 def _just_recipe(name: str) -> str:
@@ -389,3 +462,101 @@ def test_publishable_manifests_carry_pypi_metadata() -> None:
             if c not in trove_classifiers
         )
     assert not problems, "incomplete PyPI metadata:\n" + "\n".join(problems)
+
+
+# --- packaging docs and metadata agree with the build (round-2 guards) ------- #
+
+NOTICES = REPO_ROOT / "THIRD_PARTY_NOTICES.md"
+FLATPAK_README = REPO_ROOT / "packaging" / "flatpak" / "README.md"
+FLATPAK_METAINFO = (
+    REPO_ROOT / "packaging" / "flatpak" / "io.github.zhaoweny.clear-record.metainfo.xml"
+)
+FLATPAK_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-flatpak.yml"
+FLATPAK_ADR = REPO_ROOT / "docs" / "adr" / "0015-flatpak-linux-distribution.md"
+PYINSTALLER_README = PYINSTALLER_SPEC.parent / "README.md"
+
+
+def _notices_table(heading: str) -> set[str]:
+    """Distribution names in the pipe table under one notices heading."""
+    text = NOTICES.read_text()
+    match = re.search(
+        rf"### {re.escape(heading)}.*?\n(.*?)(?=\n### |\n## )", text, re.S
+    )
+    assert match is not None, f"no {heading!r} section in {NOTICES.name}"
+    return set(re.findall(r"^\| \[`([^`]+)`\]", match.group(1), re.M))
+
+
+def test_third_party_notices_cover_every_base_runtime_dependency() -> None:
+    """Every base runtime dep is documented (the file claims uv.lock parity)."""
+    runtime = _notices_table("Runtime dependencies (installed by default)")
+    undocumented = RUNTIME_DEPS - runtime
+    assert not undocumented, f"undocumented runtime deps: {sorted(undocumented)}"
+
+
+def test_notices_do_not_call_a_runtime_web_dependency_build_only() -> None:
+    """Jinja2 is a web-extra runtime dep, so it is not build-only.
+
+    Babel and PyInstaller genuinely are build tools; listing a runtime package
+    in that table would understate what an installed console links.
+    """
+    build_only = _notices_table("Build-only dependencies")
+    assert {"babel", "pyinstaller"} <= build_only, build_only
+    assert "jinja2" not in build_only, "Jinja2 is a runtime dependency of web"
+
+
+def test_flatpak_lane_trigger_matches_its_documentation() -> None:
+    """The workflow trigger and the flatpak prose cannot drift apart."""
+    workflow = FLATPAK_WORKFLOW.read_text()
+    readme = FLATPAK_README.read_text()
+    adr = FLATPAK_ADR.read_text()
+    tag_triggered = re.search(r"^  push:", workflow, re.M) is not None
+    if tag_triggered:
+        assert "tags:" in workflow
+    else:
+        assert "manual dispatch" in readme, "README must state the lane is manual"
+        assert "on `v*` tags" not in readme, "README still claims a tag trigger"
+        assert "on `v*` tags" not in adr, "ADR-0015 still claims a tag trigger"
+    assert "Python strings" not in readme, "frontend is package data (ADR-0016/0023)"
+    assert "upload-artifact@v7" in readme, "README names a stale artifact action"
+
+
+def test_flatpak_generator_is_pinned_to_a_commit() -> None:
+    """The generator is fetched from a commit, using the real script path.
+
+    The extensionless pip/flatpak-pip-generator is a git symlink; raw
+    .githubusercontent serves the link target text (flatpak-pip-generator.py),
+    so a pin to that path still downloads a non-script.
+    """
+    workflow = FLATPAK_WORKFLOW.read_text()
+    assert "flatpak-builder-tools/master" not in workflow, "fetched from master"
+    script = r"flatpak-builder-tools/[0-9a-f]{40}/pip/flatpak-pip-generator\.py"
+    assert re.search(script, workflow), (
+        "flatpak-pip-generator must be the commit-pinned .py script"
+    )
+    symlink = r"flatpak-builder-tools/[0-9a-f]{40}/pip/flatpak-pip-generator(?!\.py)"
+    assert not re.search(symlink, workflow), (
+        "the extensionless path is a git symlink, not the script"
+    )
+
+
+def test_appstream_metadata_tracks_the_release_version() -> None:
+    """The AppStream release list is not stale against the manifest version."""
+    version = _load(MEMBER_PYPROJECTS[0])["project"]["version"]
+    core = re.match(r"^\d+\.\d+\.\d+", version).group()
+    releases = re.findall(r'<release version="([^"]+)"', FLATPAK_METAINFO.read_text())
+    assert releases, "metainfo declares no <release>"
+    cores = {
+        m.group() for r in releases if (m := re.match(r"^\d+\.\d+\.\d+", r)) is not None
+    }
+    assert core in cores, f"no AppStream release for {core}: {releases}"
+
+
+def test_desktop_bundle_scope_is_documented() -> None:
+    """If the frozen app omits the MCP provider, the README must say so."""
+    spec = PYINSTALLER_SPEC.read_text()
+    hidden = re.search(r"hiddenimports = \[(.*?)\]", spec, re.S)
+    bundled = bool(hidden) and "clear_record.mcp" in hidden.group(1)
+    readme = PYINSTALLER_README.read_text()
+    if not bundled:
+        assert "clear-record mcp" in readme, "README must name the omitted command"
+        assert "agents" in readme, "README must name the extra supplying MCP"

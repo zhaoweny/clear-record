@@ -3,7 +3,7 @@
 `clear-record`'s **code** is distributed under the [MIT License](LICENSE), and
 its **documentation and authored content/assets** under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-([ADR-0008](docs/adr/0008-content-and-asset-licensing.md)). Those licences cover
+([ADR-0008](docs/adr/0008-content-and-asset-licensing.md)). Those licenses cover
 **this repository's own material only**; they do not relicense any third-party
 component listed below. The licensing boundary — including how copyleft is
 consumed — is [ADR-0003](docs/adr/0003-license-boundary.md).
@@ -33,8 +33,10 @@ this repository.
 
 | Package | Version | License |
 | --- | --- | --- |
+| [`click`](https://pypi.org/project/click/) | 8.5.0 | BSD-3-Clause |
 | [`json-repair`](https://pypi.org/project/json-repair/) | 0.63.4 | MIT |
 | [`numpy`](https://pypi.org/project/numpy/) | 2.5.3 | BSD-3-Clause (the wheel also bundles code under 0BSD, MIT, Zlib and CC0-1.0) |
+| [`platformdirs`](https://pypi.org/project/platformdirs/) | 4.11.8 | MIT |
 | [`soundfile`](https://pypi.org/project/soundfile/) | 0.14.0 | BSD-3-Clause; the wheel bundles **libsndfile** (LGPL-2.1) including **libmp3lame** (LGPL-2+) and **libmpg123** (LGPL-2.1) |
 | [`cffi`](https://pypi.org/project/cffi/) *(transitive, via soundfile)* | 2.1.1 | MIT-0 |
 | [`pycparser`](https://pypi.org/project/pycparser/) *(transitive, via cffi)* | 3.0 | BSD-3-Clause |
@@ -57,15 +59,19 @@ Not installed in a runtime environment; used by the `just verify` gate.
 
 ### Build-only dependencies
 
-Not installed at runtime. The catalog recipes (`just i18n-extract` /
-`i18n-compile` / `i18n-check`) use Babel to extract and compile the message
-catalogs; the Jinja2 extractor comes from Jinja2, already a `web`-extra / dev
-dependency. Neither is part of `just verify`, and neither is imported at runtime
-(the runtime is stdlib `gettext`).
+Not installed and not imported at runtime. The catalog recipes (`just
+i18n-extract` / `i18n-compile` / `i18n-check`) use Babel to extract and compile
+the message catalogs; the `jinja2` extractor is registered by Jinja2, which is
+already a **runtime** dependency of the console's `web` extra (it renders the
+Jinja templates) and is therefore not listed here. Babel is not part of `just
+verify` and is never imported at runtime (the runtime is stdlib `gettext`).
+`just app` additionally uses the `app` group's PyInstaller to freeze the desktop
+build.
 
 | Package | Version | License |
 | --- | --- | --- |
 | [`babel`](https://pypi.org/project/babel/) | 2.18.0 | BSD-3-Clause |
+| [`pyinstaller`](https://pypi.org/project/pyinstaller/) | 6.22.3 | GPL-2.0-or-later with a special exception permitting distribution of built programs (including non-free ones) |
 
 ## External runtimes (not bundled, not linked)
 

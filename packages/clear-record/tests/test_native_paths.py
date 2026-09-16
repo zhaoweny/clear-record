@@ -33,3 +33,21 @@ def test_default_dirs_include_every_kind_and_its_legacy() -> None:
     for name in ("data", "config", "cache", "state", "logs"):
         assert isinstance(getattr(dirs, name), Path)
         assert isinstance(getattr(dirs, f"legacy_{name}"), Path)
+
+
+def test_legacy_state_cache_and_logs_use_the_old_layout(tmp_path, monkeypatch) -> None:
+    """The three non-XDG-var kinds resolve under their spec defaults too.
+
+    Only the legacy paths are asserted; the platform-native data/config legacy
+    values are pinned above.
+    """
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    dirs = _native_paths.default_dirs()
+    assert dirs.legacy_cache == tmp_path / "cache" / "clear-record"
+    assert dirs.legacy_state == tmp_path / "state" / "clear-record"
+    assert dirs.legacy_logs == tmp_path / "state" / "clear-record" / "logs"
+    assert dirs.legacy_data == tmp_path / ".local" / "share" / "clear-record"

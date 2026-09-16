@@ -1,18 +1,54 @@
 """Supervise the local console as an in-process background server.
 
 Deliberately **Qt-free**: the tray icon is a thin shell over this, so the
-supervision logic (start, wait-until-ready, stop) is testable without a display
-— and reusable by a future `clear-record serve --supervise` on a headless node.
+supervision logic (start, wait-until-ready, live state, stop, restart) is
+testable without a display — and reusable by a future
+`clear-record serve --supervise` on a headless node.
 """
 
 from __future__ import annotations
 
+import enum
 import threading
 import urllib.error
 import urllib.request
 
 from clear_record.service import Registry
 from clear_record.web.app import create_app
+
+
+class ServiceState(enum.StrEnum):
+    """What the supervised server is doing **right now**.
+
+    ``STOPPED`` — no supervisor thread is alive (never started, stopped, or the
+    server thread died, e.g. the port was taken). ``RUNNING`` — the thread is
+    alive and the health endpoint answers. ``UNREACHABLE`` — the thread is alive
+    but the health endpoint does not answer (still starting, or wedged).
+    """
+
+    STOPPED = "stopped"
+    RUNNING = "running"
+    UNREACHABLE = "unreachable"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Answer with the 3xx response instead of following it.
+
+    ``urlopen`` follows redirects by default, so a health route that answered
+    307 to the setup page would read as a healthy console.
+    """
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        return fp
+
+    http_error_302 = http_error_301
+    http_error_303 = http_error_301
+    http_error_307 = http_error_301
+    http_error_308 = http_error_301
+
+
+#: One opener per process for the health probe — never a redirect follower.
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class ServiceController:
@@ -69,21 +105,63 @@ class ServiceController:
         return self.healthy()
 
     def healthy(self) -> bool:
+        """Does the console's health URL answer exactly 200, right now?
+
+        Redirects are **not** followed: a 3xx (e.g. a redirect to the setup
+        page) is not a healthy server. The path stays the current one — B3
+        replaces it with a dedicated credential-free ``GET /health``
+        (AUTH-06/AUTH-07), whose response must not carry the registry path.
+        """
         try:
-            with urllib.request.urlopen(
-                f"{self.url}api/health", timeout=1.0
-            ) as response:
+            with _OPENER.open(f"{self.url}api/health", timeout=1.0) as response:
                 return response.status == 200
         except (urllib.error.URLError, OSError):
             return False
 
-    def stop(self, timeout: float = 10.0) -> None:
+    def state(self) -> ServiceState:
+        """The live state, probed now — never a start-time snapshot.
+
+        The tray reads this on a timer, so it must stay cheap and must not
+        cache: a server that died after startup has to read as stopped. The
+        health probe is the only liveness signal, so it has to remain
+        answerable without a credential (see the health route).
+        """
+        if not self.running:
+            return ServiceState.STOPPED
+        return ServiceState.RUNNING if self.healthy() else ServiceState.UNREACHABLE
+
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Ask the server to exit and wait for its thread; True when it is gone.
+
+        A graceful shutdown waits for in-flight requests (a transcription takes
+        a while), so the join may time out. The handles are then **kept**:
+        clearing them would report "stopped" — and let :meth:`start` bind a
+        second server on the port the first still holds. A later
+        :meth:`stop` retries the join.
+        """
         if self._server is not None:
             self._server.should_exit = True
-        if self._thread is not None:
-            self._thread.join(timeout)
-            self._thread = None
+        if self._thread is None:
+            self._server = None
+            return True
+        self._thread.join(timeout)
+        if self._thread.is_alive():
+            return False
+        self._thread = None
         self._server = None
+        return True
+
+    def restart(self, timeout: float = 15.0) -> bool:
+        """Stop the server, then start it again on the same URL.
+
+        Returns False when the old server did not shut down in time: nothing is
+        started (a second bind on the same port would fail), the handles stay,
+        and the caller can report the failure and retry.
+        """
+        if not self.stop(timeout):
+            return False
+        self.start()
+        return self.wait_until_ready(timeout=timeout)
 
 
-__all__ = ["ServiceController"]
+__all__ = ["ServiceController", "ServiceState"]

@@ -1,20 +1,65 @@
-"""The supervisor behind the tray icon: start, readiness, health, stop.
+"""The supervisor behind the tray icon: start, readiness, live state, restart, stop.
 
-No Qt and no display — this is the part worth testing.
+No Qt and no display — this is the part worth testing. The two awkward paths
+are driven with stubs instead of sleeps: a shutdown that outlasts the join
+timeout, and a health route that answers with a redirect.
 """
 
 from __future__ import annotations
 
+import http.server
 import socket
+import threading
 import urllib.request
 
-from clear_record.tray.service import ServiceController
+from clear_record.tray.service import ServiceController, ServiceState
 
 
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+class _StubbornThread:
+    """A supervisor thread that never finishes inside the join timeout.
+
+    Stubbed on purpose: a real in-flight request would need a slow route and
+    sleeps, and the contract under test is ``stop``'s, not uvicorn's.
+    """
+
+    def __init__(self) -> None:
+        self.joins = 0
+
+    def is_alive(self) -> bool:
+        return True
+
+    def join(self, timeout: float | None = None) -> None:
+        self.joins += 1
+
+
+class _StubServer:
+    """The uvicorn server object ``stop`` signals and then drops."""
+
+    def __init__(self) -> None:
+        self.should_exit = False
+
+
+class _Redirecting(http.server.BaseHTTPRequestHandler):
+    """Redirects the health path to the setup page, which answers 200."""
+
+    def do_GET(self) -> None:
+        if self.path == "/web/setup":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"setup")
+            return
+        self.send_response(307)
+        self.send_header("Location", "/web/setup")
+        self.end_headers()
+
+    def log_message(self, *args: object) -> None:
+        pass  # keep the test output quiet
 
 
 def test_controller_serves_health_and_stops(tmp_path) -> None:
@@ -38,7 +83,97 @@ def test_controller_serves_health_and_stops(tmp_path) -> None:
 
 def test_stop_is_idempotent(tmp_path) -> None:
     controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
-    controller.stop()  # never started: must not raise
+    assert controller.stop() is True  # never started: must not raise
     controller.start()
-    controller.stop(timeout=15)
-    controller.stop(timeout=15)
+    assert controller.stop(timeout=15) is True
+    assert controller.stop(timeout=15) is True
+
+
+def test_state_is_read_live_not_snapshotted(tmp_path) -> None:
+    """The tray polls this, so it must follow the server, not memory."""
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
+    assert controller.state() is ServiceState.STOPPED  # never started
+
+    controller.start()
+    try:
+        assert controller.wait_until_ready(timeout=15), "server did not become ready"
+        assert controller.state() is ServiceState.RUNNING
+    finally:
+        controller.stop(timeout=15)
+
+    assert controller.state() is ServiceState.STOPPED
+
+
+def test_state_is_unreachable_while_the_thread_is_alive(tmp_path, monkeypatch) -> None:
+    """A live process whose health endpoint stops answering is not "running"."""
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
+    controller.start()
+    try:
+        assert controller.wait_until_ready(timeout=15), "server did not become ready"
+        monkeypatch.setattr(controller, "healthy", lambda: False)
+        assert controller.state() is ServiceState.UNREACHABLE
+    finally:
+        controller.stop(timeout=15)
+
+
+def test_restart_serves_the_same_url_again(tmp_path) -> None:
+    port = _free_port()
+    controller = ServiceController(port=port, data_dir=str(tmp_path))
+    controller.start()
+    try:
+        assert controller.wait_until_ready(timeout=15), "server did not become ready"
+        assert controller.restart(timeout=15), "server did not come back"
+        assert controller.state() is ServiceState.RUNNING
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/health", timeout=5
+        ) as response:
+            assert response.status == 200
+    finally:
+        controller.stop(timeout=15)
+
+
+def test_stop_that_does_not_join_keeps_the_handle_and_refuses_to_restart(
+    tmp_path, monkeypatch
+) -> None:
+    """A graceful shutdown can outlast the timeout (an in-flight request).
+
+    Clearing the handles anyway would report "stopped" — and then restart()
+    would bind a second server on a port the first still holds.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
+    thread = _StubbornThread()
+    server = _StubServer()
+    controller._thread = thread
+    controller._server = server
+    monkeypatch.setattr(controller, "healthy", lambda: True)
+
+    assert controller.stop(timeout=0.01) is False
+    assert server.should_exit is True  # the shutdown was asked for
+    assert thread.joins == 1
+    assert controller.running is True  # ... but the handle is kept
+    assert controller._thread is thread
+    assert controller._server is server
+    assert controller.state() is ServiceState.RUNNING  # health still answers
+
+    assert controller.restart(timeout=0.01) is False  # no second bind
+    assert controller._thread is thread
+    assert thread.joins == 2  # the failed restart asked it to stop again
+
+    controller.start()  # a direct start is a no-op while it is alive
+    assert controller._thread is thread
+
+
+def test_a_redirect_is_not_a_healthy_server(tmp_path) -> None:
+    """A 3xx must not read as healthy: the probe must not follow it to a 200 page."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Redirecting)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        controller = ServiceController(
+            port=server.server_address[1], data_dir=str(tmp_path)
+        )
+        assert not controller.healthy()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)

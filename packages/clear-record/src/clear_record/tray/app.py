@@ -1,12 +1,17 @@
 """The PySide6 system-tray app: the desktop entry point of the console.
 
 A thin shell over :class:`clear_record.tray.service.ServiceController`. The
-icon has three jobs: open the console in a browser, show where it is listening,
-and quit (stopping the background server). No icon asset ships — a standard
-style icon is used so the build carries no binary art.
+icon has four jobs: open the console in a browser, show whether the server is
+running **right now**, restart it, and quit (stopping the background server).
+No icon asset ships — a standard style icon is used so the build carries no
+binary art.
 
-Requires the `tray` extra (PySide6). Not covered by the headless verify gate;
-the supervision logic it wraps is (see ``tests/tray/test_service.py``).
+The tray holds no credential: it supervises the process and opens the console
+URL; with auth enabled the **browser** is what asks for the password.
+
+Requires the `tray` extra (PySide6) — imported inside :func:`main`, so this
+module stays importable without Qt. The Qt shell itself is not covered by the
+headless verify gate; the supervision logic it wraps is (see ``tests/tray/``).
 """
 
 from __future__ import annotations
@@ -14,7 +19,23 @@ from __future__ import annotations
 import sys
 import webbrowser
 
-from clear_record.tray.service import ServiceController
+from clear_record.core.i18n import tr
+from clear_record.tray.service import ServiceController, ServiceState
+
+#: How often the tray re-reads the live state. Each read is one local health
+#: request (1 s socket timeout), so the event loop stalls at most briefly — and
+#: only while the server is wedged.
+STATE_POLL_MS = 2000
+
+
+def status_text(controller: ServiceController) -> str:
+    """The live status line for a fresh state read — never a cached snapshot."""
+    state = controller.state()
+    if state is ServiceState.RUNNING:
+        return tr("Running at {url}", url=controller.url)
+    if state is ServiceState.UNREACHABLE:
+        return tr("Not responding")
+    return tr("Server not running")
 
 
 def main(
@@ -24,6 +45,7 @@ def main(
     data_dir: str | None = None,
     open_browser: bool = True,
 ) -> int:
+    from PySide6.QtCore import QTimer
     from PySide6.QtGui import QAction
     from PySide6.QtWidgets import (
         QApplication,
@@ -47,19 +69,21 @@ def main(
     tray = QSystemTrayIcon(
         qt.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
     )
-    tray.setToolTip(f"clear-record console — {controller.url}")
 
     menu = QMenu()
-    open_action = QAction("Open console", menu)
+    open_action = QAction(tr("Open console"), menu)
     open_action.triggered.connect(lambda: webbrowser.open(controller.url))
     menu.addAction(open_action)
 
-    status_text = (
-        f"Running at {controller.url}" if ready else "Not responding — see the console"
-    )
-    status_action = QAction(status_text, menu)
+    status_action = QAction(menu)
     status_action.setEnabled(False)
     menu.addAction(status_action)
+
+    menu.addSeparator()
+
+    restart_action = QAction(tr("Restart server"), menu)
+    restart_action.triggered.connect(lambda: controller.restart())
+    menu.addAction(restart_action)
 
     menu.addSeparator()
 
@@ -68,12 +92,24 @@ def main(
         tray.hide()
         qt.quit()
 
-    quit_action = QAction("Quit", menu)
+    quit_action = QAction(tr("Quit"), menu)
     quit_action.triggered.connect(quit_app)
     menu.addAction(quit_action)
 
+    def refresh() -> None:
+        """Repaint the live state; called once now, then on every poll tick."""
+        status = status_text(controller)
+        status_action.setText(status)
+        tray.setToolTip(tr("clear-record console — {status}", status=status))
+
     tray.setContextMenu(menu)
+    refresh()
     tray.show()
+
+    poll = QTimer()
+    poll.setInterval(STATE_POLL_MS)
+    poll.timeout.connect(refresh)
+    poll.start()
 
     if open_browser and ready:
         webbrowser.open(controller.url)

@@ -23,7 +23,7 @@
 
 [project]
 name = "clear-record-workspace"
-version = "0.2.0"
+version = "0.3.0.dev0"
 description = "Local-first open-source multitrack transcription and record-reconstruction: from many recordings to one clear record (workspace root)."
 readme = "README.md"
 license = "MIT"

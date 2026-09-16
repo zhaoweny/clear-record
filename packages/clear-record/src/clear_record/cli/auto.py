@@ -115,7 +115,8 @@ class BackendChoice:
 
     @property
     def explanation(self) -> str:
-        """The English one-liner the terminal prints (unchanged default)."""
+        """The English render for machine-readable metadata (the terminal
+        translates ``message.render(tr)``)."""
         return str(self.message)
 
 
@@ -201,7 +202,8 @@ class AutoChoice:
 
     @property
     def explanation(self) -> str:
-        """The English one-liner the terminal prints (unchanged default)."""
+        """The English render for machine-readable metadata (the terminal
+        translates ``message.render(tr)``)."""
         return str(self.message)
 
 

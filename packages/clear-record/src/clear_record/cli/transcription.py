@@ -42,6 +42,7 @@ from clear_record.core import (
     Segment,
     Source,
 )
+from clear_record.core.i18n import tr
 from clear_record.engine import (
     changed_terms,
     clean_segments,
@@ -60,6 +61,16 @@ from clear_record.cli.workspace import (
     glossary_digest,
     plan_matches,
 )
+
+
+class UnsupportedDecoderKnob(ValueError):
+    """A requested decoder knob the resolved backend does not advertise.
+
+    A :class:`ValueError` so the in-process seam keeps its documented contract,
+    but distinct so the CLI can turn exactly this usage problem into an
+    actionable error without relabelling an unrelated ``ValueError`` from the
+    backend or the workspace.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -498,16 +509,22 @@ def _validate_scope(
     """
     if not resume:
         raise ScopeError(
-            "[transcribe] a re-run scope only means something when cached chunks "
-            "may be reused, but resume is off; drop one of the two."
+            tr(
+                "[transcribe] a re-run scope only means something when cached "
+                "chunks may be reused, but resume is off; drop one of the two."
+            )
         )
     known = {src.id for src in sources}
     unknown = [name for name in scope.sources if name not in known]
     if unknown:
         available = ", ".join(sorted(known)) or "none"
         raise ScopeError(
-            "[transcribe] re-run scope names source(s) not in the manifest: "
-            f"{', '.join(unknown)} (available: {available})."
+            tr(
+                "[transcribe] re-run scope names source(s) not in the manifest: "
+                "{unknown} (available: {available}).",
+                unknown=", ".join(unknown),
+                available=available,
+            )
         )
 
 
@@ -525,9 +542,11 @@ def _empty_scope_message(scope: ChunkScope, durations: dict[str, float]) -> str:
         )
         or "no source"
     )
-    return (
-        f"[transcribe] re-run scope ({scope.describe()}) selects no chunk of "
-        f"{looked_at}; it would re-decode nothing. Widen the range or drop the scope."
+    return tr(
+        "[transcribe] re-run scope ({scope}) selects no chunk of {looked_at}; "
+        "it would re-decode nothing. Widen the range or drop the scope.",
+        scope=scope.describe(),
+        looked_at=looked_at,
     )
 
 
@@ -576,7 +595,7 @@ def transcribe(
     supported = tuple(getattr(backend.info, "decoder_knobs", ()) or ())
     unsupported = sorted(set(decoders) - set(supported))
     if unsupported:
-        raise ValueError(
+        raise UnsupportedDecoderKnob(
             f"[transcribe] backend '{backend_id}' cannot honour decoder "
             f"option(s): {', '.join(unsupported)}. It supports: "
             f"{', '.join(supported) or 'none'}."

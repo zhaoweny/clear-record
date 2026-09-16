@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 09:40+0800\n"
+"POT-Creation-Date: 2026-09-16 10:22+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -25,7 +25,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:139
+#: packages/clear-record/src/clear_record/cli/auto.py:140
 #, python-brace-format
 msgid ""
 "--backend auto: chose {backend!r} — first available in the native-first "
@@ -34,7 +34,7 @@ msgstr ""
 "--backend auto：选择了 "
 "{backend!r}——原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:153
+#: packages/clear-record/src/clear_record/cli/auto.py:154
 #, python-brace-format
 msgid ""
 "no ASR backend is available on this machine; `--backend auto` found none "
@@ -49,93 +49,93 @@ msgstr ""
 "cpp`；Linux 上例如发行版的 `whisper-cpp` 加 `ggml-cuda`/`ggml-vulkan`；参见 "
 "docs/adr/0005），或显式传入 `--backend <id>`。"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:227
+#: packages/clear-record/src/clear_record/cli/auto.py:229
 msgid "the tape length is unknown"
 msgstr "录音时长未知"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:231
+#: packages/clear-record/src/clear_record/cli/auto.py:233
 msgid "a long tape on a roomy machine"
 msgstr "资源宽裕的机器上的长录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:233
+#: packages/clear-record/src/clear_record/cli/auto.py:235
 msgid "a long tape on a modest machine (quick first pass)"
 msgstr "普通机器上的长录音（先快速过一遍）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:237
+#: packages/clear-record/src/clear_record/cli/auto.py:239
 msgid "a short tape on a machine that can afford it"
 msgstr "性能足够的机器上的短录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:239
+#: packages/clear-record/src/clear_record/cli/auto.py:241
 msgid "a middle-of-the-road tape"
 msgstr "中等长度的录音"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:260
+#: packages/clear-record/src/clear_record/cli/auto.py:262
 msgid "largest checkpoint that fits the VRAM/CPU budget"
 msgstr "符合显存/CPU 预算的最大检查点"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:264
+#: packages/clear-record/src/clear_record/cli/auto.py:266
 #, python-brace-format
 msgid ""
 "already on disk; the preferred {preferred!r} is absent and --auto does "
 "not download"
 msgstr "已在磁盘上；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:278
+#: packages/clear-record/src/clear_record/cli/auto.py:280
 #, python-brace-format
 msgid ""
 "the only checkpoint(s) on disk; the preferred {preferred!r} is absent and"
 " --auto does not download"
 msgstr "磁盘上唯一的检查点；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:290
+#: packages/clear-record/src/clear_record/cli/auto.py:292
 msgid "the largest checkpoint that fits this machine, but none is on disk"
 msgstr "适合此机器的最大检查点，但磁盘上没有"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:298
+#: packages/clear-record/src/clear_record/cli/auto.py:300
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:14
 msgid "unknown"
 msgstr "未知"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:300
+#: packages/clear-record/src/clear_record/cli/auto.py:302
 #, python-brace-format
 msgid "{hours:.1f} h"
 msgstr "{hours:.1f} 小时"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:301
+#: packages/clear-record/src/clear_record/cli/auto.py:303
 #, python-brace-format
 msgid "{minutes:.0f} min"
 msgstr "{minutes:.0f} 分钟"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:306
+#: packages/clear-record/src/clear_record/cli/auto.py:308
 msgid "unprobed (8 GB floor)"
 msgstr "未探测（下限 8 GB）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:307
+#: packages/clear-record/src/clear_record/cli/auto.py:309
 #, python-brace-format
 msgid "{vram:g} GB"
 msgstr "{vram:g} GB"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:326
+#: packages/clear-record/src/clear_record/cli/auto.py:328
 #, python-brace-format
 msgid "profile {profile!r} ({why})"
 msgstr "预设 {profile!r}（{why}）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:330
+#: packages/clear-record/src/clear_record/cli/auto.py:332
 #, python-brace-format
 msgid "model {model!r} ({why}; ~{vram:g} GB per worker)"
 msgstr "模型 {model!r}（{why}；每个 worker 约 {vram:g} GB）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:333
+#: packages/clear-record/src/clear_record/cli/auto.py:335
 #, python-brace-format
 msgid "up to {jobs} workers"
 msgstr "最多 {jobs} 个 worker"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:338
+#: packages/clear-record/src/clear_record/cli/auto.py:340
 #, python-brace-format
 msgid "per-speaker attribution on ({channels}-channel tape)"
 msgstr "开启按说话人归属（{channels} 声道录音）"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:346
+#: packages/clear-record/src/clear_record/cli/auto.py:348
 #, python-brace-format
 msgid ""
 "tape {duration}, {channels} channel(s), language {language}, VRAM {vram},"
@@ -144,7 +144,7 @@ msgstr ""
 "录音 {duration}，{channels} 声道，语言 {language}，显存 {vram}，{cpus} 个 "
 "CPU，磁盘上的模型：{disk}，可用后端：{backends}"
 
-#: packages/clear-record/src/clear_record/cli/auto.py:361
+#: packages/clear-record/src/clear_record/cli/auto.py:363
 #, python-brace-format
 msgid "--auto: chose {decisions}; inputs: {inputs}."
 msgstr "--auto：选择了 {decisions}；输入：{inputs}。"
@@ -178,7 +178,7 @@ msgid ""
 "audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:667
+#: packages/clear-record/src/clear_record/cli/cli.py:677
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -190,40 +190,66 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:818
+#: packages/clear-record/src/clear_record/cli/cli.py:828
 #, python-brace-format
 msgid ""
 "[next] the record is in {directory}/export; review it and accept the "
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:860
+#: packages/clear-record/src/clear_record/cli/cli.py:870
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:875
+#: packages/clear-record/src/clear_record/cli/cli.py:885
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:882
+#: packages/clear-record/src/clear_record/cli/cli.py:892
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:889
+#: packages/clear-record/src/clear_record/cli/cli.py:899
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:896
+#: packages/clear-record/src/clear_record/cli/cli.py:906
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:903
+#: packages/clear-record/src/clear_record/cli/cli.py:913
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
+
+#: packages/clear-record/src/clear_record/cli/transcription.py:513
+msgid ""
+"[transcribe] a re-run scope only means something when cached chunks may "
+"be reused, but resume is off; drop one of the two."
+msgstr ""
+"[transcribe] 只有当缓存片段可能被复用时，重新运行范围才有意义，但 resume 已关闭；"
+"请去掉两者之一。"
+
+#: packages/clear-record/src/clear_record/cli/transcription.py:523
+#, python-brace-format
+msgid ""
+"[transcribe] re-run scope names source(s) not in the manifest: {unknown} "
+"(available: {available})."
+msgstr ""
+"[transcribe] 重新运行范围指定了清单中不存在的来源：{unknown}"
+"（可用：{available}）。"
+
+#: packages/clear-record/src/clear_record/cli/transcription.py:546
+#, python-brace-format
+msgid ""
+"[transcribe] re-run scope ({scope}) selects no chunk of {looked_at}; it "
+"would re-decode nothing. Widen the range or drop the scope."
+msgstr ""
+"[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的任何片段；"
+"不会重新解码任何内容。请放宽范围或去掉该范围。"
 
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:490
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:500
@@ -249,25 +275,25 @@ msgstr "SpeechTranscriber 报告本机上的设备端模型不可用"
 msgid "Apple SpeechTranscriber (macOS 26+, on-device)"
 msgstr "Apple SpeechTranscriber（macOS 26+，设备端）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:719
+#: packages/clear-record/src/clear_record/providers/backends.py:732
 #, python-brace-format
 msgid "requires {target} (this is {host})"
 msgstr "需要 {target}（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:726
+#: packages/clear-record/src/clear_record/providers/backends.py:739
 msgid "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
 msgstr "在 PATH 上找不到 whisper-cli（请设置 CR_WHISPER_CLI）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:735
+#: packages/clear-record/src/clear_record/providers/backends.py:748
 #, python-brace-format
 msgid "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
 msgstr "找不到 ggml {families} 插件（参见 CR_GGML_BACKEND_DIRS）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:742
+#: packages/clear-record/src/clear_record/providers/backends.py:755
 msgid "no matching GPU device found"
 msgstr "找不到匹配的 GPU 设备"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:748
+#: packages/clear-record/src/clear_record/providers/backends.py:761
 #, python-brace-format
 msgid "whisper-cli + ggml {families} plugin"
 msgstr "whisper-cli + ggml {families} 插件"
@@ -282,23 +308,23 @@ msgstr ""
 "下载的模型 {name} 未通过 SHA-256 校验（期望 {expected}，实际 {actual}）；已将其丢弃。请重试下载，或设置 "
 "{env}=off，以不校验的方式接受该端点返回的原始数据。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:273
+#: packages/clear-record/src/clear_record/service/agent_flow.py:284
 #, python-brace-format
 msgid "transcription failed: {detail}"
 msgstr "转写失败：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:328
+#: packages/clear-record/src/clear_record/service/agent_flow.py:339
 #, python-brace-format
 msgid ""
 "the system voice ran but produced no audio ({detail}), so the hello-world"
 " tape could not be created"
 msgstr "系统语音已运行但没有产生音频（{detail}），因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:336
+#: packages/clear-record/src/clear_record/service/agent_flow.py:347
 msgid "no system voice is installed, so the hello-world tape could not be created"
 msgstr "本机未安装系统语音，因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:358
+#: packages/clear-record/src/clear_record/service/agent_flow.py:369
 #, python-brace-format
 msgid ""
 "no transcription model is on disk at {models_dir}; the first "
@@ -306,11 +332,11 @@ msgid ""
 "the check again"
 msgstr "{models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:404
+#: packages/clear-record/src/clear_record/service/agent_flow.py:415
 msgid "transcription produced no segments, so there is no transcript to show"
 msgstr "转写没有产生任何片段，因此没有可显示的转写文本。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:417
+#: packages/clear-record/src/clear_record/service/agent_flow.py:428
 msgid ""
 "the hello-world tape ran through ingest and transcription; the transcript"
 " is below"
@@ -1654,7 +1680,9 @@ msgid ""
 "Downloading a size puts that checkpoint on disk. --auto uses the largest "
 "checkpoint already on disk that fits this machine; a specific size is "
 "forced per run. Downloads are verified against a pinned checksum."
-msgstr "下载某个规格会把对应检查点放到磁盘上。--auto 会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
+msgstr ""
+"下载某个规格会把对应检查点放到磁盘上。--auto "
+"会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:23

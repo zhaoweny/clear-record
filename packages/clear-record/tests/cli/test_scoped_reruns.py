@@ -318,6 +318,39 @@ def test_the_transcription_module_refuses_an_unknown_source(tmp_path) -> None:
         )
 
 
+# --- the CLI-owned scope strings follow the installed catalog ---------------- #
+def test_the_cli_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> None:
+    """The strings ``cli/transcription.py`` owns go through ``tr()``.
+
+    The zh_CN catalog carries all three; before the fix they were plain
+    f-strings, so a Chinese user read English for every CLI-owned scope error.
+    """
+    from clear_record.core import i18n
+
+    i18n.install("zh_CN")
+    source = Source(id="a", path=str(tmp_path / "missing.wav"))
+    with pytest.raises(ScopeError, match="重新运行范围") as err:
+        transcribe(
+            [source],
+            CountingBackend(),
+            TranscriptionOptions(scope=ChunkScope.parse(("a",), None), resume=False),
+            workspace=Workspace.at(tmp_path / "w"),
+        )
+    assert "resume is off" not in str(err.value)
+
+    harness = Harness(tmp_path, monkeypatch)
+    harness.run()
+    with pytest.raises(SystemExit) as excinfo:
+        harness.run(rerun_sources=("typo",))
+    assert "重新运行范围指定了清单中不存在的来源" in str(excinfo.value)
+    assert "not in the manifest" not in str(excinfo.value)
+
+    with pytest.raises(SystemExit) as excinfo:
+        harness.run(rerun_range="1000-2000")
+    assert "没有选中" in str(excinfo.value)
+    assert "selects no chunk" not in str(excinfo.value)
+
+
 # --- the CLI surface -------------------------------------------------------- #
 def _parse(command: str, argv: list[str]):
     from types import SimpleNamespace

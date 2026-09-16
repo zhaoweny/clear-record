@@ -12,11 +12,13 @@ import errno
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from clear_record.cli.workspace import Workspace, discover_audio
+from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths as core_paths
 from clear_record.service import Registry
 from clear_record.service import managed
@@ -701,3 +703,251 @@ def test_a_managed_and_a_dir_workspace_are_indistinguishable_to_the_stages(
         for meeting in (managed_meeting, dir_meeting)
     ]
     assert kinds[0] == kinds[1] == ["export", "record", "transcript"]
+
+
+# --- STO-01: the machine total, source vs derived -------------------------- #
+def _seed_derived(workspace: Workspace) -> None:
+    """Put one file in each derived bucket: audio, export, record, agent run."""
+    workspace.audio_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.audio_dir / "a.wav").write_bytes(b"a" * 10)
+    workspace.export_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.export_dir / "record.md").write_text("e" * 7)
+    workspace.record_path.write_text("r" * 3)
+    run_dir = workspace.root / AGENT_DIRNAME / "minutes-1"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "output.json").write_text("g" * 4)
+
+
+def test_machine_storage_counts_every_bucket_and_marks_source_or_derived(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models"))
+
+    managed.upload_tape(registry, meeting, io.BytesIO(b"t" * 100), filename="a.wav")
+    workspace = Workspace.at(meeting.workspace_path)
+    _seed_derived(workspace)
+    chunk = workspace.chunks_dir / "src" / "chunk.json"
+    chunk.parent.mkdir(parents=True, exist_ok=True)
+    chunk.write_bytes(b"c" * 5)
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "ggml-base.bin").write_bytes(b"m" * 11)
+
+    storage = managed.machine_storage(registry)
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+
+    assert [bucket["id"] for bucket in storage["buckets"]] == [
+        "tapes",
+        "records",
+        "audio",
+        "exports",
+        "agent_runs",
+        "chunks",
+        "models",
+    ]
+    assert buckets["tapes"]["kind"] == "source"
+    assert buckets["tapes"]["bytes"] == 100
+    assert (buckets["tapes"]["label"], buckets["chunks"]["label"]) == (
+        "Tapes",
+        "Chunk cache",
+    )
+    assert buckets["models"]["label"] == "Model weights"
+    assert buckets["records"]["bytes"] == 3
+    assert buckets["audio"]["bytes"] == 10
+    assert buckets["exports"]["bytes"] == 7
+    assert buckets["agent_runs"]["bytes"] == 4
+    assert buckets["chunks"]["bytes"] == 5
+    assert buckets["models"]["bytes"] == 11
+    for key in ("records", "audio", "exports", "agent_runs", "chunks", "models"):
+        assert buckets[key]["kind"] == "derived"
+    assert storage["total_bytes"] == 100 + 3 + 10 + 7 + 4 + 5 + 11
+    assert storage["unknown"] == []
+    assert storage["partial"] is False
+    assert all(bucket["partial"] is False for bucket in storage["buckets"])
+
+    (project,) = storage["projects"]
+    assert project["slug"] == "ops"
+    assert project["total_bytes"] == 100 + 3 + 10 + 7 + 4 + 5  # not the models
+    assert project["unknown"] == []
+    (row,) = project["workspaces"]
+    assert row["managed"] is True
+    assert row["path"] == meeting.workspace_path
+    # The existing, narrower key keeps its workspace-only meaning.
+    assert managed.meeting_storage(registry, meeting)["bytes"] == 100 + 3 + 10 + 7 + 4
+
+
+def test_machine_storage_measures_a_user_chosen_workspace_and_its_disk(
+    registry, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    chosen = tmp_path / "user-docs"
+    chosen.mkdir()
+    (chosen / "a.wav").write_bytes(b"u" * 40)  # a loose tape: source
+    (chosen / "record.json").write_bytes(b"d" * 6)
+    registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+
+    storage = managed.machine_storage(registry)
+    (project,) = storage["projects"]
+    buckets = {bucket["id"]: bucket for bucket in project["buckets"]}
+
+    assert buckets["tapes"]["bytes"] == 40
+    assert buckets["records"]["bytes"] == 6
+    assert project["total_bytes"] == 46
+    (row,) = project["workspaces"]
+    assert row["managed"] is False
+    assert row["path"] == str(chosen)
+    assert row["partial"] is False
+    assert storage["unknown"] == []
+
+
+def test_a_partly_unreadable_workspace_keeps_the_measured_bytes(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """One unreadable workspace must not collapse the whole bucket to zero."""
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    meetings = [
+        managed.ensure_managed_workspace(
+            registry, registry.create_meeting("ops", title)
+        )
+        for title in ("Alpha", "Beta", "Gamma")
+    ]
+    for meeting in meetings:
+        managed.upload_tape(registry, meeting, io.BytesIO(b"t" * 10), filename="a.wav")
+
+    if os.name != "posix" or os.geteuid() == 0:
+        pytest.skip("permission bits cannot be expressed here")
+    blocked = Path(meetings[1].workspace_path)
+    blocked.chmod(0o000)
+    try:
+        storage = managed.machine_storage(registry)
+    finally:
+        blocked.chmod(0o755)
+
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+    assert buckets["tapes"]["bytes"] == 20  # the two readable workspaces
+    assert buckets["tapes"]["partial"] is True  # Beta's tape might be in there
+    assert storage["partial"] is True
+    assert storage["total_bytes"] == 20  # the measured bytes survive
+    (project,) = storage["projects"]
+    assert project["partial"] is True
+    assert set(project["unknown"]) == {
+        "tapes",
+        "records",
+        "audio",
+        "exports",
+        "agent_runs",
+    }
+
+
+def test_a_directory_whose_parent_is_unsearchable_is_unknown(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Path.exists() answers False here; the stat probe says unknown instead."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    cache_root = Workspace.at(meeting.workspace_path).chunks_dir
+    (cache_root / "src").mkdir(parents=True)
+    (cache_root / "src" / "chunk.json").write_bytes(b"c" * 5)
+    parent = cache_root.parent
+
+    if os.name != "posix" or os.geteuid() == 0:
+        pytest.skip("permission bits cannot be expressed here")
+    parent.chmod(0o000)
+    try:
+        assert not cache_root.exists()  # the trap the stat probe avoids
+        storage = managed.machine_storage(registry)
+    finally:
+        parent.chmod(0o755)
+
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+    assert buckets["chunks"]["bytes"] == 0  # nothing readable was lost
+    assert buckets["chunks"]["partial"] is True
+    assert "chunks" in storage["unknown"]
+
+
+def test_a_tape_registered_for_two_meetings_counts_once(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """One physical file is one bucket byte, however many rows name it."""
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    shared = tmp_path / "shared.wav"
+    shared.write_bytes(b"s" * 700)
+    for title in ("First", "Second"):
+        meeting = registry.create_meeting("ops", title)
+        registry.register_tape(meeting.id, path=str(shared), sha256="0" * 64, bytes=700)
+
+    storage = managed.machine_storage(registry)
+
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+    assert buckets["tapes"]["bytes"] == 700
+    assert storage["total_bytes"] == 700
+
+
+def test_a_meeting_without_a_workspace_still_counts_its_tapes(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """No workspace is not no storage: registered tapes are still measured."""
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    meeting = registry.create_meeting("ops", "Pathless")
+    tape_file = tmp_path / "a.wav"
+    tape_file.write_bytes(b"t" * 12)
+    registry.register_tape(meeting.id, path=str(tape_file), sha256="0" * 64, bytes=12)
+
+    storage = managed.machine_storage(registry)
+
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+    assert buckets["tapes"]["bytes"] == 12
+    (row,) = storage["projects"][0]["workspaces"]
+    assert row["path"] is None
+
+
+def test_a_workspace_two_meetings_share_is_counted_once(
+    registry, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    shared = tmp_path / "user-docs"
+    shared.mkdir()
+    (shared / "a.wav").write_bytes(b"u" * 40)
+    (shared / "record.json").write_bytes(b"d" * 6)
+    for title in ("First", "Second"):
+        registry.create_meeting("ops", title, workspace_path=str(shared))
+
+    storage = managed.machine_storage(registry)
+
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+    assert buckets["tapes"]["bytes"] == 40
+    assert buckets["records"]["bytes"] == 6
+    assert storage["total_bytes"] == 46
+
+
+def test_a_symlinked_tape_to_an_outside_file_is_counted_once(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """discover_audio follows a link, so the walk counts its target -- once."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    workspace = Path(meeting.workspace_path)
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"o" * 30)
+    (workspace / "linked.wav").symlink_to(outside)
+    (workspace / "linked-again.wav").symlink_to(outside)
+
+    buckets = {
+        bucket["id"]: bucket for bucket in managed.machine_storage(registry)["buckets"]
+    }
+    assert buckets["tapes"]["bytes"] == 30  # one target, two links
+
+    # A link pointing inside the workspace must not double its target either.
+    real = workspace / "real.wav"
+    real.write_bytes(b"r" * 7)
+    (workspace / "alias.wav").symlink_to(real)
+    buckets = {
+        bucket["id"]: bucket for bucket in managed.machine_storage(registry)["buckets"]
+    }
+    assert buckets["tapes"]["bytes"] == 37

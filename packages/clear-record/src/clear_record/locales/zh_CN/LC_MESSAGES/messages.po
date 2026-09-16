@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 10:36+0800\n"
+"POT-Creation-Date: 2026-09-16 20:25+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -92,7 +92,9 @@ msgid "the largest checkpoint that fits this machine, but none is on disk"
 msgstr "适合此机器的最大检查点，但磁盘上没有"
 
 #: packages/clear-record/src/clear_record/cli/auto.py:300
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:14
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:23
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:44
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:70
 msgid "unknown"
 msgstr "未知"
 
@@ -506,89 +508,118 @@ msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型�
 msgid "a run needs a workspace directory before --auto can probe the tape"
 msgstr "在 --auto 探测录音之前，运行需要一个工作区目录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:254
+#: packages/clear-record/src/clear_record/service/managed.py:108
+#: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
+msgid "Tapes"
+msgstr "录音带"
+
+#: packages/clear-record/src/clear_record/service/managed.py:109
+msgid "Transcripts and records"
+msgstr "转写与记录"
+
+#: packages/clear-record/src/clear_record/service/managed.py:110
+msgid "Audio copies"
+msgstr "音频副本"
+
+#: packages/clear-record/src/clear_record/service/managed.py:111
+msgid "Exports"
+msgstr "导出"
+
+#: packages/clear-record/src/clear_record/service/managed.py:112
+msgid "Agent run directories"
+msgstr "智能体运行目录"
+
+#: packages/clear-record/src/clear_record/service/managed.py:113
+msgid "Chunk cache"
+msgstr "分块缓存"
+
+#: packages/clear-record/src/clear_record/service/managed.py:114
+msgid "Model weights"
+msgstr "模型权重"
+
+#: packages/clear-record/src/clear_record/service/managed.py:292
 #, python-brace-format
 msgid "{name!r} is not an audio tape; allowed extensions: {extensions}"
 msgstr "{name!r} 不是音频录音；允许的扩展名：{extensions}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:266
+#: packages/clear-record/src/clear_record/service/managed.py:304
 #, python-brace-format
 msgid "refusing to write to the symlink {path}"
 msgstr "拒绝写入符号链接 {path}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:320
+#: packages/clear-record/src/clear_record/service/managed.py:358
 msgid ""
 "the disk filled while writing the upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:410
+#: packages/clear-record/src/clear_record/service/managed.py:523
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:431
+#: packages/clear-record/src/clear_record/service/managed.py:544
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:438
+#: packages/clear-record/src/clear_record/service/managed.py:551
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:450
+#: packages/clear-record/src/clear_record/service/managed.py:563
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:457
+#: packages/clear-record/src/clear_record/service/managed.py:570
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:462
+#: packages/clear-record/src/clear_record/service/managed.py:575
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 bytes"
 msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:482
+#: packages/clear-record/src/clear_record/service/managed.py:595
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:525
+#: packages/clear-record/src/clear_record/service/managed.py:638
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:545
+#: packages/clear-record/src/clear_record/service/managed.py:658
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:566
+#: packages/clear-record/src/clear_record/service/managed.py:679
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:641
+#: packages/clear-record/src/clear_record/service/managed.py:967
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:652
+#: packages/clear-record/src/clear_record/service/managed.py:978
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -598,7 +629,7 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:665
+#: packages/clear-record/src/clear_record/service/managed.py:991
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
@@ -857,7 +888,7 @@ msgstr ""
 "    Serve 在前台运行，并随此控制台一起停止。"
 
 #: packages/clear-record/src/clear_record/web/app.py:170
-#: packages/clear-record/src/clear_record/web/app.py:1259
+#: packages/clear-record/src/clear_record/web/app.py:1260
 msgid "Models"
 msgstr "模型"
 
@@ -972,72 +1003,72 @@ msgstr "此会议无法接收上传"
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1255
+#: packages/clear-record/src/clear_record/web/app.py:1256
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/app.py:1256
+#: packages/clear-record/src/clear_record/web/app.py:1257
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/app.py:1257
+#: packages/clear-record/src/clear_record/web/app.py:1258
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/app.py:1258
+#: packages/clear-record/src/clear_record/web/app.py:1259
 msgid "Config"
 msgstr "配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:1386
+#: packages/clear-record/src/clear_record/web/app.py:1387
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1437
+#: packages/clear-record/src/clear_record/web/app.py:1438
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1468
+#: packages/clear-record/src/clear_record/web/app.py:1469
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1703
+#: packages/clear-record/src/clear_record/web/app.py:1704
 #, python-brace-format
 msgid "No draft {run_id} for this meeting."
 msgstr "此会议没有草稿 {run_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1883
-#: packages/clear-record/src/clear_record/web/app.py:1902
+#: packages/clear-record/src/clear_record/web/app.py:1884
+#: packages/clear-record/src/clear_record/web/app.py:1903
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:2101
-#: packages/clear-record/src/clear_record/web/app.py:2145
+#: packages/clear-record/src/clear_record/web/app.py:2102
+#: packages/clear-record/src/clear_record/web/app.py:2146
 msgid "The endpoint did not answer a test call."
 msgstr "该端点未响应测试调用。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2113
+#: packages/clear-record/src/clear_record/web/app.py:2114
 #, python-brace-format
 msgid "Recorded {endpoint} in {path}."
 msgstr "已将 {endpoint} 记录到 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2137
+#: packages/clear-record/src/clear_record/web/app.py:2138
 msgid "The model could not be pulled."
 msgstr "无法拉取该模型。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2155
+#: packages/clear-record/src/clear_record/web/app.py:2156
 #, python-brace-format
 msgid "Pulled {model} and recorded it."
 msgstr "已拉取 {model} 并记录。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2183
+#: packages/clear-record/src/clear_record/web/app.py:2184
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2215
+#: packages/clear-record/src/clear_record/web/app.py:2216
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
@@ -1523,6 +1554,7 @@ msgid "Artifacts"
 msgstr "产物"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:54
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:16
 msgid "Kind"
 msgstr "类型"
 
@@ -1741,7 +1773,8 @@ msgid_plural "{count} terms"
 msgstr[0] "{count} 个术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_projects.html:17
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:40
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:58
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:96
 msgid "No projects yet."
 msgstr "暂无项目。"
 
@@ -1801,7 +1834,7 @@ msgid "Model directory"
 msgstr "模型目录"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:23
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:17
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:73
 msgid "Config file"
 msgstr "配置文件"
 
@@ -1913,31 +1946,101 @@ msgid "Hello-world check"
 msgstr "hello-world 检查"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:9
+msgid "Machine total"
+msgstr "机器总计"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:12
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:41
+msgid "at least: some components could not be measured"
+msgstr "至少：部分组成部分无法测量"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:16
+msgid "Component"
+msgstr "组成部分"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:16
+#: packages/clear-record/src/clear_record/web/templates/_storage.html:55
+#: packages/clear-record/src/clear_record/web/templates/_tab_media.html:20
+msgid "Size"
+msgstr "大小"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:22
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:44
+msgid "Source"
+msgstr "原始"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:22
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:44
+msgid "Derived"
+msgstr "派生"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
+msgid ""
+"The tapes and the model weights are the disk here; transcripts, caches "
+"and agent output are small and recomputable. Clearing a cache does not "
+"free gigabytes."
+msgstr "录音带和模型权重才是这里占磁盘的部分；转写、缓存和智能体输出都很小且可重新生成。清理缓存不会释放数 GB 空间。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:31
+msgid "Per project"
+msgstr "按项目"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:35
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:84
+msgid "Project"
+msgstr "项目"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:35
+msgid "Total"
+msgstr "总计"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:35
+msgid "Components"
+msgstr "组成部分"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:35
+msgid "Workspace"
+msgstr "工作区"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:49
+#: packages/clear-record/src/clear_record/web/templates/_storage.html:17
+msgid "no workspace yet"
+msgstr "尚无工作区"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:49
+msgid "managed by clear-record, on the managed root's disk"
+msgstr "由 clear-record 管理，位于受管理根目录所在磁盘"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:49
+msgid "user-chosen, measured on its own disk"
+msgstr "用户选择，按其所在磁盘计量"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:56
+msgid "Model weights are shared machine-wide; counted once above"
+msgstr "模型权重为全机器共享，仅在上方计入一次"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:65
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:45
 msgid "Managed root"
 msgstr "托管根目录"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:13
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:69
 msgid "Free space"
 msgstr "可用空间"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:24
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:80
 msgid "Archive roots"
 msgstr "归档根目录"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
-msgid "Project"
-msgstr "项目"
-
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:84
 msgid "Archive root"
 msgstr "归档根目录"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:34
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:90
 msgid "not set"
 msgstr "未设置"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:42
+#: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:98
 #, python-brace-format
 msgid ""
 "Retention is manual only: clear-record never deletes tapes on its own, "
@@ -2035,10 +2138,6 @@ msgstr "托管工作区"
 msgid "user-chosen workspace"
 msgstr "自选工作区"
 
-#: packages/clear-record/src/clear_record/web/templates/_storage.html:17
-msgid "no workspace yet"
-msgstr "尚无工作区"
-
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:35
 #, python-brace-format
 msgid "Workspace size: {size}"
@@ -2064,11 +2163,6 @@ msgstr "clear-record 绝不会自行删除录音；此处的删除是手动操�
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:20
 msgid "Tape"
 msgstr "录音"
-
-#: packages/clear-record/src/clear_record/web/templates/_storage.html:55
-#: packages/clear-record/src/clear_record/web/templates/_tab_media.html:20
-msgid "Size"
-msgstr "大小"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:75
 msgid "Delete this tape? The archive is the durable copy."
@@ -2147,10 +2241,6 @@ msgstr "无工作区"
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:32
 msgid "Review"
 msgstr "审阅"
-
-#: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
-msgid "Tapes"
-msgstr "录音"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:43
 msgid "Open the review"
@@ -2535,4 +2625,13 @@ msgstr "忽略初始设置"
 
 #~ msgid "refusing the filename {name!r}: it is longer than 255 characters"
 #~ msgstr "拒绝文件名 {name!r}：长度超过 255 个字符"
+
+#~ msgid "at least"
+#~ msgstr ""
+
+#~ msgid "source"
+#~ msgstr "存储"
+
+#~ msgid "derived"
+#~ msgstr "已投递"
 

@@ -54,10 +54,17 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-from clear_record.cli.workspace import AUDIO_SUFFIXES, is_audio
+from clear_record.cli.workspace import (
+    AUDIO_DIR,
+    AUDIO_SUFFIXES,
+    EXPORT_DIR,
+    Workspace,
+    is_audio,
+)
 from clear_record.core.i18n import deferred
+from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.models import Meeting, Tape
-from clear_record.service.paths import resolve_workspace_root
+from clear_record.service.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service.store import Registry
 
 #: Subdirectory of a managed workspace holding the uploaded tapes. It is not one
@@ -91,6 +98,37 @@ _SCRATCH_PREFIX = ".cr-upload-"
 _SCRATCH_SUFFIX = ".part"
 
 _READ_BLOCK = 1 << 20
+#: The storage buckets STO-01's machine total is made of, in display order:
+#: ``id``, the English label (marked for the catalog with ``deferred``; the
+#: template translates it at render time) and the kind: ``source`` is the
+#: irreplaceable tape, ``derived`` is recomputable from it. ``models`` is
+#: machine-wide (every project decodes with the same weights), so it is counted
+#: once in the machine total and left out of a project's own total.
+STORAGE_BUCKETS: tuple[tuple[str, str, str], ...] = (
+    ("tapes", deferred("Tapes"), "source"),
+    ("records", deferred("Transcripts and records"), "derived"),
+    ("audio", deferred("Audio copies"), "derived"),
+    ("exports", deferred("Exports"), "derived"),
+    ("agent_runs", deferred("Agent run directories"), "derived"),
+    ("chunks", deferred("Chunk cache"), "derived"),
+    ("models", deferred("Model weights"), "derived"),
+)
+
+#: Buckets that belong to the machine, not to one project.
+MACHINE_BUCKETS = frozenset({"models"})
+
+#: Every bucket a meeting's workspace can hold (everything but the models).
+WORKSPACE_BUCKETS: tuple[str, ...] = tuple(
+    key for key, _label, _kind in STORAGE_BUCKETS if key not in MACHINE_BUCKETS
+)
+
+#: The workspace subdirectories that name their own bucket during the walk;
+#: anything else is a source tape (input audio) or the meeting's record.
+_BUCKET_DIRS = {
+    AUDIO_DIR: "audio",
+    EXPORT_DIR: "exports",
+    AGENT_DIRNAME: "agent_runs",
+}
 
 
 class UploadRejected(ValueError):
@@ -359,6 +397,10 @@ def meeting_storage(
     :func:`root_free_bytes`), so the console's panel and the guard cannot drift;
     it is ``None`` when the root cannot report it, or when the meeting is not
     managed (its disk is not this app's concern).
+
+    ``bytes`` is deliberately the **workspace alone** (the machine-wide surface
+    is :func:`machine_storage`, whose rows are workspace + that workspace's
+    chunk cache + the models); do not "fix" the two into one number.
     """
     resolved_root = managed_root(root)
     managed_here = is_managed(meeting, resolved_root)
@@ -384,6 +426,77 @@ def meeting_storage(
             }
             for tape in registry.list_tapes(meeting.id)
         ],
+    }
+
+
+def machine_storage(
+    registry: Registry,
+    root: str | os.PathLike | None = None,
+) -> dict:
+    """STO-01's one accounting: the machine total with a per-project breakdown.
+
+    Every byte the app holds is in one of ``STORAGE_BUCKETS``, each marked
+    **source** (the tape, irreplaceable) or **derived** (recomputable). The
+    chunk cache (app-owned, outside every workspace) and the model directory are
+    **inside** the total; a *user-chosen* workspace is measured exactly like a
+    managed one, and its row says which disk it is on (``managed``).
+
+    Each bucket carries the bytes it could **measure** plus a ``partial`` flag:
+    a component that cannot be read contributes whatever was readable and is
+    named in ``unknown``, so ``total_bytes`` stays a true lower bound (the
+    console shows it as ">=") instead of collapsing to zero. One physical file
+    is counted once per call, so a tape registered for two meetings, a symlink
+    beside its target, or a workspace two meetings share cannot double count.
+
+    ``meeting_storage``'s ``bytes`` keeps its original, narrower meaning (the
+    meeting workspace's own bytes); this is a separate, wider surface.
+    """
+    resolved_root = managed_root(root)
+    machine: dict[str, _Measure] = {key: _ZERO for key, _l, _k in STORAGE_BUCKETS}
+    seen: set[str] = set()
+    projects: list[dict] = []
+    for project in registry.list_projects():
+        measured: dict[str, _Measure] = {key: _ZERO for key in WORKSPACE_BUCKETS}
+        workspaces: list[dict] = []
+        for meeting in registry.list_meetings(project.slug):
+            one = _meeting_buckets(registry, meeting, seen)
+            for key, value in one.items():
+                measured[key] = _add(measured[key], value)
+                machine[key] = _add(machine[key], value)
+            known = _sum_known(one)
+            workspaces.append(
+                {
+                    "meeting": meeting.title,
+                    "path": meeting.workspace_path,
+                    "managed": is_managed(meeting, resolved_root),
+                    "total_bytes": known,
+                    "total_size": _human_bytes(known),
+                    "partial": bool(_unknown(one)),
+                }
+            )
+        project_total = _sum_known(measured)
+        projects.append(
+            {
+                "slug": project.slug,
+                "name": project.name,
+                "buckets": _bucket_rows(measured),
+                "total_bytes": project_total,
+                "total_size": _human_bytes(project_total),
+                "unknown": _unknown(measured),
+                "partial": bool(_unknown(measured)),
+                "workspaces": workspaces,
+            }
+        )
+    machine["models"] = _dir_bytes(resolve_models_dir(), seen)
+    total = _sum_known(machine)
+    unknown = _unknown(machine)
+    return {
+        "buckets": _bucket_rows(machine),
+        "total_bytes": total,
+        "total_size": _human_bytes(total),
+        "unknown": unknown,
+        "partial": bool(unknown),
+        "projects": projects,
     }
 
 
@@ -626,6 +739,219 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+#: One measured component: the bytes that could be read, plus whether any part
+#: of it could not. (0, True) is "unknown", never a silent zero.
+_Measure = tuple[int, bool]
+
+_ZERO: _Measure = (0, False)
+
+
+def _identity(path: Path) -> str:
+    """A stable key for one physical file (its resolved path, else absolute)."""
+    try:
+        return str(path.resolve())
+    except OSError:  # pragma: no cover - a path that cannot be resolved
+        return str(path.absolute())
+
+
+def _scan(root: Path) -> tuple[list[tuple[Path, int, str]], bool]:
+    """Every file under *root*, its size and its identity, plus a partial flag.
+
+    The identity is the **resolved** path, so one physical file reached twice
+    (two links, a link and its target, two meetings) is counted once. A symlink
+    pointing back inside *root* is skipped -- the walk reaches its target
+    itself -- while a link to a target outside *root* is a file the pipeline
+    can read (discover_audio follows it), so it is counted under the target's
+    identity. Directory symlinks are never followed.
+
+    The flag is True when a part of the tree could not be read (a permission
+    error, a mount gone away): the caller marks the bucket partial rather than
+    letting the missing bytes vanish silently.
+    """
+    files: list[tuple[Path, int, str]] = []
+    unreadable = False
+
+    def _note_error(_exc: OSError) -> None:
+        nonlocal unreadable
+        unreadable = True
+
+    for dirpath, _dirnames, filenames in os.walk(
+        root, onerror=_note_error, followlinks=False
+    ):
+        for name in filenames:
+            path = Path(dirpath) / name
+            try:
+                if path.is_symlink() and _within(path.resolve(), root):
+                    continue  # the walk reaches the real file on its own
+                files.append((path, path.stat().st_size, _identity(path)))
+            except FileNotFoundError:
+                continue  # raced away: it holds nothing here now
+            except OSError:
+                unreadable = True
+    return files, unreadable
+
+
+def _dir_bytes(root: Path, seen: set[str]) -> _Measure:
+    """The bytes under *root* not already counted, plus a partial flag.
+
+    The existence probe is a stat: Path.exists swallows a permission error and
+    answers False, which would report an unreadable directory as an empty one.
+    An absent directory is genuinely 0; any other OSError is unknown (partial).
+    """
+    try:
+        root.stat()
+    except FileNotFoundError:
+        return _ZERO
+    except OSError:
+        return (0, True)
+    files, unreadable = _scan(root)
+    total = 0
+    for _path, size, identity in files:
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += size
+    return (total, unreadable)
+
+
+def _file_bytes(path: Path, seen: set[str]) -> _Measure:
+    """One file's bytes if this call has not counted it, plus a partial flag.
+
+    A file that is gone contributes nothing (a vanished source is not an
+    unreadable one); any other OSError is unknown.
+    """
+    identity = _identity(path)
+    if identity in seen:
+        return _ZERO
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return _ZERO
+    except OSError:
+        return (0, True)
+    seen.add(identity)
+    return (size, False)
+
+
+def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
+    """One walk over a meeting's workspace, split into STO-01's buckets.
+
+    A file under tapes/ -- or input audio the pipeline would discover, symlinks
+    included -- is a **source** tape. audio/, export/ and agent/ are the app's
+    derived output, and the manifest, segments, transcript and minutes are the
+    meeting's records. Files this call already counted are skipped, so a shared
+    workspace or a linked target cannot double count; every bucket carries the
+    walk's partial flag.
+    """
+    files, unreadable = _scan(root)
+    buckets = {key: 0 for key in WORKSPACE_BUCKETS}
+    for path, size, identity in files:
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rel = path.relative_to(root).parts
+        top = rel[0] if rel else ""
+        bucket = _BUCKET_DIRS.get(top)
+        if bucket is None:
+            bucket = "tapes" if top == TAPES_DIRNAME or is_audio(path) else "records"
+        buckets[bucket] += size
+    return {key: (value, unreadable) for key, value in buckets.items()}
+
+
+def _tape_bytes_outside(
+    registry: Registry,
+    meeting: Meeting,
+    workspace: Path | None,
+    seen: set[str],
+) -> _Measure:
+    """The bytes of this meeting's tapes that live outside its workspace.
+
+    Tapes inside the workspace are already counted by the walk (they are input
+    audio); one mounted elsewhere -- a user-chosen path registered by hand --
+    is still source data and belongs in the total. Rows are deduped by resolved
+    path, so the same file registered for two meetings counts once. A tape row
+    whose file is gone contributes nothing; an unreadable one is partial.
+    """
+    total = 0
+    partial = False
+    for tape in registry.list_tapes(meeting.id):
+        path = Path(tape.path)
+        if workspace is not None and _within(path, workspace):
+            continue
+        size, unreadable = _file_bytes(path, seen)
+        total += size
+        partial = partial or unreadable
+    return (total, partial)
+
+
+def _chunk_bytes(meeting: Meeting, seen: set[str]) -> _Measure:
+    """The workspace's app-owned chunk cache, which lives outside the workspace."""
+    if not meeting.workspace_path:
+        return _ZERO
+    return _dir_bytes(Workspace.at(meeting.workspace_path).chunks_dir, seen)
+
+
+def _meeting_buckets(
+    registry: Registry, meeting: Meeting, seen: set[str]
+) -> dict[str, _Measure]:
+    """One meeting's slice of the buckets (everything but the machine-wide models).
+
+    A meeting with no workspace still has registered tapes, which live outside
+    any workspace by definition, so the outside-tape walk runs for it too.
+    """
+    workspace = Path(meeting.workspace_path) if meeting.workspace_path else None
+    if workspace is None:
+        measured: dict[str, _Measure] = {key: _ZERO for key in WORKSPACE_BUCKETS}
+    else:
+        measured = _workspace_buckets(workspace, seen)
+    measured["tapes"] = _add(
+        measured["tapes"], _tape_bytes_outside(registry, meeting, workspace, seen)
+    )
+    # The chunk cache is measured separately (it lives outside the workspace),
+    # so it does not inherit the walk's partial flag.
+    measured["chunks"] = _chunk_bytes(meeting, seen)
+    return measured
+
+
+def _add(left: _Measure, right: _Measure) -> _Measure:
+    """Add one component to a bucket: the bytes sum, a partial part survives."""
+    return (left[0] + right[0], left[1] or right[1])
+
+
+def _sum_known(measured: dict[str, _Measure]) -> int:
+    """The total of the bytes that could be measured (a lower bound)."""
+    return sum(value for value, _partial in measured.values())
+
+
+def _unknown(measured: dict[str, _Measure]) -> list[str]:
+    """The ids of the components that could not be fully measured, in order."""
+    return [
+        key
+        for key, _label, _kind in STORAGE_BUCKETS
+        if key in measured and measured[key][1]
+    ]
+
+
+def _bucket_rows(measured: dict[str, _Measure]) -> list[dict]:
+    """The template rows for one measured set, labels and kinds included."""
+    rows = []
+    for key, label, kind in STORAGE_BUCKETS:
+        if key not in measured:
+            continue
+        count, partial = measured[key]
+        rows.append(
+            {
+                "id": key,
+                "label": label,
+                "kind": kind,
+                "bytes": count,
+                "size": _human_bytes(count),
+                "partial": partial,
+            }
+        )
+    return rows
+
+
 def _human_bytes(count: int) -> str:
     value = float(count)
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
@@ -678,6 +1004,7 @@ __all__ = [
     "InvalidUploadId",
     "MAX_UPLOAD_ID_LENGTH",
     "ResumeNotSupported",
+    "STORAGE_BUCKETS",
     "TAPES_DIRNAME",
     "UnsafeFilename",
     "UploadRejected",
@@ -685,6 +1012,7 @@ __all__ = [
     "delete_tape",
     "ensure_managed_workspace",
     "is_managed",
+    "machine_storage",
     "managed_root",
     "max_upload_bytes",
     "meeting_storage",

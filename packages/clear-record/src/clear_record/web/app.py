@@ -1220,13 +1220,14 @@ def create_app(
         }
 
     def storage_settings_context() -> dict:
-        """The managed root, its free space and each project's archive root."""
+        """The machine total, the managed root, its free space, each archive root."""
         root = managed.managed_root()
         try:
             free_size = human_bytes(managed.root_free_bytes(root))
         except OSError:
             free_size = None
         return {
+            "machine_storage": managed.machine_storage(registry, root),
             "managed_root": str(root),
             "free_size": free_size,
             "archive_roots": [

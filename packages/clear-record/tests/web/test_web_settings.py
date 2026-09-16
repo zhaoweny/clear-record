@@ -13,7 +13,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from clear_record.service import Registry, paths
+from clear_record.service import Registry, managed, paths
 from clear_record.service.setup import MCP_SERVER_NAME
 from clear_record.web import app as web_app
 from clear_record.web.app import LANG_COOKIE, SETTINGS_SECTIONS, create_app
@@ -234,6 +234,62 @@ def test_the_storage_section_shows_the_managed_root_and_archive_roots(tmp_path) 
     assert "Archive roots" in page.text
     assert "Retention is manual only" in page.text
     assert str(paths.resolve_workspace_root()) in page.text
+
+
+def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> None:
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    registry.create_project("Ops")
+    meeting = registry.create_meeting("ops", "Kickoff")
+    meeting = managed.ensure_managed_workspace(registry, meeting)
+    client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
+
+    page = client.get("/settings/storage").text
+
+    # The machine total and every component, each marked source or derived.
+    assert "Machine total" in page
+    assert "Chunk cache" in page
+    assert "Model weights" in page
+    assert "Source" in page
+    assert "Derived" in page
+    # The per-project breakdown names the workspace and whose disk it is on.
+    assert "Per project" in page
+    assert "Ops" in page
+    assert str(meeting.workspace_path) in page
+    assert "Kickoff" in page
+    assert "managed by clear-record" in page
+
+
+def test_the_storage_section_renders_a_partial_total_as_a_lower_bound(
+    tmp_path, monkeypatch
+) -> None:
+    """A bucket the service could not measure is named, and the total says >=."""
+    from clear_record.service import managed as managed_service
+
+    def partial(registry, root=None):
+        return {
+            "buckets": [
+                {
+                    "id": "chunks",
+                    "label": "Chunk cache",
+                    "kind": "derived",
+                    "bytes": 0,
+                    "size": "0 B",
+                    "partial": True,
+                }
+            ],
+            "total_bytes": 20,
+            "total_size": "20 B",
+            "unknown": ["chunks"],
+            "partial": True,
+            "projects": [],
+        }
+
+    monkeypatch.setattr(managed_service, "machine_storage", partial)
+    page = _client(tmp_path).get("/settings/storage")
+
+    assert "&gt;= 20 B" in page.text
+    assert "at least: some components could not be measured" in page.text
+    assert "Chunk cache" in page.text
 
 
 def test_the_status_section_carries_diagnostics_and_the_hello_check(tmp_path) -> None:

@@ -54,10 +54,18 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-from clear_record.cli.workspace import AUDIO_SUFFIXES, is_audio
+from clear_record.cli.workspace import (
+    AUDIO_DIR,
+    AUDIO_SUFFIXES,
+    CHUNKS_DIR,
+    EXPORT_DIR,
+    Workspace,
+    is_audio,
+)
 from clear_record.core.i18n import deferred
+from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.models import Meeting, Tape
-from clear_record.service.paths import resolve_workspace_root
+from clear_record.service.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service.store import Registry
 
 #: Subdirectory of a managed workspace holding the uploaded tapes. It is not one
@@ -91,6 +99,38 @@ _SCRATCH_PREFIX = ".cr-upload-"
 _SCRATCH_SUFFIX = ".part"
 
 _READ_BLOCK = 1 << 20
+#: The storage buckets STO-01's machine total is made of, in display order:
+#: ``id``, the English label (marked for the catalog with ``deferred``; the
+#: template translates it at render time) and the kind: ``source`` is the
+#: irreplaceable tape, ``derived`` is recomputable from it. ``models`` is
+#: machine-wide (every project decodes with the same weights), so it is counted
+#: once in the machine total and left out of a project's own total.
+STORAGE_BUCKETS: tuple[tuple[str, str, str], ...] = (
+    ("tapes", deferred("Tapes"), "source"),
+    ("records", deferred("Transcripts and records"), "derived"),
+    ("audio", deferred("Audio copies"), "derived"),
+    ("exports", deferred("Exports"), "derived"),
+    ("agent_runs", deferred("Agent run directories"), "derived"),
+    ("chunks", deferred("Chunk cache"), "derived"),
+    ("models", deferred("Model weights"), "derived"),
+)
+
+#: Buckets that belong to the machine, not to one project.
+MACHINE_BUCKETS = frozenset({"models"})
+
+#: Every bucket a meeting's workspace can hold (everything but the models).
+WORKSPACE_BUCKETS: tuple[str, ...] = tuple(
+    key for key, _label, _kind in STORAGE_BUCKETS if key not in MACHINE_BUCKETS
+)
+
+#: The workspace subdirectories that name their own bucket during the walk;
+#: anything else is a source tape (input audio) or the meeting's record.
+_BUCKET_DIRS = {
+    AUDIO_DIR: "audio",
+    EXPORT_DIR: "exports",
+    AGENT_DIRNAME: "agent_runs",
+    CHUNKS_DIR: "chunks",
+}
 
 
 class UploadRejected(ValueError):
@@ -387,6 +427,67 @@ def meeting_storage(
     }
 
 
+def machine_storage(
+    registry: Registry,
+    root: str | os.PathLike | None = None,
+) -> dict:
+    """STO-01's one accounting: the machine total with a per-project breakdown.
+
+    Every byte the app holds is in one of ``STORAGE_BUCKETS``, each marked
+    **source** (the tape, irreplaceable) or **derived** (recomputable). The
+    chunk cache (app-owned, outside every workspace) and the model directory are
+    **inside** the total; a *user-chosen* workspace is measured exactly like a
+    managed one, and its row says which disk it is on (``managed``). A component
+    that cannot be read is ``None`` -- "unknown", never a silent zero -- and is
+    named in ``unknown``, so ``total_bytes`` is a lower bound in that case.
+
+    ``meeting_storage``'s ``bytes`` keeps its original, narrower meaning (the
+    meeting workspace's own bytes); this is a separate, wider surface.
+    """
+    resolved_root = managed_root(root)
+    machine: dict[str, int | None] = {key: 0 for key, _l, _k in STORAGE_BUCKETS}
+    projects: list[dict] = []
+    for project in registry.list_projects():
+        measured: dict[str, int | None] = {key: 0 for key in WORKSPACE_BUCKETS}
+        workspaces: list[dict] = []
+        for meeting in registry.list_meetings(project.slug):
+            one = _meeting_buckets(registry, meeting)
+            for key, value in one.items():
+                measured[key] = _add(measured[key], value)
+                machine[key] = _add(machine[key], value)
+            known = _sum_known(one)
+            workspaces.append(
+                {
+                    "meeting": meeting.title,
+                    "path": meeting.workspace_path,
+                    "managed": is_managed(meeting, resolved_root),
+                    "total_bytes": known,
+                    "total_size": _human_bytes(known),
+                    "unknown": _unknown(one),
+                }
+            )
+        projects.append(
+            {
+                "slug": project.slug,
+                "name": project.name,
+                "buckets": _bucket_rows(measured),
+                "total_bytes": _sum_known(measured),
+                "total_size": _human_bytes(_sum_known(measured)),
+                "unknown": _unknown(measured),
+                "workspaces": workspaces,
+            }
+        )
+    machine["models"] = _dir_bytes(resolve_models_dir())
+    total = _sum_known(machine)
+    return {
+        "buckets": _bucket_rows(machine),
+        "total_bytes": total,
+        "total_size": _human_bytes(total),
+        "unknown": _unknown(machine),
+        "projects": projects,
+    }
+
+
 def delete_tape(
     registry: Registry,
     meeting: Meeting,
@@ -626,6 +727,165 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def _scan(root: Path) -> tuple[list[tuple[Path, int]], bool]:
+    """Every regular file under *root* (symlinks never followed) and its size.
+
+    The flag is True when a part of the tree could not be read (a permission
+    error, a mount gone away): the caller reports "unknown" rather than a total
+    that silently dropped bytes.
+    """
+    files: list[tuple[Path, int]] = []
+    unreadable = False
+
+    def _note_error(_exc: OSError) -> None:
+        nonlocal unreadable
+        unreadable = True
+
+    for dirpath, _dirnames, filenames in os.walk(
+        root, onerror=_note_error, followlinks=False
+    ):
+        for name in filenames:
+            path = Path(dirpath) / name
+            try:
+                if path.is_symlink():
+                    continue
+                files.append((path, path.stat().st_size))
+            except FileNotFoundError:
+                continue  # raced away: it holds nothing here now
+            except OSError:
+                unreadable = True
+    return files, unreadable
+
+
+def _dir_bytes(root: Path) -> int | None:
+    """Bytes under *root*: 0 when it is absent, None when it cannot be read."""
+    try:
+        if not root.exists():
+            return 0
+    except OSError:
+        return None
+    files, unreadable = _scan(root)
+    return None if unreadable else sum(size for _path, size in files)
+
+
+def _file_bytes(path: Path) -> int | None:
+    """One file's size: 0 when it is gone, None when it cannot be read."""
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return None
+
+
+def _workspace_buckets(root: Path) -> dict[str, int] | None:
+    """One walk over a meeting's workspace, split into STO-01's buckets.
+
+    A file under ``tapes/`` -- or input audio the pipeline would discover -- is a
+    **source** tape. ``audio/``, ``export/`` and ``agent/`` are the app's derived
+    output, and the manifest, segments, transcript and minutes are the meeting's
+    records. ``None`` when any part cannot be read.
+    """
+    files, unreadable = _scan(root)
+    if unreadable:
+        return None
+    buckets = {key: 0 for key in WORKSPACE_BUCKETS}
+    for path, size in files:
+        rel = path.relative_to(root).parts
+        top = rel[0] if rel else ""
+        bucket = _BUCKET_DIRS.get(top)
+        if bucket is None:
+            bucket = "tapes" if top == TAPES_DIRNAME or is_audio(path) else "records"
+        buckets[bucket] += size
+    return buckets
+
+
+def _tape_bytes_outside(
+    registry: Registry, meeting: Meeting, workspace: Path | None
+) -> int | None:
+    """Sizes of this meeting's tapes that live outside its workspace.
+
+    Tapes inside the workspace are already counted by the walk (they are input
+    audio); one mounted elsewhere -- a user-chosen path registered by hand -- is
+    still source data and belongs in the total. A tape row whose file is gone
+    contributes nothing; an unreadable one is unknown.
+    """
+    total = 0
+    for tape in registry.list_tapes(meeting.id):
+        path = Path(tape.path)
+        if workspace is not None and _within(path, workspace):
+            continue
+        size = _file_bytes(path)
+        if size is None:
+            return None
+        total += size
+    return total
+
+
+def _chunk_bytes(meeting: Meeting) -> int | None:
+    """The workspace's app-owned chunk cache, which lives outside the workspace."""
+    if not meeting.workspace_path:
+        return 0
+    return _dir_bytes(Workspace.at(meeting.workspace_path).chunks_dir)
+
+
+def _meeting_buckets(registry: Registry, meeting: Meeting) -> dict[str, int | None]:
+    """One meeting's slice of the buckets (everything but the machine-wide models)."""
+    workspace = Path(meeting.workspace_path) if meeting.workspace_path else None
+    if workspace is None:
+        measured: dict[str, int | None] = {key: 0 for key in WORKSPACE_BUCKETS}
+    else:
+        measured = _workspace_buckets(workspace)
+        if measured is None:
+            measured = {key: None for key in WORKSPACE_BUCKETS}
+        else:
+            measured["tapes"] = _add(
+                measured["tapes"], _tape_bytes_outside(registry, meeting, workspace)
+            )
+    measured["chunks"] = _add(measured["chunks"], _chunk_bytes(meeting))
+    return measured
+
+
+def _add(total: int | None, value: int | None) -> int | None:
+    """Add one component to a running total; ``None`` (unknown) absorbs it."""
+    if total is None or value is None:
+        return None
+    return total + value
+
+
+def _sum_known(measured: dict[str, int | None]) -> int:
+    """The total of the components that could be measured (a lower bound)."""
+    return sum(value for value in measured.values() if value is not None)
+
+
+def _unknown(measured: dict[str, int | None]) -> list[str]:
+    """The ids of the components that could not be measured, in bucket order."""
+    return [
+        key
+        for key, _label, _kind in STORAGE_BUCKETS
+        if key in measured and measured[key] is None
+    ]
+
+
+def _bucket_rows(measured: dict[str, int | None]) -> list[dict]:
+    """The template rows for one measured set, labels and kinds included."""
+    rows = []
+    for key, label, kind in STORAGE_BUCKETS:
+        if key not in measured:
+            continue
+        count = measured[key]
+        rows.append(
+            {
+                "id": key,
+                "label": label,
+                "kind": kind,
+                "bytes": count,
+                "size": None if count is None else _human_bytes(count),
+            }
+        )
+    return rows
+
+
 def _human_bytes(count: int) -> str:
     value = float(count)
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
@@ -678,6 +938,7 @@ __all__ = [
     "InvalidUploadId",
     "MAX_UPLOAD_ID_LENGTH",
     "ResumeNotSupported",
+    "STORAGE_BUCKETS",
     "TAPES_DIRNAME",
     "UnsafeFilename",
     "UploadRejected",
@@ -685,6 +946,7 @@ __all__ = [
     "delete_tape",
     "ensure_managed_workspace",
     "is_managed",
+    "machine_storage",
     "managed_root",
     "max_upload_bytes",
     "meeting_storage",

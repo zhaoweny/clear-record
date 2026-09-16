@@ -1,7 +1,64 @@
-{# Storage: the managed root and its free space, each project's archive root, and
-   the retention rule. Retention is manual only (owner, 2026-09-15): nothing
-   here suggests the node cleans up on its own, and the config path names where
-   a user edits it. #}
+{# Storage: STO-01's machine total with a per-project breakdown (every
+   component marked source or derived), the managed root and its free space,
+   each project's archive root, and the retention rule. Every size is the
+   service's own; the template does no arithmetic. Retention is manual only
+   (owner, 2026-09-15): nothing here suggests the node cleans up on its own,
+   and the config path names where a user edits it. #}
+<div class="settings-group">
+  <h3>{{ tr("Machine total") }}</h3>
+  <p class="storage-total">
+    <strong>{{ machine_storage.total_size }}</strong>
+    {% if machine_storage.unknown %}<span class="muted">{{ tr("at least: some components could not be measured") }}</span>{% endif %}
+  </p>
+  <table class="table-settings">
+    <thead>
+      <tr><th>{{ tr("Component") }}</th><th>{{ tr("Kind") }}</th><th>{{ tr("Size") }}</th></tr>
+    </thead>
+    <tbody>
+      {% for bucket in machine_storage.buckets %}
+      <tr>
+        <td>{{ tr(bucket.label) }}</td>
+        <td>{% if bucket.kind == "source" %}{{ tr("Source") }}{% else %}{{ tr("Derived") }}{% endif %}</td>
+        <td>{% if bucket.size %}{{ bucket.size }}{% else %}<span class="muted">{{ tr("unknown") }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted settings-note">{{ tr("The tapes and the model weights are the disk here; transcripts, caches and agent output are small and recomputable. Clearing a cache does not free gigabytes.") }}</p>
+</div>
+
+<h3>{{ tr("Per project") }}</h3>
+{% if machine_storage.projects %}
+<table class="table-settings">
+  <thead>
+    <tr><th>{{ tr("Project") }}</th><th>{{ tr("Total") }}</th><th>{{ tr("Components") }}</th><th>{{ tr("Workspace") }}</th></tr>
+  </thead>
+  <tbody>
+    {% for row in machine_storage.projects %}
+    <tr>
+      <td>{{ row.name }}</td>
+      <td>{{ row.total_size }}{% if row.unknown %} <span class="muted">{{ tr("at least") }}</span>{% endif %}</td>
+      <td>
+        {% for bucket in row.buckets %}
+        <div class="storage-bucket">{{ tr(bucket.label) }} ({% if bucket.kind == "source" %}{{ tr("source") }}{% else %}{{ tr("derived") }}{% endif %}): {% if bucket.size %}{{ bucket.size }}{% else %}<span class="muted">{{ tr("unknown") }}</span>{% endif %}</div>
+        {% endfor %}
+      </td>
+      <td>
+        {% for workspace in row.workspaces %}
+        <div class="storage-workspace">
+          {% if workspace.path %}<code>{{ workspace.path }}</code>{% else %}<span class="muted">{{ tr("no workspace yet") }}</span>{% endif %}
+          &mdash; {% if workspace.managed %}{{ tr("managed by clear-record, on the managed root's disk") }}{% else %}{{ tr("user-chosen, measured on its own disk") }}{% endif %}
+        </div>
+        {% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">{{ tr("No projects yet.") }}</div>
+{% endif %}
+
 <div class="settings-group">
   <table class="table-settings">
     <tbody>

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from clear_record.cli.workspace import Workspace, discover_audio
+from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths as core_paths
 from clear_record.service import Registry
 from clear_record.service import managed
@@ -701,3 +702,134 @@ def test_a_managed_and_a_dir_workspace_are_indistinguishable_to_the_stages(
         for meeting in (managed_meeting, dir_meeting)
     ]
     assert kinds[0] == kinds[1] == ["export", "record", "transcript"]
+
+
+# --- STO-01: the machine total, source vs derived -------------------------- #
+def _seed_derived(workspace: Workspace) -> None:
+    """Put one file in each derived bucket: audio, export, record, agent run."""
+    workspace.audio_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.audio_dir / "a.wav").write_bytes(b"a" * 10)
+    workspace.export_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.export_dir / "record.md").write_text("e" * 7)
+    workspace.record_path.write_text("r" * 3)
+    run_dir = workspace.root / AGENT_DIRNAME / "minutes-1"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "output.json").write_text("g" * 4)
+
+
+def test_machine_storage_counts_every_bucket_and_marks_source_or_derived(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models"))
+
+    managed.upload_tape(registry, meeting, io.BytesIO(b"t" * 100), filename="a.wav")
+    workspace = Workspace.at(meeting.workspace_path)
+    _seed_derived(workspace)
+    chunk = workspace.chunks_dir / "src" / "chunk.json"
+    chunk.parent.mkdir(parents=True, exist_ok=True)
+    chunk.write_bytes(b"c" * 5)
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "ggml-base.bin").write_bytes(b"m" * 11)
+
+    storage = managed.machine_storage(registry)
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+
+    assert [bucket["id"] for bucket in storage["buckets"]] == [
+        "tapes",
+        "records",
+        "audio",
+        "exports",
+        "agent_runs",
+        "chunks",
+        "models",
+    ]
+    assert buckets["tapes"]["kind"] == "source"
+    assert buckets["tapes"]["bytes"] == 100
+    assert (buckets["tapes"]["label"], buckets["chunks"]["label"]) == (
+        "Tapes",
+        "Chunk cache",
+    )
+    assert buckets["models"]["label"] == "Model weights"
+    assert buckets["records"]["bytes"] == 3
+    assert buckets["audio"]["bytes"] == 10
+    assert buckets["exports"]["bytes"] == 7
+    assert buckets["agent_runs"]["bytes"] == 4
+    assert buckets["chunks"]["bytes"] == 5
+    assert buckets["models"]["bytes"] == 11
+    for key in ("records", "audio", "exports", "agent_runs", "chunks", "models"):
+        assert buckets[key]["kind"] == "derived"
+    assert storage["total_bytes"] == 100 + 3 + 10 + 7 + 4 + 5 + 11
+    assert storage["unknown"] == []
+
+    (project,) = storage["projects"]
+    assert project["slug"] == "ops"
+    assert project["total_bytes"] == 100 + 3 + 10 + 7 + 4 + 5  # not the models
+    assert project["unknown"] == []
+    (row,) = project["workspaces"]
+    assert row["managed"] is True
+    assert row["path"] == meeting.workspace_path
+    # The existing, narrower key keeps its workspace-only meaning.
+    assert managed.meeting_storage(registry, meeting)["bytes"] == 100 + 3 + 10 + 7 + 4
+
+
+def test_machine_storage_measures_a_user_chosen_workspace_and_its_disk(
+    registry, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops")
+    chosen = tmp_path / "user-docs"
+    chosen.mkdir()
+    (chosen / "a.wav").write_bytes(b"u" * 40)  # a loose tape: source
+    (chosen / "record.json").write_bytes(b"d" * 6)
+    meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+
+    storage = managed.machine_storage(registry)
+    (project,) = storage["projects"]
+    buckets = {bucket["id"]: bucket for bucket in project["buckets"]}
+
+    assert buckets["tapes"]["bytes"] == 40
+    assert buckets["records"]["bytes"] == 6
+    assert project["total_bytes"] == 46
+    (row,) = project["workspaces"]
+    assert row["managed"] is False
+    assert row["path"] == str(chosen)
+    assert storage["unknown"] == []
+
+
+def test_an_unmeasurable_component_is_unknown_never_zero(
+    registry, tmp_path, monkeypatch
+) -> None:
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    workspace = Workspace.at(meeting.workspace_path)
+    chunk = workspace.chunks_dir / "src" / "chunk.json"
+    chunk.parent.mkdir(parents=True, exist_ok=True)
+    chunk.write_bytes(b"c" * 5)
+    cache_root = workspace.chunks_dir
+
+    real_walk = managed.os.walk
+
+    def blind(root, *args, **kwargs):
+        if Path(root) == cache_root:
+            onerror = kwargs.get("onerror")
+            if onerror is not None:
+                onerror(PermissionError("the cache cannot be read"))
+            return iter(())
+        return real_walk(root, *args, **kwargs)
+
+    monkeypatch.setattr(managed.os, "walk", blind)
+
+    storage = managed.machine_storage(registry)
+    buckets = {bucket["id"]: bucket for bucket in storage["buckets"]}
+
+    assert buckets["chunks"]["bytes"] is None
+    assert buckets["chunks"]["size"] is None
+    assert "chunks" in storage["unknown"]
+    assert buckets["tapes"]["bytes"] == 0  # measurable, and genuinely empty
+    assert storage["total_bytes"] == 0  # the unknown bucket did not become a zero
+    (project,) = storage["projects"]
+    assert "chunks" in project["unknown"]
+

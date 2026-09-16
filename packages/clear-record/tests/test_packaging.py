@@ -156,29 +156,27 @@ def test_web_console_assets_ship_with_the_package() -> None:
     ADR-0023 and docs/frontend-assets.md.
     """
     web = PACKAGE_DIRS[0] / "src" / "clear_record" / "web"
-    required = (
-        "templates/base.html",
-        "templates/index.html",
-        "templates/project.html",
-        "templates/settings.html",
-        "templates/setup.html",
-        "templates/agent.html",
-        "templates/404.html",
-        "templates/_projects.html",
-        "templates/_detail.html",
-        "templates/_agent_setup.html",
-        "templates/_harness_setup.html",
-        "templates/_mcp_config.html",
-        "templates/_mcp_setup.html",
-        "templates/_hello_check.html",
-        "templates/_settings_models.html",
-        "templates/_settings_backends.html",
-        "templates/_settings_storage.html",
-        "templates/_settings_status.html",
-        "static/app.css",
-        "static/app.js",
-    )
-    missing = [rel for rel in required if not (web / rel).is_file()]
+    templates = web / "templates"
+    # Derived from disk, not a hand-maintained allowlist: a template is covered
+    # the moment it lands, and a truncated one would render a blank page.
+    committed = sorted(templates.rglob("*.html"))
+    assert committed, f"no templates under {templates}"
+    empty = [p.relative_to(REPO_ROOT) for p in committed if not p.read_text().strip()]
+    assert not empty, f"empty web templates: {empty}"
+    # The page-level routes ADR-0027 names, so a wholesale rename is caught.
+    for name in (
+        "base.html",
+        "index.html",
+        "project.html",
+        "meeting.html",
+        "settings.html",
+        "setup.html",
+        "agent.html",
+    ):
+        assert (templates / name).is_file(), f"missing web page template: {name}"
+    missing = [
+        rel for rel in ("static/app.css", "static/app.js") if not (web / rel).is_file()
+    ]
     assert not missing, f"missing web console assets: {missing}"
 
 
@@ -389,3 +387,91 @@ def test_publishable_manifests_carry_pypi_metadata() -> None:
             if c not in trove_classifiers
         )
     assert not problems, "incomplete PyPI metadata:\n" + "\n".join(problems)
+
+
+# --- packaging docs and metadata agree with the build (round-2 guards) ------- #
+
+NOTICES = REPO_ROOT / "THIRD_PARTY_NOTICES.md"
+FLATPAK_README = REPO_ROOT / "packaging" / "flatpak" / "README.md"
+FLATPAK_METAINFO = (
+    REPO_ROOT / "packaging" / "flatpak" / "io.github.zhaoweny.clear-record.metainfo.xml"
+)
+FLATPAK_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-flatpak.yml"
+FLATPAK_ADR = REPO_ROOT / "docs" / "adr" / "0015-flatpak-linux-distribution.md"
+PYINSTALLER_README = PYINSTALLER_SPEC.parent / "README.md"
+
+
+def _notices_table(heading: str) -> set[str]:
+    """Distribution names in the pipe table under one notices heading."""
+    text = NOTICES.read_text()
+    match = re.search(
+        rf"### {re.escape(heading)}.*?\n(.*?)(?=\n### |\n## )", text, re.S
+    )
+    assert match is not None, f"no {heading!r} section in {NOTICES.name}"
+    return set(re.findall(r"^\| \[`([^`]+)`\]", match.group(1), re.M))
+
+
+def test_third_party_notices_cover_every_base_runtime_dependency() -> None:
+    """Every base runtime dep is documented (the file claims uv.lock parity)."""
+    runtime = _notices_table("Runtime dependencies (installed by default)")
+    undocumented = RUNTIME_DEPS - runtime
+    assert not undocumented, f"undocumented runtime deps: {sorted(undocumented)}"
+
+
+def test_notices_do_not_call_a_runtime_web_dependency_build_only() -> None:
+    """Jinja2 is a web-extra runtime dep, so it is not build-only.
+
+    Babel and PyInstaller genuinely are build tools; listing a runtime package
+    in that table would understate what an installed console links.
+    """
+    build_only = _notices_table("Build-only dependencies")
+    assert {"babel", "pyinstaller"} <= build_only, build_only
+    assert "jinja2" not in build_only, "Jinja2 is a runtime dependency of web"
+
+
+def test_flatpak_lane_trigger_matches_its_documentation() -> None:
+    """The workflow trigger and the flatpak prose cannot drift apart."""
+    workflow = FLATPAK_WORKFLOW.read_text()
+    readme = FLATPAK_README.read_text()
+    adr = FLATPAK_ADR.read_text()
+    tag_triggered = re.search(r"^  push:", workflow, re.M) is not None
+    if tag_triggered:
+        assert "tags:" in workflow
+    else:
+        assert "manual dispatch" in readme, "README must state the lane is manual"
+        assert "on `v*` tags" not in readme, "README still claims a tag trigger"
+        assert "on `v*` tags" not in adr, "ADR-0015 still claims a tag trigger"
+    assert "Python strings" not in readme, "frontend is package data (ADR-0016/0023)"
+    assert "upload-artifact@v7" in readme, "README names a stale artifact action"
+
+
+def test_flatpak_generator_is_pinned_to_a_commit() -> None:
+    """The generator script is fetched from a commit, never master."""
+    workflow = FLATPAK_WORKFLOW.read_text()
+    assert "flatpak-builder-tools/master" not in workflow, "fetched from master"
+    assert re.search(r"flatpak-builder-tools/[0-9a-f]{40}/", workflow), (
+        "flatpak-pip-generator is not commit-pinned"
+    )
+
+
+def test_appstream_metadata_tracks_the_release_version() -> None:
+    """The AppStream release list is not stale against the manifest version."""
+    version = _load(MEMBER_PYPROJECTS[0])["project"]["version"]
+    core = re.match(r"^\d+\.\d+\.\d+", version).group()
+    releases = re.findall(r'<release version="([^"]+)"', FLATPAK_METAINFO.read_text())
+    assert releases, "metainfo declares no <release>"
+    cores = {
+        m.group() for r in releases if (m := re.match(r"^\d+\.\d+\.\d+", r)) is not None
+    }
+    assert core in cores, f"no AppStream release for {core}: {releases}"
+
+
+def test_desktop_bundle_scope_is_documented() -> None:
+    """If the frozen app omits the MCP provider, the README must say so."""
+    spec = PYINSTALLER_SPEC.read_text()
+    hidden = re.search(r"hiddenimports = \[(.*?)\]", spec, re.S)
+    bundled = bool(hidden) and "clear_record.mcp" in hidden.group(1)
+    readme = PYINSTALLER_README.read_text()
+    if not bundled:
+        assert "clear-record mcp" in readme, "README must name the omitted command"
+        assert "agents" in readme, "README must name the extra supplying MCP"

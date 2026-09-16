@@ -37,9 +37,11 @@ Date: 2026-09-14
   (`packaging/flatpak/io.github.zhaoweny.clear-record.yml`) plus **AppStream
   metadata** (`io.github.zhaoweny.clear-record.metainfo.xml`).
 - [DECISION] Add a **CI lane** (`.github/workflows/build-flatpak.yml`) that
-  builds a `.flatpak` on `workflow_dispatch` and on `v*` tags with
+  builds a `.flatpak` on `workflow_dispatch` with
   `flatpak/flatpak-github-actions/flatpak-builder@v6`, and keeps it as a
-  **workflow artifact**. It signs nothing and publishes nowhere.
+  **workflow artifact**. It signs nothing and publishes nowhere. (The original
+  decision also tag-triggered this lane; that trigger was **withdrawn** on
+  2026-09-16 — see the Update at the end.)
 - [DECISION] The build is **deferred**: the scaffold is not wired into `just
   verify`, not released and not submitted to Flathub until there is a reason
   (a Linux user asking, a console worth double-clicking, or a submission
@@ -117,3 +119,13 @@ Date: 2026-09-14
 - Revisit when one of the stated reasons appears; the review must confirm the
   bundled Vulkan plugin actually loads under `--device=dri`, resolve the ffmpeg
   gap, and settle the metadata license and icon before submission.
+
+## Update (2026-09-16) — the CI lane is manual-only until the scaffold closes
+
+- [DECISION] The `build-flatpak` lane is **`workflow_dispatch` only**; the tag
+  trigger in the decision above is **withdrawn for now**. A release tag fired a
+  lane that cannot yet succeed while the manifest is still a scaffold —
+  `python3-modules.json` and the wheel are generated (the "heavy lifting"), but
+  the whisper.cpp pin, the Vulkan build deps, the icon and the ffmpeg codecs
+  remain `[OPEN]` in `packaging/flatpak/README.md`. Restore a tag trigger once
+  those items close. The rest of this ADR stands.

@@ -3,8 +3,8 @@
 <component type="desktop-application">
   <id>io.github.zhaoweny.clear-record</id>
 
-  <!-- The metainfo file itself is CC BY 4.0, matching the repo's content licence
-       (ADR-0008). Flathub normally prefers a permissive metadata licence
+  <!-- The metainfo file itself is CC BY 4.0, matching the repo's content license
+       (ADR-0008). Flathub normally prefers a permissive metadata license
        (FSFAP/CC0) — see the [OPEN] note in packaging/flatpak/README.md. -->
   <metadata_license>CC-BY-4.0</metadata_license>
   <project_license>MIT</project_license>
@@ -68,6 +68,15 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.2.0" date="2026-09-16">
+      <description>
+        <p>
+          Second release: platform-native paths (platformdirs), the bundled web
+          console, the PySide6 tray supervisor and desktop bundle, the MCP
+          server, i18n catalogs, and this Flatpak scaffold.
+        </p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-09-14">
       <description>
         <p>

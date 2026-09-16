@@ -36,9 +36,10 @@ Owner framing (2026-09-14), verbatim:
 `python3-modules.json` and the `clear-record` wheel are **build inputs**, not
 source: CI generates the first and `just build` produces the second. See §5.
 
-`.github/workflows/build-flatpak.yml` builds a `.flatpak` on manual dispatch and
-on `v*` tags. It **signs nothing and publishes nowhere** — it only uploads the
-bundle as a workflow artifact.
+`.github/workflows/build-flatpak.yml` builds a `.flatpak` on **manual dispatch
+only** — a release tag would fire a lane that cannot yet succeed (ADR-0015's
+2026-09-16 Update). It **signs nothing and publishes nowhere** — it only uploads
+the bundle as a workflow artifact.
 
 ## 1. The `whisper-cli` problem (the real blocker)
 
@@ -139,8 +140,9 @@ Why not freeze the PyInstaller bundle into the Flatpak?
 - A pip install into the runtime's Python reuses the runtime's ABI and is the
   supported Flatpak pattern; it also gets `clear_record.commands` entry points
   and dist metadata for free.
-- The console's frontend is embedded as Python strings (ADR-0013), so there are
-  no data files to collect — a wheel install is enough.
+- The console's frontend ships as **package data** — Jinja templates plus the
+  compiled `app.css`/`app.js` (ADR-0016/0023) — and `uv_build` includes it in
+  the wheel, so a wheel install is enough.
 
 Python dependencies are resolved by **`flatpak-pip-generator`** from
 `packages/clear-record/pyproject.toml` (including the `web` optional group), with
@@ -189,8 +191,8 @@ heavy**, not just code:
 
 ## 9. Running the CI lane (and what it does today)
 
-`.github/workflows/build-flatpak.yml` runs on `workflow_dispatch` and on `v*`
-tags. It:
+`.github/workflows/build-flatpak.yml` runs on **manual dispatch only** (ADR-0015's
+2026-09-16 Update; a release tag would fire a lane that cannot yet succeed). It:
 
 1. builds the wheel (`just build`);
 2. generates `python3-modules.json` with `flatpak-pip-generator` — the "heavy
@@ -198,7 +200,7 @@ tags. It:
 3. builds the bundle with
    [`flatpak/flatpak-github-actions/flatpak-builder@v6`](https://github.com/flatpak/flatpak-github-actions)
    on the `freedesktop-25.08` container image;
-4. uploads the `.flatpak` with `actions/upload-artifact@v4`.
+4. uploads the `.flatpak` with `actions/upload-artifact@v7`.
 
 It does **not** sign, publish to Flathub/OSTree, or touch PyPI.
 

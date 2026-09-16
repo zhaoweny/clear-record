@@ -39,11 +39,12 @@ jobs:
         run: just build
 
       - name: Generate the Python module list (flatpak-pip-generator)
-        # [OPEN] pin flatpak-builder-tools to a commit rather than master.
+        # Pinned to a flatpak-builder-tools commit (not master) so the lane runs
+        # a known generator; bump deliberately.
         run: |
           python3 -m pip install --user --break-system-packages requirements-parser
           curl -fsSL -o /tmp/flatpak-pip-generator \
-            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/pip/flatpak-pip-generator
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/de2225a6dee4818c1339b3cdbf29f90c471fcb7e/pip/flatpak-pip-generator
           chmod +x /tmp/flatpak-pip-generator
           # numpy/soundfile/cffi/pydantic-core ship platform wheels; prefer them
           # over rebuilding from sdist inside the SDK.

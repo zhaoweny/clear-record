@@ -17,7 +17,7 @@ Artifacts land in `dist/` (gitignored):
 |---|---|
 | `dist/clear-record/clear-record-tray` | the double-click target — runs the console behind a menu-bar tray icon |
 | `dist/clear-record/clear-record-web` | starts the console and opens the browser |
-| `dist/clear-record/clear-record` | the full console CLI (all subcommands) |
+| `dist/clear-record/clear-record` | the full console CLI (every bundled subcommand) |
 | `dist/clear-record.app` | macOS only — the above as an app bundle (`CFBundleExecutable = clear-record-tray`) |
 
 `just app` runs PyInstaller from the optional `app` dependency group and pulls
@@ -27,6 +27,12 @@ the verify environment never carries the build toolchain.
 
 **Build on each target OS.** PyInstaller does not cross-compile: a macOS app is
 built on macOS, a Windows app on Windows. The `build-app` CI workflow does both.
+
+The bundle deliberately does **not** pull the `agents` extra, so
+`clear-record mcp` is **not included** in the desktop app — the MCP server needs
+the MCP SDK, which the frozen build leaves out (`clear-record.spec` carries no
+`clear_record.mcp` hidden import). Install `clear-record[agents]` from PyPI to
+run the MCP server; the desktop app carries the console and the CLI.
 
 ## What the frozen app contains
 

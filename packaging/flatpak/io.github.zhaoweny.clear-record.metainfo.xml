@@ -68,6 +68,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.3.0" date="2026-09-16">
+      <description>
+        <p>
+          Development trunk after 0.2.0: the console consolidates its state and
+          text in SQLite, gains token authentication and a versioned JSON API,
+          and drops the in-app model endpoint so an agent harness is the client
+          of the glossary, project and transcription services.
+        </p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-16">
       <description>
         <p>

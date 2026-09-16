@@ -121,3 +121,24 @@ def test_the_stage_turns_an_unsupported_knob_into_a_systemexit(
 
     with pytest.raises(SystemExit, match="cannot honour"):
         stages.transcribe(str(wd), "noknob", beam_size=4)
+
+
+def test_the_unsupported_knob_message_is_translated(tmp_path, monkeypatch) -> None:
+    """The frame is translated; the backend id and knob names stay verbatim."""
+    from clear_record.core import i18n
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _wav(wd / "a.wav")
+    stages.ingest(str(wd), split="mix")
+    monkeypatch.setattr(stages, "get_backend", lambda _id: _NoKnobBackend())
+
+    i18n.install("zh_CN")
+    with pytest.raises(SystemExit) as err:
+        stages.transcribe(str(wd), "noknob", beam_size=4)
+
+    message = str(err.value)
+    assert "无法支持解码器选项" in message
+    assert "noknob" in message and "beam_size" in message
+    assert "cannot honour" not in message
+    assert "It supports:" not in message

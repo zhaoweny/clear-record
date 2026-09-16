@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 10:22+0800\n"
+"POT-Creation-Date: 2026-09-16 10:25+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -229,27 +229,29 @@ msgstr "列出当前可用的 ASR 后端"
 msgid ""
 "[transcribe] a re-run scope only means something when cached chunks may "
 "be reused, but resume is off; drop one of the two."
-msgstr ""
-"[transcribe] 只有当缓存片段可能被复用时，重新运行范围才有意义，但 resume 已关闭；"
-"请去掉两者之一。"
+msgstr "[transcribe] 只有当缓存片段可能被复用时，重新运行范围才有意义，但 resume 已关闭；请去掉两者之一。"
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:523
 #, python-brace-format
 msgid ""
 "[transcribe] re-run scope names source(s) not in the manifest: {unknown} "
 "(available: {available})."
-msgstr ""
-"[transcribe] 重新运行范围指定了清单中不存在的来源：{unknown}"
-"（可用：{available}）。"
+msgstr "[transcribe] 重新运行范围指定了清单中不存在的来源：{unknown}（可用：{available}）。"
 
 #: packages/clear-record/src/clear_record/cli/transcription.py:546
 #, python-brace-format
 msgid ""
 "[transcribe] re-run scope ({scope}) selects no chunk of {looked_at}; it "
 "would re-decode nothing. Widen the range or drop the scope."
+msgstr "[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的任何片段；不会重新解码任何内容。请放宽范围或去掉该范围。"
+
+#: packages/clear-record/src/clear_record/cli/transcription.py:600
+#, python-brace-format
+msgid ""
+"[transcribe] backend '{backend}' cannot honour decoder option(s): "
+"{unsupported}. It supports: {supported}."
 msgstr ""
-"[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的任何片段；"
-"不会重新解码任何内容。请放宽范围或去掉该范围。"
+"[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupported}。它支持：{supported}。"
 
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:490
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:500

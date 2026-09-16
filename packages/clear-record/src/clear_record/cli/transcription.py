@@ -596,9 +596,13 @@ def transcribe(
     unsupported = sorted(set(decoders) - set(supported))
     if unsupported:
         raise UnsupportedDecoderKnob(
-            f"[transcribe] backend '{backend_id}' cannot honour decoder "
-            f"option(s): {', '.join(unsupported)}. It supports: "
-            f"{', '.join(supported) or 'none'}."
+            tr(
+                "[transcribe] backend '{backend}' cannot honour decoder "
+                "option(s): {unsupported}. It supports: {supported}.",
+                backend=backend_id,
+                unsupported=", ".join(unsupported),
+                supported=", ".join(supported) or "none",
+            )
         )
 
     if scope is not None:

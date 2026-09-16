@@ -81,6 +81,16 @@ def test_redact_text_hashes_a_component_that_contains_a_space() -> None:
     assert redacted.endswith(".wav")
 
 
+def test_redact_text_hashes_a_bare_filename_that_contains_a_space() -> None:
+    """A separator-free name with a space is hashed whole, not from its last word."""
+    redacted = diagnostics.redact_text("My Meeting.wav")
+    assert "My" not in redacted
+    assert "Meeting" not in redacted
+    assert redacted.endswith(".wav")
+    # A bare non-file value stays readable for triage.
+    assert diagnostics.redact_text("large-v3") == "large-v3"
+
+
 def test_redact_text_does_not_leak_prose_after_a_path() -> None:
     redacted = diagnostics.redact_text(
         "cannot open /home/alice/notes.txt because it is locked"

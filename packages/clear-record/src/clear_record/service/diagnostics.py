@@ -89,10 +89,15 @@ _FILE_SUFFIXES = (
 #: replacement is never re-hashed by a second rule. The path branch runs to the
 #: next line break, quote, comma, semicolon, angle bracket, pipe or close paren,
 #: so a component containing a space (My Meeting) is redacted as one token; a
-#: space alone does not end the path.
+#: space alone does not end the path. The bare branch likewise admits interior
+#: spaces (My Meeting.wav), so a filename is hashed whole rather than only from
+#: its last word; that can also hash the words leading up to a filename in free
+#: text, which is the safe direction for a privacy redactor.
 _TOKEN = re.compile(
     r"(?:[A-Za-z]:)?(?:[\\/][^\n\"'<>|,;)]+)+"
-    r"|(?<![\w/\\])[\w][\w.\-]*\.(?:" + "|".join(_FILE_SUFFIXES) + r")(?![\w])",
+    r"|(?<![\w/\\])[\w][\w.\-]*(?: [\w.\-]+)*\.(?:"
+    + "|".join(_FILE_SUFFIXES)
+    + r")(?![\w])",
     re.IGNORECASE,
 )
 
@@ -504,7 +509,7 @@ class DiagnosticsHandler(logging.Handler):
     redaction applies to them unchanged.
     """
 
-    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+    def emit(self, record: logging.LogRecord) -> None:
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a log line must never raise

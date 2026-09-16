@@ -121,6 +121,23 @@ def test_a_named_secret_that_is_unset_is_per_endpoint(tmp_path) -> None:
     assert "CR_MISSING_SECRET" in bad["problems"][0]
 
 
+def test_a_configured_endpoint_with_no_delivery_is_not_labelled_ok(tmp_path) -> None:
+    """A configured endpoint that has never sent reads "No delivery yet"."""
+    emitter = WebhookEmitter([WebhookEndpoint(url="http://never.test/hook")])
+    try:
+        client = _client(tmp_path, emitter)
+
+        view = client.get("/api/webhooks").json()
+
+        assert view["state"] == "no_delivery_yet"
+        # The aggregate label must not fall through to the neutral "Configured"
+        # (that read as a success the endpoint has not had).
+        assert view["state_label"] == "No delivery yet"
+        assert "No delivery yet" in client.get("/ui/webhooks").text
+    finally:
+        emitter.close(timeout=5)
+
+
 # --- the last delivery outcome ---------------------------------------------- #
 
 

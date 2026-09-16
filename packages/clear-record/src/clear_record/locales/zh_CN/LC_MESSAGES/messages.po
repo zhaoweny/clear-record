@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 10:13+0800\n"
+"POT-Creation-Date: 2026-09-16 10:24+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -446,15 +446,15 @@ msgid ""
 "and this node cannot resume one; start again with a new upload id"
 msgstr "ID 为 {id!r} 的上传正在进行或已中断，而此节点无法续传；请使用新的上传 ID 重新开始"
 
-#: packages/clear-record/src/clear_record/service/runs.py:281
+#: packages/clear-record/src/clear_record/service/runs.py:285
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:287
+#: packages/clear-record/src/clear_record/service/runs.py:291
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:291
+#: packages/clear-record/src/clear_record/service/runs.py:295
 msgid "a run is already in flight for this meeting"
 msgstr "此会议已有一个正在进行的运行"
 
@@ -698,7 +698,7 @@ msgstr ""
 "    Serve 在前台运行，并随此控制台一起停止。"
 
 #: packages/clear-record/src/clear_record/web/app.py:170
-#: packages/clear-record/src/clear_record/web/app.py:1232
+#: packages/clear-record/src/clear_record/web/app.py:1234
 msgid "Models"
 msgstr "模型"
 
@@ -750,134 +750,135 @@ msgstr "配置问题"
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:555
-msgid "Configured"
-msgstr "已配置"
-
-#: packages/clear-record/src/clear_record/web/app.py:560
-msgid "Config problem"
-msgstr "配置问题"
-
-#: packages/clear-record/src/clear_record/web/app.py:562
-msgid "Failing"
-msgstr "投递失败"
-
-#: packages/clear-record/src/clear_record/web/app.py:564
-#: packages/clear-record/src/clear_record/web/app.py:600
-msgid "Delivered"
-msgstr "已投递"
-
-#: packages/clear-record/src/clear_record/web/app.py:565
+#: packages/clear-record/src/clear_record/web/app.py:556
+#: packages/clear-record/src/clear_record/web/app.py:567
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
 msgid "No delivery yet"
 msgstr "尚未投递"
 
+#: packages/clear-record/src/clear_record/web/app.py:557
+msgid "Configured"
+msgstr "已配置"
+
+#: packages/clear-record/src/clear_record/web/app.py:562
+msgid "Config problem"
+msgstr "配置问题"
+
+#: packages/clear-record/src/clear_record/web/app.py:564
+msgid "Failing"
+msgstr "投递失败"
+
+#: packages/clear-record/src/clear_record/web/app.py:566
 #: packages/clear-record/src/clear_record/web/app.py:602
+msgid "Delivered"
+msgstr "已投递"
+
+#: packages/clear-record/src/clear_record/web/app.py:604
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:943
+#: packages/clear-record/src/clear_record/web/app.py:945
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:945
+#: packages/clear-record/src/clear_record/web/app.py:947
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/app.py:947
+#: packages/clear-record/src/clear_record/web/app.py:949
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/app.py:949
+#: packages/clear-record/src/clear_record/web/app.py:951
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/app.py:951
+#: packages/clear-record/src/clear_record/web/app.py:953
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/app.py:953
+#: packages/clear-record/src/clear_record/web/app.py:955
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/app.py:954
+#: packages/clear-record/src/clear_record/web/app.py:956
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:980
+#: packages/clear-record/src/clear_record/web/app.py:982
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/app.py:1094
+#: packages/clear-record/src/clear_record/web/app.py:1096
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1228
+#: packages/clear-record/src/clear_record/web/app.py:1230
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/app.py:1229
+#: packages/clear-record/src/clear_record/web/app.py:1231
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/app.py:1230
+#: packages/clear-record/src/clear_record/web/app.py:1232
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/app.py:1231
+#: packages/clear-record/src/clear_record/web/app.py:1233
 msgid "Config"
 msgstr "配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:1359
+#: packages/clear-record/src/clear_record/web/app.py:1361
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1410
+#: packages/clear-record/src/clear_record/web/app.py:1412
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1441
+#: packages/clear-record/src/clear_record/web/app.py:1443
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1654
+#: packages/clear-record/src/clear_record/web/app.py:1656
 #, python-brace-format
 msgid "No draft {run_id} for this meeting."
 msgstr "此会议没有草稿 {run_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1825
-#: packages/clear-record/src/clear_record/web/app.py:1844
+#: packages/clear-record/src/clear_record/web/app.py:1827
+#: packages/clear-record/src/clear_record/web/app.py:1846
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:2045
-#: packages/clear-record/src/clear_record/web/app.py:2091
+#: packages/clear-record/src/clear_record/web/app.py:2047
+#: packages/clear-record/src/clear_record/web/app.py:2093
 msgid "The endpoint did not answer a test call."
 msgstr "该端点未响应测试调用。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2059
+#: packages/clear-record/src/clear_record/web/app.py:2061
 #, python-brace-format
 msgid "Recorded {endpoint} in {path}."
 msgstr "已将 {endpoint} 记录到 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2083
+#: packages/clear-record/src/clear_record/web/app.py:2085
 msgid "The model could not be pulled."
 msgstr "无法拉取该模型。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2103
+#: packages/clear-record/src/clear_record/web/app.py:2105
 #, python-brace-format
 msgid "Pulled {model} and recorded it."
 msgstr "已拉取 {model} 并记录。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2134
+#: packages/clear-record/src/clear_record/web/app.py:2136
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2169
+#: packages/clear-record/src/clear_record/web/app.py:2171
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"

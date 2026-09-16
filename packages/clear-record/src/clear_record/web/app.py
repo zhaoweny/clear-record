@@ -1489,7 +1489,14 @@ def create_app(
         return TEMPLATES.TemplateResponse(
             request,
             "_setup_transcription.html",
-            {"transcription": transcription_status(), "error": error},
+            {
+                "transcription": transcription_status(),
+                "error": error,
+                # A failed download leaves state == "model", so the retry form
+                # still renders; without these the select would have no options.
+                "model_ladder": MODEL_LADDER,
+                "default_model": DEFAULT_MODEL,
+            },
         )
 
     @app.post("/ui/settings/models/download", response_class=HTMLResponse)
@@ -1579,12 +1586,21 @@ def create_app(
 
     @app.post("/ui/projects", response_class=HTMLResponse)
     def ui_create_project(request: Request, name: str = Form(...)) -> HTMLResponse:
+        """Create a project, or re-render the list with the service's message.
+
+        An invalid name is a typo the user can fix in the form, so it re-renders
+        at 200: htmx does not swap a 4xx (base.html sets noSwap), and a 409 here
+        would make the failure invisible.
+        """
+        error = None
         try:
             registry.create_project(name)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            error = str(exc)
         return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
+            request,
+            "_projects.html",
+            {"projects": project_rows(), "active_slug": None, "error": error},
         )
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
@@ -1766,7 +1782,9 @@ def create_app(
         try:
             registry.set_recording_set(meeting_id, tapes)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # A tape set is fixable in the form, so re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
@@ -1976,7 +1994,6 @@ def create_app(
         detection: Detection | None = None,
         error: str | None = None,
         notice: str | None = None,
-        status_code: int = 200,
         part: str = "agent",
     ) -> HTMLResponse:
         """The setup panel: the service's state, plus whatever a step just did.
@@ -2007,7 +2024,6 @@ def create_app(
                 # idle state and the POST below swaps a result in.
                 "check": None,
             },
-            status_code=status_code,
         )
 
     @app.get("/ui/agent-setup", response_class=HTMLResponse)
@@ -2044,15 +2060,13 @@ def create_app(
                     if verification.detail is not None
                     else tr("The endpoint did not answer a test call.")
                 )
-                return agent_setup_panel(request, error=shown, status_code=400)
+                return agent_setup_panel(request, error=shown)
             path = write_agent_settings(
                 endpoint, model=model or None, api_key_env=api_key_env or None
             )
             refresh_agent_config()
         except SetupError as exc:
-            return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
-            )
+            return agent_setup_panel(request, error=exc.message.render(tr))
         return agent_setup_panel(
             request,
             notice=tr(
@@ -2082,7 +2096,7 @@ def create_app(
                 if pulled.detail is not None
                 else tr("The model could not be pulled.")
             )
-            return agent_setup_panel(request, error=shown, status_code=400)
+            return agent_setup_panel(request, error=shown)
         verification = verify_endpoint(endpoint, model=pulled.model)
         if not verification.ok:
             shown = (
@@ -2090,14 +2104,12 @@ def create_app(
                 if verification.detail is not None
                 else tr("The endpoint did not answer a test call.")
             )
-            return agent_setup_panel(request, error=shown, status_code=400)
+            return agent_setup_panel(request, error=shown)
         try:
             write_agent_settings(endpoint, model=pulled.model)
             refresh_agent_config()
         except SetupError as exc:
-            return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
-            )
+            return agent_setup_panel(request, error=exc.message.render(tr))
         return agent_setup_panel(
             request,
             notice=tr("Pulled {model} and recorded it.", model=pulled.model),
@@ -2121,10 +2133,7 @@ def create_app(
             pointed = resolve_harness(harness)
         except SetupError as exc:
             return agent_setup_panel(
-                request,
-                part=panel_part,
-                error=exc.message.render(tr),
-                status_code=400,
+                request, part=panel_part, error=exc.message.render(tr)
             )
         remember_harness(pointed)
         return agent_setup_panel(
@@ -2157,10 +2166,7 @@ def create_app(
             path = write_mcp_config(config)
         except SetupError as exc:
             return agent_setup_panel(
-                request,
-                part=panel_part,
-                error=exc.message.render(tr),
-                status_code=400,
+                request, part=panel_part, error=exc.message.render(tr)
             )
         return agent_setup_panel(
             request,

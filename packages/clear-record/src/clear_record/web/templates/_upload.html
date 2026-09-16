@@ -13,7 +13,11 @@
         hx-encoding="multipart/form-data"
         hx-target="#storage-{{ storage.meeting_id }}"
         hx-swap="innerHTML">
-    <input type="file" name="file" accept="{{ audio_accept }}" required hx-preserve
+    {# htmx preserve keys on the element id, so the input must carry one (and the
+       template renders it again after a swap) for the chosen file to survive a
+       re-render. #}
+    <input type="file" name="file" id="upload-file-{{ storage.meeting_id }}"
+           accept="{{ audio_accept }}" required hx-preserve
            aria-label="{{ tr('Audio tape') }}">
     <button class="primary" type="submit" :disabled="busy">
       <span x-show="!busy">{{ tr("Upload tape") }}</span>

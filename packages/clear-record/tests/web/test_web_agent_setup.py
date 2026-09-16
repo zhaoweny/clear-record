@@ -119,6 +119,9 @@ def test_detecting_a_fake_endpoint_shows_it_verified_and_usable(
     assert "qwen2.5:1.5b" in panel
     assert "Verify and use" in panel
     assert "Pull a small model" in panel  # the native tags endpoint answered
+    # The probed endpoint rides in hx-vals as JSON (tojson), not interpolated by
+    # hand, so a quote in a URL cannot break the attribute.
+    assert '{"endpoint": "http://fake.test:11434/v1"}' in panel
 
 
 def test_nothing_running_says_what_to_install(tmp_path, monkeypatch) -> None:
@@ -190,8 +193,11 @@ def test_a_failed_test_call_records_nothing(tmp_path, monkeypatch) -> None:
         "/ui/agent-setup/use", data={"endpoint": FAKE.base_url, "model": ""}
     )
 
-    assert response.status_code == 400
+    # 200, not 400: base.html sets htmx noSwap for every 4xx, so a 400 panel
+    # would never be swapped in and the user would see nothing.
+    assert response.status_code == 200
     assert "endpoint refused the test call" in response.text
+    assert 'class="run-error"' in response.text
     assert not paths.config_path().is_file()
     assert client.get("/api/agent/setup").json()["state"] == "not_configured"
 
@@ -257,6 +263,21 @@ def test_recording_the_endpoint_reaches_a_meeting_without_a_restart(
 
     assert response.status_code == 200
     assert client.get(agent_url).json()["configured"] is True
+
+
+def test_a_config_problem_is_rendered_verbatim(tmp_path, monkeypatch) -> None:
+    """The service's own config-problem text reaches the panel.
+
+    A config problem is a runtime string (it embeds the config path), not an
+    extractable message ID, so the template shows it verbatim rather than
+    wrapping it in a tr() lookup that could never match.
+    """
+    view = setup.SetupView(state="problem", problems=("a bad [agent] table",))
+    monkeypatch.setattr(web_app, "setup_view", lambda **_kwargs: view)
+
+    panel = _panel(_client(tmp_path))
+
+    assert "a bad [agent] table" in panel
 
 
 # --- the MCP rung: point at a harness, write its client config --------------- #
@@ -327,7 +348,8 @@ def test_pointing_at_something_unrunnable_records_nothing(tmp_path) -> None:
 
     response = client.post("/ui/agent-setup/mcp/harness", data={"harness": str(plain)})
 
-    assert response.status_code == 400
+    # 200, not 400, for the same noSwap reason as the endpoint verification.
+    assert response.status_code == 200
     assert "is not executable" in response.text
     assert client.get("/api/agent/setup").json()["harness"] is None
 

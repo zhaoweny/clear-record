@@ -20,9 +20,9 @@
   {% if status.problems %}
   <div class="webhooks-problems">
     {% for problem in status.problems %}
-    {# The service's own wording, translated for display; the console never
-       restates the rule that raised it. #}
-    <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+    {# The service's own wording, shown verbatim: a runtime string with the path
+       embedded, not an extractable message ID, so tr() was a no-op. #}
+    <div class="webhooks-problem" role="alert">{{ problem }}</div>
     {% endfor %}
   </div>
   {% endif %}
@@ -42,7 +42,7 @@
         {% if endpoint.include_content %}&middot; {{ tr('content included') }}{% endif %}
       </div>
       {% for problem in endpoint.problems %}
-      <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+      <div class="webhooks-problem" role="alert">{{ problem }}</div>
       {% endfor %}
       {% if endpoint.last_delivery %}
       {% set last = endpoint.last_delivery %}

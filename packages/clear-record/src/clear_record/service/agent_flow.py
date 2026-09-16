@@ -183,7 +183,7 @@ def transcription_status(
     """Report transcription readiness without running the pipeline.
 
     Never downloads: a missing checkpoint is the ``model`` state, not a fetch.
-    Mirrors the backend/model choice in :func:`run_hello_check`, so the wizard
+    It is the backend/model choice :func:`run_hello_check` makes, so the wizard
     and the acceptance check cannot disagree about what is ready.
     """
     models_dir = resolve_models_dir(model_dir)
@@ -363,6 +363,7 @@ def run_hello_check(
         status = transcription_status(backends=backends, checkpoint=checkpoint)
         if status.state == LEG_BACKEND:
             # A ``backend`` state always carries the CLI's own finding.
+            assert status.message is not None
             return finding(LEG_BACKEND, status.message, tape=tape)
 
         backend_id = status.backend

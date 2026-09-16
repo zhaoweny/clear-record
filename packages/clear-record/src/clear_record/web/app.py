@@ -263,6 +263,20 @@ def resolve_web_locale(
     return i18n.resolve_locale(environ=environ)
 
 
+def render_download_error(exc: Exception) -> str:
+    """The download step error text: a seam ``Message``, else the raw fault.
+
+    ``download_transcription_model`` raises :class:`SetupError`, whose ``message``
+    is a translatable :class:`~clear_record.core.message.Message`; this boundary
+    renders it with ``tr`` the same way the other setup routes do. Any other
+    failure keeps the ``Type: text`` diagnostic, which is what a user pastes.
+    """
+    render = getattr(getattr(exc, "message", None), "render", None)
+    if render is not None:
+        return render(tr)
+    return f"{type(exc).__name__}: {exc}"
+
+
 def run_backend_choices() -> tuple[str, ...]:
     """The run form's backend ids: what this machine can run, then ``auto``.
 
@@ -1485,7 +1499,7 @@ def create_app(
         try:
             await run_in_threadpool(download_transcription_model, chosen)
         except Exception as exc:  # noqa: BLE001 - a failed download is a state
-            error = f"{type(exc).__name__}: {exc}"
+            error = render_download_error(exc)
         return TEMPLATES.TemplateResponse(
             request,
             "_setup_transcription.html",
@@ -1506,7 +1520,7 @@ def create_app(
         try:
             await run_in_threadpool(download_transcription_model, chosen)
         except Exception as exc:  # noqa: BLE001 - a failed download is a state
-            error = f"{type(exc).__name__}: {exc}"
+            error = render_download_error(exc)
         return TEMPLATES.TemplateResponse(
             request,
             "_settings_models.html",

@@ -1,6 +1,9 @@
 {# The project list: the workspace centerpiece and the project page switcher.
    A real link (`hx-boost` makes it fast; no JavaScript makes it a normal
    navigation). The counts are each row at-a-glance facts. #}
+{# A create-project refusal re-renders this list at 200 (htmx does not swap a
+   4xx), so the service's message has somewhere to land. #}
+{% if error %}<div class="run-error project-error" role="alert">{{ error }}</div>{% endif %}
 <ul class="projects" hx-boost="true">
   {% for row in projects %}
   <li>

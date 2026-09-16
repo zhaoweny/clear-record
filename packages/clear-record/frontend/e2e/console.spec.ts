@@ -47,9 +47,25 @@ test("creating a project adds it to the workspace", async ({ page }) => {
   await page.goto("/");
   // Unique per run: the suite deliberately reuses one seeded data dir.
   const name = `Design review ${Date.now()}`;
-  await page.getByPlaceholder("New project name").fill(name);
+  const field = page.getByPlaceholder("New project name");
+  await field.fill(name);
   await page.getByRole("button", { name: "Add project" }).click();
   await expect(page.locator("#projects .project", { hasText: name })).toBeVisible();
+  // Only a real success signals the form to clear (HX-Trigger).
+  await expect(field).toHaveValue("");
+  expect(errors).toEqual([]);
+});
+
+test("a refused project name stays in the form", async ({ page }) => {
+  const errors = watch(page);
+  await page.goto("/");
+  const field = page.getByPlaceholder("New project name");
+  await field.fill("   ");
+  await page.getByRole("button", { name: "Add project" }).click();
+  // The refusal re-renders #projects but carries no success signal, so the
+  // form is not replaced and keeps the whitespace-only name.
+  await expect(page.locator(".project-error")).toBeVisible();
+  await expect(field).toHaveValue("   ");
   expect(errors).toEqual([]);
 });
 

@@ -47,9 +47,10 @@
       {% endif %}
 
       {% for problem in setup.problems %}
-      {# The service's own wording, translated for display; the console never
-         restates the rule that raised it. #}
-      <div class="webhooks-problem" role="alert">{{ tr(problem) }}</div>
+      {# The service's own wording, shown verbatim: a config problem is a runtime
+         string (it embeds the config path), not an extractable message ID, so
+         wrapping it in tr() was a no-op. The console never restates the rule. #}
+      <div class="webhooks-problem" role="alert">{{ problem }}</div>
       {% endfor %}
 
       {% if setup.detection %}
@@ -87,7 +88,7 @@
              user's editable model field -- and no field markup the CSS scanner would
              read as a utility class. #}
           <form class="stack" hx-post="/ui/agent-setup/use" hx-target="#agent-setup"
-                hx-swap="innerHTML" hx-vals='{"endpoint": "{{ probe.candidate.base_url }}"}'>
+                hx-swap="innerHTML" hx-vals='{{ {"endpoint": probe.candidate.base_url} | tojson }}'>
             <input name="model" value="{{ probe.models[0] if probe.models else '' }}"
                    placeholder="{{ tr('model (optional)') }}">
             <button class="primary" type="submit">{{ tr("Verify and use") }}</button>
@@ -95,7 +96,7 @@
           {% endif %}
           {% if not setup.configured and probe.pull_supported %}
           <form class="stack" hx-post="/ui/agent-setup/pull" hx-target="#agent-setup"
-                hx-swap="innerHTML" hx-vals='{"endpoint": "{{ probe.candidate.base_url }}"}'>
+                hx-swap="innerHTML" hx-vals='{{ {"endpoint": probe.candidate.base_url} | tojson }}'>
             <input name="model" value="{{ default_model }}" placeholder="{{ tr('model to pull') }}">
             <button type="submit">{{ tr("Pull a small model") }}</button>
           </form>

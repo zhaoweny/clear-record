@@ -394,6 +394,79 @@ def test_ui_create_meeting_and_save_tapes(console, tmp_path) -> None:
     assert f"{tmp_path}/b.wav" in saved.text
 
 
+def test_an_empty_tape_set_re_renders_at_200(console, tmp_path) -> None:
+    """A bad tape set is a form mistake, not an htmx-invisible 4xx.
+
+    htmx does not swap a 4xx (base.html sets noSwap), so the refusal has to come
+    back at 200 carrying the service's message for the user to see it.
+    """
+    meeting = _make_meeting(console, tmp_path)
+
+    refused = console.client.post(
+        f"/ui/meetings/{meeting['id']}/tapes", data={"paths": ""}
+    )
+
+    assert refused.status_code == 200
+    assert "a recording set needs at least one tape" in refused.text
+
+
+def test_a_blank_project_name_re_renders_at_200(client) -> None:
+    """A blank name is a form mistake, not an htmx-invisible 409.
+
+    A duplicate *name* is deduplicated by slug, so the reachable ValueError on
+    this route is a whitespace-only name (the form's required flag lets it
+    through). Either way the refusal must come back at 200 (base.html's noSwap).
+    """
+    refused = client.post("/ui/projects", data={"name": "   "})
+
+    assert refused.status_code == 200
+    assert 'class="run-error project-error"' in refused.text
+    assert "must not be blank" in refused.text
+
+
+def test_the_other_ui_refusals_re_render_at_200(client) -> None:
+    """The remaining UI mutations obey the same noSwap rule."""
+
+    # A blank term, an invalid status and a blank title are all fixable form
+    # mistakes, so each re-renders its #detail fragment at 200 with the
+    # service's message (htmx does not swap a 4xx; base.html sets noSwap).
+    _make_project(client)
+
+    blank_term = client.post("/ui/projects/weekly-ops/glossary", data={"term": "   "})
+    assert blank_term.status_code == 200
+    assert 'class="run-error"' in blank_term.text
+    assert "term must not be blank" in blank_term.text
+
+    added = client.post("/ui/projects/weekly-ops/glossary", data={"term": "Falcon"})
+    assert added.status_code == 200
+    term_id = client.get("/api/projects/weekly-ops/glossary").json()[0]["id"]
+
+    bad_status = client.post(f"/ui/glossary/{term_id}/status", data={"status": "nope"})
+    assert bad_status.status_code == 200
+    assert 'class="run-error"' in bad_status.text
+    assert "status must be one of" in bad_status.text
+
+    blank_title = client.post("/ui/projects/weekly-ops/meetings", data={"title": "   "})
+    assert blank_title.status_code == 200
+    assert 'class="run-error"' in blank_title.text
+    assert "meeting title must not be blank" in blank_title.text
+
+
+def test_the_add_project_form_clears_only_on_a_real_success(client) -> None:
+    """The add-project form sits outside the #projects swap target."""
+
+    # The swap does not replace it, so it is cleared on a success signal rather
+    # than on any 2xx: the refusal re-render carries no HX-Trigger.
+    created = client.post("/ui/projects", data={"name": "Weekly Ops"})
+    assert created.status_code == 200
+    assert created.headers.get("HX-Trigger") == "project-created"
+
+    refused = client.post("/ui/projects", data={"name": "   "})
+    assert refused.status_code == 200
+    assert refused.headers.get("HX-Trigger") is None
+    assert "must not be blank" in refused.text
+
+
 def test_run_form_offers_only_this_machines_backends(
     console, tmp_path, monkeypatch
 ) -> None:

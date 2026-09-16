@@ -322,6 +322,9 @@ def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "The download did not finish: RuntimeError: no network" in response.text
+    # A failed download leaves state == "model", so the retry form still
+    # renders its size picker rather than an empty select.
+    assert response.text.count("<option value=") == 5
 
 
 def test_an_unknown_model_shows_the_translated_error(tmp_path, monkeypatch) -> None:

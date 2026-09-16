@@ -439,6 +439,17 @@ async def _receive_tape(
     ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
     so each caller maps it to its own shape (a re-render, or an HTTP status).
     """
+    # Accepted deviation from ADR-0024:67-71 (which decides multipart -> a sibling
+    # .part on the managed root, and defers only resumability): Starlette 1.6
+    # parses the multipart body first, and each *file part* over 1 MB spools to a
+    # SpooledTemporaryFile under the process TMPDIR before managed.upload_tape
+    # streams it to the managed .part. A large upload therefore holds its bytes
+    # in TMPDIR as well as on the managed root, and TMPDIR (unlike the managed
+    # root) is not covered by precheck_upload's free-space guard. The cost is
+    # accepted: precheck_upload still caps the declared size against the managed
+    # root before the body is read, and the .part writer maps ENOSPC to
+    # InsufficientSpace. Removing the TMPDIR copy needs true streaming, which the
+    # ADR does not yet decide (it defers resumability only).
     try:
         form = await request.form()
     except Exception as exc:  # noqa: BLE001 - a malformed body is a refusal
@@ -1505,7 +1516,14 @@ def create_app(
         return TEMPLATES.TemplateResponse(
             request,
             "_setup_transcription.html",
-            {"transcription": transcription_status(), "error": error},
+            {
+                "transcription": transcription_status(),
+                "error": error,
+                # A failed download leaves state == "model", so the retry form
+                # still renders; without these the select would have no options.
+                "model_ladder": MODEL_LADDER,
+                "default_model": DEFAULT_MODEL,
+            },
         )
 
     @app.post("/ui/settings/models/download", response_class=HTMLResponse)
@@ -1595,13 +1613,28 @@ def create_app(
 
     @app.post("/ui/projects", response_class=HTMLResponse)
     def ui_create_project(request: Request, name: str = Form(...)) -> HTMLResponse:
+        """Create a project, or re-render the list with the service's message.
+
+        An invalid name is a typo the user can fix in the form, so it re-renders
+        at 200: htmx does not swap a 4xx (base.html sets noSwap), and a 409 here
+        would make the failure invisible.
+        """
+        error = None
         try:
             registry.create_project(name)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return TEMPLATES.TemplateResponse(
-            request, "_projects.html", {"projects": project_rows(), "active_slug": None}
+            error = str(exc)
+        response = TEMPLATES.TemplateResponse(
+            request,
+            "_projects.html",
+            {"projects": project_rows(), "active_slug": None, "error": error},
         )
+        if error is None:
+            # The add-project form sits outside the #projects swap target, so the
+            # swap does not replace it. Signal a real success so it clears; a
+            # refusal carries no signal and keeps the user's text.
+            response.headers["HX-Trigger"] = "project-created"
+        return response
 
     @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
@@ -1714,19 +1747,24 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            # A bad term is fixable in the form, so re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, slug, tab="glossary", error=str(exc))
         return detail(request, slug, tab="glossary")
 
     @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
         request: Request, term_id: int, status: str = Form(...)
     ) -> HTMLResponse:
+        term = registry.get_term(term_id)
+        if term is None:
+            raise HTTPException(status_code=404, detail=f"no term {term_id}")
         try:
             term = registry.update_term(term_id, status=status)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # An invalid status is fixable in the form; re-render the tab with
+            # the service's message at 200 (htmx does not swap a 4xx).
+            return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
     @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
@@ -1768,7 +1806,9 @@ def create_app(
             # re-render the tab with the service's message.
             return detail(request, slug, tab="meetings", error=str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            # A bad title is fixable in the form; re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, slug, tab="meetings", error=str(exc))
         return detail(request, slug, tab="meetings")
 
     @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
@@ -1782,7 +1822,9 @@ def create_app(
         try:
             registry.set_recording_set(meeting_id, tapes)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # A tape set is fixable in the form, so re-render the tab with the
+            # service's message at 200 (htmx does not swap a 4xx; see base.html).
+            return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
     @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
@@ -1992,7 +2034,6 @@ def create_app(
         detection: Detection | None = None,
         error: str | None = None,
         notice: str | None = None,
-        status_code: int = 200,
         part: str = "agent",
     ) -> HTMLResponse:
         """The setup panel: the service's state, plus whatever a step just did.
@@ -2023,7 +2064,6 @@ def create_app(
                 # idle state and the POST below swaps a result in.
                 "check": None,
             },
-            status_code=status_code,
         )
 
     @app.get("/ui/agent-setup", response_class=HTMLResponse)
@@ -2060,15 +2100,13 @@ def create_app(
                     if verification.detail is not None
                     else tr("The endpoint did not answer a test call.")
                 )
-                return agent_setup_panel(request, error=shown, status_code=400)
+                return agent_setup_panel(request, error=shown)
             path = write_agent_settings(
                 endpoint, model=model or None, api_key_env=api_key_env or None
             )
             refresh_agent_config()
         except SetupError as exc:
-            return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
-            )
+            return agent_setup_panel(request, error=exc.message.render(tr))
         return agent_setup_panel(
             request,
             notice=tr(
@@ -2098,7 +2136,7 @@ def create_app(
                 if pulled.detail is not None
                 else tr("The model could not be pulled.")
             )
-            return agent_setup_panel(request, error=shown, status_code=400)
+            return agent_setup_panel(request, error=shown)
         verification = verify_endpoint(endpoint, model=pulled.model)
         if not verification.ok:
             shown = (
@@ -2106,14 +2144,12 @@ def create_app(
                 if verification.detail is not None
                 else tr("The endpoint did not answer a test call.")
             )
-            return agent_setup_panel(request, error=shown, status_code=400)
+            return agent_setup_panel(request, error=shown)
         try:
             write_agent_settings(endpoint, model=pulled.model)
             refresh_agent_config()
         except SetupError as exc:
-            return agent_setup_panel(
-                request, error=exc.message.render(tr), status_code=400
-            )
+            return agent_setup_panel(request, error=exc.message.render(tr))
         return agent_setup_panel(
             request,
             notice=tr("Pulled {model} and recorded it.", model=pulled.model),
@@ -2137,10 +2173,7 @@ def create_app(
             pointed = resolve_harness(harness)
         except SetupError as exc:
             return agent_setup_panel(
-                request,
-                part=panel_part,
-                error=exc.message.render(tr),
-                status_code=400,
+                request, part=panel_part, error=exc.message.render(tr)
             )
         remember_harness(pointed)
         return agent_setup_panel(
@@ -2173,10 +2206,7 @@ def create_app(
             path = write_mcp_config(config)
         except SetupError as exc:
             return agent_setup_panel(
-                request,
-                part=panel_part,
-                error=exc.message.render(tr),
-                status_code=400,
+                request, part=panel_part, error=exc.message.render(tr)
             )
         return agent_setup_panel(
             request,

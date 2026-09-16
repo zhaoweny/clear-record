@@ -127,6 +127,9 @@ def test_the_panel_offers_an_upload_built_from_the_service_allow_list(client) ->
     assert "htmx:finally:request" in panel.text
     assert "htmx:xhr:progress" not in panel.text
     assert "hx-preserve" in panel.text
+    # htmx preserve keys on the element id; without one the attribute is inert
+    # and the chosen file is lost on the storage re-render.
+    assert f'id="upload-file-{meeting["id"]}"' in panel.text
 
 
 def test_a_user_chosen_meeting_has_no_upload_and_says_why(client, tmp_path) -> None:

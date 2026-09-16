@@ -1,18 +1,34 @@
 """Supervise the local console as an in-process background server.
 
 Deliberately **Qt-free**: the tray icon is a thin shell over this, so the
-supervision logic (start, wait-until-ready, stop) is testable without a display
-— and reusable by a future `clear-record serve --supervise` on a headless node.
+supervision logic (start, wait-until-ready, live state, stop, restart) is
+testable without a display — and reusable by a future
+`clear-record serve --supervise` on a headless node.
 """
 
 from __future__ import annotations
 
+import enum
 import threading
 import urllib.error
 import urllib.request
 
 from clear_record.service import Registry
 from clear_record.web.app import create_app
+
+
+class ServiceState(enum.StrEnum):
+    """What the supervised server is doing **right now**.
+
+    ``STOPPED`` — no supervisor thread is alive (never started, stopped, or the
+    server thread died, e.g. the port was taken). ``RUNNING`` — the thread is
+    alive and the health endpoint answers. ``UNREACHABLE`` — the thread is alive
+    but the health endpoint does not answer (still starting, or wedged).
+    """
+
+    STOPPED = "stopped"
+    RUNNING = "running"
+    UNREACHABLE = "unreachable"
 
 
 class ServiceController:
@@ -77,6 +93,18 @@ class ServiceController:
         except (urllib.error.URLError, OSError):
             return False
 
+    def state(self) -> ServiceState:
+        """The live state, probed now — never a start-time snapshot.
+
+        The tray reads this on a timer, so it must stay cheap and must not
+        cache: a server that died after startup has to read as stopped. The
+        health probe is the only liveness signal, so it has to remain
+        answerable without a credential (see the health route).
+        """
+        if not self.running:
+            return ServiceState.STOPPED
+        return ServiceState.RUNNING if self.healthy() else ServiceState.UNREACHABLE
+
     def stop(self, timeout: float = 10.0) -> None:
         if self._server is not None:
             self._server.should_exit = True
@@ -85,5 +113,17 @@ class ServiceController:
             self._thread = None
         self._server = None
 
+    def restart(self, timeout: float = 15.0) -> bool:
+        """Stop the server and start it again on the same URL.
 
-__all__ = ["ServiceController"]
+        Blocks until the old server releases the port (typically well under a
+        second; ``timeout`` bounds a wedged one), so the caller is the tray's
+        explicit restart action, not the poll timer. Returns whether the
+        console answered again before ``timeout``.
+        """
+        self.stop(timeout)
+        self.start()
+        return self.wait_until_ready(timeout=timeout)
+
+
+__all__ = ["ServiceController", "ServiceState"]

@@ -142,6 +142,10 @@ honestly assert:
 - [DECISION] The **agent-answers** leg is proven on demand by the optional,
   bring-your-own-key (BYOK) `just agent-drive` workflow (ticket 07), not by the
   console check.
+- [FACT] The tape's provenance (engine, language, voice, spoken phrase, and any
+  English fallback) is **surfaced on the result**; the scratch workspace is wiped
+  and recreated each run, so nothing is persisted. This narrows the earlier
+  "the generated tape records its provenance" clause to what the code does.
 - [DECISION] The **same** check is the permanent diagnostic at Settings → Status;
   `/setup/agent` and `/settings/agent` render the one four-stage flow
   (Endpoint → Harness → MCP config → Try it).

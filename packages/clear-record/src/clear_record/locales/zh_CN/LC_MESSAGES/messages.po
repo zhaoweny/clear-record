@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 09:40+0800\n"
+"POT-Creation-Date: 2026-09-16 10:13+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -249,25 +249,25 @@ msgstr "SpeechTranscriber 报告本机上的设备端模型不可用"
 msgid "Apple SpeechTranscriber (macOS 26+, on-device)"
 msgstr "Apple SpeechTranscriber（macOS 26+，设备端）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:719
+#: packages/clear-record/src/clear_record/providers/backends.py:732
 #, python-brace-format
 msgid "requires {target} (this is {host})"
 msgstr "需要 {target}（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:726
+#: packages/clear-record/src/clear_record/providers/backends.py:739
 msgid "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
 msgstr "在 PATH 上找不到 whisper-cli（请设置 CR_WHISPER_CLI）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:735
+#: packages/clear-record/src/clear_record/providers/backends.py:748
 #, python-brace-format
 msgid "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
 msgstr "找不到 ggml {families} 插件（参见 CR_GGML_BACKEND_DIRS）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:742
+#: packages/clear-record/src/clear_record/providers/backends.py:755
 msgid "no matching GPU device found"
 msgstr "找不到匹配的 GPU 设备"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:748
+#: packages/clear-record/src/clear_record/providers/backends.py:761
 #, python-brace-format
 msgid "whisper-cli + ggml {families} plugin"
 msgstr "whisper-cli + ggml {families} 插件"
@@ -282,23 +282,23 @@ msgstr ""
 "下载的模型 {name} 未通过 SHA-256 校验（期望 {expected}，实际 {actual}）；已将其丢弃。请重试下载，或设置 "
 "{env}=off，以不校验的方式接受该端点返回的原始数据。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:273
+#: packages/clear-record/src/clear_record/service/agent_flow.py:284
 #, python-brace-format
 msgid "transcription failed: {detail}"
 msgstr "转写失败：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:328
+#: packages/clear-record/src/clear_record/service/agent_flow.py:339
 #, python-brace-format
 msgid ""
 "the system voice ran but produced no audio ({detail}), so the hello-world"
 " tape could not be created"
 msgstr "系统语音已运行但没有产生音频（{detail}），因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:336
+#: packages/clear-record/src/clear_record/service/agent_flow.py:347
 msgid "no system voice is installed, so the hello-world tape could not be created"
 msgstr "本机未安装系统语音，因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:358
+#: packages/clear-record/src/clear_record/service/agent_flow.py:369
 #, python-brace-format
 msgid ""
 "no transcription model is on disk at {models_dir}; the first "
@@ -306,11 +306,11 @@ msgid ""
 "the check again"
 msgstr "{models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:404
+#: packages/clear-record/src/clear_record/service/agent_flow.py:415
 msgid "transcription produced no segments, so there is no transcript to show"
 msgstr "转写没有产生任何片段，因此没有可显示的转写文本。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:417
+#: packages/clear-record/src/clear_record/service/agent_flow.py:428
 msgid ""
 "the hello-world tape ran through ingest and transcription; the transcript"
 " is below"
@@ -347,89 +347,89 @@ msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型�
 msgid "a run needs a workspace directory before --auto can probe the tape"
 msgstr "在 --auto 探测录音之前，运行需要一个工作区目录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:253
+#: packages/clear-record/src/clear_record/service/managed.py:254
 #, python-brace-format
 msgid "{name!r} is not an audio tape; allowed extensions: {extensions}"
 msgstr "{name!r} 不是音频录音；允许的扩展名：{extensions}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:265
+#: packages/clear-record/src/clear_record/service/managed.py:266
 #, python-brace-format
 msgid "refusing to write to the symlink {path}"
 msgstr "拒绝写入符号链接 {path}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:319
+#: packages/clear-record/src/clear_record/service/managed.py:320
 msgid ""
 "the disk filled while writing the upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:409
+#: packages/clear-record/src/clear_record/service/managed.py:410
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:430
+#: packages/clear-record/src/clear_record/service/managed.py:431
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:437
+#: packages/clear-record/src/clear_record/service/managed.py:438
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:449
+#: packages/clear-record/src/clear_record/service/managed.py:450
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:456
+#: packages/clear-record/src/clear_record/service/managed.py:457
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
 #: packages/clear-record/src/clear_record/service/managed.py:462
 #, python-brace-format
-msgid "refusing the filename {name!r}: it is longer than 255 characters"
-msgstr "拒绝文件名 {name!r}：长度超过 255 个字符"
+msgid "refusing the filename {name!r}: it is longer than 255 bytes"
+msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:483
+#: packages/clear-record/src/clear_record/service/managed.py:482
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:526
+#: packages/clear-record/src/clear_record/service/managed.py:525
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:546
+#: packages/clear-record/src/clear_record/service/managed.py:545
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:559
+#: packages/clear-record/src/clear_record/service/managed.py:566
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:634
+#: packages/clear-record/src/clear_record/service/managed.py:641
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:645
+#: packages/clear-record/src/clear_record/service/managed.py:652
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -439,22 +439,22 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:658
+#: packages/clear-record/src/clear_record/service/managed.py:665
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
 "and this node cannot resume one; start again with a new upload id"
 msgstr "ID 为 {id!r} 的上传正在进行或已中断，而此节点无法续传；请使用新的上传 ID 重新开始"
 
-#: packages/clear-record/src/clear_record/service/runs.py:271
+#: packages/clear-record/src/clear_record/service/runs.py:281
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:277
+#: packages/clear-record/src/clear_record/service/runs.py:287
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:281
+#: packages/clear-record/src/clear_record/service/runs.py:291
 msgid "a run is already in flight for this meeting"
 msgstr "此会议已有一个正在进行的运行"
 
@@ -1654,7 +1654,9 @@ msgid ""
 "Downloading a size puts that checkpoint on disk. --auto uses the largest "
 "checkpoint already on disk that fits this machine; a specific size is "
 "forced per run. Downloads are verified against a pinned checksum."
-msgstr "下载某个规格会把对应检查点放到磁盘上。--auto 会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
+msgstr ""
+"下载某个规格会把对应检查点放到磁盘上。--auto "
+"会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:23

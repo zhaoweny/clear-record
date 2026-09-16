@@ -121,6 +121,38 @@ def test_rearchiving_creates_a_new_directory(tmp_path, monkeypatch) -> None:
     assert len(registry.list_archives(meeting.id)) == 2
 
 
+def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> None:
+    """A name another archive won between the probe and mkdir is retried, not deleted."""
+    from clear_record.service import archive as archive_mod
+
+    registry, meeting, _tape, _record, root = _seeded(tmp_path)
+    winner = root / "ops" / "20260914-120000-kickoff"
+    winner.mkdir(parents=True)
+    (winner / MANIFEST_FILENAME).write_text('{"winner": true}', encoding="utf-8")
+
+    calls = {"n": 0}
+    real = archive_mod._archive_dir
+
+    def racy(root_path, meeting, timestamp):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return winner
+        return real(root_path, meeting, timestamp)
+
+    monkeypatch.setattr(archive_mod, "_archive_dir", racy)
+
+    archive = archive_meeting(registry, meeting)
+
+    # The concurrent winner is byte-for-byte untouched...
+    assert (winner / MANIFEST_FILENAME).read_text(
+        encoding="utf-8"
+    ) == '{"winner": true}'
+    # ...and this archive landed beside it, under a free name.
+    assert Path(archive.root_path) != winner
+    assert Path(archive.root_path).parent == winner.parent
+    assert verify_archive(Path(archive.root_path))["ok"] is True
+
+
 def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     registry, meeting, _tape, _record, _root = _seeded(tmp_path)
     archive = archive_meeting(registry, meeting)

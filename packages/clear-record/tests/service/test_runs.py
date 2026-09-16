@@ -326,6 +326,26 @@ def test_failed_run_is_recorded(tmp_path) -> None:
     assert registry.list_artifacts(meeting.id) == []
 
 
+def test_a_failure_around_the_pipeline_still_fails_the_meeting(tmp_path) -> None:
+    """An error outside the pipeline's own try must not leave the meeting running."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    def boom(meeting, run_id):
+        raise RuntimeError("artifact registration exploded")
+
+    manager._register_artifacts = boom  # type: ignore[method-assign]
+
+    state = manager.wait(manager.start(meeting).id, timeout=10)
+
+    assert state.status == "failed"
+    assert registry.meeting_by_id(meeting.id).status == "failed"
+
+
 def test_run_requires_a_workspace_and_a_tape_set(tmp_path) -> None:
     registry = _registry(tmp_path)
     registry.create_project("Ops")

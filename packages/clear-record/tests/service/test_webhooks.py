@@ -319,6 +319,17 @@ def test_an_endpoint_filters_events_and_an_empty_emitter_is_inert() -> None:
     inert.close()
 
 
+def test_status_is_not_ok_before_any_delivery() -> None:
+    """A configured endpoint that has never sent is its own state, not 'ok'."""
+    emitter = WebhookEmitter([WebhookEndpoint(url="http://127.0.0.1:1/hook")])
+    try:
+        status = emitter.status()
+    finally:
+        emitter.close(timeout=5)
+    assert status.endpoints[0].health == "no_delivery_yet"
+    assert status.state == "no_delivery_yet"
+
+
 # --- run events ------------------------------------------------------------- #
 
 

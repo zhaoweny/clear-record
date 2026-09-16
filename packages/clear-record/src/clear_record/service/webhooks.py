@@ -233,8 +233,9 @@ class WebhookStatus:
     - ``"config_problem"`` — resolving the config found a problem; delivery is
       off entirely or affected for one endpoint. This is the state a malformed
       config used to hide in.
-    - ``"delivery_failed"`` / ``"ok"`` — the config is valid, so the newest
-      delivery outcome decides.
+    - ``"delivery_failed"`` / ``"no_delivery_yet"`` / ``"ok"`` — the config is
+      valid, so the delivery history decides: a failure, nothing delivered yet,
+      or a success.
 
     ``problems`` is :attr:`WebhookEmitter.problems` verbatim — the same surface
     that already warns on stderr, never a recomputation.
@@ -245,13 +246,19 @@ class WebhookStatus:
 
     @property
     def state(self) -> str:
-        """``not_configured`` / ``config_problem`` / ``delivery_failed`` / ``ok``."""
+        """``not_configured`` / ``config_problem`` / ``delivery_failed`` / ``no_delivery_yet`` / ``ok``."""
         if not self.endpoints and not self.problems:
             return "not_configured"
         if self.problems:
             return "config_problem"
         if any(report.health == "delivery_failed" for report in self.endpoints):
             return "delivery_failed"
+        if self.endpoints and all(
+            report.last_delivery is None for report in self.endpoints
+        ):
+            # A configured endpoint that has never sent is its own silence;
+            # "ok" would claim a success that has not happened.
+            return "no_delivery_yet"
         return "ok"
 
 

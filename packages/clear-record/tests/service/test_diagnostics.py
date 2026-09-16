@@ -64,13 +64,30 @@ def test_hashes_are_stable_and_keep_the_path_shape() -> None:
 
 def test_redact_text_covers_paths_and_bare_filenames() -> None:
     redacted = diagnostics.redact_text(
-        "source /home/bob/secret take1.wav and notes.txt"
+        "source /home/bob/secret take1.wav; and notes.txt"
     )
     assert "bob" not in redacted
     assert "secret" not in redacted
     assert "take1" not in redacted
     assert "notes" not in redacted
     assert ".wav" in redacted and ".txt" in redacted
+
+
+def test_redact_text_hashes_a_component_that_contains_a_space() -> None:
+    redacted = diagnostics.redact_text("/home/alice/Private Meeting/take 1.wav")
+    assert "alice" not in redacted
+    assert "Private" not in redacted and "Meeting" not in redacted
+    assert "take" not in redacted
+    assert redacted.endswith(".wav")
+
+
+def test_redact_text_does_not_leak_prose_after_a_path() -> None:
+    redacted = diagnostics.redact_text(
+        "cannot open /home/alice/notes.txt because it is locked"
+    )
+    assert "alice" not in redacted
+    assert "notes" not in redacted
+    assert "because" not in redacted
 
 
 def test_bundle_redacts_private_material(tmp_path) -> None:
@@ -119,6 +136,38 @@ def test_bundle_redacts_private_material(tmp_path) -> None:
     assert diagnostics.hash_component(private_file) in text
     assert diagnostics.hash_component("PRIVATE-MEETING") in text
     assert "NOT TELEMETRY" in text
+
+
+def test_bundle_redacts_a_model_path_in_the_run_section() -> None:
+    model = "/Users/alice/private/ggml-base.bin"
+    facts = diagnostics.BundleFacts(
+        version="0.2.0",
+        python="3.14.0",
+        platform="TestOS",
+        machine="x86_64",
+        backends={},
+        options={},
+        run={"run_id": 1, "status": "done", "model": model},
+        include_private=False,
+    )
+    text = diagnostics.build_bundle(facts)
+    assert model not in text
+    assert "/Users/alice" not in text
+
+
+def test_bundle_redacts_a_separator_free_glossary_filename() -> None:
+    facts = diagnostics.BundleFacts(
+        version="0.2.0",
+        python="3.14.0",
+        platform="TestOS",
+        machine="x86_64",
+        backends={},
+        options={"glossary": "tuned.txt"},
+        include_private=False,
+    )
+    text = diagnostics.build_bundle(facts)
+    assert "tuned.txt" not in text
+    assert diagnostics.hash_component("tuned.txt") in text
 
 
 def test_collection_never_reads_transcript_audio_or_glossary_by_default(

@@ -83,8 +83,8 @@ def read_transcript(
 ) -> TranscriptSlice:
     """Read a meeting's transcript text, optionally sliced by segment index.
 
-    ``offset`` skips that many segments and ``limit`` caps the page; both are
-    the natural paging cursor an agent uses on a long tape. A reconciled record
+    ``offset`` skips that many segments and ``limit`` caps the page (at least 1 when
+    given); both are the natural paging cursor an agent uses on a long tape. A reconciled record
     with segments is preferred; otherwise the raw per-source segments are
     merged onto one timeline. Raises :class:`FileNotFoundError` when the
     workspace has neither file (no run has produced a transcript yet).
@@ -110,8 +110,8 @@ def read_transcript(
 
     total = len(segments)
     start = max(0, offset)
-    if limit is not None and limit < 0:
-        raise ValueError("limit must not be negative")
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
     end = total if limit is None else start + limit
     page = segments[start:end]
     following = start + len(page)

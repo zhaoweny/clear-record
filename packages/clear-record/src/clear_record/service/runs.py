@@ -145,6 +145,11 @@ class RunManager:
     One run **executing** per node (the queue), and no more than one
     **enqueued or running** run per meeting (the dedupe). Both are read from the
     registry, so a restart cannot break either invariant.
+
+    One manager owns a console process (ADR-0013). The scheduler and the live
+    set are process-local, so opening a second manager over the same registry is
+    not supported and would reconcile that process's in-flight run to
+    interrupted.
     """
 
     def __init__(
@@ -162,9 +167,10 @@ class RunManager:
         #: Serializes event appends from a run's worker threads (a chunk pool
         #: reports from several at once), so the persisted stream has one order.
         self._events_lock = threading.Lock()
-        #: Runs this process is executing, so startup reconciliation never
-        #: interrupts a run that is alive (relevant when a second manager is
-        #: opened over the same registry in-process).
+        #: Runs this process is executing, so a waiter does not return on a
+        #: run's terminal status before its synchronous effects finish. Local to
+        #: one manager by design (single-manager console per ADR-0013); it is not
+        #: shared with another manager over the same registry.
         self._live: set[int] = set()
         #: Meeting + options for runs enqueued in this process, so a live run
         #: does not pay to re-read what it just wrote.
@@ -184,6 +190,10 @@ class RunManager:
         ``error``) and logged; a meeting left ``running`` follows its run. Then
         the queue is drained, so **queued** work from a previous process is not
         lost by the restart.
+
+        Startup-only: :meth:`__init__` calls this before any run of this manager
+        is live, and one manager owns a process (ADR-0013); a second manager over
+        the same registry is the unsupported case the live guard cannot cover.
         """
         interrupted: list[int] = []
         for run in self._registry.runs_with_status("running"):
@@ -458,6 +468,9 @@ class RunManager:
                     error=error,
                     progress=self._progress(run.id, "failed", error),
                 )
+                # The pipeline's own failure path sets this; a failure raised
+                # around that path must not leave the meeting "running".
+                self._registry.set_meeting_status(run.meeting_id, "failed")
             except Exception:  # noqa: BLE001 - the registry is the last resort
                 pass
             log_event(

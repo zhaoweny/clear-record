@@ -300,13 +300,9 @@ class CommandRunner(Runner):
         template = template.strip()
         if not template:
             raise AgentConfigError("command template must not be blank")
-        unknown = _unknown_placeholders(template)
-        if unknown:
-            raise AgentConfigError(
-                f"command template has unknown placeholder(s) "
-                f"{', '.join(sorted(unknown))}; allowed: "
-                f"{', '.join(COMMAND_PLACEHOLDERS)}"
-            )
+        problem = _template_problem(template)
+        if problem is not None:
+            raise AgentConfigError(f"command template {problem}")
         self.template = template
         self.model = label or None
         self.timeout = timeout
@@ -368,15 +364,34 @@ class CommandRunner(Runner):
         return RunnerOutput(text=text, model=self.model)
 
 
-def _unknown_placeholders(template: str) -> set[str]:
-    """Template fields outside :data:`COMMAND_PLACEHOLDERS` (a malformed template)."""
-    unknown: set[str] = set()
-    for _literal, field_name, _spec, _conversion in string.Formatter().parse(template):
-        if field_name is None:
-            continue
-        if field_name not in COMMAND_PLACEHOLDERS:
-            unknown.add(field_name)
-    return unknown
+def _template_problem(template: str) -> str | None:
+    """Why a command template is malformed, or None when it is usable.
+
+    Two failures, both returned as data so a config typo reads as "why is my
+    agent not running?" rather than a traceback escaping the load:
+
+    - a format string string.Formatter.parse cannot read (a stray "{" or
+      "}"), which raises ValueError; the seam documents that a malformed
+      template is an AgentConfigError, and load_agent_config says it never
+      raises at all;
+    - a field name outside COMMAND_PLACEHOLDERS.
+    """
+    try:
+        unknown = {
+            field_name
+            for _literal, field_name, _spec, _conversion in string.Formatter().parse(
+                template
+            )
+            if field_name is not None and field_name not in COMMAND_PLACEHOLDERS
+        }
+    except ValueError as exc:
+        return f"is not a valid format string ({exc})"
+    if unknown:
+        return (
+            f"has unknown placeholder(s) {', '.join(sorted(unknown))}; "
+            f"allowed: {', '.join(COMMAND_PLACEHOLDERS)}"
+        )
+    return None
 
 
 # --- provenance and the draft ----------------------------------------------- #
@@ -473,7 +488,7 @@ def run_task(
         raise AgentTaskError(f"{task.kind}: the task declares no pipeline steps")
     payload = canonical_payload(task)
     context_digest = context_hash(task)
-    prompt_digest = prompt_hash(steps)
+    prompt_digest = prompt_hash(steps, task.kind)
     started_at = clock()
     run_id = _run_id(task.kind, context_digest, prompt_digest, started_at)
     run_dir = Path(out_dir) / f"{task.kind}-{run_id}"
@@ -755,12 +770,9 @@ def _commands(raw: object, source: str) -> tuple[dict[str, str], tuple[str, ...]
         if not isinstance(template, str) or not template.strip():
             problems.append(f"{source}: agent.commands.{kind} must be a string")
             continue
-        unknown = _unknown_placeholders(template)
-        if unknown:
-            problems.append(
-                f"{source}: agent.commands.{kind} has unknown placeholder(s) "
-                f"{', '.join(sorted(unknown))}"
-            )
+        problem = _template_problem(template)
+        if problem is not None:
+            problems.append(f"{source}: agent.commands.{kind} {problem}")
             continue
         commands[kind] = template.strip()
     return commands, tuple(problems)

@@ -347,8 +347,6 @@ def _promote_glossary(
     *,
     registry: Registry,
     meeting: Meeting,
-    workspace: Path,
-    clock: Callable[[], str],
 ) -> dict:
     """The proposed terms become **candidate** registry terms (never confirmed)."""
     value = draft.value if isinstance(draft.value, dict) else {}
@@ -386,8 +384,6 @@ def _promote_transcript_check(
     *,
     registry: Registry,
     meeting: Meeting,
-    workspace: Path,
-    clock: Callable[[], str],
 ) -> dict:
     """Write the corrected revision as a **new** file plus its change list."""
     value = draft.value if isinstance(draft.value, dict) else {}
@@ -423,8 +419,6 @@ def _promote_minutes(
     *,
     registry: Registry,
     meeting: Meeting,
-    workspace: Path,
-    clock: Callable[[], str],
 ) -> dict:
     """Write the Markdown minutes and register them as the meeting's artifact."""
     value = draft.value if isinstance(draft.value, dict) else {}
@@ -468,14 +462,8 @@ def promote_draft(
         raise PromotionError(
             deferred("no promotion is defined for task kind {kind}"), kind=draft.kind
         )
-    workspace = _agent_dir(meeting)
-    summary = promoter(
-        draft,
-        registry=registry,
-        meeting=meeting,
-        workspace=workspace,
-        clock=clock,
-    )
+    _agent_dir(meeting)  # refuses a meeting with no workspace
+    summary = promoter(draft, registry=registry, meeting=meeting)
     promotion = {"kind": draft.kind, "at": clock(), "summary": summary}
     document = json.loads(draft.provenance_path.read_text(encoding="utf-8"))
     document["review_state"] = "accepted"

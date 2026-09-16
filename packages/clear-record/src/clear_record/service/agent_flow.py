@@ -51,7 +51,7 @@ from clear_record.service.auto import (
 from clear_record.service.hello_tape import HelloTape, write_hello_tape
 from clear_record.service.models import Meeting
 from clear_record.service.paths import resolve_models_dir, resolve_state_dir
-from clear_record.service.setup import mcp_server_entry, read_setup_state
+from clear_record.service.setup import SetupError, mcp_server_entry, read_setup_state
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 
 #: The legs the check reports. ``ok`` means the transcript was produced; the
@@ -157,6 +157,8 @@ class TranscriptionStatus:
     or ``model`` (the backend needs a checkpoint and none is on disk). It is the
     decision :func:`run_hello_check` makes before it transcribes, exposed on its
     own so the setup wizard can state readiness instead of describing theory.
+    ``message`` is the CLI's own finding for a ``backend`` state, so the
+    acceptance check reports the same words the resolver chose.
     """
 
     state: str
@@ -164,6 +166,7 @@ class TranscriptionStatus:
     model: str | None
     models_dir: str
     models_present: tuple[str, ...]
+    message: Message | None = None
 
     @property
     def ready(self) -> bool:
@@ -187,8 +190,10 @@ def transcription_status(
     present = tuple(sorted(path.name for path in model_paths_on_disk(model_dir)))
     try:
         choice = _auto.resolve_backend(backends())
-    except _auto.NoBackendAvailable:
-        return TranscriptionStatus(LEG_BACKEND, None, None, str(models_dir), present)
+    except _auto.NoBackendAvailable as exc:
+        return TranscriptionStatus(
+            LEG_BACKEND, None, None, str(models_dir), present, exc.message
+        )
     backend_id = choice.backend
     if backend_id == _auto.APPLE_SPEECH_BACKEND_ID:
         return TranscriptionStatus(LEG_OK, backend_id, None, str(models_dir), present)
@@ -224,8 +229,11 @@ def download_transcription_model(
     from clear_record.cli import stages
 
     if model is not None and model not in MODEL_LADDER:
-        raise ValueError(
-            f"unknown model {model!r}; expected one of {chr(44).join(MODEL_LADDER)}"
+        raise SetupError(
+            Message(
+                deferred("unknown model {model!r}; expected one of {known}"),
+                (("model", model), ("known", ", ".join(MODEL_LADDER))),
+            )
         )
     if model is not None:
         # A named model is a ggml checkpoint request, whatever backend is
@@ -350,32 +358,29 @@ def run_hello_check(
                 )
             return finding(LEG_TTS, message)
 
-        # 2. An ASR backend, in the CLI's own native-first preference order.
-        try:
-            choice = _auto.resolve_backend(backends())
-        except _auto.NoBackendAvailable as exc:
-            return finding(LEG_BACKEND, exc.message, tape=tape)
+        # 2. Transcription readiness, from the wizard's own resolver, so the
+        #    wizard and this check cannot disagree about what is ready.
+        status = transcription_status(backends=backends, checkpoint=checkpoint)
+        if status.state == LEG_BACKEND:
+            # A ``backend`` state always carries the CLI's own finding.
+            return finding(LEG_BACKEND, status.message, tape=tape)
 
-        backend_id = choice.backend
-        model_free = backend_id == _auto.APPLE_SPEECH_BACKEND_ID
-        model: str | None = None
-        if not model_free:
-            found = checkpoint()
-            if found is None:
-                return finding(
-                    LEG_MODEL,
-                    Message(
-                        deferred(
-                            "no transcription model is on disk at {models_dir}; "
-                            "the first transcription run downloads one, or place a "
-                            "checkpoint there, then run the check again"
-                        ),
-                        (("models_dir", str(resolve_models_dir())),),
+        backend_id = status.backend
+        model: str | None = status.model
+        if status.state == LEG_MODEL:
+            return finding(
+                LEG_MODEL,
+                Message(
+                    deferred(
+                        "no transcription model is on disk at {models_dir}; "
+                        "the first transcription run downloads one, or place a "
+                        "checkpoint there, then run the check again"
                     ),
-                    tape=tape,
-                    backend=backend_id,
-                )
-            model = str(found)
+                    (("models_dir", status.models_dir),),
+                ),
+                tape=tape,
+                backend=backend_id,
+            )
 
         # 3. Ingest -> transcribe, and read the transcript the same way the MCP
         #    tool and the review do.

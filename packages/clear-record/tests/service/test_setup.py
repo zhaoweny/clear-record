@@ -388,6 +388,23 @@ def test_the_version_marker_is_an_allowed_non_secret_fact(tmp_path) -> None:
         setup.update_setup_state(path=record, seen="1.2.3")
 
 
+def test_forgetting_the_marker_writes_no_file_when_none_exists(tmp_path) -> None:
+    """Regression: it used to create an empty agent-setup.json on the click."""
+    absent = tmp_path / "state.json"
+
+    assert setup.clear_seen_version(path=absent) == {}
+    assert not absent.exists()
+
+
+def test_forgetting_the_marker_keeps_every_other_recorded_fact(tmp_path) -> None:
+    record = tmp_path / "state.json"
+    setup.update_setup_state(path=record, seen_version="1.2.3", model="m")
+
+    setup.clear_seen_version(path=record)
+
+    assert setup.read_setup_state(path=record) == {"model": "m"}
+
+
 def test_setup_incomplete_is_the_marker_compared_with_the_current_version() -> None:
     assert setup.setup_incomplete(state={}, version="1.2.3") is True
     seen = {"seen_version": "1.2.3"}

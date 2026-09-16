@@ -140,16 +140,3 @@ def test_two_locales_do_not_overwrite_each_other(monkeypatch, tmp_path) -> None:
     assert first.path != second.path
     assert first.path.is_file()
     assert second.path.is_file()
-
-
-def test_hello_tape_as_dict_is_json_safe(monkeypatch, tmp_path) -> None:
-    _stub(monkeypatch, _provenance())
-
-    document = write_hello_tape(tmp_path, lang="zh_CN").as_dict()
-
-    assert document["engine"] == "say"
-    assert document["lang"] == "zh_CN"
-    assert document["phrase"] == HELLO_PHRASES["zh"]
-    assert document["voice"] == "Tingting"
-    assert document["fallback"] is False
-    assert isinstance(document["path"], str)

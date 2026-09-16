@@ -995,12 +995,14 @@ def clear_seen_version(*, path: str | Path | None = None) -> dict:
     """Forget the marker, so the Setup link returns and the wizard re-opens.
 
     The Settings -> Status walk-setup-again action. No other key changes, and
-    the write is the same JSON record DISMISS and COMPLETE use.
+    the write is the same JSON record DISMISS and COMPLETE use. A record that
+    does not exist is left absent: forgetting a marker writes no file.
     """
+    target = Path(path) if path is not None else setup_state_path()
+    if not target.is_file():
+        return {}
     document = read_setup_state(path=path)
     document.pop("seen_version", None)
-    target = Path(path) if path is not None else setup_state_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-16 09:40+0800\n"
+"POT-Creation-Date: 2026-09-16 10:12+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -225,54 +225,131 @@ msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:490
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:500
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:233
+#, python-brace-format
+msgid "Apple SpeechTranscriber ({source}) returned non-list 'segments': {type}."
+msgstr "Apple SpeechTranscriber（{source}）返回的 'segments' 不是列表：{type}。"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:245
+#, python-brace-format
+msgid "Apple SpeechTranscriber ({source}) returned a non-object segment: {entry}."
+msgstr "Apple SpeechTranscriber（{source}）返回的 segment 不是对象：{entry}。"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:347
+#, python-brace-format
+msgid ""
+"Apple SpeechTranscriber is reachable only through its Swift-only API, so "
+"clear-record compiles a small helper on first use. Install the Swift "
+"toolchain with `xcode-select --install`, or set {env} to a prebuilt "
+"helper."
+msgstr ""
+"Apple SpeechTranscriber 只能通过其仅限 Swift 的 API 访问，因此 clear-record 会在首次使用时编译一个小型辅助程序。请用 "
+"`xcode-select --install` 安装 Swift 工具链，或将 {env} 设置为预编译的辅助程序。"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:362
+#, python-brace-format
+msgid "could not create the Apple speech helper cache directory {path}: {error}"
+msgstr "无法创建 Apple 语音辅助程序缓存目录 {path}：{error}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:389
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:400
+#, python-brace-format
+msgid "could not compile the Apple speech helper: {detail}"
+msgstr "无法编译 Apple 语音辅助程序：{detail}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:398
+msgid "could not compile the Apple speech helper"
+msgstr "无法编译 Apple 语音辅助程序"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:411
+#, python-brace-format
+msgid "could not install the compiled Apple speech helper: {error}"
+msgstr "无法安装编译后的 Apple 语音辅助程序：{error}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:480
+#, python-brace-format
+msgid "the Apple speech helper timed out after {seconds} seconds"
+msgstr "Apple 语音辅助程序在 {seconds} 秒后超时"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:488
+#, python-brace-format
+msgid "could not run the Apple speech helper: {error}"
+msgstr "无法运行 Apple 语音辅助程序：{error}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:496
+#, python-brace-format
+msgid "the Apple speech helper failed (exit {code}): {detail}"
+msgstr "Apple 语音辅助程序失败（退出码 {code}）：{detail}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:498
+#, python-brace-format
+msgid "the Apple speech helper failed (exit {code})"
+msgstr "Apple 语音辅助程序失败（退出码 {code}）"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:508
+msgid ""
+"the Apple speech helper produced no result (it may not support "
+"SpeechAnalyzer on this OS)"
+msgstr "Apple 语音辅助程序未产生结果（此 OS 可能不支持 SpeechAnalyzer）"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:519
+#, python-brace-format
+msgid "the Apple speech helper returned unreadable JSON: {error}"
+msgstr "Apple 语音辅助程序返回了无法解析的 JSON：{error}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:528
+#, python-brace-format
+msgid "the Apple speech helper returned non-object JSON: {type}"
+msgstr "Apple 语音辅助程序返回了非对象 JSON：{type}"
+
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:576
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:586
 #, python-brace-format
 msgid "requires macOS {major}+ (this is {host})"
 msgstr "需要 macOS {major}+（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:510
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:596
 #, python-brace-format
 msgid "Apple Speech is unavailable: {detail}"
 msgstr "Apple Speech 不可用：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:518
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:604
 #, python-brace-format
 msgid "Apple Speech probe failed: {detail}"
 msgstr "Apple Speech 探测失败：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:527
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:613
 msgid "SpeechTranscriber reports the on-device model unavailable on this device"
 msgstr "SpeechTranscriber 报告本机上的设备端模型不可用"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:534
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:620
 msgid "Apple SpeechTranscriber (macOS 26+, on-device)"
 msgstr "Apple SpeechTranscriber（macOS 26+，设备端）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:719
+#: packages/clear-record/src/clear_record/providers/backends.py:732
 #, python-brace-format
 msgid "requires {target} (this is {host})"
 msgstr "需要 {target}（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:726
+#: packages/clear-record/src/clear_record/providers/backends.py:739
 msgid "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
 msgstr "在 PATH 上找不到 whisper-cli（请设置 CR_WHISPER_CLI）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:735
+#: packages/clear-record/src/clear_record/providers/backends.py:748
 #, python-brace-format
 msgid "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
 msgstr "找不到 ggml {families} 插件（参见 CR_GGML_BACKEND_DIRS）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:742
+#: packages/clear-record/src/clear_record/providers/backends.py:755
 msgid "no matching GPU device found"
 msgstr "找不到匹配的 GPU 设备"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:748
+#: packages/clear-record/src/clear_record/providers/backends.py:761
 #, python-brace-format
 msgid "whisper-cli + ggml {families} plugin"
 msgstr "whisper-cli + ggml {families} 插件"
 
-#: packages/clear-record/src/clear_record/providers/ggml_hashes.py:147
+#: packages/clear-record/src/clear_record/providers/ggml_hashes.py:149
 #, python-brace-format
 msgid ""
 "the downloaded model {name} failed its SHA-256 check (expected "
@@ -282,23 +359,23 @@ msgstr ""
 "下载的模型 {name} 未通过 SHA-256 校验（期望 {expected}，实际 {actual}）；已将其丢弃。请重试下载，或设置 "
 "{env}=off，以不校验的方式接受该端点返回的原始数据。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:273
+#: packages/clear-record/src/clear_record/service/agent_flow.py:284
 #, python-brace-format
 msgid "transcription failed: {detail}"
 msgstr "转写失败：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:328
+#: packages/clear-record/src/clear_record/service/agent_flow.py:339
 #, python-brace-format
 msgid ""
 "the system voice ran but produced no audio ({detail}), so the hello-world"
 " tape could not be created"
 msgstr "系统语音已运行但没有产生音频（{detail}），因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:336
+#: packages/clear-record/src/clear_record/service/agent_flow.py:347
 msgid "no system voice is installed, so the hello-world tape could not be created"
 msgstr "本机未安装系统语音，因此无法创建 hello-world 录音。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:358
+#: packages/clear-record/src/clear_record/service/agent_flow.py:369
 #, python-brace-format
 msgid ""
 "no transcription model is on disk at {models_dir}; the first "
@@ -306,11 +383,11 @@ msgid ""
 "the check again"
 msgstr "{models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:404
+#: packages/clear-record/src/clear_record/service/agent_flow.py:415
 msgid "transcription produced no segments, so there is no transcript to show"
 msgstr "转写没有产生任何片段，因此没有可显示的转写文本。"
 
-#: packages/clear-record/src/clear_record/service/agent_flow.py:417
+#: packages/clear-record/src/clear_record/service/agent_flow.py:428
 msgid ""
 "the hello-world tape ran through ingest and transcription; the transcript"
 " is below"
@@ -1654,7 +1731,9 @@ msgid ""
 "Downloading a size puts that checkpoint on disk. --auto uses the largest "
 "checkpoint already on disk that fits this machine; a specific size is "
 "forced per run. Downloads are verified against a pinned checksum."
-msgstr "下载某个规格会把对应检查点放到磁盘上。--auto 会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
+msgstr ""
+"下载某个规格会把对应检查点放到磁盘上。--auto "
+"会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:33
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:23

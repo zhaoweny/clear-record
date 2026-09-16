@@ -57,6 +57,7 @@ class _FakeHelper:
         self.probe_calls = 0
         self.prepared: list[str | None] = []
         self.calls: list[tuple[str, str | None, tuple[str, ...]]] = []
+        self.runners: list[object | None] = []
 
     def probe(self) -> SpeechProbe:
         self.probe_calls += 1
@@ -71,8 +72,14 @@ class _FakeHelper:
         return {"locale": "en_US", "installed": True, "reserved": True}
 
     def transcribe(
-        self, audio_path: str, *, language: str | None, terms: tuple[str, ...]
+        self,
+        audio_path: str,
+        *,
+        language: str | None,
+        terms: tuple[str, ...],
+        runner: object | None = None,
     ) -> dict:
+        self.runners.append(runner)
         if self._transcribe_error is not None:
             raise self._transcribe_error
         self.calls.append((audio_path, language, terms))
@@ -147,6 +154,30 @@ def test_unavailable_when_the_helper_cannot_be_built(monkeypatch) -> None:
     assert status.available is False
     assert "xcode-select --install" in str(status.reason)
     assert backend.available() is False
+
+
+def test_toolchain_missing_reason_is_a_translated_message(tmp_path, monkeypatch):
+    """Issue-08: the availability detail is a message ID, not raw English.
+
+    The reason template is already a Message; before the fix its ``detail``
+    parameter was ``str(exc)``, so a zh-CN console showed the English Swift
+    guidance inside a translated frame.
+    """
+    from clear_record.core import i18n
+
+    _macos_26(monkeypatch)
+    monkeypatch.delenv(HELPER_ENV, raising=False)
+    monkeypatch.setattr(apple_speech, "_swift_compiler", lambda: None)
+    backend = AppleSpeechBackend(AppleSpeechHelper(cache_dir=tmp_path / "cache"))
+
+    status = backend.availability()
+
+    assert status.available is False
+    assert "xcode-select --install" in str(status.reason)
+    i18n.install("zh_CN")
+    translated = status.reason.render(i18n.tr)
+    assert "工具链" in translated
+    assert "Install the Swift toolchain" not in translated
 
 
 def test_unavailable_when_speech_transcriber_says_so(monkeypatch) -> None:
@@ -247,6 +278,26 @@ def test_transcribe_surfaces_an_actionable_language_error() -> None:
         backend.transcribe("a.wav", language="xx-XX")
 
 
+def test_transcribe_passes_the_process_runner_to_the_helper() -> None:
+    """The pool's cancellable runner must reach the helper, not be dropped."""
+    helper = _FakeHelper()
+    backend = AppleSpeechBackend(helper)
+    sentinel = object()
+
+    backend.transcribe("a.wav", process_runner=sentinel)
+
+    assert helper.runners == [sentinel]
+
+
+def test_transcribe_rejects_a_decoder_knob_it_declares_unsupported() -> None:
+    """decoder_knobs=() means a directly-supplied knob fails loudly, not
+    silently (the pipeline guard only covers the pipeline path)."""
+    backend = AppleSpeechBackend(_FakeHelper())
+
+    with pytest.raises(ValueError, match="beam_size"):
+        backend.transcribe("a.wav", beam_size=5)
+
+
 # --------------------------------------------------------------------------- #
 # the helper's subprocess contract (still no real OS call)
 # --------------------------------------------------------------------------- #
@@ -342,6 +393,31 @@ def test_helper_requires_the_swift_toolchain(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(AppleSpeechUnavailable, match="xcode-select --install"):
         helper.ensure_binary()
+
+
+def test_helper_transcribe_routes_through_a_supplied_runner(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression: the caller's runner must launch the helper, not the default
+    ``subprocess.run`` (which cancellation cannot reach)."""
+    seen: list[list[str]] = []
+
+    def default_run(cmd, *, capture_output, text, timeout):
+        raise AssertionError("the injected runner must be used")
+
+    def runner(cmd, *, capture_output=True, text=True, timeout=None):
+        seen.append(cmd)
+        out = cmd[cmd.index("--out") + 1]
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump({"language": "en", "segments": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    helper = _cached_helper(tmp_path, monkeypatch, default_run)
+
+    helper.transcribe("a.wav", language="en", runner=runner)
+
+    assert seen
+    assert seen[0][1:3] == ["transcribe", "--audio"]
 
 
 # --------------------------------------------------------------------------- #

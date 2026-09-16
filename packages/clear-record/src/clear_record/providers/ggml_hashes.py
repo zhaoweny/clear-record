@@ -28,9 +28,11 @@ path the tool picks, not a gate on every name a user can invent.
 ``ggerganov/whisper.cpp`` ``main`` revision (2026-09-14). For an LFS file the
 object id **is** the SHA-256 of the file content, so the digests were read from
 the repository's tree metadata rather than derived by downloading gigabytes.
-The identity was confirmed end to end for one entry: ``ggml-tiny.bin`` fetched
-from ``resolve/main`` (77,691,713 bytes) hashes to the pinned ``be07e0…``.
-Refresh by reading ``lfs.oid`` for each ``ggml-*.bin`` from
+Every entry was re-checked against that metadata (through the ``hf-mirror.com``
+mirror of the same tree API) and matches; the identity of ``ggml-tiny.bin`` was
+also confirmed end to end (fetched from ``resolve/main``, 77,691,713 bytes,
+hashes to the pinned ``be07e0…``). Refresh by reading ``lfs.oid`` for each
+``ggml-*.bin`` from
 ``https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main``.
 
 Set ``CR_MODEL_CHECKSUM`` to ``off`` (also ``0``/``false``/``no``,

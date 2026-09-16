@@ -366,3 +366,37 @@ def test_match_voice_prefers_an_exact_locale() -> None:
     assert tts._match_voice(voices, "zh_tw") == TtsVoice("taiwan", "zh_TW")
     assert tts._match_voice(voices, "zh") == TtsVoice("base", "zh")
     assert tts._match_voice(voices, "xx") is None
+
+
+def test_match_voice_normalizes_hyphenated_voice_locales() -> None:
+    """Regression: say/espeak tags use a hyphen (en-GB, zh-HK).
+
+    Both the exact-locale and the base-language comparison split only on the
+    underscore, so a hyphenated tag never matched and the requested language
+    silently fell through to the engine default.
+    """
+    voices = (TtsVoice(name="brit", lang="en-GB"), TtsVoice(name="hk", lang="zh-HK"))
+
+    assert tts._match_voice(voices, "en_gb") == TtsVoice("brit", "en-GB")
+    assert tts._match_voice(voices, "en") == TtsVoice("brit", "en-GB")
+    assert tts._match_voice(voices, "zh_hk") == TtsVoice("hk", "zh-HK")
+    assert tts._match_voice(voices, "zh") == TtsVoice("hk", "zh-HK")
+
+
+def test_a_missing_language_without_an_english_voice_does_not_claim_english(
+    monkeypatch, tmp_path
+) -> None:
+    """A non-English request with no matching voice and no English voice must
+    not report lang='en': the engine's default voice speaks the original text."""
+    runner = FakeRunner(say_voices="Tingting  zh_CN  # x\n")
+    monkeypatch.setattr(tts, "_run", runner)
+
+    result = synthesize_clip(
+        "bonjour", lang="fr", out_path=tmp_path / "clip.wav", engines=(SAY,)
+    )
+
+    assert result.lang == "fr"
+    assert result.fallback is False
+    assert result.voice is None
+    assert runner.synth_calls[0][-1] == "bonjour"
+    assert "-v" not in runner.synth_calls[0]

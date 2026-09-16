@@ -191,11 +191,16 @@ def synthesize_clip(
         spoken_text = text
         fallback = False
         if voice is None and requested != "en":
-            voice = _match_voice(voices, "en")
-            spoken_lang = "en"
-            fallback = True
-            if fallback_text is not None:
-                spoken_text = fallback_text
+            english = _match_voice(voices, "en")
+            if english is not None:
+                # Only claim English when an English voice was actually chosen:
+                # with none, the engine's default voice speaks the original
+                # text and the provenance must not invent a language.
+                voice = english
+                spoken_lang = "en"
+                fallback = True
+                if fallback_text is not None:
+                    spoken_text = fallback_text
         command = _command(engine, spoken_text, voice=voice, out_path=out_path)
         try:
             proc = _run(command, timeout=_SYNTH_TIMEOUT_S)
@@ -230,14 +235,20 @@ def _normalize_lang(lang: str) -> str:
 
 
 def _match_voice(voices: Sequence[TtsVoice], lang: str) -> TtsVoice | None:
-    """The best voice for ``lang``: exact locale first, then base language."""
-    target = lang.lower()
+    """The best voice for ``lang``: exact locale first, then base language.
+
+    ``lang`` arrives normalised, but a voice tag is kept as the engine printed
+    it, so both sides are normalised here -- ``en-GB`` and ``zh-HK`` must match
+    ``en_gb`` and ``zh_hk`` rather than silently falling through to the engine
+    default.
+    """
+    target = _normalize_lang(lang)
     base = target.split("_")[0]
     for voice in voices:
-        if voice.lang.lower() == target:
+        if _normalize_lang(voice.lang) == target:
             return voice
     for voice in voices:
-        if voice.lang.lower().split("_")[0] == base:
+        if _normalize_lang(voice.lang).split("_")[0] == base:
             return voice
     return None
 

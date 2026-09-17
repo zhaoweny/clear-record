@@ -39,6 +39,7 @@ from starlette.datastructures import UploadFile
 from clear_record.core import (
     PROFILE_CUSTOM,
     PROFILES,
+    JobEvent,
     profile_values,
     resolve_options,
 )
@@ -65,6 +66,7 @@ from clear_record.service import (
     Tape,
     archive_meeting,
     collect_bundle,
+    cost_of,
     default_config,
     describe_draft,
     estimate_eta_s,
@@ -91,7 +93,7 @@ from clear_record.service.auto import (
     models_on_disk,
     render_message as render_service_message,
 )
-from clear_record.service.diagnostics import backend_status
+from clear_record.service.diagnostics import backend_status, machine_description
 from clear_record.service.paths import (
     config_path,
     resolve_data_dir,
@@ -99,6 +101,10 @@ from clear_record.service.paths import (
     resolve_models_dir,
     resolve_state_dir,
 )
+
+#: The service's own number reader, so a record's or a queued run's options field
+#: is parsed the one way (bools are not numbers, a string is not a figure).
+from clear_record.service.runs import number_or_none
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
     Detection,
@@ -200,6 +206,12 @@ def settings_section(slug: str) -> tuple[str, str, str] | None:
 #: project's Overview show. Both are cheap registry reads; walking every
 #: workspace for tapes and transcripts is the project's Media tab's job.
 RECENT_MEETINGS = 5
+
+#: How many finished runs the Activity page lists (RUN-03). The page answers
+#: "what is clear-record doing right now": the live queue is complete, and the
+#: history is the newest outcomes — a meeting's whole run history is its own
+#: page, not this one.
+ACTIVITY_HISTORY = 20
 
 
 def _accept_language_tags(header: str | None) -> list[str]:
@@ -527,6 +539,66 @@ def _run_axes(row, meeting) -> dict | None:
     if row is None or row.status not in TERMINAL_STATUSES:
         return None
     return run_axes(row, directory=meeting.workspace_path if meeting else None)
+
+
+def _run_machine(run: PipelineRun) -> str | None:
+    """The machine a run is on, from what was *recorded*, never a guess.
+
+    A run that stopped carries the machine description its cost record measured
+    (RUN-01/OQ-3); a run still in flight carries the host its claiming owner
+    named (RUN-02). A queued run has neither — nothing has claimed it yet — so
+    the column says unknown rather than naming this node, which the claim has
+    not yet agreed to.
+    """
+    machine = cost_of(run).get("machine")
+    if isinstance(machine, str) and machine:
+        return machine
+    host, sep, _pid = (run.owner or "").rpartition(":")
+    return host if sep and host else None
+
+
+#: The stage whose units are audio chunks — the economy the cost record's
+#: ``chunks``/``chunk_seconds`` pair measures (RUN-01). It is the only stage a
+#: live rate can be read from: every other stage's units are something else.
+_CHUNK_STAGE = "transcribe"
+
+
+def _run_speed_so_far(run: PipelineRun, event: JobEvent | None) -> float | None:
+    """A **running** run's rate so far, in audio seconds per wall second.
+
+    The rate *so far*, not the run's average, and it is derived from the run's
+    own persisted primitives: the chunks its last transcribe event reported
+    that the decoder actually **ran**, times the chunk length its queued options
+    resolved, over that stage's own elapsed seconds — so the numerator and the
+    denominator cover the same work. The terminal cost record's speed is the
+    whole run's audio over its whole wall clock, including ingest and
+    reconcile; this is what the decoder is sustaining now, which is why the page
+    labels it "so far".
+
+    ``reused`` is subtracted from the count, not ignored: a resumed run serves
+    chunks from the cache, those advance the stage without the decoder touching
+    them (``Progress.advance(reused=True)``), and the elapsed clock covers only
+    the chunks it did decode. Without that, a run with 112 of 120 chunks cached
+    would report the fixture's 260x instead of its ~2.4x.
+
+    It is chunk-granular: the chunk in flight is counted when its event lands,
+    and overlapping chunks count at their full length, so it reads a little
+    high. ``None`` is the honest answer whenever a primitive is missing — a
+    queued run, a run whose last event belongs to another stage, a run enqueued
+    without a chunk plan, an event with no elapsed time yet, a run whose chunks
+    were all re-used (nothing was decoded to rate), or arithmetic that would
+    divide by zero — and the page says unknown.
+    """
+    if run.status != "running" or event is None or event.stage != _CHUNK_STAGE:
+        return None
+    options = run.run_options if isinstance(run.run_options, dict) else {}
+    chunk_seconds = number_or_none(options.get("chunk_seconds"))
+    if chunk_seconds is None or event.elapsed_s is None:
+        return None
+    audio = (event.index - event.reused) * chunk_seconds
+    if audio <= 0 or event.elapsed_s <= 0:
+        return None
+    return round(audio / event.elapsed_s, 3)
 
 
 #: The statuses a run can be resumed from: it is over, and continuing it is a
@@ -1359,6 +1431,103 @@ def create_app(
             "check": None,
         }
 
+    def run_row(run: PipelineRun, projects: Mapping[str, str]) -> dict:
+        """One run as the Activity page renders it, live or finished (RUN-03).
+
+        Every field comes from a pinned source: the run's own columns, its cost
+        record (RUN-01) through the service's axes, and — for a run still in
+        flight — its newest persisted progress event, the rate that event
+        supports and the service's history-based ETA. Nothing is invented for a
+        run that has not recorded it: a run with no cost record has no recorded
+        speed, and a run that is not transcribing has no rate so far, so both
+        read unknown rather than being filled in from a second quantity.
+        """
+        meeting = registry.meeting_by_id(run.meeting_id)
+        slug = meeting.project_slug if meeting else ""
+        recorded = run_axes(run)["speed"]
+        live = run.status in ("queued", "running")
+        event = registry.latest_run_event(run.id) if live else None
+        eta_s = event.eta_s if event else None
+        if run.status == "running":
+            # The history-based estimate replaces the stage-local one when this
+            # machine has a matching history (RUN-01), the same precedence the
+            # run fragment applies.
+            history_eta_s = estimate_eta_s(registry, run)
+            if history_eta_s is not None:
+                eta_s = history_eta_s
+        return {
+            "run": run,
+            "project_slug": slug,
+            "project_name": projects.get(slug, slug),
+            "meeting_slug": meeting.slug if meeting else "",
+            "meeting_title": meeting.title if meeting else "",
+            # A queued run's place in the node's FIFO; 0 for every other status.
+            "position": registry.queue_position(run.id),
+            "stage": event.stage if event else None,
+            "index": event.index if event else 0,
+            "total": event.total if event else 0,
+            "eta_s": eta_s,
+            # Two different quantities, kept apart: the speed a finished run's
+            # cost record measured, and the rate a running run is sustaining so
+            # far. A row has at most one of them.
+            "speed": recorded["x_realtime"],
+            "speed_so_far": _run_speed_so_far(run, event),
+            "wall_s": recorded["wall_seconds"],
+            "machine": _run_machine(run),
+        }
+
+    def activity_context() -> dict:
+        """The pipeline status page (RUN-03): one node's runs, live and recent.
+
+        Running and queued runs come from the **shared** registry, across every
+        project (RUN-02), so a run an agent's MCP server or the CLI started is
+        here with the same fields as one the console started — including the
+        origin it was started from. This is one node's view: the rows carry the
+        machine that measured or claimed them, and there is no aggregation
+        across nodes (a non-goal).
+        """
+        projects = {row.slug: row.name for row in registry.list_projects()}
+        history = registry.finished_runs(*TERMINAL_STATUSES, limit=ACTIVITY_HISTORY)
+        return {
+            "live": [
+                run_row(run, projects)
+                for run in registry.runs_with_status("running", "queued")
+            ],
+            # Newest **finish** first, the same ranking the chip uses: the page
+            # leads with the latest outcome, and it is the row the chip is
+            # talking about.
+            "history": [run_row(run, projects) for run in history],
+            # Which node this page is about: the same description a run's cost
+            # record stores (RUN-01/OQ-3), so the subtitle and a row's machine
+            # speak one language.
+            "machine": machine_description(),
+        }
+
+    def chip_context() -> dict:
+        """The header chip's live state, read from the same registry (RUN-03).
+
+        The chip answers "what is this node doing right now" and must not lie:
+        a run in flight makes it say so (with the queue's depth when the node
+        has not picked the work up yet), and with nothing in flight the **newest
+        finished** run — the one that ended most recently, not the row written
+        last — decides between "needs attention" (it failed or was
+        interrupted) and idle. A ``stopped`` run was cancelled on purpose, so it
+        is not attention. The label is translated at render time.
+        """
+        running = registry.runs_with_status("running")
+        if running:
+            return {
+                "label": tr("running {count}", count=len(running)),
+                "state": "running",
+            }
+        queued = registry.runs_with_status("queued")
+        if queued:
+            return {"label": tr("queued {count}", count=len(queued)), "state": "queued"}
+        newest = registry.finished_runs(*TERMINAL_STATUSES, limit=1)
+        if newest and newest[0].status in ("failed", "interrupted"):
+            return {"label": tr("needs attention"), "state": "failed"}
+        return {"label": tr("idle"), "state": "neutral"}
+
     def settings_context(section: str) -> dict:
         """Everything one Settings section renders, from the service only.
 
@@ -1414,14 +1583,14 @@ def create_app(
     ) -> HTMLResponse:
         """A full page extending ``base.html``.
 
-        Every page needs the top-level nav item and the setup marker: the Setup
-        link and the update notice both come from :func:`setup_flags`, so a page
-        render cannot forget either.
+        Every page needs the top-level nav item, the header chip's live state
+        (RUN-03) and the setup marker: the Setup link and the update notice both
+        come from :func:`setup_flags`, so a page render cannot forget either.
         """
         return TEMPLATES.TemplateResponse(
             request,
             template,
-            {"nav": nav, **setup_flags(), **extra},
+            {"nav": nav, "chip": chip_context(), **setup_flags(), **extra},
             status_code=status_code,
         )
 
@@ -1538,6 +1707,16 @@ def create_app(
             tab="meetings",
             **meeting_context(meeting, offset=max(0, offset)),
         )
+
+    @app.get("/activity", response_class=HTMLResponse)
+    def page_activity(request: Request) -> HTMLResponse:
+        """The pipeline status page (RUN-03): what this node is doing right now.
+
+        The queue and the recent outcomes across every project, plus the header
+        chip's own answer at full width. A real URL with a plain link, like the
+        other pages, so it works with no JavaScript and survives a refresh.
+        """
+        return page(request, "activity.html", nav="activity", **activity_context())
 
     @app.get("/settings", response_class=HTMLResponse)
     def page_settings(request: Request) -> HTMLResponse:

@@ -966,6 +966,40 @@ class Registry:
         runs = self.runs_with_status("queued")
         return runs[0] if runs else None
 
+    def finished_runs(
+        self, *statuses: str, limit: int | None = None
+    ) -> list[PipelineRun]:
+        """Runs in ``statuses``, newest **finish** first.
+
+        :meth:`runs_with_status` orders by id, which is *creation* order — and a
+        run created later can finish earlier (the queue is FIFO, a cancel is
+        not), so "the newest run" and "the run that finished most recently" are
+        not the same row. Ranking a status view by ``ended_at`` is what "newest
+        finished run" means there: the chip's own state and the history it links
+        to have to agree.
+
+        ``ended_at`` is written by every terminal transition, so the
+        ``created_at`` fallback only covers a row written by something that did
+        not set one; ``id`` breaks a tie between two runs that ended in the same
+        second. ``limit`` bounds the query to the newest ``limit`` in that
+        order, read and ordered in the database rather than in the caller.
+        """
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        sql = (
+            "SELECT * FROM pipeline_run"
+            f" WHERE status IN ({placeholders})"
+            " ORDER BY COALESCE(ended_at, created_at) DESC, id DESC"
+        )
+        params: tuple = tuple(statuses)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (*params, limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._run(row) for row in rows]
+
     def claim_run(self, run_id: int, *, owner: str) -> PipelineRun | None:
         """Claim a ``queued`` run for ``owner``: the node's one write for ``running``.
 
@@ -1154,6 +1188,23 @@ class Registry:
                 (run_id, after),
             ).fetchall()
         return [self._event(json.loads(row["payload"])) for row in rows]
+
+    def latest_run_event(self, run_id: int) -> JobEvent | None:
+        """A run's last persisted event, or ``None`` when it has none.
+
+        The one-event read for a caller that wants a run's *current* stage and
+        progress — the console's status page, which renders a live run from the
+        registry alone (RUN-03) — rather than its whole stream: a transcribe
+        stage persists one event per chunk, so reading them all to keep the last
+        is work the reader does not need and cannot bound.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM run_event WHERE run_id = ?"
+                " ORDER BY seq DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return self._event(json.loads(row["payload"])) if row else None
 
     def count_run_events(self, run_id: int) -> int:
         with self._connect() as conn:

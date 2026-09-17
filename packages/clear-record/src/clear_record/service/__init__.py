@@ -164,6 +164,7 @@ from clear_record.service.runs import (
     RunManager,
     RunState,
     collect_artifacts,
+    cost_of,
     estimate_eta_s,
 )
 from clear_record.service.store import SCHEMA_VERSION, Registry
@@ -279,6 +280,7 @@ __all__ = [
     "collect_bundle",
     "config_path",
     "console_log_config",
+    "cost_of",
     "delete_tape",
     "ensure_managed_workspace",
     "estimate_eta_s",

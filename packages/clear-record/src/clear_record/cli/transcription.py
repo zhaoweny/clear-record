@@ -1016,7 +1016,10 @@ def transcribe(
     progress = Progress("transcribe", total_chunks, on_event)
     progress.start(f"{total_chunks} chunk(s) over {len(plans)} source(s)")
     for src_id in cached_hits:
-        progress.advance(source=src_id, message="cached")
+        # Counted as re-used, not decoded: the bar advances either way, but the
+        # stage's elapsed clock only paid for the chunks the decoder actually
+        # ran, and a live speed reading is derived from the two (RUN-03).
+        progress.advance(source=src_id, message="cached", reused=True)
 
     plan_by_id = {plan.source.id: plan for plan in plans}
     workers = resolve_jobs(

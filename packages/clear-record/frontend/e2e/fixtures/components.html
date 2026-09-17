@@ -9,7 +9,7 @@
 <header class="app-header">
   <svg class="brand" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
   <h1>clear-record</h1><span class="tag">project console</span>
-  <span class="badge" id="status">ready</span>
+  <a class="badge status-running" id="status" href="/activity">running 1</a>
   <form class="lang-switch"><span class="btn btn-sm is-active">English</span><button class="btn btn-sm btn-ghost" type="button">中文</button></form>
   <a class="btn btn-ghost" href="#">Diagnostics</a>
   <button class="btn btn-ghost btn-danger-ghost" type="button">Quit</button>
@@ -81,6 +81,8 @@
     <span class="badge status-done">done</span>
     <span class="badge status-failed">failed</span>
     <span class="badge status-error">error</span>
+    <span class="badge status-stopped">stopped</span>
+    <span class="badge status-interrupted">interrupted</span>
     <span class="badge status-ok">ok</span>
     <span class="badge status-missing">missing</span>
     <span class="badge status-managed">managed workspace</span>
@@ -119,6 +121,44 @@
     <div class="run-error" role="alert">no ggml model for apple-speech; pre-fetch it with hf download</div>
   </div>
   <div class="run run-idle"><span class="muted">No run yet.</span></div>
+
+  <h3>Activity row (RUN-03)</h3>
+  <div class="activity">
+    <div class="run status-running">
+      <div class="run-head">
+        <span class="badge status-running">running</span>
+        <a href="#">Kickoff</a>
+        <span class="muted">Q3 sync</span>
+        <span class="run-count">#12</span>
+        <span class="run-stage">transcribe</span>
+        <span class="run-count">412 / 1640</span>
+        <span class="run-eta">ETA 4m 12s</span>
+      </div>
+      <progress value="412" max="1640"></progress>
+      <dl class="run-axes">
+        <dt>speed</dt><dd><span class="muted">unknown</span></dd>
+        <dt>model</dt><dd>whisper-large-v3 <span class="muted">apple-speech</span></dd>
+        <dt>origin</dt><dd>console</dd>
+        <dt>machine</dt><dd>run-owner.example</dd>
+      </dl>
+    </div>
+    <div class="run status-stopped">
+      <div class="run-head">
+        <span class="badge status-stopped">stopped</span>
+        <a href="#">Retro</a>
+        <span class="muted">Q3 sync</span>
+        <span class="run-count">#11</span>
+      </div>
+      <dl class="run-axes">
+        <dt>speed</dt><dd>2.41x realtime</dd>
+        <dt>duration</dt><dd>1200.0s</dd>
+        <dt>model</dt><dd>whisper-large-v3 <span class="muted">apple-speech</span></dd>
+        <dt>origin</dt><dd>mcp</dd>
+        <dt>machine</dt><dd>Mac14,1 (Darwin-25.3.0; arm64)</dd>
+      </dl>
+      <div class="muted run-message">resumed from run 10</div>
+    </div>
+  </div>
 
   <h3>Knobs preview</h3>
   <div>

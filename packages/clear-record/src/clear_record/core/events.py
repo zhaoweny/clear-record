@@ -31,6 +31,12 @@ class JobEvent:
     stage: str
     index: int = 0
     total: int = 0
+    #: How many of ``index`` were **re-used from the chunk cache** rather than
+    #: decoded (RUN-01/RUN-03). The two are the same unit but not the same work:
+    #: a cached chunk advances the stage without a decoder ever touching it, so
+    #: a reader deriving a *speed* has to subtract them — the chunks the clock
+    #: in ``elapsed_s`` actually paid for are ``index - reused``.
+    reused: int = 0
     source: str | None = None
     done: bool = False
     elapsed_s: float | None = None
@@ -62,6 +68,13 @@ class Progress:
     the remainder); it is ``None`` until a unit completes, and on completion.
     ``advance`` is **thread-safe** because transcription's chunk pool calls it
     from worker threads.
+
+    A unit that was **re-used from the cache** rather than decoded advances too
+    — the work is done either way — but it is counted separately
+    (:attr:`JobEvent.reused`), because the elapsed clock only paid for the units
+    the decoder actually ran. A reader deriving "how fast is this decoding" has
+    to look at ``index - reused``; a reader drawing a progress bar wants
+    ``index``.
     """
 
     def __init__(
@@ -78,6 +91,7 @@ class Progress:
         self._clock = clock
         self._started = clock()
         self._done = 0
+        self._reused = 0
         self._lock = threading.Lock()
 
     def start(self, message: str = "") -> None:
@@ -86,10 +100,21 @@ class Progress:
             JobEvent(stage=self.stage, index=0, total=self.total, message=message),
         )
 
-    def advance(self, source: str | None = None, message: str = "") -> JobEvent:
+    def advance(
+        self, source: str | None = None, message: str = "", *, reused: bool = False
+    ) -> JobEvent:
+        """One completed unit; ``reused`` when the cache supplied it.
+
+        The count is what a speed reading needs (see the class docstring): the
+        caller that advances on a **cached** chunk says so, and every event then
+        carries how many of its ``index`` were served from the cache.
+        """
         with self._lock:
             self._done += 1
+            if reused:
+                self._reused += 1
             done = self._done
+            reused_count = self._reused
         elapsed = max(0.0, self._clock() - self._started)
         eta = None
         if 0 < done < self.total and elapsed > 0:
@@ -98,6 +123,7 @@ class Progress:
             stage=self.stage,
             index=done,
             total=self.total,
+            reused=reused_count,
             source=source,
             done=done >= self.total,
             elapsed_s=round(elapsed, 3),

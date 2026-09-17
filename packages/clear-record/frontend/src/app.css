@@ -390,6 +390,23 @@ h3:first-child { margin-top: 0; }
   --chip-glyph: "\2715\00a0"; /* failed */
   --progress-fill: var(--danger-ink);
 }
+/* The two stops that are not failures (RUN-04). `stopped` was asked for — the
+   user cancelled it — so it stays neutral rather than alarming; `interrupted`
+   was not: the process holding the run died, so it reads as a warning. */
+.status-stopped {
+  --chip-bg: var(--neutral-bg);
+  --chip-ink: var(--neutral-ink);
+  --chip-line: var(--neutral-line);
+  --chip-glyph: "\25A0\00a0"; /* cancelled on purpose */
+  --progress-fill: var(--neutral-ink);
+}
+.status-interrupted {
+  --chip-bg: var(--warn-bg);
+  --chip-ink: var(--warn-ink);
+  --chip-line: var(--warn-line);
+  --chip-glyph: "\26A0\00a0"; /* no one asked it to stop */
+  --progress-fill: var(--warn-ink);
+}
 .status-ok {
   --chip-bg: var(--ok-bg);
   --chip-ink: var(--ok-ink);
@@ -730,9 +747,10 @@ ul.projects .count {
 }
 
 /* --- Workspace and Settings shells --------------------------------------- */
-/* `/` is the Projects workspace and `/setup` is readiness; neither has the
-   project sidebar, so they span the shell grid. */
+/* `/`, `/activity` and `/setup` have no project sidebar, so they span the
+   shell grid rather than sitting in its sidebar column. */
 .workspace,
+.activity,
 .setup { grid-column: 1 / -1; }
 
 /* --- Setup: the readiness sequence --------------------------------------- */
@@ -1241,6 +1259,22 @@ tbody tr:last-child td { border-bottom: none; }
     oklch(1 0 0 / 0.28) 0 6px,
     transparent 6px 12px
   );
+}
+
+/* The Activity page's per-run facts (RUN-03): a definition grid of label and
+   value, so a column of runs reads as a table without being one — the row still
+   reflows to one card per run on a narrow screen. */
+.activity .run-axes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.activity .run-axes dt { color: var(--muted-foreground); }
+.activity .run-axes dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- Archives ------------------------------------------------------------ */

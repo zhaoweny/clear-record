@@ -109,13 +109,29 @@ def test_the_pools_own_cancel_flag_does_not_cancel_a_running_child() -> None:
     assert runner.cancelled is True
 
 
-def test_the_runs_cancel_signal_stops_a_child_that_is_already_running() -> None:
+def test_the_runs_cancel_signal_kills_a_child_that_is_already_running(
+    tmp_path,
+) -> None:
     """The run's own signal is what stops a decode in flight (RUN-04).
 
     A whole-file backend, or any tape inside one chunk, has a decode running for
     the length of the recording: without this the cancel would wait for it (and a
     decoder that never returns would hold the run, its meeting and the node).
+
+    The child is the witness: it catches SIGTERM and writes a marker, so a runner
+    that abandoned the process instead of killing it — which is exactly what a
+    regression here looks like, and invisible to the runner's own bookkeeping —
+    cannot pass this test.
     """
+    marker = tmp_path / "child-terminated.txt"
+    child = (
+        "import pathlib, signal, time\n"
+        "def on_term(*_):\n"
+        f"    pathlib.Path({str(marker)!r}).write_text('terminated')\n"
+        "    raise SystemExit(0)\n"
+        "signal.signal(signal.SIGTERM, on_term)\n"
+        "time.sleep(30)\n"
+    )
     run_cancel = threading.Event()
     runner = CancellableProcessRunner(cancel=run_cancel)
 
@@ -126,6 +142,9 @@ def test_the_runs_cancel_signal_stops_a_child_that_is_already_running() -> None:
     threading.Thread(target=cancel_soon, daemon=True).start()
 
     with pytest.raises(ProcessCancelled):
-        runner.run([sys.executable, "-c", "import time; time.sleep(30)"])
+        runner.run([sys.executable, "-c", child])
 
-    assert runner.live_pids() == (), "the child was killed, not abandoned"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.02)
+    assert marker.exists(), "the child was killed, not abandoned"

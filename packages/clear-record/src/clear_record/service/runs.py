@@ -82,10 +82,14 @@ _ETA_HISTORY_LIMIT = 50
 #: old a heartbeat may be before another process reads the run as left by a dead
 #: owner (RUN-02). The interval is short against the deadline, so a loaded machine
 #: — one whose pipeline is holding the GIL — still beats many times inside it.
-#: The deadline is the one judgement call here: too short and a live run gets
-#: reaped, too long and a dead writer leaves the node waiting.
+#: The deadline governs only runs whose owner this node cannot probe (see
+#: :func:`_local_owner_state`); a *local* owner is decided by the process itself.
 HEARTBEAT_INTERVAL_S = 2.0
 HEARTBEAT_STALE_S = 30.0
+
+#: This node's name as it appears in a run's ``owner`` — one source of truth for
+#: the identity written at claim time and the one read back to probe the process.
+_HOST = _platform.node() or "unknown"
 
 
 def _now() -> str:
@@ -93,13 +97,70 @@ def _now() -> str:
 
 
 def _process_identity() -> str:
-    """This process's claim identity: host + pid, written on every run it claims.
+    """This process's claim identity: ``host:pid``, written on every claim.
 
     It is an identity, not a fingerprint: enough to say *which* process owns a
-    run in the status data, to recognize this process's own earlier life (the OS
-    hands a pid back after a crash), and to grow a node column from later (Q15).
+    run in the status data, to probe whether that process still exists on this
+    host, and to grow a node column from later (Q15).
     """
-    return f"{_platform.node() or 'unknown'}:{os.getpid()}"
+    return f"{_HOST}:{os.getpid()}"
+
+
+def _local_owner_state(owner: str | None) -> bool | None:
+    """Whether a run's owner is a live process **here**, or provably gone from here.
+
+    ``True`` a live process on this host owns the run, ``False`` the owner's
+    process is gone from this host, ``None`` this node cannot tell — the caller
+    then falls back to the heartbeat, which is evidence about a process rather
+    than proof of one.
+
+    The pid is probed first and its answer is read **asymmetrically**, because the
+    two directions do not carry the same risk:
+
+    * **A live pid holds the run, whatever the recorded host text says.** A
+      process that exists is the strongest evidence there is, and the host text
+      is a snapshot of a *mutable* name: ``platform.node()`` follows the machine's
+      network name, so a VPN switch, a rename or a container can change it under
+      a running registry. Reading that mismatch as "not ours" would free the node
+      and admit a second pipeline beside a stalled-but-alive owner — the one
+      thing this rule exists to prevent.
+    * **A gone pid frees the run only when the owner named *this* host**, because
+      "no such pid here" says nothing about a process on another host. A renamed
+      host therefore falls back to the heartbeat and reaps a killed owner's run a
+      deadline later rather than at once: slower, never wrong in the direction
+      that matters.
+
+    The probe is ``kill(pid, 0)`` — existence, not signalling — and it is only
+    attempted on POSIX: on Windows that call *terminates* the process, so a
+    registry shared with one gets the heartbeat's answer instead.
+    """
+    if not owner:
+        return None
+    host, sep, pid_text = owner.rpartition(":")
+    if not sep or os.name != "posix":
+        return None
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return None
+    if pid <= 0:  # a pid group (or a corrupt string), not a process
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False if host == _HOST else None
+    except PermissionError:
+        return True  # exists, owned by someone else on this host
+    except OverflowError:
+        # A pid outside C's int range: an unparseable owner, not a process. It
+        # must answer like any other unparseable owner rather than raise — this
+        # runs from reconciliation (a manager's constructor) and from the drain
+        # loop, where an escaping exception would stop the console from starting
+        # and, once running, would kill the queue thread.
+        return None
+    except OSError:
+        return None  # cannot tell: let the heartbeat decide
+    return True
 
 
 def _sha256(path: Path) -> str:
@@ -339,11 +400,12 @@ class RunManager:
     process just wrote, and :attr:`_live` says what this process is executing.
 
     An executing manager **beats** (:attr:`_heartbeat`), refreshing its run's
-    liveness heartbeat; reconciliation respects that heartbeat, so a second
-    manager — another process, or another manager in this process — leaves the
-    first's live run alone, while a run whose owner died still becomes
-    ``interrupted``. The claim decides who executes; the heartbeat decides who is
-    still alive.
+    liveness heartbeat, and reconciliation reads that beat together with the
+    owner's recorded ``host:pid``: a second manager — another process, or another
+    manager in this process — leaves a live owner's run alone, a killed owner's
+    run is reconciled at once, and an owner this node cannot see is judged by its
+    beat. The claim decides who executes; whether the owner still exists decides
+    who is still alive.
     """
 
     def __init__(
@@ -392,20 +454,19 @@ class RunManager:
         lost by the restart.
 
         A run is left alone when a **live owner** holds it (RUN-02): this manager
-        is executing it, or its owner is still beating — the heartbeat is within
-        :data:`HEARTBEAT_STALE_S` of now (see :meth:`_is_dead` for what counts as
-        evidence). Everything else is an orphan and becomes ``interrupted``: no
-        heartbeat at all (a run recorded before the heartbeat existed, or one
-        whose owner died before its first beat) or a heartbeat its owner stopped
-        refreshing when it died. Without that rule a second manager's startup
-        would read the first process's in-flight run as dead; with it, a dead
-        process's run still becomes honest.
+        is executing it, or its owner is a process on this host that still exists
+        (see :meth:`_is_dead`). Everything else is an orphan and becomes
+        ``interrupted``: an owner process that is gone, no heartbeat at all (a run
+        recorded before the heartbeat existed, or one whose owner died before its
+        first beat), an owner this node cannot probe whose heartbeat has gone
+        stale, or a heartbeat its owner stopped refreshing when it died. Without
+        that rule a second manager's startup would read the first process's
+        in-flight run as dead; with it, a dead process's run still becomes honest.
 
-        Staleness is a *deadline*, so a process killed a second ago leaves a run
-        that is reaped once its heartbeat goes stale — by the drain loop's own
-        tick or by a later reconciliation — not the instant it died. The
-        alternative, believing a beat only once its owner is provably gone, needs
-        a node-level liveness probe that one queue on one node does not.
+        A process that *exists* is believed over its heartbeat, so a run whose
+        owner is stalled holds its meeting and the node rather than being declared
+        an orphan: that is deliberate, and it is why the two cases (a killed
+        process, a stalled one) do not need to be told apart by a deadline.
         """
         interrupted = self._reap_dead_runs(self._registry.runs_with_status("running"))
         if interrupted:
@@ -466,29 +527,46 @@ class RunManager:
     def _is_dead(self, run: PipelineRun, now: _dt.datetime) -> bool:
         """Whether no live process holds ``run`` (RUN-02's ownership evidence).
 
-        The evidence is the **heartbeat**, not the owner string. A process that
-        is alive keeps refreshing its run's heartbeat; one that is not cannot.
-        That is what makes the rule work across writers — an owner string says
-        nothing about whether that process still exists, while a beat seconds old
-        does — and it needs no process table, no pid liveness test, and no
-        assumption that the owner is a well-behaved peer.
+        The evidence is the owner **process** when this node can see it, and the
+        heartbeat when it cannot:
 
-        A beat is evidence only while it is *near* now, in either direction: this
-        registry belongs to one node, so every writer reads one clock, and a beat
-        far ahead of `now` means the clock stepped **backwards** after it was
-        written. Reading that as life would pin the run — and, through the claim's
-        one-run guard, the whole queue — in ``running`` until the clock caught up.
+        * The owner's **process** is probed first (see :func:`_local_owner_state`,
+          which reads the answer asymmetrically): a pid that is alive holds its
+          run — fail closed, because a stalled owner must not free the node or
+          admit a second pipeline for the same meeting, and the row says
+          ``running`` because that is the truth. A pid that is *gone* makes the
+          run an orphan **now**, however fresh its last heartbeat is, which is
+          what lets a killed console reconcile at once instead of leaving its run
+          and its meeting refused for the heartbeat deadline.
+        * When this node cannot probe the owner at all — another host, a run
+          recorded before the column existed, a platform without a signal probe —
+          the **heartbeat** decides, which is evidence *about* a process rather
+          than proof of one. A beat is such evidence only while it is near
+          ``now`` in either direction: every writer on one node reads one clock,
+          so a beat far ahead means the clock stepped backwards after it was
+          written, and reading it as life would pin the queue until the clock
+          caught up.
 
-        The owner string is deliberately *not* compared here: this process's own
-        identity on a row it is not executing means either a previous life of
-        this process (a recycled pid) or a second manager in this same process,
-        and those two must not be treated alike. Both are covered anyway — the
-        first by the staleness rule below (a dead process stops beating), the
-        second by its live manager's heartbeats.
+        The cost of failing closed is named rather than hidden: a pid that exists
+        but is not the process that claimed the run — a recycled pid, or a zombie
+        whose parent has not reaped it — holds the queue until that pid goes away
+        (the process ending, or its parent waiting on it). That pid is the
+        operator's handle: nothing in this queue will reap a row whose owner
+        still exists. Reaping such a row instead needs a node-level liveness
+        protocol, and guessing from a heartbeat alone is how a second pipeline
+        gets admitted beside live work.
+
+        The owner string is deliberately *not* compared for equality: this
+        process's own identity on a row it is not executing means either a second
+        manager here (alive, holding) or a recycled pid, and the probe above
+        already answers that question better than a string comparison.
         """
         with self._lock:
             if run.id in self._live:
                 return False
+        local = _local_owner_state(run.owner)
+        if local is not None:
+            return not local
         beat = _parse_time(run.heartbeat_at)
         if beat is None:
             return True
@@ -823,23 +901,54 @@ class RunManager:
                     return
             for run_id in live:
                 try:
-                    self._registry.heartbeat_run(run_id)
+                    landed = self._registry.heartbeat_run(run_id)
                 except sqlite3.Error as exc:
                     # A liveness thread must not die on a transient registry
                     # error: another process would then read this run as dead and
                     # reap it while it is still executing. Report it once per run
                     # and keep beating — the error says the node cannot *prove*
                     # the run is alive, not that it is not.
-                    if run_id not in self._beat_failed:
-                        self._beat_failed.add(run_id)
-                        log_event(
-                            "warning",
-                            "runs",
-                            "run.heartbeat_failed",
-                            run_id=run_id,
-                            error=f"{type(exc).__name__}: {exc}",
-                        )
+                    self._report_beat_failure(run_id, f"{type(exc).__name__}: {exc}")
+                    continue
+                if not landed and self._was_reaped(run_id):
+                    # A peer moved a row this manager is still executing: the
+                    # pipeline keeps working (no cancellation contract) and our
+                    # terminal write still decides what the run says, but the
+                    # disagreement should be visible.
+                    self._report_beat_failure(
+                        run_id, "a peer reconciled this run while it executes"
+                    )
             time.sleep(HEARTBEAT_INTERVAL_S)
+
+    def _was_reaped(self, run_id: int) -> bool:
+        """Whether a run left ``running`` because another writer reconciled it.
+
+        Not every beat that fails to land is news: this manager's own terminal
+        write lands a moment before the run leaves :attr:`_live`, so the beat
+        meets the same "no longer running" a peer's reap produces — a live set
+        check cannot tell those apart. The row can: this process never reconciles
+        a run it is executing, so an ``interrupted`` status under a live run is a
+        peer's verdict, and that is the one worth reporting.
+        """
+        row = self._registry.get_run(run_id)
+        return row is not None and row.status == "interrupted"
+
+    def _report_beat_failure(self, run_id: int, reason: str) -> None:
+        """Log a beat that did not land, once per run (RUN-02).
+
+        Once, not once per beat: a run can execute for hours, and the same
+        condition would otherwise fill the rotating log with the same line.
+        """
+        if run_id in self._beat_failed:
+            return
+        self._beat_failed.add(run_id)
+        log_event(
+            "warning",
+            "runs",
+            "run.heartbeat_failed",
+            run_id=run_id,
+            reason=reason,
+        )
 
     def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
         """Rebuild the queued run's options from the registry (after a restart)."""

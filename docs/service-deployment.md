@@ -464,14 +464,17 @@ console process's memory:
 - **The event stream is persisted** per run as it arrives, so the live view
   replays after a restart instead of 404ing.
 - **An orphaned run is reconciled**, at startup and by a queue whose next turn is
-  blocked behind it: a run is `running` only while its owner keeps **beating** (a
-  heartbeat the executing process refreshes), so one whose owner stopped
-  reporting is the orphan and becomes **`interrupted`** (distinct from `failed`:
-  the node died, the work did not necessarily fail), with the reason recorded on
-  the run. The meeting follows. After a restart you see the run as interrupted
-  with its progress still readable, and you can start a new run. A process killed
-  a moment ago is recorded as interrupted once its heartbeat goes stale — a
-  deadline later, not the instant it died.
+  blocked behind it. Every run records its owner as `host:pid`, so a run whose
+  owner process is **gone** is an orphan at once: a killed console's run becomes
+  **`interrupted`** (distinct from `failed`: the node died, the work did not
+  necessarily fail) with the reason recorded on the run, its progress still
+  readable, and you can start a new run. The meeting follows. When the owner is
+  not a process this node can see — another host, or a run recorded before the
+  owner column existed — the owner's refreshed **heartbeat** decides instead, and
+  the run is reaped once that beat goes stale. A **stalled** owner (a process that
+  still exists but has stopped reporting) keeps its run `running` and keeps
+  holding the node and the meeting: the queue fails closed rather than admitting a
+  second pipeline beside work that may still be progressing.
 - **The active-run guard is read from the registry**, so a stale `running` row
   can no longer be silently doubled by a second start.
 
@@ -491,8 +494,8 @@ restart and is picked back up. This is deliberately minimal: no priorities, no
 cancellation, no per-meeting concurrency.
 
 [FACT] `clear-record serve` stops draining the queue when it exits (a clean
-`SIGTERM` included); a run still executing stops beating with the process, so the
-next start reconciles it, and the resumable chunk cache means resuming it is
+`SIGTERM` included); a run still executing dies with the process, so the next
+start reconciles it at once, and the resumable chunk cache means resuming it is
 cheap (`docs/architecture.md` §8).
 
 ## 6. What this does not cover

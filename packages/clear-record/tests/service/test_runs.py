@@ -7,7 +7,14 @@ events, artifact checksums — is exercised with no ASR backend and no GPU.
 from __future__ import annotations
 
 import dataclasses
+import itertools
+import json
+import os
 import platform
+import signal
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 from pathlib import Path
@@ -608,6 +615,68 @@ def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
 
 # --- the claim: one queue, every writer (RUN-02) ---------------------------- #
 
+#: The child a crash or stall test runs: it claims and executes a run and then
+#: blocks, so the parent can freeze it (``SIGSTOP``) or kill it. Either way the row
+#: is left ``running`` — with a stale beat and a live pid, or a fresh beat and no
+#: pid at all — which is exactly what a stalled or killed writer leaves behind.
+_BLOCKED_OWNER = '''
+import os
+import pathlib
+import sys
+import time
+
+from clear_record.service import Registry, RunManager, WebhookEmitter
+
+db_path, marker = sys.argv[1:3]
+
+def pipeline(directory, options, on_event):
+    """Never returns: the parent freezes or kills this process mid-run."""
+    pathlib.Path(marker).write_text(str(os.getpid()))
+    time.sleep(120)
+
+# An inert emitter, so a child never reads the machine's real webhook config.
+RunManager(
+    Registry.open(db_path=db_path), pipeline=pipeline, webhooks=WebhookEmitter(())
+)
+time.sleep(120)
+'''
+
+
+def _child_env(tmp_path) -> dict:
+    """The environment a spawned child gets: the app-owned dirs inside the test.
+
+    A child inherits the environment, not the suite's in-process redirection (see
+    ``conftest``), so without this a spawned manager would resolve — and write —
+    the machine's real data, log and cache directories.
+    """
+    return {
+        **os.environ,
+        "CR_DATA_DIR": str(tmp_path / "child-data"),
+        "CR_STATE_DIR": str(tmp_path / "child-state"),
+        "CR_LOG_DIR": str(tmp_path / "child-logs"),
+        "CR_CACHE_DIR": str(tmp_path / "child-cache"),
+    }
+
+
+#: Names the throwaway child scripts. Unique per call, because two children in one
+#: test must never share a file: a second write could land while the first child
+#: is still reading it.
+_CHILD_SCRIPTS = itertools.count()
+
+
+def _run_child(tmp_path, source: str, *args: str) -> subprocess.Popen:
+    """Write a small script and start it as a child process, hermetically."""
+    script = tmp_path / f"child-{next(_CHILD_SCRIPTS)}.py"
+    script.write_text(textwrap.dedent(source), encoding="utf-8")
+    return subprocess.Popen(
+        [sys.executable, str(script), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_child_env(tmp_path),
+    )
+
+
 #: The child a two-process claim race runs: it constructs its manager — and so
 #: starts draining the shared queue — only once both children are at the gate,
 #: records the run's work with the pid that did it, and reports what it saw.
@@ -828,6 +897,317 @@ def test_reconciliation_respects_a_live_peer_and_reaps_a_dead_one(tmp_path) -> N
     assert registry.meeting_by_id(busy.id).status == "interrupted"
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="the owner probe needs POSIX kill(pid, 0)"
+)
+def test_a_run_whose_owner_is_alive_holds_its_meeting_and_the_node(tmp_path) -> None:
+    """A stalled owner holds the queue: a live pid outranks a stale heartbeat.
+
+    The owner here is a live process on this host — this test process, named the
+    way the claim names one — and its heartbeat is years stale, which is the shape
+    of a stalled owner. The run must still be ``running``, because reaping it
+    would free *both* guards: a second pipeline for the same meeting and a second
+    run on the node would be admitted while the first one still transcribes.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    busy = _meeting(registry, tmp_path, [tape])
+    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
+    registry.set_recording_set(waiting.id, [str(tape)])
+
+    held = registry.create_run(
+        busy.id,
+        origin="mcp",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    owner = f"{platform.node()}:{os.getpid()}"
+    assert registry.claim_run(held.id, owner=owner) is not None
+    registry.set_meeting_status(busy.id, "running")
+    assert registry.heartbeat_run(held.id, at="2020-01-01T00:00:00+00:00")
+    behind = registry.create_run(
+        waiting.id,
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        assert manager.reconcile() == []  # a process exists: not an orphan
+        holds = registry.get_run(held.id)
+        assert holds.status == "running" and holds.error is None
+        # The node and the meeting are still held, ticks and all.
+        assert manager.wait(behind.id, timeout=2.0).status == "queued"
+        with pytest.raises(ValueError):
+            manager.start(busy, origin="console")
+    finally:
+        manager.shutdown(timeout=5)
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="the owner probe needs POSIX kill(pid, 0)"
+)
+def test_a_killed_owner_is_reaped_at_once(tmp_path) -> None:
+    """A run whose owner process is gone is an orphan now, not in 30 s (RUN-02).
+
+    A killed console leaves a heartbeat a second or two old, so the heartbeat
+    alone would keep its run — and its meeting — refused for the whole deadline,
+    which is not the reconciliation the queue has always promised. The owner is
+    written as ``host:pid``, so the next process asks the OS instead: the pid is
+    gone, the run is interrupted, and the work queued behind it moves on.
+    """
+    import datetime as dt
+
+    from clear_record.service import HEARTBEAT_STALE_S, RESTART_REASON
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
+    registry.set_recording_set(waiting.id, [str(tape)])
+    run = registry.create_run(
+        meeting.id,
+        origin="mcp",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    behind = registry.create_run(
+        waiting.id,
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    marker = tmp_path / "running"
+    child = _run_child(tmp_path, _BLOCKED_OWNER, str(registry.db_path), str(marker))
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.01)
+        started = marker.exists()
+        if started:
+            running = registry.get_run(run.id)
+            assert running.status == "running"
+            assert running.owner == f"{platform.node()}:{marker.read_text()}"
+        child.kill()
+        _, stderr = child.communicate(timeout=30)
+        assert started, f"the child never started its run: {stderr}"
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+
+    # The heartbeat is seconds old: the beat alone would read as a live owner.
+    beat = dt.datetime.fromisoformat(running.heartbeat_at or "")
+    age = (dt.datetime.now(dt.UTC) - beat).total_seconds()
+    assert age < HEARTBEAT_STALE_S
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        reaped = registry.get_run(run.id)
+        assert (reaped.status, reaped.error) == ("interrupted", RESTART_REASON)
+        assert registry.meeting_by_id(meeting.id).status == "interrupted"
+        assert manager.wait(behind.id, timeout=10).status == "done"
+    finally:
+        manager.shutdown(timeout=5)
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="the owner probe needs POSIX kill(pid, 0)"
+)
+def test_a_frozen_owner_does_not_admit_a_second_pipeline(tmp_path, monkeypatch) -> None:
+    """A stalled-but-alive owner holds the node: the blocker, with real processes.
+
+    A real writer is frozen mid-run (``SIGSTOP``: its heartbeats really stop, and
+    the deadline is shortened here so the stall is genuinely stale), and a second
+    writer then starts over the same registry. The run must stay ``running`` and
+    the meeting must stay refused: its owner process exists, so there is nothing
+    to reconcile, and no second pipeline may be admitted beside it.
+    """
+    from clear_record.service import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "HEARTBEAT_STALE_S", 0.5)
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    busy = _meeting(registry, tmp_path, [tape])
+    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
+    registry.set_recording_set(waiting.id, [str(tape)])
+    run = registry.create_run(
+        busy.id,
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    behind = registry.create_run(
+        waiting.id,
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    marker = tmp_path / "running"
+    child = _run_child(tmp_path, _BLOCKED_OWNER, str(registry.db_path), str(marker))
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.01)
+        assert marker.exists(), "the child never started its run"
+        owner_pid = int(marker.read_text())
+        os.kill(owner_pid, signal.SIGSTOP)
+        # The beat interval is 2 s, so this outlives the child's last heartbeat by
+        # more than the (shortened) deadline: a stale beat and a live process.
+        time.sleep(2.2)
+
+        manager = RunManager(registry, pipeline=lambda *args: None)
+        try:
+            assert manager.reconcile() == []  # the owner exists: not an orphan
+            held = registry.get_run(run.id)
+            assert held.status == "running" and held.error is None
+            assert manager.wait(behind.id, timeout=2.0).status == "queued"
+            with pytest.raises(ValueError):
+                manager.start(busy, origin="console")
+        finally:
+            manager.shutdown(timeout=5)
+    finally:
+        os.kill(child.pid, signal.SIGCONT)
+        child.kill()
+        child.wait(timeout=30)
+
+
+def test_a_live_pid_holds_a_run_even_when_the_owner_names_another_host(
+    tmp_path,
+) -> None:
+    """A host text that no longer matches must not free a live owner's run.
+
+    ``platform.node()`` follows the machine's network name, so it can differ
+    between the process that claimed a run and the process reconciling it (a VPN
+    switch, a rename, a container) — and a shared registry would name another
+    machine outright. A mismatch is not evidence that nobody is executing the run:
+    the pid is alive here, and reaping on that basis would admit a second
+    pipeline for the meeting beside a stalled-but-live owner. The run is claimed
+    with a live pid under an unrecognized host name, which is that shape.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    busy = _meeting(registry, tmp_path, [tape])
+    held = registry.create_run(
+        busy.id,
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    assert (
+        registry.claim_run(
+            held.id, owner=f"a-name-this-machine-had-before:{os.getpid()}"
+        )
+        is not None
+    )
+    registry.set_meeting_status(busy.id, "running")
+    assert registry.heartbeat_run(held.id, at="2020-01-01T00:00:00+00:00")
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        assert manager.reconcile() == []
+        assert registry.get_run(held.id).status == "running"
+        with pytest.raises(ValueError):
+            manager.start(busy, origin="console")
+    finally:
+        manager.shutdown(timeout=5)
+
+
+def test_a_running_row_with_an_out_of_range_pid_reconciles(tmp_path) -> None:
+    """An owner this node cannot parse is an orphan, not a crash.
+
+    ``os.kill`` takes a C int, so a pid with too many digits raises
+    ``OverflowError`` — a shape neither the parse guard nor the ``OSError`` guard
+    covers. Reconciliation reaches it from a manager's *constructor* and from the
+    drain loop, so an escape would stop the console from starting at all and, in
+    a running console, kill the queue thread for good. The owner column is free
+    text written by ``claim_run``, so this is a row the registry can hold.
+    """
+    from clear_record.service import RESTART_REASON
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(meeting.id, origin="console")
+    # The owner column is free text and this pid is too large for C's int, which
+    # is what `os.kill` converts to.
+    oversized = f"{platform.node()}:{'9' * 24}"
+    assert registry.claim_run(run.id, owner=oversized) is not None
+    assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
+
+    manager = RunManager(registry, pipeline=lambda *args: None)  # must not raise
+    try:
+        reaped = registry.get_run(run.id)
+        assert (reaped.status, reaped.error) == ("interrupted", RESTART_REASON)
+    finally:
+        manager.shutdown(timeout=5)
+
+
+def test_a_completed_run_logs_no_heartbeat_failure(tmp_path, monkeypatch) -> None:
+    """Our own completion must not read as a peer reaping us.
+
+    The terminal status lands a moment before the run leaves the manager's live
+    set, so a beat can meet a row that is no longer ``running`` because *this*
+    manager finished it. The interval is shortened here so those windows are hit
+    many times per run; the warning is meant for a peer's reap and must stay
+    silent.
+    """
+    from clear_record.core import read_recent
+    from clear_record.service import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "HEARTBEAT_INTERVAL_S", 0.001)
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    for _ in range(3):
+        run = manager.start(meeting, origin="console")
+        assert manager.wait(run.id, timeout=10).status == "done"
+
+    events = [json.loads(line)["event"] for line in read_recent(200)]
+    assert "run.finished" in events  # the log is live, so this is not vacuous
+    assert "run.heartbeat_failed" not in events
+
+
+def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
+    """A successful run reports no error, whatever a reaper wrote meanwhile.
+
+    A reaper can mark a run interrupted while its owner is in fact about to
+    finish (it could not see that process). The owner's own record is the last
+    word: a run that says ``done`` must not also carry the reap reason, which the
+    console's run view and the API would otherwise show as a failure.
+    """
+    from clear_record.service import RESTART_REASON
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(meeting.id, origin="console")
+    assert registry.claim_run(run.id, owner="peer:1") is not None
+    reaped = registry.interrupt_run(
+        run.id,
+        ended_at="2026-01-01T00:00:00+00:00",
+        error=RESTART_REASON,
+        progress={"interrupted": True},
+    )
+    assert reaped is not None and reaped.error == RESTART_REASON
+
+    finished = registry.update_run(
+        run.id,
+        status="done",
+        ended_at="2026-01-01T00:01:00+00:00",
+        progress={"kept": 1},
+    )
+    assert (finished.status, finished.error) == ("done", None)
+    assert finished.progress == {"kept": 1}
+    assert registry.get_run(run.id).error is None
+
+
 def test_a_second_manager_leaves_a_live_run_alone(tmp_path) -> None:
     """A second manager — another writer — does not reap a run that is live here.
 
@@ -942,11 +1322,6 @@ def test_two_processes_claim_one_run_and_exactly_one_executes(tmp_path) -> None:
     clean: if either process had reconciled the other's live run away, the run
     would carry the restart reason on its record.
     """
-    import json
-    import os
-    import subprocess
-    import sys
-    import textwrap
 
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -958,8 +1333,6 @@ def test_two_processes_claim_one_run_and_exactly_one_executes(tmp_path) -> None:
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
 
-    script = tmp_path / "drain.py"
-    script.write_text(textwrap.dedent(_TWO_PROCESS_DRAIN), encoding="utf-8")
     gate = tmp_path / "gate"
     executed = tmp_path / "executed.txt"
     children = []
@@ -971,29 +1344,15 @@ def test_two_processes_claim_one_run_and_exactly_one_executes(tmp_path) -> None:
         ready_files.append(ready)
         result_files.append(result)
         children.append(
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(script),
-                    str(registry.db_path),
-                    str(gate),
-                    str(ready),
-                    str(result),
-                    str(executed),
-                    str(run.id),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                # A child inherits the environment, not the suite's in-process
-                # redirection: point its app-owned directories at the test too.
-                env={
-                    **os.environ,
-                    "CR_DATA_DIR": str(tmp_path / "child-data"),
-                    "CR_STATE_DIR": str(tmp_path / "child-state"),
-                    "CR_LOG_DIR": str(tmp_path / "child-logs"),
-                    "CR_CACHE_DIR": str(tmp_path / "child-cache"),
-                },
+            _run_child(
+                tmp_path,
+                _TWO_PROCESS_DRAIN,
+                str(registry.db_path),
+                str(gate),
+                str(ready),
+                str(result),
+                str(executed),
+                str(run.id),
             )
         )
 

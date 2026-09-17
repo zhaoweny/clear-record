@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import random
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from clear_record.core import (
     PipelineOptions,
     Progress,
     RecordDocument,
+    RunCancelled,
     ScopeError,
     Segment,
     Source,
@@ -361,6 +363,7 @@ def transcribe(
             ),
             workspace=w,
             on_event=on_event,
+            cancel=run_cancel_signal(on_event),
         )
     except ScopeError as exc:
         # A scope that cannot be honoured is a usage problem, not a crash: name
@@ -771,6 +774,19 @@ def _run_export(
     )
 
 
+def run_cancel_signal(on_event: EventSink | None) -> threading.Event | None:
+    """The run's cancel signal, when the caller's sink is a run queue channel.
+
+    A run's cancel travels with the sink the run queue hands a pipeline (RUN-04):
+    the queue's channel both raises on the next report and exposes the signal
+    itself, which is what the transcribe pool needs — a chunk already decoding
+    must be able to stop promptly rather than at the next report. A plain sink
+    (the CLI, a test) carries none, so this answers ``None`` and nothing changes
+    for a caller that is not a run.
+    """
+    return getattr(on_event, "signal", None)
+
+
 # One runner per declared stage; the drift test checks the keys against the spec.
 _STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions, EventSink | None], None]] = {
     Step.INGEST: _run_ingest,
@@ -810,6 +826,11 @@ def run(
             log_event("info", "stage", "stage.started", stage=name)
             _STAGE_RUNNERS[stage.step](directory, options, on_event)
             log_event("info", "stage", "stage.finished", stage=name)
+    except RunCancelled:
+        # A cancellation is an outcome, not a failure: the run queue records the
+        # run as ``stopped``, so the log must not call it a failed pipeline.
+        log_event("info", "cli", "cli.run.stopped")
+        raise
     except (Exception, SystemExit) as exc:  # the error path already raises
         log_event(
             "error",

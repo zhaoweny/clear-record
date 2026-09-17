@@ -39,7 +39,7 @@ from pathlib import Path
 
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
-from clear_record.core import EventSink, JobEvent, PipelineOptions
+from clear_record.core import EventSink, JobEvent, PipelineOptions, RunCancelled
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
@@ -61,7 +61,53 @@ from clear_record.service.webhooks import (
 )
 
 #: What the manager calls to run a pipeline: the CLI's stage wiring by default.
+#: The ``on_event`` it receives is a :class:`RunChannel` — the event sink plus the
+#: run's cancel signal (RUN-04) — so a pipeline's cancellation needs no extra
+#: parameter to thread.
 PipelineCallable = Callable[[str, PipelineOptions, EventSink | None], None]
+
+
+class RunChannel:
+    """What the run queue hands one pipeline: the event sink, plus its stop button.
+
+    One object per run, and the only thing the manager passes a pipeline that the
+    manager owns. Reporting goes through it (``channel(event)``), and the run's
+    cancel signal travels with it:
+
+    * a **set signal makes the next report raise** :class:`RunCancelled`, so any
+      pipeline that reports progress stops at its next event — a stage's first
+      announcement is a stage boundary, and transcribe reports per chunk;
+    * :attr:`signal` is the same signal, for the one stage that owns something
+      long-running: transcribe's chunk pool reads it so a cancel terminates its
+      decoder children promptly instead of waiting for a chunk to finish.
+
+    Nothing is persisted for the report that stopped the run: the stream ends at
+    the last thing the work actually said.
+    """
+
+    def __init__(
+        self,
+        registry: Registry,
+        run_id: int,
+        events_lock: threading.Lock,
+        signal: threading.Event,
+    ) -> None:
+        self._registry = registry
+        self._run_id = run_id
+        self._events_lock = events_lock
+        self._signal = signal
+
+    @property
+    def signal(self) -> threading.Event:
+        """The run's cancel signal (see this class's docstring)."""
+        return self._signal
+
+    def __call__(self, event: JobEvent) -> None:
+        if self._signal.is_set():
+            raise RunCancelled("the run was cancelled")
+        with self._events_lock:
+            self._registry.add_run_event(self._run_id, event)
+
 
 #: A status that no later transition follows.
 TERMINAL_STATUSES = ("done", "failed", "stopped", "interrupted")
@@ -437,6 +483,11 @@ class RunManager:
         #: execute, and the runs whose beat failed (reported once each).
         self._heartbeat: threading.Thread | None = None
         self._beat_failed: set[int] = set()
+        #: One cancel signal per run this manager is executing (RUN-04). The
+        #: pipeline gets it while it runs; a request that arrives before the run
+        #: starts is carried by the registry instead (``cancel_requested_at``),
+        #: and the beat below picks that up.
+        self._cancels: dict[int, threading.Event] = {}
         self._wake = threading.Condition()
         self._scheduler: threading.Thread | None = None
         self._stopping = False
@@ -608,6 +659,7 @@ class RunManager:
         *,
         auto: dict | None = None,
         origin: str,
+        resumes: int | None = None,
     ) -> PipelineRun:
         """Enqueue a run at the back of the node's FIFO and return its row.
 
@@ -621,6 +673,11 @@ class RunManager:
         (RUN-02). It is required — a start path that does not name itself would
         record a run whose provenance nobody can trust — and recorded with the
         row, so it survives the restart that ends this process.
+
+        ``resumes`` names the run this one continues (RUN-04). The link is
+        recorded with the row and checked by the registry (same meeting, run
+        exists); what makes a resume *cheaper* is the chunk cache, which is why a
+        resume also starts the run with ``resume=True`` (see :meth:`resume`).
 
         ``auto`` is the meta the opt-in ``--auto`` / ``--backend auto``
         resolvers produced (see :func:`clear_record.service.auto.resolve_run`):
@@ -657,6 +714,7 @@ class RunManager:
             options=self._run_meta(options, run_meta, auto),
             run_options=dataclasses.asdict(options),
             origin=origin,
+            resumes_run_id=resumes,
         )
         with self._lock:
             self._pending[run.id] = (meeting, options)
@@ -672,6 +730,142 @@ class RunManager:
             language=options.language,
         )
         self._ensure_scheduler()
+        return run
+
+    # --- cancel and resume (RUN-04) ----------------------------------------- #
+    def cancel(self, run_id: int) -> PipelineRun:
+        """Cancel a queued or running run, and return its row as it now stands.
+
+        Two different acts, chosen by where the run actually is:
+
+        * **Queued** — nothing is executing it, so the cancel *is* the terminal
+          transition: the row becomes ``stopped`` here and now (conditional on
+          ``queued``, so a claim racing this cannot both win). The drain never
+          picks it up and a restart has nothing to resurrect.
+        * **Running** — its owner is executing it in a workspace, so this records
+          a **request** (``cancel_requested_at``); when this manager is the
+          owner, the run's in-process signal is set straight away, and otherwise
+          the owner reads the request on its next heartbeat and stops at its next
+          safe boundary. The owner writes ``stopped`` — never the requester,
+          because a run that keeps executing must not read as stopped. A stalled
+          owner therefore keeps its run ``running``: the fail-closed rule holds,
+          and the honest answer to "why is it not stopping?" is that the process
+          holding it is not answering.
+
+        Cancelling a run that is already terminal is a no-op (a second click, a
+        stale page): the row is returned unchanged. ``KeyError`` for an unknown
+        run, so each caller owns its 404.
+        """
+        run = self._registry.get_run(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        if run.status not in ("queued", "running"):
+            return run
+
+        if run.status == "queued":
+            ended_at = _now()
+            stopped = self._registry.stop_run(
+                run_id,
+                ended_at=ended_at,
+                progress=self._progress(run_id, "stopped", ended_at=ended_at),
+            )
+            if stopped is not None:
+                with self._lock:
+                    # The options this manager kept for the run are for running
+                    # it; a cancelled run never runs, and nothing else would ever
+                    # drop them.
+                    self._pending.pop(run_id, None)
+                meeting = self._registry.meeting_by_id(run.meeting_id)
+                if meeting is not None and meeting.status == "running":
+                    # A cancel before the run started leaves the meeting runnable,
+                    # not recorded and not failed.
+                    self._registry.set_meeting_status(run.meeting_id, "ready")
+                log_event(
+                    "info",
+                    "runs",
+                    "run.cancelled",
+                    run_id=run_id,
+                    meeting_id=run.meeting_id,
+                    status="stopped",
+                )
+                return stopped
+            # A claim won the race: the run is starting, so ask it to stop
+            # instead of insisting it never did.
+            current = self._registry.get_run(run_id)
+            if current is None:
+                raise KeyError(run_id)
+            if current.status != "running":
+                return current
+
+        requested = self._registry.request_cancel(run_id)
+        if requested is None:
+            # Terminal between the read and the write: report what it is now.
+            current = self._registry.get_run(run_id)
+            return current if current is not None else run
+        # This manager may be the one executing it: then the pipeline stops at
+        # its next boundary instead of waiting for the heartbeat to notice.
+        self._stop_signal(run_id)
+        log_event(
+            "info",
+            "runs",
+            "run.cancel_requested",
+            run_id=run_id,
+            meeting_id=requested.meeting_id,
+            owner=requested.owner,
+        )
+        return requested
+
+    def resume(self, run_id: int, *, origin: str) -> PipelineRun:
+        """Start a new run that continues ``run_id``, re-using its chunk cache.
+
+        The previous run's **own resolved options** are what it continues with:
+        the chunk cache is keyed on backend, model, language, glossary and chunk
+        plan, so resuming with the same ones is exactly what makes the cached
+        chunks reusable. ``resume`` is forced on — a resume that re-decoded
+        everything would be a plain re-run wearing the name.
+
+        Only a terminal run can be resumed (a live one is cancelled first), and
+        its options must be on the row: a run old enough to predate them cannot be
+        reconstructed, and guessing would be worse than saying so. ``KeyError``
+        for an unknown run.
+        """
+        previous = self._registry.get_run(run_id)
+        if previous is None:
+            raise KeyError(run_id)
+        if previous.status in ("queued", "running"):
+            # Placeholder-free, like the service's other refusals: the console
+            # renders the message it is given, and the user is looking at the run.
+            raise ValueError(deferred("this run is still in flight; cancel it first"))
+        options = self._options_from_row(previous)
+        if options is None:
+            raise ValueError(
+                deferred(
+                    "this run did not record the options it ran with, "
+                    "so it cannot be resumed"
+                )
+            )
+        meeting = self._registry.meeting_by_id(previous.meeting_id)
+        if meeting is None:
+            raise ValueError(deferred("the run's meeting no longer exists"))
+        run = self.start(
+            meeting,
+            # The scope is *this* run's assertion about which chunks may be
+            # re-decoded; continuing the work means reusing everything the cache
+            # can prove, so a resume starts unscoped.
+            dataclasses.replace(
+                options, resume=True, rerun_sources=None, rerun_range=None
+            ),
+            origin=origin,
+            resumes=previous.id,
+        )
+        log_event(
+            "info",
+            "runs",
+            "run.resumed",
+            run_id=run.id,
+            meeting_id=meeting.id,
+            resumes_run_id=previous.id,
+        )
         return run
 
     @staticmethod
@@ -800,6 +994,12 @@ class RunManager:
                         run = self._registry.oldest_queued_run()
                         if run is not None:
                             break
+                        # Nothing is waiting and nothing is executing, so the
+                        # enqueue-time options this manager kept cannot be needed:
+                        # their runs were claimed elsewhere, cancelled by another
+                        # writer, or finished. The registry is the truth; this is
+                        # a cache, and an empty queue is when to drop it.
+                        self._prune_pending()
                     self._wake.wait(timeout=1.0)
             self._execute_run(run)
 
@@ -824,6 +1024,10 @@ class RunManager:
             )
             return
         run = claimed
+        # The run's own cancel signal (RUN-04), registered *before* the pipeline
+        # starts so a cancel arriving now cannot miss the run and wait for the
+        # next heartbeat to be noticed.
+        self._signal_for(run.id)
         self._beat_while_live()
         try:
             meeting = (
@@ -870,6 +1074,9 @@ class RunManager:
         finally:
             with self._lock:
                 self._live.discard(run.id)
+                # The pipeline is done with it: a later cancel is answered from
+                # the registry (a terminal row needs no signal).
+                self._cancels.pop(run.id, None)
 
     # --- the liveness heartbeat (RUN-02) ------------------------------------ #
     def _beat_while_live(self) -> None:
@@ -909,12 +1116,15 @@ class RunManager:
                     # run is alive, so a dead thread means a still-executing run
                     # looks dead 30 s later and its meeting and the node are freed.
                     landed = self._registry.heartbeat_run(run_id)
+                    asked_to_stop = landed and self._registry.cancel_requested(run_id)
                     reaped = not landed and self._was_reaped(run_id)
                 except sqlite3.Error as exc:
                     # Report it once per run and keep beating — the error says the
                     # node cannot *prove* the run is alive, not that it is not.
                     self._report_beat_failure(run_id, f"{type(exc).__name__}: {exc}")
                     continue
+                if asked_to_stop:
+                    self._stop_signal(run_id)
                 if reaped:
                     # A peer moved a row this manager is still executing: the
                     # pipeline keeps working (no cancellation contract) and our
@@ -924,6 +1134,19 @@ class RunManager:
                         run_id, "a peer reconciled this run while it executes"
                     )
             time.sleep(HEARTBEAT_INTERVAL_S)
+
+    def _stop_signal(self, run_id: int) -> None:
+        """Set a live run's cancel signal for it (RUN-04).
+
+        The signal itself is per manager and per run; this is the one place the
+        *owner* acts on a request that came from elsewhere — the console asking a
+        run executing in an agent's MCP server to stop, say. Setting an already
+        set event is a no-op, so the heartbeat may call this as often as it likes.
+        """
+        with self._lock:
+            signal = self._cancels.get(run_id)
+        if signal is not None:
+            signal.set()
 
     def _was_reaped(self, run_id: int) -> bool:
         """Whether a run left ``running`` because another writer reconciled it.
@@ -954,6 +1177,32 @@ class RunManager:
             run_id=run_id,
             reason=reason,
         )
+
+    def _signal_for(self, run_id: int) -> threading.Event:
+        """The run's cancel signal, created if this manager has not opened one yet.
+
+        One signal per run *this* manager is executing, so :meth:`cancel` can set
+        it from another thread and the pipeline can read it from where the work
+        happens. Kept per run rather than per manager: a manager that is draining
+        a queue must not confuse one run's stop with the next run's start.
+        """
+        with self._lock:
+            signal = self._cancels.get(run_id)
+            if signal is None:
+                signal = threading.Event()
+                self._cancels[run_id] = signal
+            return signal
+
+    def _prune_pending(self) -> None:
+        """Drop enqueue-time options that can no longer be used (see the drain).
+
+        A run enqueued here and cancelled by *another* writer never reaches
+        :meth:`_execute_run`, which is the only other place the entry is dropped;
+        without this its ``(Meeting, PipelineOptions)`` would be retained for the
+        life of the process.
+        """
+        with self._lock:
+            self._pending.clear()
 
     def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
         """Rebuild the queued run's options from the registry (after a restart)."""
@@ -991,14 +1240,29 @@ class RunManager:
             run_id=run.id,
         )
 
-        def sink(event: JobEvent) -> None:
-            with self._events_lock:
-                self._registry.add_run_event(run.id, event)
+        sink = RunChannel(
+            self._registry, run.id, self._events_lock, self._signal_for(run.id)
+        )
 
         try:
             self._pipeline(meeting.workspace_path, options, sink)
+        except RunCancelled:
+            # A cancel is an outcome, not a failure (RUN-04): the run stopped
+            # where its own signal said to, so it is recorded as ``stopped`` with
+            # the stages it did complete, and the meeting goes back to runnable
+            # (the chunk cache is what a resume continues from).
+            self._finish_stopped(run, meeting)
+            return
         except Exception as exc:  # noqa: BLE001 - recorded for the console, not hidden
             error = f"{type(exc).__name__}: {exc}"
+            if self._signal_for(run.id).is_set():
+                # The run was cancelled while this was in flight, and whatever the
+                # stage raised is downstream of that (a child killed mid-decode is
+                # the ordinary case). The outcome the user asked for is a stop, so
+                # it is recorded as one — with the stage's own words kept, because
+                # they explain where the run actually ended.
+                self._finish_stopped(run, meeting, error=error)
+                return
             ended_at = _now()
             self._registry.update_run(
                 run.id,
@@ -1054,6 +1318,37 @@ class RunManager:
                 meeting_id=meeting.id,
                 run_id=run.id,
             )
+
+    def _finish_stopped(
+        self, run: PipelineRun, meeting: Meeting, *, error: str | None = None
+    ) -> None:
+        """Record a cancelled run's terminal state (RUN-04).
+
+        ``stopped`` is terminal like the others, but it means something else: the
+        run did not fail and it did not finish — it was cancelled, and what it
+        completed is in its cost record. The meeting goes back to ``ready`` rather
+        than ``failed`` so the next start is a resume of this work, not a fresh
+        attempt at a broken one. ``error`` is kept when a stage reported something
+        on its way out of a cancel, so the reason the run ended where it did is
+        not lost.
+        """
+        ended_at = _now()
+        self._registry.update_run(
+            run.id,
+            status="stopped",
+            ended_at=ended_at,
+            error=error,
+            progress=self._progress(run.id, "stopped", error, ended_at=ended_at),
+        )
+        self._registry.set_meeting_status(meeting.id, "ready")
+        log_event(
+            "info",
+            "runs",
+            "run.stopped",
+            run_id=run.id,
+            meeting_id=meeting.id,
+            error=error,
+        )
 
     def _fail_unrunnable(
         self, run: PipelineRun, meeting: Meeting | None, error: str

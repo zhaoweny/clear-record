@@ -262,6 +262,24 @@ def main() -> int:
     )
     Path(retro.workspace_path).mkdir(parents=True, exist_ok=True)
 
+    # A run the user cancelled (RUN-04): a terminal row with the options it ran
+    # with, so the console offers to resume it and states what a resume re-uses.
+    cancelled = registry.create_run(
+        retro.id,
+        backend="apple-speech",
+        model="whisper-large-v3",
+        language="en",
+        options={"profile": "balanced"},
+        run_options={
+            "backend": "apple-speech",
+            "model": "whisper-large-v3",
+            "language": "en",
+            "resume": True,
+        },
+        origin="console",
+    )
+    registry.update_run(cancelled.id, status="stopped")
+
     # An archive whose manifest is gone: the lazy status cell's "missing" hue.
     registry.add_archive(
         kickoff.id,

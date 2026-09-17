@@ -45,7 +45,7 @@ from clear_record.service.models import (
 )
 from clear_record.service.paths import registry_path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -207,6 +207,18 @@ ALTER TABLE pipeline_run ADD COLUMN owner TEXT;
 ALTER TABLE pipeline_run ADD COLUMN heartbeat_at TEXT;
 """
 
+# RUN-04: cancel and resume. ``resumes_run_id`` links a run to the run it
+# continues (the chunk cache is what actually makes it cheaper; this is what makes
+# the link visible). ``cancel_requested_at`` is a *request* on a ``running`` run:
+# only its owner may end it, so the column records who asked and when, and the
+# owner's next look at the row turns it into the terminal ``stopped``. Both are
+# NULL for a run that neither resumes nor was asked to stop.
+_SCHEMA_V8 = """
+ALTER TABLE pipeline_run ADD COLUMN resumes_run_id INTEGER;
+
+ALTER TABLE pipeline_run ADD COLUMN cancel_requested_at TEXT;
+"""
+
 # Forward-only: each entry is (version it produces, DDL). A fresh registry runs
 # them all; an existing one runs only those newer than its stored version.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -217,6 +229,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (5, _SCHEMA_V5),
     (6, _SCHEMA_V6),
     (7, _SCHEMA_V7),
+    (8, _SCHEMA_V8),
 )
 
 
@@ -788,6 +801,7 @@ class Registry:
         options: dict | None = None,
         run_options: dict | None = None,
         origin: str | None = None,
+        resumes_run_id: int | None = None,
     ) -> PipelineRun:
         """Create a **queued** run at the back of the node's FIFO.
 
@@ -797,17 +811,31 @@ class Registry:
         recorded so a queued run is picked back up after a restart. ``origin`` is
         the surface that started it, one of :data:`RUN_ORIGINS` (RUN-02); it is
         ``None`` only for a caller that is not a start path (a seeded row).
+
+        ``resumes_run_id`` links this run to the run it continues (RUN-04). The
+        reference is checked here rather than left to the reader: a link to a run
+        that does not exist, or to a run of another meeting, would be a lie the
+        registry itself could see.
         """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
         if origin is not None and origin not in RUN_ORIGINS:
             raise ValueError(f"origin must be one of {RUN_ORIGINS}, got {origin!r}")
+        if resumes_run_id is not None:
+            previous = self.get_run(resumes_run_id)
+            if previous is None:
+                raise KeyError(resumes_run_id)
+            if previous.meeting_id != meeting_id:
+                raise ValueError(
+                    f"run {resumes_run_id} belongs to meeting "
+                    f"{previous.meeting_id}, not {meeting_id}"
+                )
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO pipeline_run"
                 " (meeting_id, status, backend, model, language, options,"
-                "  run_options, created_at, origin)"
-                " VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
+                "  run_options, created_at, origin, resumes_run_id)"
+                " VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     meeting_id,
                     backend,
@@ -817,6 +845,7 @@ class Registry:
                     json.dumps(run_options) if run_options else None,
                     _now(),
                     origin,
+                    resumes_run_id,
                 ),
             )
             return self._run_row(conn, cur.lastrowid)
@@ -1013,6 +1042,73 @@ class Registry:
             if cur.rowcount == 0:
                 return None
             return self._run_row(conn, run_id)
+
+    def stop_run(
+        self, run_id: int, *, ended_at: str, progress: dict
+    ) -> PipelineRun | None:
+        """Move a **queued** run to ``stopped``, before anyone claimed it (RUN-04).
+
+        The counterpart of :meth:`claim_run` for a run that has not started:
+        both are conditional on ``status = 'queued'``, so a cancel and a claim
+        cannot both win — whoever loses sees no row and acts on what it finds
+        instead. Moving the row out of ``queued`` is what makes a cancellation
+        stick: the drain never picks it up, the meeting's active-run guard lets go
+        of it, and a restart has nothing to resurrect.
+
+        ``None`` means the run was not ``queued`` any more (claimed or already
+        terminal): the caller re-reads it rather than insisting.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pipeline_run SET status = 'stopped', ended_at = ?,"
+                " progress = ?"
+                " WHERE id = ? AND status = 'queued'",
+                (ended_at, json.dumps(progress), run_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            return self._run_row(conn, run_id)
+
+    def request_cancel(
+        self, run_id: int, *, at: str | None = None
+    ) -> PipelineRun | None:
+        """Record a cancel **request** on a ``running`` run (RUN-04).
+
+        A running run belongs to whoever is executing it, and only that process
+        may end it: its pipeline is mid-write in a workspace, so a second process
+        flipping the row to a terminal status would record a stop that did not
+        happen and let the work continue unheard. This writes the request; the
+        owner honours it (it reads this column on every heartbeat), stops at its
+        next safe boundary and writes ``stopped`` itself.
+
+        The first request's timestamp is kept, so asking twice is idempotent
+        rather than a rewrite. ``None`` means the run was not ``running`` any
+        more — already terminal by the time the request arrived.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pipeline_run SET cancel_requested_at ="
+                " COALESCE(cancel_requested_at, ?)"
+                " WHERE id = ? AND status = 'running'",
+                (at or _now(), run_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            return self._run_row(conn, run_id)
+
+    def cancel_requested(self, run_id: int) -> bool:
+        """Whether a cancel has been requested for this run (RUN-04).
+
+        Read by the executing owner's heartbeat, which is the only place a
+        *request* can become an actual stop: cheap, one column, and only asked
+        while a run is live.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cancel_requested_at FROM pipeline_run WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return bool(row and row["cancel_requested_at"])
 
     def queue_position(self, run_id: int) -> int:
         """A queued run's 1-based place in the FIFO (``0`` when not queued).
@@ -1306,6 +1402,8 @@ class Registry:
             origin=row["origin"],
             owner=row["owner"],
             heartbeat_at=row["heartbeat_at"],
+            resumes_run_id=row["resumes_run_id"],
+            cancel_requested_at=row["cancel_requested_at"],
         )
 
     def _run_row(self, conn: sqlite3.Connection, run_id: int) -> PipelineRun:

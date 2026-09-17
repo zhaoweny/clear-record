@@ -491,7 +491,25 @@ in the registry. Starting a run while another is executing **enqueues** it and
 reports its position (position 1 is next) instead of refusing the different
 meeting, so two meetings no longer fight over one GPU. Queued work survives a
 restart and is picked back up. This is deliberately minimal: no priorities, no
-cancellation, no per-meeting concurrency.
+pausing a run (only cancel and resume), no per-meeting concurrency.
+
+[FACT, repo] A run can be **cancelled** while it is queued or running, and a run
+that stopped early can be **resumed** (RUN-04):
+
+- **Queued**: cancelled outright. The row becomes `stopped` before anything claims
+  it, so nothing runs it and a restart does not resurrect it.
+- **Running**: *asked* to stop. Only the process executing a run may end it — its
+  pipeline is mid-write in a workspace — so a cancel records a request on the row
+  and the owner stops at its next safe boundary (a stage boundary, or between
+  chunks in transcribe's pool, which also terminates the decoder children it
+  launched) and writes `stopped` itself. A process that is stalled cannot read the
+  request: its run stays `running`, which is why the console can say a run was
+  *asked* to stop without claiming that it did.
+- **Resume** starts a *new* run continuing the old one's work: it runs the
+  previous run's own resolved options with `resume` on, so it re-uses the chunks
+  the cache still holds, and the row records which run it resumes. The chunk
+  cache is app-owned and keyed by the workspace path — a re-run from another
+  workspace, another machine or a moved directory, decodes from scratch.
 
 [FACT] `clear-record serve` stops draining the queue when it exits (a clean
 `SIGTERM` included); a run still executing dies with the process, so the next

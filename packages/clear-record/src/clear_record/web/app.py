@@ -57,6 +57,7 @@ from clear_record.service import (
     ModelNotOnDisk,
     NoBackendAvailable,
     PipelineOptions,
+    PipelineRun,
     Registry,
     Runner,
     RunManager,
@@ -528,6 +529,27 @@ def _run_axes(row, meeting) -> dict | None:
     return run_axes(row, directory=meeting.workspace_path if meeting else None)
 
 
+#: The statuses a run can be resumed from: it is over, and continuing it is a
+#: new run that re-uses the chunk cache (RUN-04). ``done`` is not one of them —
+#: re-running a finished meeting is the run form's job, not a resume.
+RESUMABLE_STATUSES = ("stopped", "interrupted", "failed")
+
+
+def _run_controls(row: PipelineRun | None, *, status: str) -> dict:
+    """The cancel/resume controls a run fragment shows (RUN-04).
+
+    Derived from the row, never from live process state: a queued or running run
+    can be cancelled, a terminal one that did not finish can be resumed, and a
+    resume says which run it continues.
+    """
+    return {
+        "cancellable": status in ("queued", "running"),
+        "cancel_requested": bool(row.cancel_requested_at) if row is not None else False,
+        "resumable": status in RESUMABLE_STATUSES,
+        "resumes_run_id": row.resumes_run_id if row is not None else None,
+    }
+
+
 def _run_context(
     state: RunState | None,
     *,
@@ -536,8 +558,14 @@ def _run_context(
     meta: dict | None = None,
     history_eta_s: float | None = None,
     axes: dict | None = None,
+    row: PipelineRun | None = None,
 ) -> dict:
     """The template context for one run fragment (live state, else the last row).
+
+    ``row`` is the registry row behind the fragment. The run's control state — can
+    it be cancelled, was it asked to stop, can it be resumed, what does it resume
+    (RUN-04) — lives there rather than in the live state: it is what survives a
+    restart, and it is what another writer (the agent's MCP server) can change.
 
     ``history_eta_s`` is the service's history-based estimate (RUN-01). When a
     matching history produced one it replaces the stage-local estimate, which
@@ -553,6 +581,7 @@ def _run_context(
         context["message"] = last.message if last else ""
         context["polling"] = state.status in ("queued", "running")
         context["axes"] = axes
+        context.update(_run_controls(row, status=state.status))
         if history_eta_s is not None:
             context["eta_s"] = history_eta_s
         context.update(_auto_view(meta))
@@ -570,6 +599,7 @@ def _run_context(
         "polling": False,
         "axes": axes,
     }
+    context.update(_run_controls(row, status=fallback.status))
     context.update(_auto_view(meta if meta is not None else fallback.options))
     return context
 
@@ -834,6 +864,7 @@ def create_app(
                     meta=latest[0].options,
                     history_eta_s=eta_s,
                     axes=axes,
+                    row=latest[0],
                 )
             elif latest:
                 run = _run_context(
@@ -843,6 +874,7 @@ def create_app(
                     meta=latest[0].options,
                     history_eta_s=eta_s,
                     axes=axes,
+                    row=latest[0],
                 )
             else:
                 run = None
@@ -884,6 +916,7 @@ def create_app(
                     meta=row.options if row else None,
                     history_eta_s=estimate_eta_s(registry, row) if row else None,
                     axes=_run_axes(row, meeting),
+                    row=row,
                 )
             },
         )
@@ -2048,6 +2081,41 @@ def create_app(
             if active is not None:
                 return render_run(request, active)
             return render_run_error(request, meeting_id, tr(str(exc)))
+        return render_run(request, runs.require_state(run.id))
+
+    @app.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
+    def ui_cancel_run(request: Request, run_id: int) -> HTMLResponse:
+        """Cancel a queued or running run (RUN-04).
+
+        A queued run is stopped here and now; a running one is *asked* to stop —
+        the request is recorded and its owner ends it at a safe boundary (see
+        ``RunManager.cancel``). Re-rendering the fragment is the whole response:
+        the run's own polling (or the next click) shows the outcome, and a
+        cancelled run that is already terminal is a no-op rather than an error.
+        """
+        try:
+            runs.cancel(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no run {run_id}") from exc
+        return render_run(request, runs.require_state(run_id))
+
+    @app.post("/ui/runs/{run_id}/resume", response_class=HTMLResponse)
+    def ui_resume_run(request: Request, run_id: int) -> HTMLResponse:
+        """Start a new run continuing ``run_id`` (RUN-04), and render it.
+
+        The new run carries the previous run's own resolved options with resume
+        forced on, so the chunk cache is what it reuses; the fragment shows the
+        link back to the run it continues.
+        """
+        previous = registry.get_run(run_id)
+        if previous is None:
+            raise HTTPException(status_code=404, detail=f"no run {run_id}")
+        try:
+            run = runs.resume(run_id, origin="console")
+        except ValueError as exc:
+            # A refusal is the run's own message (already in flight, or no
+            # recorded options to continue with), rendered where the user asked.
+            return render_run_error(request, previous.meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
     @app.get("/ui/runs/{run_id}", response_class=HTMLResponse)

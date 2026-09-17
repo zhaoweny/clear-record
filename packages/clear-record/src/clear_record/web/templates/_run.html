@@ -67,4 +67,26 @@
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
   {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}
+  {# Cancel and resume (RUN-04). Both act on the run this fragment shows and
+     swap the fragment back in; the controls are derived from the run's row, so
+     a run another writer started (the agent's MCP server) offers them too. #}
+  {% if run.cancellable or run.resumable or run.resumes_run_id %}
+  <div class="run-actions">
+    {% if run.cancellable %}
+    {% if run.cancel_requested %}<span class="muted">{{ tr("asking the run to stop…") }}</span>{% endif %}
+    <button class="btn btn-ghost" hx-post="/ui/runs/{{ run.run_id }}/cancel"
+            hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("Cancel") }}</button>
+    {% endif %}
+    {% if run.resumable %}
+    <button class="btn btn-ghost" hx-post="/ui/runs/{{ run.run_id }}/resume"
+            hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("Resume") }}</button>
+    <span class="muted">{{ tr("Resuming re-uses this workspace's cached chunks. A run elsewhere re-decodes from scratch: the cache is app-owned and keyed by this workspace's path.") }}</span>
+    {% endif %}
+    {% if run.resumes_run_id %}
+    <a class="muted" href="/ui/runs/{{ run.resumes_run_id }}"
+       hx-get="/ui/runs/{{ run.resumes_run_id }}"
+       hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("resumed from run {run_id}", run_id=run.resumes_run_id) }}</a>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>

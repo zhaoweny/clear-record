@@ -42,6 +42,7 @@ from clear_record.core import (
     ChunkScope,
     EventSink,
     Progress,
+    RunCancelled,
     ScopeError,
     Segment,
     Source,
@@ -55,7 +56,7 @@ from clear_record.engine import (
     write_chunk,
 )
 from clear_record.engine.audio import read_audio
-from clear_record.providers import CancellableProcessRunner
+from clear_record.providers import CancellableProcessRunner, ProcessCancelled
 
 from clear_record.cli.workspace import (
     ChunkCache,
@@ -405,8 +406,13 @@ def resolve_jobs(
 _CANCEL_GRACE_S = 1.0
 
 
-class _PoolCancelled(Exception):
-    """Raised inside a pool worker once cancellation has been requested."""
+class _PoolCancelled(RunCancelled):
+    """Raised inside a pool worker once cancellation has been requested.
+
+    A :class:`~clear_record.core.RunCancelled`, so a chunk pool that stops and a
+    stage boundary that stops are the same event to every caller: the run's owner
+    records the run as ``stopped`` either way (RUN-04).
+    """
 
 
 def _run_pending(
@@ -433,9 +439,15 @@ def _run_pending(
                 src_id, index, shifted = run_chunk(task)
                 plan_by_id[src_id].segments[index] = shifted
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            if isinstance(
+                exc, (KeyboardInterrupt, SystemExit, RunCancelled, ProcessCancelled)
+            ):
                 runner.cancel()
                 runner.terminate_all()
+                if isinstance(exc, ProcessCancelled):
+                    # The runner killed a child because a cancel arrived, so what
+                    # ended this chunk is the run's own stop, not a decode error.
+                    raise RunCancelled(str(exc)) from exc
             raise
         return
 
@@ -449,8 +461,12 @@ def _run_pending(
             src_id, index, shifted = future.result()
             plan_by_id[src_id].segments[index] = shifted
     except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-            # Operator interruption: stop queued work and kill what is already
+        if isinstance(
+            exc, (KeyboardInterrupt, SystemExit, RunCancelled, ProcessCancelled)
+        ):
+            # Interruption: an operator's Ctrl-C, or a run's cancel arriving
+            # while a chunk was decoding (RUN-04) — which the runner reports by
+            # killing the child it launched. Stop queued work, kill what is still
             # decoding, then return promptly.
             runner.cancel()
             for future in futures:
@@ -459,6 +475,8 @@ def _run_pending(
             wait(futures, timeout=_CANCEL_GRACE_S)
             runner.terminate_all(grace=0.0)
             pool.shutdown(wait=False, cancel_futures=True)
+            if isinstance(exc, ProcessCancelled):
+                raise RunCancelled(str(exc)) from exc
         else:
             # A chunk failed (e.g. a backend error): finish the already
             # submitted work so its cache is complete, then propagate.
@@ -812,6 +830,7 @@ def transcribe(
     *,
     workspace: Workspace,
     on_event: EventSink | None = None,
+    cancel: threading.Event | None = None,
 ) -> Transcription:
     """Transcribe ``sources`` in resumable overlapping chunks.
 
@@ -1011,7 +1030,10 @@ def transcribe(
 
     # One explicit, pool-scoped runner: the backend launches every child
     # through it, so cancellation can terminate exactly this pool's processes.
-    runner = CancellableProcessRunner()
+    # The run's own cancel signal (RUN-04) joins it here, so a cancel stops a
+    # long decode between chunks — and kills the children already decoding —
+    # exactly where Ctrl-C does.
+    runner = CancellableProcessRunner(cancel=cancel)
 
     def _run_chunk(task: _ChunkTask) -> tuple[str, int, list[Segment]]:
         chunk_wav = task.cache.audio_path(task.index)

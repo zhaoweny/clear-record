@@ -47,7 +47,13 @@ from clear_record.core.options import (
     profile_values,
     resolve_options,
 )
-from clear_record.core.pipeline import PipelineSpec, PipelineStage, Step, pipeline_spec
+from clear_record.core.pipeline import (
+    PipelineSpec,
+    PipelineStage,
+    RunCancelled,
+    Step,
+    pipeline_spec,
+)
 from clear_record.core.scope import (
     ChunkScope,
     ScopeError,
@@ -76,6 +82,7 @@ __all__ = [
     "PipelineStage",
     "Progress",
     "RecordDocument",
+    "RunCancelled",
     "ScopeError",
     "Segment",
     "Source",

@@ -168,6 +168,15 @@ class PipelineRun:
     #: heartbeat as a dead owner — that is how a run left by a killed process is
     #: told from one a live peer is executing (RUN-02).
     heartbeat_at: str | None = None
+    #: The run this one continues (RUN-04), set when a cancelled or interrupted
+    #: run is resumed. ``resumes`` is the link; the *saving* is the chunk cache,
+    #: which a resumed run re-uses because it runs the same tape with the same
+    #: backend, model, glossary and chunk plan.
+    resumes_run_id: int | None = None
+    #: When someone asked this run to stop (RUN-04). A *request*, not a state:
+    #: only the process executing the run may end it, so this column is what the
+    #: owner reads on its next heartbeat before stopping at a safe boundary.
+    cancel_requested_at: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)

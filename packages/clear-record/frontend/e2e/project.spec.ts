@@ -42,6 +42,19 @@ test("the meetings tab keeps the run form and the review links", async ({ page }
   expect(errors).toEqual([]);
 });
 
+test("a stopped run offers resume, and says what a resume re-uses", async ({ page }) => {
+  // RUN-04: the controls come from the run's row, so a seeded stopped run shows
+  // the resume action (and the cache rule right where the button is), while a
+  // terminal run offers no cancel.
+  const errors = watch(page);
+  await page.goto("/projects/q3-sync/meetings");
+  const retro = page.locator("#detail .meeting", { hasText: "Retro" }).locator(".run");
+  await expect(retro.locator("button", { hasText: "Resume" })).toBeVisible();
+  await expect(retro).toContainText("keyed by this workspace");
+  await expect(retro.locator("button", { hasText: "Cancel" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("a chosen tape survives a storage re-render", async ({ page }) => {
   const errors = watch(page);
   await page.goto("/projects/q3-sync/meetings");

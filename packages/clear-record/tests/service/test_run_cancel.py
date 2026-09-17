@@ -221,8 +221,12 @@ def test_a_cancel_mid_run_stops_at_the_next_report(tmp_path) -> None:
 
     manager = RunManager(registry, pipeline=_reporting_pipeline)
     run = manager.start(meeting, origin="console")
+    # Wait for the first *persisted* report rather than for the claim: the queue's
+    # channel raises before it records anything, so a cancel that wins the race
+    # against the pipeline's first event leaves a run that stopped without
+    # reporting, and the assertion below has no event to read.
     for _ in range(1000):
-        if registry.get_run(run.id).status == "running":
+        if registry.count_run_events(run.id) > 0:
             break
         time.sleep(0.005)
 

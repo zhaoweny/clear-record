@@ -470,8 +470,9 @@ console process's memory:
   necessarily fail) with the reason recorded on the run, its progress still
   readable, and you can start a new run. The meeting follows. When the owner is
   not a process this node can see — another host, or a run recorded before the
-  owner column existed — the owner's refreshed **heartbeat** decides instead, and
-  the run is reaped once that beat goes stale. A **stalled** owner (a process that
+  owner column existed — the owner's refreshed **heartbeat** decides instead: a
+  run with no beat at all is reaped at once, and one whose beat has gone stale
+  is reaped after the deadline. A **stalled** owner (a process that
   still exists but has stopped reporting) keeps its run `running` and keeps
   holding the node and the meeting: the queue fails closed rather than admitting a
   second pipeline beside work that may still be progressing.

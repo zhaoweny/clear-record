@@ -148,3 +148,8 @@ def test_the_runs_cancel_signal_kills_a_child_that_is_already_running(
     while time.monotonic() < deadline and not marker.exists():
         time.sleep(0.02)
     assert marker.exists(), "the child was killed, not abandoned"
+    # And forgotten: a stale Popen here would be re-terminated by every later
+    # ``terminate_all`` and re-scanned by every ``live_pids`` (the sampler's API),
+    # and this branch is the only place a cancelled launch is dropped.
+    with runner._lock:
+        assert runner._procs == [], "the killed child was forgotten"

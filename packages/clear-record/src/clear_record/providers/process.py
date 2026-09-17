@@ -89,9 +89,20 @@ class CancellableProcessRunner:
     @property
     def cancelled(self) -> bool:
         """Whether a cancellation was requested: this runner's, or the run's."""
-        return self._cancelled.is_set() or (
-            self._cancel is not None and self._cancel.is_set()
-        )
+        return self._cancelled.is_set() or self.run_cancelled
+
+    @property
+    def run_cancelled(self) -> bool:
+        """Whether the **run** asked this pool to stop (RUN-04).
+
+        Deliberately distinct from :attr:`cancelled`, which also covers this
+        runner's own flag — the one the pool sets in its interruption handler
+        while it kills its children. Only the run's own signal means "report this
+        chunk as cancelled": the pool's flag must leave the backends seeing
+        exactly what they saw before it existed, a child killed out from under
+        them, which is how the CLI's Ctrl-C reports itself.
+        """
+        return self._cancel is not None and self._cancel.is_set()
 
     def cancel(self) -> None:
         """Signal cancellation; later launches fail fast (see ``run``)."""
@@ -155,7 +166,7 @@ class CancellableProcessRunner:
         """
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
-            if self.cancelled:
+            if self.run_cancelled:
                 raise ProcessCancelled("process runner cancelled while decoding")
             slice_s = _CANCEL_POLL_S
             if deadline is not None:

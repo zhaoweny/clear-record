@@ -85,3 +85,47 @@ def test_timeout_kills_the_child_and_forgets_it() -> None:
         runner.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.2)
     with runner._lock:
         assert runner._procs == []
+
+
+def test_the_pools_own_cancel_flag_does_not_cancel_a_running_child() -> None:
+    """The runner's own flag is the pool's Ctrl-C, never the run's stop (RUN-04).
+
+    The pool sets that flag in its interruption handler as it kills its children,
+    so a wait that treated it as "report this chunk as cancelled" would rob the
+    backend of the exit status it is entitled to see — the CLI's Ctrl-C reports
+    itself as a killed child, and that is the behaviour this flag must preserve.
+    """
+    runner = CancellableProcessRunner()
+
+    def cancel_soon() -> None:
+        time.sleep(0.2)
+        runner.cancel()  # the pool's own flag, as its interrupt handler sets it
+
+    threading.Thread(target=cancel_soon, daemon=True).start()
+
+    result = runner.run([sys.executable, "-c", "import time; time.sleep(0.4)"])
+
+    assert result.returncode == 0, "the child exited on its own terms"
+    assert runner.cancelled is True
+
+
+def test_the_runs_cancel_signal_stops_a_child_that_is_already_running() -> None:
+    """The run's own signal is what stops a decode in flight (RUN-04).
+
+    A whole-file backend, or any tape inside one chunk, has a decode running for
+    the length of the recording: without this the cancel would wait for it (and a
+    decoder that never returns would hold the run, its meeting and the node).
+    """
+    run_cancel = threading.Event()
+    runner = CancellableProcessRunner(cancel=run_cancel)
+
+    def cancel_soon() -> None:
+        time.sleep(0.2)
+        run_cancel.set()
+
+    threading.Thread(target=cancel_soon, daemon=True).start()
+
+    with pytest.raises(ProcessCancelled):
+        runner.run([sys.executable, "-c", "import time; time.sleep(30)"])
+
+    assert runner.live_pids() == (), "the child was killed, not abandoned"

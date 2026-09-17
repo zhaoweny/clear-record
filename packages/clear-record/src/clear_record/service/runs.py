@@ -901,16 +901,21 @@ class RunManager:
                     return
             for run_id in live:
                 try:
+                    # Both registry calls of one beat live in this guard: the
+                    # write that refreshes the heartbeat, and the read that decides
+                    # whether the row was taken from under us. A read that raises
+                    # (a locked database, say) must not end the thread — where the
+                    # pid probe cannot decide, this beat *is* the only evidence a
+                    # run is alive, so a dead thread means a still-executing run
+                    # looks dead 30 s later and its meeting and the node are freed.
                     landed = self._registry.heartbeat_run(run_id)
+                    reaped = not landed and self._was_reaped(run_id)
                 except sqlite3.Error as exc:
-                    # A liveness thread must not die on a transient registry
-                    # error: another process would then read this run as dead and
-                    # reap it while it is still executing. Report it once per run
-                    # and keep beating — the error says the node cannot *prove*
-                    # the run is alive, not that it is not.
+                    # Report it once per run and keep beating — the error says the
+                    # node cannot *prove* the run is alive, not that it is not.
                     self._report_beat_failure(run_id, f"{type(exc).__name__}: {exc}")
                     continue
-                if not landed and self._was_reaped(run_id):
+                if reaped:
                     # A peer moved a row this manager is still executing: the
                     # pipeline keeps working (no cancellation contract) and our
                     # terminal write still decides what the run says, but the

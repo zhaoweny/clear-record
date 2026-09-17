@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import signal
+import sqlite3
 import subprocess
 import sys
 import textwrap
@@ -613,6 +614,33 @@ def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
     assert manager.wait(fresh.id, timeout=10).status == "done"
 
 
+class _UnreadableBeats:
+    """A registry whose beat read fails the way a locked database does.
+
+    Everything else is the wrapped registry — the manager claims, drains and reads
+    through it unchanged. ``heartbeat_run`` reports that the beat did not land, so
+    the heartbeat thread goes on to read the row (``get_run``), which is where this
+    fake raises while ``raise_on_read`` is set.
+    """
+
+    def __init__(self, registry: Registry) -> None:
+        self._registry = registry
+        self.beats = 0
+        self.raise_on_read = True
+
+    def heartbeat_run(self, run_id: int, *, at: str | None = None) -> bool:
+        self.beats += 1
+        return False
+
+    def get_run(self, run_id: int):
+        if self.raise_on_read:
+            raise sqlite3.OperationalError("database is locked")
+        return self._registry.get_run(run_id)
+
+    def __getattr__(self, name):
+        return getattr(self._registry, name)
+
+
 # --- the claim: one queue, every writer (RUN-02) ---------------------------- #
 
 #: The child a crash or stall test runs: it claims and executes a run and then
@@ -786,8 +814,6 @@ def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
     connection's busy timeout covers the rest. Here another connection holds the
     write lock for the whole claim.
     """
-    import sqlite3
-
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
@@ -869,7 +895,11 @@ def test_reconciliation_respects_a_live_peer_and_reaps_a_dead_one(tmp_path) -> N
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
-    assert registry.claim_run(peer_run.id, owner="peer:4242") is not None
+    # The owner is one the pid probe cannot resolve, so the **heartbeat** is
+    # what decides here: an owner that looks like a live pid would hold the
+    # run on a machine that happens to have that pid, and the test would be
+    # about the probe instead of about the beat.
+    assert registry.claim_run(peer_run.id, owner="peer:not-a-pid") is not None
     registry.set_meeting_status(busy.id, "running")
     behind = registry.create_run(
         waiting.id,
@@ -1173,6 +1203,44 @@ def test_a_completed_run_logs_no_heartbeat_failure(tmp_path, monkeypatch) -> Non
     assert "run.heartbeat_failed" not in events
 
 
+def test_a_failing_beat_read_does_not_kill_the_heartbeat_thread(
+    tmp_path, monkeypatch
+) -> None:
+    """A read that fails while checking a beat must not stop the beats.
+
+    The two registry calls of one beat are one job. Where an owner's pid cannot
+    decide (an unparseable or absent owner, a registry shared with a platform
+    without the probe, a row naming another machine) the beat is the *only*
+    evidence a run is alive, so a thread that dies on a read error means a
+    still-executing run reads as dead a deadline later — and its meeting and the
+    node are freed, which is the admission the fail-closed rule exists to prevent.
+    """
+    from clear_record.service import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "HEARTBEAT_INTERVAL_S", 0.01)
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    flaky = _UnreadableBeats(registry)
+    release = threading.Event()
+    manager = RunManager(flaky, pipeline=lambda *args: release.wait(10))
+    run = manager.start(meeting, origin="console")
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and flaky.beats < 3:
+            time.sleep(0.005)
+        assert flaky.beats >= 3  # a thread that died on the read beat exactly once
+        assert registry.get_run(run.id).status == "running"
+    finally:
+        flaky.raise_on_read = False
+        release.set()
+        manager.wait(run.id, timeout=10)
+        manager.shutdown(timeout=5)
+
+
 def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
     """A successful run reports no error, whatever a reaper wrote meanwhile.
 
@@ -1188,7 +1256,11 @@ def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
     run = registry.create_run(meeting.id, origin="console")
-    assert registry.claim_run(run.id, owner="peer:1") is not None
+    # The owner is one the pid probe cannot resolve, so the **heartbeat** is
+    # what decides here: an owner that looks like a live pid would hold the
+    # run on a machine that happens to have that pid, and the test would be
+    # about the probe instead of about the beat.
+    assert registry.claim_run(run.id, owner="peer:not-a-pid") is not None
     reaped = registry.interrupt_run(
         run.id,
         ended_at="2026-01-01T00:00:00+00:00",
@@ -1240,7 +1312,7 @@ def test_a_second_manager_leaves_a_live_run_alone(tmp_path) -> None:
     assert first.wait(run.id, timeout=10).status == "done"
 
 
-def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path) -> None:
+def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path, monkeypatch) -> None:
     """The orphan transition is conditional: a finished run is not an orphan.
 
     A reaper decides from a **snapshot** — the heartbeat that had gone stale — and
@@ -1248,13 +1320,19 @@ def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path) -> None:
     outcome. Staging that gap here (the snapshot is passed in directly) pins the
     precedence: the owner's record wins, so the row keeps ``done``, its progress
     and its cost record, and the meeting keeps the status that run gave it.
+
+    The owner is one the pid probe cannot resolve as live, so the reap really runs
+    and ``interrupt_run``'s conditional guard — the thing under test — is the call
+    that decides: with a live pid the row would be held and the guard never
+    reached, and this test would pass even if the guard were removed.
     """
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
     run = registry.create_run(meeting.id, origin="console")
-    assert registry.claim_run(run.id, owner="console:1") is not None
+    unreadable = f"{platform.node()}:{'9' * 24}"
+    assert registry.claim_run(run.id, owner=unreadable) is not None
     assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
 
     stale = registry.get_run(run.id)  # what a reaper decided from
@@ -1266,13 +1344,25 @@ def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path) -> None:
     )
     registry.set_meeting_status(meeting.id, "recorded")
 
-    manager = RunManager(registry, pipeline=lambda *args: None)
-    assert manager._reap_dead_runs([stale]) == []
+    reached: list[int] = []
+    original = Registry.interrupt_run
 
-    kept = registry.get_run(run.id)
-    assert kept.status == "done" and kept.error is None
-    assert kept.progress == {"kept": 1}
-    assert registry.meeting_by_id(meeting.id).status == "recorded"
+    def instrumented(self, run_id: int, **kwargs: object):
+        reached.append(run_id)
+        return original(self, run_id, **kwargs)
+
+    monkeypatch.setattr(Registry, "interrupt_run", instrumented)
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        assert manager._reap_dead_runs([stale]) == []
+        assert reached == [run.id]  # the guard was asked, and it said no
+        kept = registry.get_run(run.id)
+        assert kept.status == "done" and kept.error is None
+        assert kept.progress == {"kept": 1}
+        assert registry.meeting_by_id(meeting.id).status == "recorded"
+    finally:
+        manager.shutdown(timeout=5)
 
 
 def test_a_heartbeat_ahead_of_the_clock_is_not_evidence_of_life(tmp_path) -> None:
@@ -1295,7 +1385,11 @@ def test_a_heartbeat_ahead_of_the_clock_is_not_evidence_of_life(tmp_path) -> Non
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
-    assert registry.claim_run(peer_run.id, owner="peer:4242") is not None
+    # The owner is one the pid probe cannot resolve, so the **heartbeat** is
+    # what decides here: an owner that looks like a live pid would hold the
+    # run on a machine that happens to have that pid, and the test would be
+    # about the probe instead of about the beat.
+    assert registry.claim_run(peer_run.id, owner="peer:not-a-pid") is not None
     registry.set_meeting_status(busy.id, "running")
     # A beat written before the clock stepped backwards, i.e. dated after "now".
     assert registry.heartbeat_run(peer_run.id, at="2099-01-01T00:00:00+00:00")

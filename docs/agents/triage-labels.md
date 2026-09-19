@@ -19,8 +19,6 @@ All five exist on the instance, `ready-for-human` included.
 
 When a skill mentions a role (e.g. "apply the ready-for-agent triage label"), use the corresponding label string from this table.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
-
 ## The other label families
 
 The roles above share one un-prefixed namespace; the rest of the vocabulary is prefixed

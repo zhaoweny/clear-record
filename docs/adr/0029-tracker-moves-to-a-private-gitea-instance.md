@@ -12,9 +12,10 @@ Date: 2026-09-19
 - [FACT] ADR-0026 kept the issue tracker as gitignored local markdown in the main
   checkout: private by construction, freely wipeable, and never referenced by path from
   a committed file. It explicitly named "migrated to GitHub Issues" as rejected.
-- [FACT] The corpus outgrew that shape: 28 lanes, 155 files, 110 tickets, 18 specs. It
-  lives on one machine, is invisible to any other checkout or machine, cannot be
-  cross-linked, and keeps no history of state changes.
+- [FACT] The corpus outgrew that shape: 28 lanes, 155 files, 110 tickets, 19
+  spec-bearing lanes (18 `spec.md` plus one `spec/` directory). It lives on one machine,
+  is invisible to any other checkout or machine, cannot be cross-linked, and keeps no
+  history of state changes.
 - [VOICE: owner, 2026-09-19] *"we now have gitea as a staging area and safe to dump all
   the tickets there"*; and, asked for the shape, the owner chose: tickets in the issues
   of a **private mirror repo**, Gitea **canonical**, the full history imported (done

@@ -358,7 +358,7 @@ def test_the_chip_and_the_page_are_translated(tmp_path) -> None:
 
     text = client.get("/activity").text
 
-    assert ">运行中 1</a>" in _chip(text)
+    assert ">运行中 1 个</a>" in _chip(text)
     assert "活动" in text  # the nav entry and the page heading
     assert "进行中" in text and "最近完成" in text
     assert "来源" in text and "机器" in text and "耗时" in text

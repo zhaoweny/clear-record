@@ -1201,12 +1201,12 @@ msgstr "配置"
 #: packages/clear-record/src/clear_record/web/app.py:1512
 #, python-brace-format
 msgid "running {count}"
-msgstr "运行中 {count}"
+msgstr "运行中 {count} 个"
 
 #: packages/clear-record/src/clear_record/web/app.py:1517
 #, python-brace-format
 msgid "queued {count}"
-msgstr "排队中 {count}"
+msgstr "排队中 {count} 个"
 
 #: packages/clear-record/src/clear_record/web/app.py:1520
 msgid "needs attention"

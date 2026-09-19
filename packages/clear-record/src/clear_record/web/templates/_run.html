@@ -83,9 +83,7 @@
     <span class="muted">{{ tr("Resuming re-uses this workspace's cached chunks. A run elsewhere re-decodes from scratch: the cache is app-owned and keyed by this workspace's path.") }}</span>
     {% endif %}
     {% if run.resumes_run_id %}
-    <a class="muted" href="/ui/runs/{{ run.resumes_run_id }}"
-       hx-get="/ui/runs/{{ run.resumes_run_id }}"
-       hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("resumed from run {run_id}", run_id=run.resumes_run_id) }}</a>
+    <div class="muted run-message">{{ tr("resumed from run {run_id}", run_id=run.resumes_run_id) }}</div>
     {% endif %}
   </div>
   {% endif %}

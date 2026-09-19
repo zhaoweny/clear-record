@@ -89,18 +89,6 @@ class FakeGitea:
                 found[match.group("key")] = issue
         return found
 
-    def existing_issue_markers(self) -> dict[str, int]:
-        """The narrower surface a pre-fix script asks for.
-
-        The script under test used to ask only "which keys already exist" and
-        skip them. This stands in for that call so the regression test fails on
-        the defect it is about — a comment that never gets posted, a ticket left
-        open — rather than on an ``AttributeError`` that would hide the defect.
-        """
-        return {
-            key: int(issue["number"]) for key, issue in self.existing_issues().items()
-        }
-
     def issue_comments(self, number: int) -> list[dict[str, str]]:
         return [{"body": body} for body in self.issues[number]["comments"]]
 
@@ -197,7 +185,15 @@ def run_apply(
     monkeypatch.setattr(importer, "Gitea", lambda url, repo, token: fake)
     monkeypatch.setattr(importer, "resolve_token", lambda: ("fake-token", "test"))
     return importer.main(
-        ["--tracker", str(tracker), "--manifest", str(manifest), "--apply"]
+        [
+            "--tracker",
+            str(tracker),
+            "--url",
+            "https://gitea.example.test",
+            "--manifest",
+            str(manifest),
+            "--apply",
+        ]
     )
 
 
@@ -288,6 +284,40 @@ def test_a_blocker_that_never_landed_is_not_reported_as_resolved(
     assert "Blocked by: #" not in str(first["body"])
 
 
+def test_a_blocker_a_later_creation_supplies_lands_in_the_same_run(
+    importer: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Creation comes first, so the repair sees the number the run just got.
+
+    Ticket 01 is blocked by 02, and an earlier run created 01 but lost 02 — so
+    01's ``Blocked by:`` line went with it, and 01 sits in the tracker with no
+    line to show it. The next run creates 02: the line has to land with the
+    number 02 was just given, not be skipped because ``numbers`` was read before
+    02 existed (which exits 0 and leaves the ticket for a third run).
+    """
+    tracker = make_tracker(tmp_path / "tracker")
+    fake = FakeGitea(importer)
+    manifest = tmp_path / "manifest.json"
+    fake.fail_create_for = "02-second"
+
+    assert run_apply(importer, monkeypatch, tracker, fake, manifest) == 1
+    assert "Blocked by: #" not in str(
+        fake.by_key("demo-lane/issues/01-first.md")["body"]
+    ), "01 landed without 02, so it carries no line yet"
+
+    # The first fault-free rerun creates 02 and writes 01's line with it.
+    fake.fail_create_for = None
+    assert run_apply(importer, monkeypatch, tracker, fake, manifest) == 0
+    second = fake.by_key("demo-lane/issues/02-second.md")
+    first = fake.by_key("demo-lane/issues/01-first.md")
+    assert f"Blocked by: #{second['number']}" in str(first["body"])
+
+    # And the run after it creates nothing and posts no second comment.
+    assert run_apply(importer, monkeypatch, tracker, fake, manifest) == 0
+    assert len(fake.issues) == 2
+    assert fake.by_key("demo-lane/issues/01-first.md")["comments"] == [COMMENT_TEXT]
+
+
 def test_a_bare_run_says_where_the_tracker_root_comes_from(
     importer: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -297,3 +327,21 @@ def test_a_bare_run_says_where_the_tracker_root_comes_from(
         importer.main(["--manifest", str(tmp_path / "manifest.json")])
     assert "--tracker DIR" in str(exit_info.value)
     assert importer.TRACKER_ENV in str(exit_info.value)
+
+
+def test_a_run_without_a_url_names_the_lever(
+    importer: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No --url and no environment: the tool names the lever, not a hostname."""
+    monkeypatch.delenv(importer.URL_ENV, raising=False)
+    with pytest.raises(SystemExit) as exit_info:
+        importer.main(
+            [
+                "--tracker",
+                str(make_tracker(tmp_path / "tracker")),
+                "--manifest",
+                str(tmp_path / "manifest.json"),
+            ]
+        )
+    assert "--url URL" in str(exit_info.value)
+    assert importer.URL_ENV in str(exit_info.value)

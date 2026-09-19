@@ -88,10 +88,11 @@ agent-drive *ARGS:
 #
 # The tracker directory is named by the caller, never defaulted here — the
 # convention keeps that path out of committed files (docs/agents/issue-tracker.md,
-# enforced by tests/test_tracker_refs.py). So `--tracker DIR` is required unless
-# $CLEAR_RECORD_TRACKER_DIR names it. Flags pass straight through, with or
-# without a `--` separator: `just migrate-tracker --only console-ia`. Other
-# levers: `--repo OWNER/NAME`, `--url URL`, `--manifest PATH`.
+# enforced by packages/clear-record/tests/test_tracker_refs.py). So `--tracker DIR`
+# is required unless $CLEAR_RECORD_TRACKER_DIR names it. Flags pass straight
+# through, with or without a `--` separator: `just migrate-tracker --only
+# console-ia`. Other levers: `--repo OWNER/NAME`, `--url URL` (or
+# $CLEAR_RECORD_GITEA_URL), `--manifest PATH`.
 migrate-tracker *ARGS:
     uv run --no-project scripts/migrate_tracker.py {{ARGS}}
 

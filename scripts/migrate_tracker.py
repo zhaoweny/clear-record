@@ -35,11 +35,17 @@ Its directory is deliberately not defaulted to a path, because the convention ke
 that path out of committed files (``docs/agents/issue-tracker.md``): pass
 ``--tracker DIR``, or set ``CLEAR_RECORD_TRACKER_DIR`` for a scripted run.
 
+The Gitea base URL is not defaulted either, and for the same reason: the instance
+hostname is environment-local, and the committed-file guard
+(``packages/clear-record/tests/test_tracker_refs.py``) rejects it in any committed
+file — an error string included. Pass ``--url URL``, or set
+``CLEAR_RECORD_GITEA_URL`` for a scripted run.
+
 Usage (normally via ``just migrate-tracker …``)::
 
-    uv run --no-project scripts/migrate_tracker.py --tracker DIR            # dry run
-    uv run --no-project scripts/migrate_tracker.py --tracker DIR --only LANE
-    uv run --no-project scripts/migrate_tracker.py --tracker DIR --apply    # import
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL --only LANE
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL --apply
 
 Exit status is 0 on success and non-zero if any per-item call failed; the rest of
 the import still runs, and the summary names every failure.
@@ -64,7 +70,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-DEFAULT_URL = "https://gitea.tailnet-00e4.ts.net"
 DEFAULT_REPO = "zhaow/clear-record"
 
 # The tracker root is named by the caller, never defaulted to a path here: the
@@ -72,6 +77,11 @@ DEFAULT_REPO = "zhaow/clear-record"
 # (docs/agents/issue-tracker.md, and packages/clear-record/tests/test_tracker_refs.py
 # enforces it). The variable is the scripted-run form of `--tracker DIR`.
 TRACKER_ENV = "CLEAR_RECORD_TRACKER_DIR"
+
+# The Gitea base URL is named by the caller too, never defaulted to a host here:
+# the instance is private, and the same guard rejects its hostname in committed
+# text — an error string included. The variable is the scripted form of `--url`.
+URL_ENV = "CLEAR_RECORD_GITEA_URL"
 
 TEA_CONFIG = Path.home() / "Library/Application Support/tea/config.yml"
 TEA_LOGIN = "zhaow"
@@ -874,21 +884,15 @@ def run_apply(
     lookup = ref_lookup(issues)
     created = present = reconciled = 0
     deferred: list[Issue] = []
+
+    # Create first, reconcile second. ``numbers`` is only complete once every
+    # issue this pass creates exists, and a repair can need a number a later
+    # creation supplies: reconcile a present ticket whose blocker is created
+    # further down the list, and ``blocker_line`` sees no number for it, so the
+    # ``Blocked by:`` repair is skipped and the run still exits 0 — leaving a
+    # ticket that only a third run (which nobody promised) would fix.
     for issue in issues:
-        remote = existing.get(issue.key)
-        if remote is not None:
-            present += 1
-            try:
-                repairs = reconcile_issue(client, issue, remote, numbers, lookup)
-            except GiteaError as exc:
-                failures.append(f"issue {issue.key} (reconcile): {exc}")
-                continue
-            if repairs:
-                reconciled += 1
-                print(
-                    f"  issue #{remote['number']:<4} {issue.key} "
-                    f"reconciled: {', '.join(repairs)}"
-                )
+        if issue.key in existing:
             continue
         pending_refs = [
             ref
@@ -927,6 +931,23 @@ def run_apply(
             continue
         print(f"  issue #{number:<4} {issue.key} blocked-by resolved later")
         time.sleep(REQUEST_PAUSE)
+
+    for issue in issues:
+        remote = existing.get(issue.key)
+        if remote is None:
+            continue
+        present += 1
+        try:
+            repairs = reconcile_issue(client, issue, remote, numbers, lookup)
+        except GiteaError as exc:
+            failures.append(f"issue {issue.key} (reconcile): {exc}")
+            continue
+        if repairs:
+            reconciled += 1
+            print(
+                f"  issue #{remote['number']:<4} {issue.key} "
+                f"reconciled: {', '.join(repairs)}"
+            )
 
     wiki_created = wiki_updated = wiki_unchanged = 0
     for doc in docs:
@@ -1011,9 +1032,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--url",
-        default=DEFAULT_URL,
         metavar="URL",
-        help=f"Gitea base URL (default: {DEFAULT_URL})",
+        help=f"Gitea base URL; required unless ${URL_ENV} names it",
     )
     parser.add_argument(
         "--apply",
@@ -1053,9 +1073,30 @@ def resolve_tracker(args: argparse.Namespace) -> Path:
     )
 
 
+def resolve_url(args: argparse.Namespace) -> str:
+    """The Gitea base URL: ``--url URL``, else ``$CLEAR_RECORD_GITEA_URL``.
+
+    Deliberately not defaulted, for the tracker root's reason and one more: the
+    instance is private, and the committed-file guard rejects its hostname in
+    any committed file — a convenience default here would be that literal.
+    """
+    if args.url:
+        return args.url
+    from_env = os.environ.get(URL_ENV, "").strip()
+    if from_env:
+        return from_env
+    raise SystemExit(
+        "migrate-tracker: no Gitea base URL.\n"
+        f"  Pass --url URL, or set {URL_ENV}. The instance is private and\n"
+        "  environment-local, so nothing here knows its hostname; see\n"
+        "  docs/adr/0029-tracker-moves-to-a-private-gitea-instance.md."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     tracker = resolve_tracker(args)
+    args.url = resolve_url(args)
     manifest_path = (
         Path(args.manifest).expanduser().resolve()
         if args.manifest

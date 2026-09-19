@@ -508,7 +508,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
   frontend                    the console's front-end source (Vite + Tailwind; output committed into web/static)
 docs/architecture.md          (spec + provenance, the primary doc)
-docs/adr/                     (decision records 0001–0028)
+docs/adr/                     (the decision records, one file per decision)
 ```
 
 ## License

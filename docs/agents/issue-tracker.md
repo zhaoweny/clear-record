@@ -80,3 +80,15 @@ Enforced by `packages/clear-record/tests/test_tracker_refs.py` — the
 separate job. The guard matches the archive's path roots and the instance hostname;
 adding another private class needs its own ruling on which files may legitimately
 name it.
+
+## The rule's one recorded exception
+
+The guard names the instance's hostname, because a ban has to write down the name
+it bans. That literal is the **owner-accepted exception** to this rule, decided on
+2026-09-19: the literal stays as published, the guard is exempt from itself, and any
+other committed file naming the host is a finding — a decision, not an oversight.
+
+So the rule above holds as written, with exactly one carve-out, and the guard's own
+comments carry it too (`packages/clear-record/tests/test_tracker_refs.py`,
+`EXEMPT`). A second private host, or a second file that needs to name this one, is a
+new ruling in the same place rather than an extension of this exception.

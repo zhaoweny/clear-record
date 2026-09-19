@@ -74,6 +74,22 @@ agent-setup:
 agent-drive *ARGS:
     uv run --all-packages python scripts/agent_drive.py {{ARGS}}
 
+# One-shot, re-runnable import of the retired local tracker (`.scratch/`, see
+# docs/agents/issue-tracker.md) into Gitea issues + wiki pages. Pointer to a
+# Python script because it branches; `--no-project` because it is stdlib-only
+# and imports no project package. Dry-run by DEFAULT: it writes a manifest to
+# `.local/migrate-tracker-manifest.json` and prints the counts, making no
+# network call at all — so it is safe to run anywhere, token or no token.
+# `just migrate-tracker --apply` performs the import; it reads a Gitea token
+# from $GITEA_TOKEN or the `tea` login store and never prints it. Every created
+# issue carries a `<!-- scratch:<lane>/<path> sha=… -->` marker, so a second
+# `--apply` creates nothing new. Flags pass straight through, with or without a
+# `--` separator: `just migrate-tracker --only console-ia`. Other levers:
+# `--only <lane>` (one lane), `--tracker DIR`, `--repo OWNER/NAME`, `--url URL`,
+# `--manifest PATH`.
+migrate-tracker *ARGS:
+    uv run --no-project scripts/migrate_tracker.py {{ARGS}}
+
 # Build the console's compiled assets into
 # packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
 # output is committed, so `just verify` and end users never need Node.

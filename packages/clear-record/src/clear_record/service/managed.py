@@ -268,7 +268,8 @@ def upload_tape(
 ) -> Tape:
     """Stream one uploaded tape to the meeting's managed workspace.
 
-    Guards run first (filename, extension, cap, disk, upload id). The body is
+    Guards run first (the upload id, the declared size, free space, then the
+    filename and extension). The body is
     then copied in blocks to a sibling ``.part`` file, ``fsync``-ed and
     atomically renamed; the tape is recorded — checksum and size — only after
     the rename. Any failure (a truncated body included) removes the partial file

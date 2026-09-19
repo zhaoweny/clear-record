@@ -1046,11 +1046,12 @@ class Registry:
         gone stale — and writes afterwards, so the row may not be the one it
         judged by the time it writes. ``observed`` is that snapshot, and the
         statement compares the row against the **ownership and heartbeat the
-        decision was based on**, not just the status. Two writers can move the row
-        in between: the owner finishing (:meth:`update_run`), or — the case this
-        compare exists for — the owner refreshing its heartbeat
-        (:meth:`heartbeat_run`) because it was alive all along. Both are evidence
-        newer than the snapshot that said "dead", so both win.
+        decision was based on**, not just the status. Three things can move the row
+        in between: the owner finishing (:meth:`update_run`), a peer's reap
+        already landing (this same method, from another node), or — the case
+        this compare exists for — the owner refreshing its heartbeat
+        (:meth:`heartbeat_run`) because it was alive all along. Each moves the
+        row before this write can, so each wins the compare.
 
         ``None`` means the compare lost: the row is not the one judged dead, so
         the caller has a **stale observation** on its hands rather than an

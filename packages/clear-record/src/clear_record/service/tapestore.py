@@ -48,9 +48,9 @@ def unique_name(name: str, *, taken: Callable[[str], bool]) -> str:
 
     ``taken`` is the caller's own notion of occupied — the upload path probes the
     filesystem, the archive copier consults the names it has already copied into
-    a fresh directory — and it is consulted before anything is written. The
-    disambiguation itself is the same for both, so a namesake is either never
-    handed back or handed back under the same suffix, whichever path asked.
+    a fresh directory — and it is consulted before anything is written. A clash is
+    resolved by one rule on either path: the namesake is never handed back, and
+    the substitute is always ``stem-N.suffix``.
     """
     stem, suffix = Path(name).stem, Path(name).suffix
     candidate = name

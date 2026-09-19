@@ -1480,8 +1480,8 @@ def create_app(
         """The pipeline status page (RUN-03): one node's runs, live and recent.
 
         Running and queued runs come from the **shared** registry, across every
-        project (RUN-02), so a run an agent's MCP server or the CLI started is
-        here with the same fields as one the console started — including the
+        project (RUN-02), so a run an agent's MCP server started is here with
+        the same fields as one the console started — including the
         origin it was started from. This is one node's view: the rows carry the
         machine that measured or claimed them, and there is no aggregation
         across nodes (a non-goal).

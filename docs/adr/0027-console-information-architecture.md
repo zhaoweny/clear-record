@@ -239,8 +239,8 @@ plex.tv"*); spec `04-activity-and-status.md` RUN-03.
   across every project — each with its stage and progress, the speed and
   duration its own cost record measures (RUN-01), its model and backend, the
   origin that started it and the machine it is on — then the newest finished
-  runs. It reads the registry and nothing else, so a run the CLI or an agent's
-  MCP server started appears with the same fields as one the console started.
+  runs. It reads the registry and nothing else, so a run an agent's MCP server
+  started appears with the same fields as one the console started.
   There is **no cross-node aggregation** (a non-goal); the row shape can carry
   a node later (Q15).
 - [DECISION] **The header chip is fed by live state**, through the one

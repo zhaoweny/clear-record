@@ -36,10 +36,13 @@ so an interruption cannot lose a registry, a model or a multi-GB workspace.
 
 The **models** directory has a second legacy shape. Before the ADR-0007
 kind-split its default was ``<cwd>/models``. That location is adopted the same
-way, but only when it *positively looks like a ggml cache* (it holds a completed
-``ggml-*.bin``): ``<cwd>`` is wherever the user happened to run the command, so a
-directory merely *named* ``models`` is not evidence that any weights are there to
-lose.
+way, but only when a recognizer installed from above — by the layer that owns the
+artifact format — *positively identifies* it as a cache of our weights. Which
+names identify them is that format's own knowledge, and the format belongs to a
+vendor, so this module, vendor-free, consumes the recognizer
+(:func:`install_models_recognizer`) rather than spelling the names itself:
+``<cwd>`` is wherever the user happened to run the command, so a directory
+merely *named* ``models`` is not evidence that any weights are there to lose.
 """
 
 from __future__ import annotations
@@ -59,12 +62,8 @@ CONFIG_FILENAME = "config.toml"
 #: Directory under the data dir that holds a managed meeting's workspace
 #: (ADR-0024). Kept here so the layout has one owner.
 WORKSPACES_DIRNAME = "workspaces"
-#: Directory under the data dir that holds downloaded ggml model weights.
+#: Directory under the data dir that holds downloaded model weights.
 MODELS_DIRNAME = "models"
-#: Every file ADR-0005's auto-download writes into a models directory. A legacy
-#: ``<cwd>/models`` must hold at least one to be adopted (see
-#: :func:`_looks_like_ggml_cache`).
-_GGML_CACHE_GLOB = "ggml-*.bin"
 #: Directory under the cache dir that holds the resumable per-source chunk cache.
 CHUNKS_DIRNAME = "chunks"
 
@@ -113,6 +112,32 @@ def install_defaults(dirs: DefaultDirs) -> None:
     _defaults = dirs
 
 
+def _nothing_recognized(_directory: Path) -> bool:
+    """No artifact format is known to this layer, so nothing is a cache of ours.
+
+    The recognizer in force before the layer above installs the real one.
+    """
+    return False
+
+
+#: The positive identity check for the legacy ``<cwd>/models`` candidate,
+#: installed from the layer above (:mod:`clear_record.providers`). Which names
+#: prove that a directory is a cache of *our* weights is the artifact format's
+#: own knowledge, and that format belongs to a vendor: this module spells no
+#: vendor name (ADR-0012, ``tests/test_layering.py``), so it *receives* the
+#: recognizer and consumes it. Until one is installed nothing is recognized —
+#: ``<cwd>`` is wherever the user ran the command, so a directory that merely
+#: shares the name ``models`` is no evidence, and existence alone is exactly that
+#: non-evidence.
+_recognize_models: Callable[[Path], bool] = _nothing_recognized
+
+
+def install_models_recognizer(recognize: Callable[[Path], bool]) -> None:
+    """Install the recognizer for a legacy ``<cwd>/models`` (called from above)."""
+    global _recognize_models
+    _recognize_models = recognize
+
+
 def _dirs() -> DefaultDirs:
     if _defaults is None:  # pragma: no cover - ``import clear_record`` installs
         raise RuntimeError(
@@ -130,21 +155,6 @@ def _cwd() -> Path:
     developer's real, gitignored ``models/`` cache lives.
     """
     return Path.cwd()
-
-
-def _looks_like_ggml_cache(directory: Path) -> bool:
-    """True when *directory* holds at least one completed ``ggml-*.bin`` download.
-
-    ADR-0005's auto-download is the only writer of a models directory, and it
-    names every weight ``ggml-<size>.bin``. Requiring one makes the legacy
-    ``<cwd>/models`` adoption *positive*: a directory that merely shares the name
-    (a source tree's, a user's notes) is left alone. A stray ``.part`` does not
-    count, because only a completed download looks like a model to the resolver.
-    """
-    try:
-        return any(path.is_file() for path in directory.glob(_GGML_CACHE_GLOB))
-    except OSError:  # pragma: no cover - an unreadable directory is not a cache
-        return False
 
 
 def _adopt(
@@ -326,10 +336,11 @@ def resolve_models_dir(explicit: str | os.PathLike | None = None) -> Path:
     directory through the config file instead.
 
     A pre-move source checkout that still holds its weights in ``<cwd>/models``
-    is adopted rather than silently re-downloaded — but only when it *looks like*
-    a cache, because ``<cwd>`` is wherever the user happened to run the command
-    (:func:`_looks_like_ggml_cache`). An override is checked first, so a pinned
-    location neither adopts nor announces anything.
+    is adopted rather than silently re-downloaded — but only when the recognizer
+    installed from above (:func:`install_models_recognizer`) identifies a cache
+    there, because ``<cwd>`` is wherever the user happened to run the command.
+    An override is checked first, so a pinned location neither adopts nor
+    announces anything.
     """
     return _resolve_app_dir(
         explicit,
@@ -338,7 +349,7 @@ def resolve_models_dir(explicit: str | os.PathLike | None = None) -> Path:
         native=resolve_data_dir() / MODELS_DIRNAME,
         legacy=_cwd() / MODELS_DIRNAME,
         label="models",
-        recognize=_looks_like_ggml_cache,
+        recognize=_recognize_models,
         hint=tr(" Set CR_MODELS_DIR to pin a different models directory."),
     )
 
@@ -380,6 +391,7 @@ __all__ = [
     "WORKSPACES_DIRNAME",
     "config_path",
     "install_defaults",
+    "install_models_recognizer",
     "registry_path",
     "resolve_cache_dir",
     "resolve_config_dir",

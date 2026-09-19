@@ -7,10 +7,13 @@ config file's ``models_dir``, then ``<data>/models``. This module keeps the
 default and the backend's first-use ggml download cannot disagree.
 
 A pre-move source checkout that still holds weights in the old ``<cwd>/models``
-is adopted in place *when that directory looks like a ggml cache*, with a
-one-line notice — see ``core.paths``. An explicit flag, ``CR_MODELS_DIR`` or
-``[paths] models_dir`` is checked first, so a pinned location never adopts and
-never announces.
+is adopted in place *when this layer's recognizer*
+(:func:`clear_record.providers.model_cache.looks_like_model_cache`, installed
+into the core's adoption rule when :mod:`clear_record.providers` is imported)
+identifies a cache of downloaded weights there, with a one-line notice —
+see ``core.paths``. An explicit flag, ``CR_MODELS_DIR`` or ``[paths]
+models_dir`` is checked first, so a pinned location never adopts and never
+announces.
 
 ``providers`` may import ``core``; the platformdirs call itself stays one layer
 up in :mod:`clear_record._native_paths`, because ``core`` may import no

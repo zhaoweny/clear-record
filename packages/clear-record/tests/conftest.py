@@ -1,6 +1,6 @@
 """Keep the test suite hermetic: **no real app state** and **English by default**.
 
-Two leaks this closes:
+Three leaks this closes:
 
 - The i18n mechanism must leave the English default provably untouched: every
   existing test asserts exact English strings. A developer or CI machine whose
@@ -16,11 +16,11 @@ Two leaks this closes:
   macOS, so the redirection replaces the resolved defaults directly rather than
   the environment.
 - The **models** resolver also considers the old ``<cwd>/models`` default
-  (adopting it only when it holds a ``ggml-*.bin``). A source checkout is exactly
-  where a developer's real, gitignored ``models/`` cache lives, so the legacy
-  candidate is aimed away from it: the suite replaces
-  ``core.paths._cwd`` with a directory that cannot exist, and only a test that
-  opts in points it at its own ``tmp_path``.
+  (adopting it only when the recognizer the provider layer installs identifies a
+  downloaded model cache there). A source checkout is exactly where a developer's
+  real, gitignored ``models/`` cache lives, so the legacy candidate is aimed away
+  from it: the suite replaces ``core.paths._cwd`` with a directory that cannot
+  exist, and only a test that opts in points it at its own ``tmp_path``.
 
 A test that wants a locale calls :func:`clear_record.core.i18n.install`/``use``
 explicitly, or passes an explicit ``environ=`` to :func:`resolve_locale` — neither

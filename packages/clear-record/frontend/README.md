@@ -49,13 +49,24 @@ source **and** the rebuilt output together.
 ## End-to-end and visual review
 
 ```sh
-just e2e-install   # one-time: download Chromium into .local/ms-playwright
+just e2e-install   # one-time per machine: download Chromium into .local/ms-playwright
 just e2e           # seed, boot the real console, run the specs, write screenshots
 ```
 
 `just e2e` is not part of `just verify` — it needs bun and a browser. It writes
 screenshots to `.local/e2e/screenshots/` (gitignored) for the visual review, and
 its specs assert the htmx wiring those captures show.
+
+The browser download is per **machine** by convention, not per worktree: it
+lands once in the main checkout's `.local/ms-playwright`, and a worktree shares
+that copy when its own `.local/ms-playwright` is a symlink to it — the link comes
+from environment provisioning, not from a committed step. `just e2e` provisions
+nothing; it checks first and fails immediately, naming the fix — `bun install
+--frozen-lockfile --cwd packages/clear-record/frontend` when the dependencies
+are not installed, `just e2e-install` when the browser is not — rather than
+letting a fresh worktree die on `playwright: command not found` or one
+`browserType.launch` failure per spec. Point a run at another browser copy with
+`PLAYWRIGHT_BROWSERS_PATH`.
 
 ### Filenames are stable, not content-hashed
 

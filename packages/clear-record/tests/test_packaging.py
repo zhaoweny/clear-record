@@ -11,6 +11,7 @@ build.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -315,6 +316,61 @@ def test_i18n_build_and_guard_are_just_recipes() -> None:
     assert "scripts/i18n.py check" in _just_recipe("i18n-check")
     assert "i18n" not in _just_recipe("verify")
     assert (REPO_ROOT / "scripts" / "i18n.py").is_file()
+
+
+def test_e2e_is_a_just_recipe_guarded_by_the_provisioning_pointer_script() -> None:
+    """`just e2e` checks its provisioning before it seeds, boots or launches.
+
+    A freshly cut worktree has neither the frontend's `node_modules` nor the
+    browser, and either one missing otherwise costs a diagnosis session:
+    `playwright: command not found` (exit 127), or one `browserType.launch`
+    failure per spec. The guard branches, so it is a pointer-script, and it
+    shares the browser path with the run through `e2e_browsers_path` so the
+    check cannot drift from the browser Playwright actually launches.
+    """
+    first, *_, launch = _just_recipe("e2e").splitlines()
+    assert "uv run --no-project scripts/check_e2e_provisioning.py" in first, first
+    assert "PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}}" in first, first
+    assert "PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}}" in launch, launch
+    assert (REPO_ROOT / "scripts" / "check_e2e_provisioning.py").is_file()
+
+
+def test_e2e_provisioning_guard_reports_each_missing_piece(tmp_path: Path) -> None:
+    """The guard exits non-zero naming the fix for each piece `e2e` needs.
+
+    Run in a synthetic tree — the guard resolves the repo root from its own
+    path — because whether the real tree has `node_modules` depends on who is
+    running the suite, and both branches have to be pinned either way. A
+    regression here is this ticket's whole failure mode: a fresh worktree's gate
+    reporting one `browserType.launch` error per spec instead of one line.
+    """
+    guard = tmp_path / "scripts" / "check_e2e_provisioning.py"
+    guard.parent.mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "scripts" / "check_e2e_provisioning.py", guard)
+    browsers = tmp_path / "ms-playwright"
+    browsers.mkdir()
+    env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(browsers)}
+
+    def check() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(guard)], capture_output=True, text=True, env=env
+        )
+
+    missing_deps = check()
+    assert missing_deps.returncode != 0
+    assert (
+        "bun install --frozen-lockfile --cwd packages/clear-record/frontend"
+        in missing_deps.stderr
+    ), missing_deps.stderr
+
+    runner = tmp_path / "packages/clear-record/frontend/node_modules/.bin/playwright"
+    runner.parent.mkdir(parents=True)
+    runner.touch()
+
+    missing_browser = check()
+    assert missing_browser.returncode != 0
+    assert "just e2e-install" in missing_browser.stderr, missing_browser.stderr
+    assert str(browsers) in missing_browser.stderr, missing_browser.stderr
 
 
 def test_babel_is_a_build_only_group_not_a_runtime_dependency() -> None:

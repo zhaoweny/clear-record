@@ -109,21 +109,43 @@ web-assets:
 web-assets-check:
     uv run --no-project scripts/check_web_assets.py
 
+# Where `e2e` and `e2e-install` keep the Playwright browser: `.local/` is
+# gitignored, so the download stays out of the repo and out of the OS browser
+# cache. A caller may point the run elsewhere by exporting
+# PLAYWRIGHT_BROWSERS_PATH (which is also how the guard below is exercised
+# against an empty directory).
+e2e_browsers_path := env_var_or_default("PLAYWRIGHT_BROWSERS_PATH", justfile_directory() / ".local" / "ms-playwright")
+
 # Browser end-to-end and visual review for the console (Playwright +
 # Chromium). Seeds a throwaway data dir, boots the real server against it,
 # drives the UI headlessly, and writes screenshots to .local/e2e/screenshots.
 # It needs bun, Python and a downloaded browser, so it is NOT part of `verify`.
+#
+# The browser download is PER MACHINE by convention, not per worktree: it lands
+# once in the main checkout's `.local/ms-playwright`, and a worktree shares that
+# copy when its own `.local/ms-playwright` symlinks there (three levels up) — a
+# link environment provisioning makes, not a committed step. On a machine
+# provisioned that way `just e2e-install` is a one-off rather than a step per
+# tree; a worktree without the link downloads its own copy.
+# The first line below is the provisioning guard: it checks before the seed
+# runs, before the server boots and before the first spec, and exits non-zero
+# naming the command that provides whichever piece is missing — the frontend's
+# dependencies (`bun install --frozen-lockfile --cwd
+# packages/clear-record/frontend`) or the browser (`just e2e-install`). It is a
+# pointer to a Python script because it branches.
+#
 # The seed writes the setup marker, so it must resolve the same state dir the
 # server will (playwright.config.ts sets CR_STATE_DIR for the webServer; the
 # seed runs as a separate process).
 e2e:
+    PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} uv run --no-project scripts/check_e2e_provisioning.py
     CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state uv run --all-packages python packages/clear-record/frontend/e2e/seed.py
-    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e
+    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} bun run --cwd packages/clear-record/frontend e2e
 
 # One-time Chromium download for `e2e`. The browser lands in `.local/` so it
 # stays out of the repo and out of the OS cache.
 e2e-install:
-    PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e:install
+    PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} bun run --cwd packages/clear-record/frontend e2e:install
 
 # Message catalogs (Babel, build-time only; see docs/i18n.md). Source strings are
 # the English message IDs in the code and templates; `i18n-extract` merges new

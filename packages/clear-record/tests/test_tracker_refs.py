@@ -73,7 +73,7 @@ PRIVATE_HOSTS = ("gitea.tailnet-00e4.ts.net",)
 # Files exempt because they define or explain the boundary: the ignore rule
 # itself, the standing instructions, the tracker convention, the ADR that moves
 # the tracker (which must name the archive it freezes), and this guard (whose
-# docstring must name the directory to explain what it bans).
+# docstring must name the directory and the hostname ban to explain what it bans).
 EXEMPT = frozenset(
     {
         ".gitignore",

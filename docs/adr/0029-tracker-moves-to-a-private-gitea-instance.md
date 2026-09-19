@@ -61,15 +61,17 @@ Date: 2026-09-19
   from every checkout and worktree, labels that cross lanes, real state history, and
   issues a remote agent can claim.
 - The cost is the opposite of ADR-0026's: the corpus is no longer freely wipeable, and
-  ticket work now needs the instance up. The owner accepted both explicitly.
+  ticket work now needs the instance up. That is the trade the move makes: wipeability is
+  the price paid for reachability from every checkout and worktree, cross-lane labels,
+  and real state history.
 
 ## Alternatives considered
 
 - **Keep local markdown as canonical** (status quo). Rejected: leaves the corpus
   machine-local, unlinkable and historyless.
 - **GitHub Issues on the public repo.** Rejected exactly as ADR-0026 rejected it: it
-  publishes the corpus permanently, and parts of it concern work projects that must not
-  be public.
+  publishes the corpus permanently, and the tracker is to stay private — tickets and all
+  (Context: *"we are here on Gitea for private tickets"*).
 - **Publish the tracker in-tree** (`.agents/tickets/`). Rejected as in ADR-0026: it
   re-introduces cross-branch merge conflicts on the one artefact every branch touches.
 - **Bidirectional sync between `.scratch` and Gitea.** Rejected: two homes for one rule

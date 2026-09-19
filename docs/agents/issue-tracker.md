@@ -39,7 +39,8 @@ archive copy at `.scratch/<lane>/issues/<NN>-<slug>.md` remains readable for pro
 ## Wayfinding operations
 
 The map is a wiki page (`<effort>/map`); child tickets are issues in that effort's lane,
-with the question in the body.
+with the question in the body. The map's body is three sections — **Notes**,
+**Decisions-so-far**, and **Fog**.
 
 - **Frontier**: open issues in the lane that are unblocked (no open `Blocked by`) and
   unassigned; lowest issue number wins.

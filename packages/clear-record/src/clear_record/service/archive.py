@@ -29,6 +29,7 @@ import json
 import shutil
 from pathlib import Path
 
+from clear_record.service import tapestore
 from clear_record.service.models import Archive, Meeting
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
@@ -37,9 +38,9 @@ from clear_record.service.webhooks import (
     default_emitter,
 )
 
-#: Section holding the incoming tapes inside an archive.
-TAPES_DIRNAME = "tapes"
-#: Section holding the pipeline's derivative artifacts inside an archive.
+#: Section holding the pipeline's derivative artifacts inside an archive. The
+#: tapes section is the shared one
+#: (:data:`clear_record.service.tapestore.TAPES_DIRNAME`).
 RECORD_DIRNAME = "record"
 #: The manifest filename; also the first thing :func:`verify_archive` reads.
 MANIFEST_FILENAME = "archive.json"
@@ -99,15 +100,17 @@ def _archive_dir(root: Path, meeting: Meeting, timestamp: str) -> Path:
 
     The timestamp has second resolution, so two archives in the same second are
     disambiguated with a numeric suffix rather than reusing (and thus
-    overwriting) the first.
+    overwriting) the first. The suffix is the shared collision rule
+    (:func:`clear_record.service.tapestore.unique_name`); what is probed here is
+    existence, because a name another archive won before its ``mkdir`` is handled
+    by the caller's retry rather than skipped silently.
     """
     parent = root / meeting.project_slug
-    candidate = parent / f"{timestamp}-{meeting.slug}"
-    suffix = 2
-    while candidate.exists():
-        candidate = parent / f"{timestamp}-{meeting.slug}-{suffix}"
-        suffix += 1
-    return candidate
+    name = tapestore.unique_name(
+        f"{timestamp}-{meeting.slug}",
+        taken=lambda candidate: (parent / candidate).exists(),
+    )
+    return parent / name
 
 
 def _copy_into(source: Path, dest_dir: Path, used: set[str]) -> Path:
@@ -115,16 +118,13 @@ def _copy_into(source: Path, dest_dir: Path, used: set[str]) -> Path:
 
     Returns the destination path; ``used`` accumulates the names already taken in
     this directory so two artifacts with the same basename cannot clobber each
-    other.
+    other — the caller's notion of occupied, fed to the shared collision rule
+    (:func:`clear_record.service.tapestore.unique_name`) so the archive's
+    suffixes are the upload path's.
     """
     if not source.is_file():
         raise FileNotFoundError(f"archive source is missing: {source}")
-    name = source.name
-    if name in used:
-        n = 2
-        while f"{source.stem}-{n}{source.suffix}" in used:
-            n += 1
-        name = f"{source.stem}-{n}{source.suffix}"
+    name = tapestore.unique_name(source.name, taken=used.__contains__)
     used.add(name)
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / name
@@ -193,7 +193,9 @@ def archive_meeting(
         files: list[dict] = []
         used_tapes: set[str] = set()
         for tape in tape_set.paths:
-            target = _copy_into(Path(tape), archive_dir / TAPES_DIRNAME, used_tapes)
+            target = _copy_into(
+                Path(tape), tapestore.tapes_dir(archive_dir), used_tapes
+            )
             files.append(_entry(archive_dir, target, TAPE_KIND))
 
         used_record: set[str] = set()
@@ -280,7 +282,6 @@ def verify_archive(archive_dir: str | Path) -> dict:
 __all__ = [
     "MANIFEST_FILENAME",
     "RECORD_DIRNAME",
-    "TAPES_DIRNAME",
     "archive_meeting",
     "tool_version",
     "verify_archive",

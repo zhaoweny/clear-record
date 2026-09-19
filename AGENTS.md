@@ -6,7 +6,7 @@ Standing instructions for agents working in this repo. Read this first.
 
 ### Issue tracker
 
-Work is tracked as local markdown under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Work is tracked on the owner's private Gitea instance (reachable only over the tailnet): tickets are issues, specs are wiki pages. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

@@ -85,12 +85,23 @@ def test_adr_0018_tool_count_is_current() -> None:
     assert len(_tool_names()) == 22
 
 
-def test_issue_tracker_names_the_real_guard_constant() -> None:
+def test_issue_tracker_names_the_real_guard_classes() -> None:
+    """The convention's enforcement claim matches what the guard actually runs.
+
+    It used to name the constant ``IGNORED_PATH_ROOTS``. ADR-0029 added the
+    private instance as a second class, so the doc now names the classes rather
+    than the identifiers — the guard stays the source of truth, so both classes
+    must still exist and be the ones the scan calls.
+    """
     tracker = _text("docs/agents/issue-tracker.md")
-    assert "IGNORED_PATH_ROOTS" in tracker
+    assert "path roots and the instance hostname" in tracker
+    assert "packages/clear-record/tests/test_tracker_refs.py" in tracker
     assert "IGNORED_PREFIXES" not in tracker
     guard = _text("packages/clear-record/tests/test_tracker_refs.py")
-    assert "IGNORED_PATH_ROOTS = " in guard
+    for name in ("IGNORED_PATH_ROOTS", "PRIVATE_HOSTS"):
+        assert f"{name} = " in guard, f"the guard no longer defines {name}"
+    assert "_references_root(" in guard
+    assert "_references_host(" in guard
 
 
 def test_adr_0027_sitemap_lists_the_project_subroutes() -> None:

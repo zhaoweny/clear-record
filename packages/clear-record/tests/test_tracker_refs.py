@@ -1,20 +1,23 @@
-"""Guard: committed files never reference the unpublished local tracker.
+"""Guard: committed files never reference the unpublished tracker.
 
-The issue tracker lives in ``.scratch/``, which is gitignored and never
-published — ``docs/agents/issue-tracker.md`` defines it, and it sits on the same
-environment-local boundary as recordings and model weights (ADR-0006). A
-committed file therefore must not reference it **by path**: a reader of the
-public repo can follow neither a markdown link nor a backticked path into a
-directory that is not there, and nothing in a normal checkout flags the rot.
+The tracker moved to the owner's private Gitea instance, reachable only over the
+tailnet (ADR-0029); the pre-migration corpus stays in ``.scratch/`` as a frozen
+archive, gitignored and never published — ``docs/agents/issue-tracker.md``
+defines the boundary, which is the same environment-local one as recordings and
+model weights (ADR-0006). A committed file therefore must not reference the
+tracker **by path or hostname**: a reader of the public repo can follow neither
+a markdown link nor a backticked path into a directory that is not there, nor a
+ticket URL into a host they cannot reach, and nothing in a normal checkout flags
+the rot.
 
 The rule (``docs/agents/issue-tracker.md`` § Citing the tracker from committed
 files):
 
-- **Never link** into the tracker.
-- **Never cite a tracker file as evidence.** Durable claims stand on durable
-  sources: an ADR, ``docs/research/``, or ``docs/vox/voice-of-owner.md``.
+- **Never link** into the tracker or the instance.
+- **Never cite a ticket as evidence.** Durable claims stand on durable sources:
+  an ADR, ``docs/research/``, or ``docs/vox/voice-of-owner.md``.
 - **Naming a lane in prose is fine** ("the ``hardware-backends`` lane of the
-  local tracker"). The banned thing is the path, not the concept.
+  tracker"). The banned thing is the address, not the concept.
 - **The arrow points one way.** Tracker entries link *to* ``docs/``; a
   committed file never links back into the tracker. A tracker finding that
   needs to be citable graduates into ``docs/``.
@@ -24,7 +27,7 @@ Two deliberate scoping choices:
 - Every file git would publish is checked — **tracked files, plus untracked
   files that are not ignored** — so a freshly written document is caught before
   it is ever staged, and `just verify` agrees with CI.
-- Only four files are exempt, because they are the ones that define or explain
+- Only five files are exempt, because they are the ones that define or explain
   the boundary itself.
 
 The scan **fails loudly when it cannot enumerate tracked files**. A guard that
@@ -50,18 +53,32 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # (a longer name). Home-relative and absolute paths are excluded separately, so
 # that a ``.local`` entry cannot trip on ``~/.local/share/…`` or ``/home/…``.
 #
-# v1 covers the local issue tracker only. Extending the guard to another
-# gitignored class (``workspace/``, ``.local/``, ``.wt/`` …) is one entry here,
-# plus a ruling on which files may legitimately name it.
+# ``.scratch`` holds the tracker's frozen pre-migration archive (ADR-0029). The
+# live tracker is a hostname rather than a path, so it is matched by
+# ``PRIVATE_HOSTS`` below. Extending either set to another private class
+# (``workspace/``, ``.local/``, ``.wt/`` …) is one entry, plus a ruling on which
+# files may legitimately name it.
 IGNORED_PATH_ROOTS = (".scratch",)
 
+# Hostnames of private services a committed file must not name: the tracker's
+# Gitea instance, reachable only over the owner's tailnet (ADR-0029).
+#
+# A hostname is not a path root, so it needs its own matcher. The scheme of a
+# ``https://host/…`` URL makes the leading token look like an absolute path, so
+# the path rule above deliberately lets it through; the host itself is the
+# reference, so matching it alone catches the bare host, a backticked host, and
+# every scheme-qualified or port-qualified URL form at once.
+PRIVATE_HOSTS = ("gitea.tailnet-00e4.ts.net",)
+
 # Files exempt because they define or explain the boundary: the ignore rule
-# itself, the standing instructions, the tracker convention, and this guard
-# (whose docstring must name the directory to explain what it bans).
+# itself, the standing instructions, the tracker convention, the ADR that moves
+# the tracker (which must name the archive it freezes), and this guard (whose
+# docstring must name the directory to explain what it bans).
 EXEMPT = frozenset(
     {
         ".gitignore",
         "AGENTS.md",
+        "docs/adr/0029-tracker-moves-to-a-private-gitea-instance.md",
         "docs/agents/issue-tracker.md",
         "packages/clear-record/tests/test_tracker_refs.py",
     }
@@ -116,6 +133,25 @@ _SEGMENT = {
     for root in IGNORED_PATH_ROOTS
 }
 
+# Each host matched as a *host token*: a leading boundary so a different name
+# ending in it (``notgitea.tailnet-00e4.ts.net``) is not glued on, and a trailing
+# boundary so a longer name in either direction is not a hit — neither a wider
+# subdomain (``x.…``) nor a longer domain (``….evil``). A dot that ends the
+# token rather than continuing it is allowed, because that is how a sentence
+# ends and how an FQDN may be rooted.
+#
+# ``IGNORECASE`` because a hostname is case-insensitive: ``GITEA.….TS.NET`` is
+# the same address, so matching one spelling would be a silent bypass. Path
+# roots above are deliberately *not* matched this way — they have to resolve on
+# the case-sensitive machine that opens the published link.
+_HOST = {
+    host: re.compile(
+        rf"(?<![A-Za-z0-9.-]){re.escape(host)}(?![A-Za-z0-9-])(?!\.[A-Za-z0-9-])",
+        re.IGNORECASE,
+    )
+    for host in PRIVATE_HOSTS
+}
+
 
 # A leading run of relative-link prefixes, stripped before judging whether a
 # path is repo-relative: `../.scratch/…` from `docs/research/` is repo-relative.
@@ -141,12 +177,25 @@ def _references_root(line: str, root: str) -> bool:
     return False
 
 
+def _references_host(line: str, host: str) -> bool:
+    """True when *line* names *host*, bare or inside a URL.
+
+    Unlike a path root this needs no repo-relative test. ``https://host/…`` is
+    exactly the qualified form that slips past the path rule — its leading token
+    looks absolute — and the host is what a public reader cannot resolve in any
+    form. A bare host, a backticked host, and every scheme- or port-qualified
+    URL contain the same hostname, so one match covers them all.
+    """
+    return _HOST[host].search(line) is not None
+
+
 def _offences(name: str, text: str) -> list[str]:
-    """Lines of *name* that reference an ignored path root."""
+    """Lines of *name* that reference an ignored path root or a private host."""
     return [
         f"{name}:{lineno}: {line.strip()}"
         for lineno, line in enumerate(text.splitlines(), start=1)
         if any(_references_root(line, root) for root in IGNORED_PATH_ROOTS)
+        or any(_references_host(line, host) for host in PRIVATE_HOSTS)
     ]
 
 
@@ -164,10 +213,11 @@ def test_the_scan_actually_scans() -> None:
 
 
 def test_committed_files_do_not_reference_the_tracker() -> None:
-    """No committed file outside the exempt set references an ignored path root.
+    """No committed file outside the exempt set names the tracker's address.
 
-    Durable documents cite durable sources. If a tracker entry carries a finding
-    worth citing, it graduates into ``docs/`` and *that* is what gets linked.
+    That is an ignored path root or the private instance's hostname. Durable
+    documents cite durable sources: if a tracker entry carries a finding worth
+    citing, it graduates into ``docs/`` and *that* is what gets linked.
     """
     violations: list[str] = []
     for name in _tracked_files():
@@ -180,9 +230,21 @@ def test_committed_files_do_not_reference_the_tracker() -> None:
             continue
         violations.extend(_offences(name, text))
     assert not violations, (
-        "committed files must not reference the unpublished local tracker "
-        f"({', '.join(IGNORED_PATH_ROOTS)}). Name the lane in prose, cite a durable "
-        "source, or graduate the finding into docs/. See docs/agents/"
-        "issue-tracker.md § Citing the tracker from committed files.\n"
-        + "\n".join(violations)
+        "committed files must not reference the unpublished tracker "
+        f"({', '.join((*IGNORED_PATH_ROOTS, *PRIVATE_HOSTS))}). Name the lane in "
+        "prose, cite a durable source, or graduate the finding into docs/. See "
+        "docs/agents/issue-tracker.md § Citing the tracker from committed "
+        "files.\n" + "\n".join(violations)
     )
+
+
+def test_the_host_match_is_case_insensitive() -> None:
+    """A hostname is case-insensitive, so a shouty spelling is the same address.
+
+    ``GITEA.TAILNET-00E4.TS.NET`` reaches the instance while reading as a
+    different string, so matching only the lower-case spelling is a silent
+    bypass of the whole rule. A path root is deliberately *not* matched this
+    way: it has to resolve on the case-sensitive machine that opens the link.
+    """
+    for host in PRIVATE_HOSTS:
+        assert _references_host(f"see https://{host.upper()}/zhaow/x", host), host

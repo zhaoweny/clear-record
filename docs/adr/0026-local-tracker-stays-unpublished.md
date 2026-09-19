@@ -3,6 +3,10 @@
 Status: active
 Date: 2026-09-15
 
+- Superseded in part by [ADR-0029](0029-tracker-moves-to-a-private-gitea-instance.md)
+  (2026-09-19): the tracker stays unpublished and committed files still cite lanes, but
+  its home is now a private Gitea instance, and the naming rule covers that instance too.
+
 ## Context
 
 - [FACT] The repository is public (MIT). The issue tracker lives in a gitignored

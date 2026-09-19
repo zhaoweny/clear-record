@@ -13,6 +13,14 @@ worktree_dir = ".wt"
 # repo; omit it for solo trees and GitHub-fork workflows.
 branch_template = "agents/{slug}"
 
+[gates]
+# The command the run's verify gate runs, in the tree it certifies. `gwt
+# integrate` runs it in the integration tree before it stages a merge, and the
+# batch checkpoint runs the same command in the same tree. Absent, no gate runs
+# and every integration logs `gate="none"` while nothing was checked; this repo
+# runs these three as separate CI jobs, so the gate here is the compound.
+verify = "just verify && just web-assets-check && just i18n-check"
+
 [control]
 # Who performs the final review-and-land on main:
 #   "orchestrator" — the running main agent verifies (verify gate) then lands.

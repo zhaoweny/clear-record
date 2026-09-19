@@ -50,6 +50,7 @@ from clear_record.core import (
 )
 from clear_record.core.i18n import deferred
 from clear_record.core.message import Message
+from clear_record.core.process import ProcessRunner, SubprocessRunner
 
 from clear_record.providers.apple_speech import AppleSpeechBackend
 from clear_record.providers.base import (
@@ -64,7 +65,9 @@ from clear_record.providers.ggml_hashes import (
     verify_model_sha256,
 )
 from clear_record.providers.paths import resolve_models_dir
-from clear_record.providers.process import ProcessRunner, SubprocessRunner
+
+#: The seam for this module's one-shot probes (``whisper-cli --version``).
+_RUNNER = SubprocessRunner()
 
 
 def _make_segment(
@@ -382,7 +385,7 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
     try:
         # ``--version`` still runs ``ggml_backend_load_all()`` (the first thing
         # ``main`` does) and then exits, so no model is touched.
-        proc = subprocess.run(
+        proc = _RUNNER.run(
             [cli, "--version"], capture_output=True, text=True, timeout=30
         )
         output = f"{proc.stdout or ''}\n{proc.stderr or ''}"

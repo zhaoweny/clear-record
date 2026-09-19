@@ -40,12 +40,6 @@ from clear_record.providers.base import (
 )
 from clear_record.providers.model_cache import looks_like_model_cache
 from clear_record.providers.paths import resolve_models_dir
-from clear_record.providers.process import (
-    CancellableProcessRunner,
-    ProcessCancelled,
-    ProcessRunner,
-    SubprocessRunner,
-)
 from clear_record.providers.tts import (
     Synthesis,
     TtsEngine,
@@ -69,15 +63,11 @@ __all__ = [
     "BackendBase",
     "BackendId",
     "BackendInfo",
-    "CancellableProcessRunner",
     "DEFAULT_MODEL",
     "PluginLoadProbe",
-    "ProcessCancelled",
-    "ProcessRunner",
     "RUNTIME_SYSTEM",
     "RUNTIME_WHISPER_CLI",
     "SpeechProbe",
-    "SubprocessRunner",
     "Synthesis",
     "TtsEngine",
     "TtsError",

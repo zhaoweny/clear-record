@@ -7,8 +7,7 @@ from typing import Protocol
 
 from clear_record.core import TranscriptionResult
 from clear_record.core.message import Message
-
-from clear_record.providers.process import ProcessRunner
+from clear_record.core.process import ProcessRunner
 
 BackendId = str
 
@@ -143,7 +142,7 @@ class Backend(Protocol):
         ``model_dir`` is where to download/read model weights. ``initial_prompt``
         biases decoding toward a glossary of names/terms. ``process_runner``
         optionally overrides how the backend launches its CLI, so a caller can
-        scope cancellation to its own children (see ``clear_record.providers.process``).
+        scope cancellation to its own children (see ``clear_record.core.process``).
 
         The trailing decoder knobs are optional; a backend advertises which it
         supports via :attr:`BackendInfo.decoder_knobs` and must implement the

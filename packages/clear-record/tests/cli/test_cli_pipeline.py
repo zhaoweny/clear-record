@@ -947,7 +947,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
             initial_prompt=None,
             process_runner=None,
         ):
-            from clear_record.providers import SubprocessRunner
+            from clear_record.core.process import SubprocessRunner
 
             runner = process_runner or SubprocessRunner()
             started.set()

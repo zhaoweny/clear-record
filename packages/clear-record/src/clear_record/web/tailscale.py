@@ -37,9 +37,10 @@ Store install puts the CLI inside ``Tailscale.app`` and commonly symlinks
 ``~/.local/bin/tailscale`` at it: the app-bundle binary aborts when invoked
 through the symlink, and works by its real path.
 
-Standard library only (``subprocess`` + ``json`` + ``os`` + ``shutil`` +
-``atexit``); nothing here imports FastAPI, so the light ``clear_record.web``
-package can call it from the CLI. Every failure raises
+Standard library only (``json`` + ``os`` + ``shutil`` + ``atexit``); every child
+process goes through the shared seam, :mod:`clear_record.core.process`. Nothing
+here imports FastAPI, so the light ``clear_record.web`` package can call it from
+the CLI. Every failure raises
 :class:`TailscaleError` carrying an operator-facing fix, never a traceback.
 """
 
@@ -52,6 +53,13 @@ import shutil
 import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from clear_record.core.process import CancellableProcessRunner, SubprocessRunner
+
+#: The seam the one-shot CLI calls (``status --json``, ``serve status --json``)
+#: go through. The long-lived Serve child gets a runner of its own, so stopping
+#: the console's Serve cannot touch anything else.
+_RUNNER = SubprocessRunner()
 
 #: The Tailscale CLI; module-level so tests can point at a fake.
 TAILSCALE_BIN = "tailscale"
@@ -171,11 +179,10 @@ def _invoke(args: list[str], *, tailscale_bin: str | None = None):
     """
     binary = tailscale_bin or resolve_tailscale_bin()
     try:
-        return subprocess.run(
+        return _RUNNER.run(
             [binary, *args],
             capture_output=True,
             text=True,
-            check=False,
         )
     except FileNotFoundError as exc:
         raise TailscaleError(f"could not run `{binary}`: {_INSTALL_HINT}") from exc
@@ -183,20 +190,6 @@ def _invoke(args: list[str], *, tailscale_bin: str | None = None):
         raise TailscaleError(
             f"could not run `{binary}` ({exc}): {_INSTALL_HINT}"
         ) from exc
-
-
-def _spawn(args: list[str]):
-    """Start the long-lived foreground ``tailscale serve`` child.
-
-    Its stdout/stderr are piped so a refusal can be surfaced; a successful
-    foreground Serve is quiet after its banner, so the pipes cannot fill.
-    """
-    return subprocess.Popen(
-        args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
 
 
 def _detail(proc) -> str:
@@ -452,11 +445,13 @@ class ServeSession:
         serve_port: int,
         target_port: int,
         process=None,
+        runner: CancellableProcessRunner | None = None,
         reused: bool = False,
     ) -> None:
         self.serve_port = serve_port
         self.target_port = target_port
         self._process = process
+        self._runner = runner
         self.reused = reused
 
     @property
@@ -469,23 +464,22 @@ class ServeSession:
 
         The child's ``WatchIPNBus`` session closes on exit, and tailscaled
         deletes the ephemeral mapping then — so there is no ``off`` command, and
-        an ungraceful parent death cleans up too. Bounded: SIGTERM, a short
-        wait, then SIGKILL; never blocks the console's shutdown for long.
+        an ungraceful parent death cleans up too. The ladder itself is the
+        seam's (:meth:`clear_record.core.process.CancellableProcessRunner.stop`):
+        SIGTERM, ``SERVE_STOP_GRACE_S`` seconds, then SIGKILL — never blocks the
+        console's shutdown for long, and only this session's child is signalled.
         """
         process, self._process = self._process, None
+        runner, self._runner = self._runner, None
         atexit.unregister(self.stop)
         if process is None:
             return
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=SERVE_STOP_GRACE_S)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                try:
-                    process.wait(timeout=SERVE_STOP_GRACE_S)
-                except subprocess.TimeoutExpired:
-                    pass
+        if runner is None:
+            # Built by hand (a test, a caller using the constructor directly):
+            # no runner owns the child, so give the ladder a private one. It
+            # signals this child and nothing else either way.
+            runner = CancellableProcessRunner()
+        runner.stop(process, grace=SERVE_STOP_GRACE_S)
         _close_pipes(process)
 
 
@@ -506,14 +500,23 @@ def start_serve(
     args = serve_command(
         serve_port=serve_port, target_port=target_port, tailscale_bin=binary
     )
-    process = _spawn(args)
+    # A runner of this session's own: it tracks the foreground Serve child, so
+    # stopping the console signals exactly that child and nothing else. Its
+    # stdout/stderr are piped so a refusal can be surfaced; a successful
+    # foreground Serve is quiet after its banner, so the pipes cannot fill.
+    runner = CancellableProcessRunner()
+    process = runner.start(args, capture_output=True, text=True)
     try:
         process.wait(timeout=SERVE_STARTUP_GRACE_S)
     except subprocess.TimeoutExpired:
         return ServeSession(
-            serve_port=serve_port, target_port=target_port, process=process
+            serve_port=serve_port,
+            target_port=target_port,
+            process=process,
+            runner=runner,
         )
     detail = _child_detail(process)
+    runner.stop(process, grace=SERVE_STOP_GRACE_S)
     _close_pipes(process)
     raise TailscaleError(
         f"`{' '.join(args)}` did not start.\n"

@@ -75,6 +75,7 @@ from clear_record.core import Segment, TranscriptionResult
 from clear_record.core.i18n import deferred
 from clear_record.core.message import Message
 from clear_record.core.paths import resolve_cache_dir
+from clear_record.core.process import SubprocessRunner
 from clear_record.providers.base import (
     APPLE_SPEECH_BACKEND_ID,
     Availability,
@@ -101,6 +102,10 @@ _RUN_TIMEOUT_S = 24 * 60 * 60.0
 _PROBE_TIMEOUT_S = 30.0
 
 _PART_COUNTER = itertools.count()
+
+#: The seam this module's own launches go through (the ``swiftc`` probe). The
+#: helper itself is driven through an injected runner or this same default.
+_RUNNER = SubprocessRunner()
 
 
 class _AppleSpeechProblem(RuntimeError):
@@ -162,7 +167,7 @@ def _swift_compiler() -> list[str] | None:
     xcrun = shutil.which("xcrun")
     if xcrun:
         try:
-            proc = subprocess.run(
+            proc = _RUNNER.run(
                 [xcrun, "--find", "swiftc"],
                 capture_output=True,
                 text=True,
@@ -285,7 +290,7 @@ def _as_run_callable(runner: object | None) -> RunCallable | None:
 
     The backend seam takes a ``ProcessRunner`` -- an *object* with ``run``
     (``CancellableProcessRunner``, ``SubprocessRunner``; see
-    :mod:`clear_record.providers.process`) -- while :class:`AppleSpeechHelper`
+    :mod:`clear_record.core.process`) -- while :class:`AppleSpeechHelper`
     launches through a plain ``subprocess.run``-shaped callable. Passing the
     object straight through raised ``TypeError: ... object is not callable`` on
     the real Apple path. A runner exposing a callable ``run`` is bound to it; a
@@ -301,9 +306,10 @@ def _as_run_callable(runner: object | None) -> RunCallable | None:
 class AppleSpeechHelper:
     """Compile/cache and drive :file:`apple_speech_helper.swift`.
 
-    The OS call is reached only through ``run`` (a ``subprocess.run``-compatible
-    callable), so tests can drive the whole backend seam with it faked and the
-    suite stays green on any platform.
+    The OS call is reached only through ``run`` (a ``ProcessRunner.run``-shaped
+    callable, defaulting to the shared seam in
+    :mod:`clear_record.core.process`), so tests can drive the whole backend seam
+    with it faked and the suite stays green on any platform.
     """
 
     def __init__(
@@ -315,7 +321,7 @@ class AppleSpeechHelper:
     ) -> None:
         self._source = Path(source) if source is not None else HELPER_SOURCE
         self._cache_dir = Path(cache_dir) if cache_dir is not None else None
-        self._run: RunCallable = run or subprocess.run
+        self._run: RunCallable = run or _RUNNER.run
         self._binary: str | None = None
         self._probe: SpeechProbe | None = None
 

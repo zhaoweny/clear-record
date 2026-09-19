@@ -48,6 +48,11 @@ from clear_record.core import (
     Source,
 )
 from clear_record.core.i18n import deferred, tr
+from clear_record.core.process import (
+    CancellableProcessRunner,
+    ProcessCancelled,
+    SubprocessRunner,
+)
 from clear_record.engine import (
     changed_terms,
     clean_segments,
@@ -56,7 +61,6 @@ from clear_record.engine import (
     write_chunk,
 )
 from clear_record.engine.audio import read_audio
-from clear_record.providers import CancellableProcessRunner, ProcessCancelled
 
 from clear_record.cli.workspace import (
     ChunkCache,
@@ -233,6 +237,9 @@ _UMA_MEMORY_SHARE = 0.5
 _PROC_MEMINFO = Path("/proc/meminfo")
 _DEFAULT_MAX_JOBS = 4
 
+#: The seam the advisory ``nvidia-smi`` probe is launched through.
+_RUNNER = SubprocessRunner()
+
 
 def model_vram_gb(model: str | None) -> float:
     """Approximate resident VRAM (GB) for one ``whisper-cli`` process.
@@ -291,7 +298,7 @@ def detect_vram_gb() -> float | None:
     if not smi:
         return None
     try:
-        proc = subprocess.run(
+        proc = _RUNNER.run(
             [smi, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,

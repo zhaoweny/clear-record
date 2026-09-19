@@ -42,11 +42,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from clear_record.core.process import SubprocessRunner
+
 #: How long a voice listing may take. It is a local probe, not synthesis.
 _PROBE_TIMEOUT_S = 10.0
 #: How long a synthesis may take. Generous: a slow VM or a long phrase is still
 #: a valid clip, and a false "unavailable" is worse than a slow one.
 _SYNTH_TIMEOUT_S = 120.0
+
+#: The seam this module launches its engines through (see ``_run``).
+_RUNNER = SubprocessRunner()
 
 #: The WAV data format macOS ``say`` needs. Without it, ``say -o out.wav`` fails
 #: with ``Opening output file failed: fmt?`` -- the extension alone does not pick
@@ -328,8 +333,13 @@ def _command(
 
 
 def _run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess:
-    """Run one engine command, capturing text output (the test seam)."""
-    return subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    """Run one engine command through the seam, capturing text output.
+
+    Kept as a module-level function (rather than inlining ``_RUNNER.run`` at the
+    two call sites) because it is this module's process seam for tests: every
+    voice listing and synthesis in the suite is driven through a fake here.
+    """
+    return _RUNNER.run(command, capture_output=True, text=True, timeout=timeout)
 
 
 def _has_audio(path: Path) -> bool:

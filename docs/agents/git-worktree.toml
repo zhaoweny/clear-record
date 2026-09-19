@@ -17,4 +17,4 @@ branch_template = "agents/{slug}"
 # Who performs the final review-and-land on main:
 #   "orchestrator" — the running main agent verifies (verify gate) then lands.
 #   "human"        — agents push + report; a human reviews and lands.
-landing_authority = "orchestrator"
+landing_authority = "human"

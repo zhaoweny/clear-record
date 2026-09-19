@@ -509,6 +509,97 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     assert Fake.calls > first
 
 
+def test_a_resumed_run_counts_reused_chunks_apart_from_decoded_ones(
+    tmp_path, monkeypatch
+) -> None:
+    """The transcribe stage separates cached chunks from work the clock paid for.
+
+    RUN-03 derives a live speed from exactly these events — ``(index - reused)``
+    chunks of audio over the event's elapsed seconds — so a cached chunk has to
+    advance the stage *as re-used*: counted as done (the progress bar is right)
+    and never counted as decoded work. Without the split a resume reports a rate
+    no machine sustained: the seed's own 112-of-120 reuse shape prints ~260x
+    where the machine measures ~2.4x.
+    """
+    from clear_record.cli.workspace import Workspace
+    from clear_record.core import JobEvent, Segment, TranscriptionResult
+    from clear_record.engine.chunk import plan_chunks
+    from clear_record.providers import BackendInfo
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", seconds=8.0)
+    sources = stages.ingest(str(wd))
+
+    class Fake(BackendBase):
+        calls = 0
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(
+            self,
+            audio_path,
+            *,
+            language=None,
+            model=None,
+            model_dir=None,
+            initial_prompt=None,
+            process_runner=None,
+        ):
+            type(self).calls += 1
+            data, file_sr = sf.read(audio_path)
+            duration = len(data) / file_sr
+            return TranscriptionResult(
+                source="fake",
+                segments=(
+                    Segment(0.0, round(duration, 3), "chunk", "fake", confidence=0.5),
+                ),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=duration,
+            )
+
+    monkeypatch.setattr(stages, "get_backend", lambda _id: Fake())
+    chunk_seconds, overlap_seconds = 3.0, 1.0
+    stages.transcribe(
+        str(wd), "fake", chunk_seconds=chunk_seconds, overlap_seconds=overlap_seconds
+    )
+    n_chunks = len(plan_chunks(8.0, chunk_seconds, overlap_seconds))
+
+    # Drop one cached body: the next run decodes exactly that chunk and re-uses
+    # the rest, which is the shape a resume has.
+    cache = Workspace.at(wd).chunk_cache(sources[0].id)
+    bodies = sorted(cache.directory.glob("[0-9]*.json"))
+    assert len(bodies) == n_chunks
+    bodies[0].unlink()
+
+    events: list[JobEvent] = []
+    Fake.calls = 0
+    stages.transcribe(
+        str(wd),
+        "fake",
+        chunk_seconds=chunk_seconds,
+        overlap_seconds=overlap_seconds,
+        on_event=events.append,
+    )
+    last = [event for event in events if event.stage == "transcribe"][-1]
+
+    assert Fake.calls == 1  # the chunk whose body was dropped
+    assert last.index == n_chunks
+    assert last.reused == n_chunks - 1
+    # What a speed reading may divide by is the work the clock actually covered.
+    assert last.index - last.reused == Fake.calls
+
+
 def test_transcription_module_is_a_single_seam(tmp_path) -> None:
     """The resumable transcriber is callable through one function — plan ->
     cache -> pool -> merge — driven by a `Workspace` and plain data types, with

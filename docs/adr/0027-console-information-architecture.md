@@ -228,3 +228,27 @@ previously read-only surface.
 - [FACT] `MODEL_LADDER` is now public (`cli.auto`, re-exported by
   `service.auto`) so the console can list the sizes without importing `cli`.
 
+## Update — 2026-09-17: the pipeline status page and a live header chip
+
+Owner-asked (US-08: *"a pipeline status page, like the status page for
+plex.tv"*); spec `04-activity-and-status.md` RUN-03.
+
+- [DECISION] **`/activity` joins the sitemap as a top-level page**, with an
+  entry in the header nav. It is one node's answer to "what is clear-record
+  doing right now": the running and queued runs of the shared queue (RUN-02)
+  across every project — each with its stage and progress, the speed and
+  duration its own cost record measures (RUN-01), its model and backend, the
+  origin that started it and the machine it is on — then the newest finished
+  runs. It reads the registry and nothing else, so a run an agent's MCP server
+  started appears with the same fields as one the console started.
+  There is **no cross-node aggregation** (a non-goal); the row shape can carry
+  a node later (Q15).
+- [DECISION] **The header chip is fed by live state**, through the one
+  `page()` seam every full page already uses: `idle`, `running N` (or
+  `queued N` when the node has not picked the work up yet), or
+  `needs attention` when the newest finished run failed or was interrupted — a
+  deliberate `stopped` is not attention. It links to `/activity`, is
+  translated, and `{% block status %}` still lets a page override it.
+- [FACT] `Registry.latest_run_event(run_id)` is the one additive registry read:
+  a live run's stage and progress live in its persisted event stream (one event
+  per chunk), so the page reads the last one instead of the whole stream.

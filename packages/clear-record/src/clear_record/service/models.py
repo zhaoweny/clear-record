@@ -64,6 +64,13 @@ MEETING_STATUSES = ("new", "ready", "running", "recorded", "failed", "interrupte
 #: startup, and its event stream stays readable.
 RUN_STATUSES = ("queued", "running", "done", "failed", "stopped", "interrupted")
 
+#: Which surface **started** a run (RUN-02). ``console`` is the local console UI,
+#: ``api`` the HTTP JSON API (a script or an integration), ``mcp`` the stdio MCP
+#: server an agent harness drives, ``cli`` the command line. It is recorded when
+#: the run is enqueued, so a run's provenance survives the restart that ends its
+#: process.
+RUN_ORIGINS = ("console", "api", "mcp", "cli")
+
 
 @dataclasses.dataclass(frozen=True)
 class Meeting:
@@ -116,9 +123,11 @@ class PipelineRun:
 
     ``status`` moves ``queued → running → done|failed|interrupted``: a run is
     **enqueued** first (the FIFO the node drains one at a time), and only one run
-    per node is ``running`` at once. ``interrupted`` means the console process
-    died while the run was live (startup reconciliation), which is not the same
-    as the pipeline failing.
+    per node is ``running`` at once. The move to ``running`` is a **conditional
+    claim** (:meth:`~clear_record.service.store.Registry.claim_run`), so several
+    processes sharing the registry cannot execute the same run. ``interrupted``
+    means the process that owned the run died while it was live, which is not the
+    same as the pipeline failing.
     """
 
     id: int
@@ -146,6 +155,28 @@ class PipelineRun:
     #: description) — never a derived ratio. ``None`` means no record: a live
     #: run, or one recorded before the record existed, both read as unknown.
     progress: dict | None = None
+    #: The surface that started the run (RUN-02): one of :data:`RUN_ORIGINS`.
+    #: ``None`` is a run enqueued before the column existed — read as unknown,
+    #: never guessed.
+    origin: str | None = None
+    #: The process identity that **claimed** the run, written by the claim so a
+    #: later reader can say who runs it. The claim is what makes it meaningful:
+    #: it is set once, by the winner, and never changes.
+    owner: str | None = None
+    #: When the owner last proved it was alive. The owner refreshes it while the
+    #: run executes; another process's reconciliation treats a missing or stale
+    #: heartbeat as a dead owner — that is how a run left by a killed process is
+    #: told apart from one a live peer is executing (RUN-02).
+    heartbeat_at: str | None = None
+    #: The run this one continues (RUN-04), set when a cancelled, interrupted or
+    #: failed run is resumed. ``resumes`` is the link; the *saving* is the chunk
+    #: cache, which a resumed run re-uses because it runs the same tape with the
+    #: backend, model, glossary and chunk plan.
+    resumes_run_id: int | None = None
+    #: When someone asked this run to stop (RUN-04). A *request*, not a state:
+    #: only the process executing the run may end it, so this column is what the
+    #: owner reads on its next heartbeat before stopping at a safe boundary.
+    cancel_requested_at: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -192,6 +223,7 @@ __all__ = [
     "PipelineRun",
     "Project",
     "RecordingSet",
+    "RUN_ORIGINS",
     "RUN_STATUSES",
     "TERM_AUTHORS",
     "TERM_STATUSES",

@@ -51,6 +51,25 @@ def test_progress_counts_and_estimates() -> None:
     assert [event.index for event in events] == [0, 1, 2, 3, 4]
 
 
+def test_advance_counts_reused_units_separately() -> None:
+    """A cached unit advances the stage but is not work the clock paid for.
+
+    The count is cumulative and rides every event, so a reader deriving a speed
+    can subtract it: ``index`` is the progress bar's business, ``index - reused``
+    is the decoder's (RUN-03).
+    """
+    events: list[JobEvent] = []
+    progress = Progress("transcribe", 4, events.append)
+
+    progress.advance(source="a", reused=True)
+    progress.advance(source="a", reused=True)
+    decoded = progress.advance(source="a")
+
+    assert (decoded.index, decoded.reused) == (3, 2)
+    assert [event.reused for event in events] == [1, 2, 2]
+    assert decoded.index - decoded.reused == 1  # one chunk the decoder ran
+
+
 def test_finish_marks_a_stageless_run_done() -> None:
     events: list[JobEvent] = []
     progress = Progress("transcribe", 0, events.append, clock=_Clock())

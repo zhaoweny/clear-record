@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from clear_record.cli.workspace import Workspace
 from clear_record.core import RecordDocument, Segment, Source
-from clear_record.service import Registry
+from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
 
 COST = {
@@ -18,6 +18,22 @@ COST = {
 }
 
 
+def _console(registry: Registry) -> TestClient:
+    """A console over ``registry`` whose run queue is stopped before seeding.
+
+    These tests are about what the run fragment renders, not about the queue:
+    they write run rows straight into the registry and read them back. The
+    app's own :class:`RunManager` would otherwise claim a hand-seeded ``queued``
+    row on its next 1 s rescan and fail it — the row has no tape set — turning
+    the row terminal underneath an assertion that expects a live run (issue 19).
+    Stopping the drain through the manager's own API first leaves every seeded
+    row exactly as written.
+    """
+    manager = RunManager(registry)
+    manager.shutdown(timeout=5.0)
+    return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+
+
 def _seeded(
     tmp_path,
     *,
@@ -26,7 +42,7 @@ def _seeded(
     confidence: float | None = 0.9,
 ):
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
+    client = _console(registry)
     registry.create_project("Ops")
     directory = tmp_path / "ws"
     directory.mkdir()

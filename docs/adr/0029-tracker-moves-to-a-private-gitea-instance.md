@@ -39,9 +39,9 @@ Date: 2026-09-19
 
 - [DECISION] **The canonical tracker is the private Gitea instance**: tickets are
   issues, a lane's spec is an **umbrella ticket** labelled `type/spec` — its body the
-  spec verbatim, its remaining parts as comments, a checklist of the lane's tickets, and
-  it closes when the lane's work is done — the lane's other documents are wiki pages,
-  lane/type/triage metadata are labels. One lane is one label (`lane/<slug>`).
+  spec verbatim plus a checklist of the lane's tickets, its remaining parts as comments,
+  and it closes when the lane's work is done — the lane's other documents are wiki
+  pages, lane/type/triage metadata are labels. One lane is one label (`lane/<slug>`).
 - [DECISION] **The Gitea repository is the ticket home, not the code's home, and nothing
   syncs it automatically.** The public repository on GitHub remains where the code lives;
   the Gitea repository exists so tickets and specs sit next to a copy of the code, and

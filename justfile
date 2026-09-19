@@ -113,6 +113,55 @@ agent-drive *ARGS:
 migrate-tracker *ARGS:
     uv run --no-project scripts/migrate_tracker.py {{ARGS}}
 
+# The tracker's history has a way back (ADR-0029: the instance is the one place
+# ticket history lives, and `gitea dump` inside its container is the backup
+# lever). This is the check that a dump really holds the tracker. Pointer to a
+# Python script because it branches; `--no-project` because it is stdlib-only and
+# imports no project package.
+#
+# The dump itself is taken on the host that runs the container — `docker exec -u
+# git <container> gitea dump`, then a `docker cp` of the zip out — and kept
+# outside the repository (`.local/backups/`), never committed. `--dump FILE`
+# audits one with no network at all: it opens the zip, opens the SQLite database
+# inside it read-only, and counts the tickets, comments, wiki pages, users,
+# labels and attachments it holds. `--url URL` (or $CLEAR_RECORD_GITEA_URL)
+# additionally compares those counts, the issue numbers and a sample of issues —
+# title, state, body digest, created and updated timestamps, comments,
+# attachments — against the instance's API. The token comes from $GITEA_TOKEN or
+# the `tea` login store, and is never printed; the host is never defaulted, so no
+# committed file names it.
+#
+# The verdict separates the two questions a comparison can answer. FAIL (exit 1)
+# means the source is missing what the dump holds — a ticket, a comment, a page, a
+# label or an account the dump has and the instance does not, which is what a
+# restore that dropped it produces, and what a dump from another instance looks
+# like. DRIFT (exit 0) means the dump holds everything it should and the source
+# has moved on since it was taken — expected against a live instance. MATCH
+# (exit 0) means the two agree.
+#
+# `just tracker-restore` is the other half — take the dump where the instance
+# runs, restore it here with the local Gitea, and audit there, where the verdict
+# must read MATCH. docs/tracker-backup.md is the procedure, the evidence each run
+# leaves, and who runs it.
+tracker-backup *ARGS:
+    uv run --no-project scripts/audit_tracker_backup.py {{ARGS}}
+
+# The restore half of the drill: take the dump where the instance runs (through
+# the operator's Docker endpoint, `--context`/`--docker-host`), restore it HERE
+# with this machine's own Gitea, and audit the restored copy — where the verdict
+# must read MATCH. Pointer to a Python script because it branches; `--no-project`
+# because it is stdlib-only and imports no project package.
+#
+# It refuses to restore across Gitea versions: the local binary must be the
+# release the source runs, or the drill would be testing a forward migration
+# instead. The restored instance binds 127.0.0.1 only, and carries the dump's own
+# database, so the operator's token authenticates against it and the audit reads
+# it exactly as it reads the source. `--dry-run` prints the whole sequence,
+# including what a reader with no Docker at all would run.
+# docs/tracker-backup.md carries the procedure, the evidence and who runs it.
+tracker-restore *ARGS:
+    uv run --no-project scripts/restore_tracker_dump.py {{ARGS}}
+
 # Build the console's compiled assets into
 # packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
 # output is committed, so `just verify` and end users never need Node.

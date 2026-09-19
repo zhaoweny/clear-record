@@ -868,7 +868,7 @@ class Registry:
 
         ``status='done'`` also **clears** ``error`` (RUN-02): a run that reached
         its own successful end reports no error, whatever a reaper wrote on it
-        while its owner was stalled — the reason would otherwise sit on a
+        while wrongly believing the owner dead — the reason would otherwise sit on a
         finished run and be shown as a failure by the console and the API. There
         is no caller that wants both, so the clear wins over a passed ``error``.
         """

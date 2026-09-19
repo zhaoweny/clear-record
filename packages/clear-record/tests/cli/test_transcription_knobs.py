@@ -7,6 +7,8 @@ profile re-decodes instead of reusing the other profile's chunks.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -14,7 +16,7 @@ import soundfile as sf
 from clear_record.cli import stages
 from clear_record.cli.transcription import TranscriptionOptions, transcribe
 from clear_record.cli.workspace import Workspace, chunk_cache_key
-from clear_record.core import Segment, Source, TranscriptionResult
+from clear_record.core import DECODER_KNOBS, Segment, Source, TranscriptionResult
 from clear_record.providers import BackendBase, BackendInfo
 
 
@@ -60,6 +62,27 @@ class _EchoBackend(BackendBase):
             model="echo",
             audio_duration=1.0,
         )
+
+
+def test_the_stage_takes_every_declared_decoder_knob() -> None:
+    """The command hands the stage each declared knob by name; the stage's
+    keyword list is its own public API (a caller may set a knob directly), so it
+    cannot be derived — this is the pin that keeps the two in step."""
+    signature = inspect.signature(stages.transcribe)
+
+    assert {knob.name for knob in DECODER_KNOBS} <= set(signature.parameters)
+
+
+def test_transcription_options_carry_every_declared_decoder_knob() -> None:
+    """The stage's options type restates none of the knobs: it inherits the
+    declaration's decoder fields, and each one round-trips through the converter
+    the row names."""
+    requested = {knob.name: knob.convert("3") for knob in DECODER_KNOBS}
+
+    options = TranscriptionOptions(**requested)
+
+    assert options.decoder_knobs() == requested
+    assert TranscriptionOptions().decoder_knobs() == {}
 
 
 def test_unsupported_decoder_knob_fails_loudly(tmp_path) -> None:

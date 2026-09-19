@@ -12,10 +12,12 @@ The parser is **Click** (ADR-0022). The two properties the port must keep are:
 - the pipeline stages' **default stdout is byte-identical** — only the parser
   changed, never what a stage prints.
 
-Each ``CR_*`` environment variable a CLI option mirrors is declared **on that
-option** (``envvar=``), so the name is discoverable in ``--help`` and the
-ADR-0007 precedence (flag > env > config > default) lives in one mechanism. The
-``CR_*`` reads that live outside the CLI (``providers``, ``service``, ``web``,
+A run knob — its flag spelling, its ``CR_*`` binding, its type and its ``--help``
+text — is declared once, in ``core.options.RUN_KNOBS``; the options for
+``transcribe``/``run``/``calibrate`` are generated from those rows. Each generated
+option still carries ``envvar=``, so the name stays discoverable in ``--help`` and
+the ADR-0007 precedence (flag > env > config > default) lives in one mechanism.
+The ``CR_*`` reads that live outside the CLI (``providers``, ``service``, ``web``,
 ``core.diagnostics``) are deliberately left where they are.
 
 Recordings and model weights are environment-local data — never commit them.
@@ -33,10 +35,10 @@ from typing import Any, Sequence
 import click
 
 from clear_record.core import (
-    DEFAULT_CHUNK_S,
-    DEFAULT_OVERLAP_S,
+    DECODER_KNOBS,
     PROFILE_CUSTOM,
     PROFILES,
+    RUN_KNOBS,
     PipelineOptions,
     ScopeError,
     Step,
@@ -430,6 +432,32 @@ _REFERENCE_TRANSCRIPT = _with_options(
     )
 )
 
+
+def _knob_options(slot: str) -> list:
+    """The Click options for one slot of the run-knob table (``core.RUN_KNOBS``).
+
+    Each generated option states itself once, from its row: the spelling, the
+    type, the ``CR_*`` binding and the help. The default is always ``None``
+    ("unset"), never the concrete built-in value, so an explicit flag that equals
+    the default — ``--jobs 0``, the documented "auto" — is still recognised as
+    explicit and beats a profile or the environment (see
+    :func:`clear_record.core.resolve_options`).
+    """
+    return [
+        click.option(
+            *knob.cli,
+            knob.name,
+            type=knob.convert,
+            default=None,
+            envvar=knob.env,
+            show_envvar=True,
+            help=knob.help,
+        )
+        for knob in RUN_KNOBS
+        if knob.cli_slot == slot
+    ]
+
+
 #: The backend/decoder subset shared by `transcribe`, `run` and `calibrate`. Each
 #: option mirrors its ``CR_*`` variable; ``--profile`` stays ``None`` when unset
 #: (a real sentinel, like the other resolver-managed knobs), so `--auto` can tell
@@ -473,25 +501,10 @@ _BACKEND = _with_options(
         help="glossary file (one term/line) used as the ASR initial prompt; "
         "defaults to <directory>/glossary.txt if present",
     ),
-    # These default to None (unset), not to the concrete built-in value, so
-    # resolve_options can tell an explicit `--chunk-seconds 600` from "not
-    # given" and keep the explicit flag on top of any profile/env layer.
-    click.option(
-        "--chunk-seconds",
-        type=float,
-        default=None,
-        envvar="CR_CHUNK_SECONDS",
-        show_envvar=True,
-        help=f"chunk length for long tape transcription (default {DEFAULT_CHUNK_S:.0f}s)",
-    ),
-    click.option(
-        "--overlap-seconds",
-        type=float,
-        default=None,
-        envvar="CR_OVERLAP_SECONDS",
-        show_envvar=True,
-        help=f"overlap between chunks (default {DEFAULT_OVERLAP_S:.0f}s)",
-    ),
+    # The knobs of `core.RUN_KNOBS`, spliced in at their declared slots: the
+    # chunking pair here, then `--jobs` after `--no-resume`, then the decoder
+    # knobs last. Each carries its own spelling, `CR_*` var, type and help.
+    *_knob_options("chunking"),
     click.option(
         "--no-resume",
         "resume",
@@ -500,16 +513,7 @@ _BACKEND = _with_options(
         default=True,
         help="ignore cached chunks and re-transcribe from scratch",
     ),
-    click.option(
-        "--jobs",
-        "-j",
-        type=int,
-        default=None,
-        envvar="CR_JOBS",
-        show_envvar=True,
-        help="parallel transcription workers (0 = auto; process-isolated "
-        "backends only, e.g. the AMD/NVIDIA whisper-cli)",
-    ),
+    *_knob_options("sizing"),
     click.option(
         "--check-plugin",
         is_flag=True,
@@ -542,63 +546,7 @@ _BACKEND = _with_options(
         "(H:MM or H:MM:SS, or seconds; e.g. 12:30-18:00); chunks outside keep "
         "their cached decode",
     ),
-    # The decoder knobs. All default to unset (None) and declare their CR_* var.
-    click.option(
-        "--beam-size",
-        type=int,
-        default=None,
-        envvar="CR_BEAM_SIZE",
-        show_envvar=True,
-        help="beam search width; larger = slower and (usually) more accurate",
-    ),
-    click.option(
-        "--best-of",
-        type=int,
-        default=None,
-        envvar="CR_BEST_OF",
-        show_envvar=True,
-        help="candidates tried in greedy decoding; larger = slower",
-    ),
-    click.option(
-        "--temperature",
-        type=float,
-        default=None,
-        envvar="CR_TEMPERATURE",
-        show_envvar=True,
-        help="decoding temperature (0.0 = deterministic)",
-    ),
-    click.option(
-        "--entropy-thold",
-        type=float,
-        default=None,
-        envvar="CR_ENTROPY_THOLD",
-        show_envvar=True,
-        help="entropy threshold; decoding stops when it falls below it",
-    ),
-    click.option(
-        "--no-speech-thold",
-        type=float,
-        default=None,
-        envvar="CR_NO_SPEECH_THOLD",
-        show_envvar=True,
-        help="probability below which a window counts as silence/skip",
-    ),
-    click.option(
-        "--max-context",
-        type=int,
-        default=None,
-        envvar="CR_MAX_CONTEXT",
-        show_envvar=True,
-        help="max tokens of previous text used as decoder context (-1 = default)",
-    ),
-    click.option(
-        "--threads",
-        type=int,
-        default=None,
-        envvar="CR_THREADS",
-        show_envvar=True,
-        help="CPU threads for the decoder (matters on CPU-only paths)",
-    ),
+    *_knob_options("decoder"),
 )
 
 
@@ -613,10 +561,7 @@ def _backend_option_kwargs(args: Any) -> dict:
         "language": args.language,
         "model_dir": args.models_dir,
         "glossary": args.glossary,
-        "chunk_seconds": args.chunk_seconds,
-        "overlap_seconds": args.overlap_seconds,
         "resume": args.resume,
-        "jobs": args.jobs,
         "check_plugin": args.check_plugin,
         "rerun_sources": tuple(args.rerun_sources) or None,
         "rerun_range": args.rerun_range,
@@ -624,13 +569,9 @@ def _backend_option_kwargs(args: Any) -> dict:
         # like the other resolver-managed knobs), so `--auto` can tell "choose
         # for me" from an explicit `--profile custom`.
         "profile": args.profile or PROFILE_CUSTOM,
-        "beam_size": args.beam_size,
-        "best_of": args.best_of,
-        "temperature": args.temperature,
-        "entropy_thold": args.entropy_thold,
-        "no_speech_thold": args.no_speech_thold,
-        "max_context": args.max_context,
-        "threads": args.threads,
+        # Every knob the table declares is read off the parsed arguments by its
+        # own name, so a new row needs no edit here.
+        **{knob.name: getattr(args, knob.name) for knob in RUN_KNOBS},
     }
 
 
@@ -779,13 +720,9 @@ def _cmd_transcribe(**kwargs: Any) -> int:
         check_plugin=options.check_plugin,
         rerun_sources=options.rerun_sources,
         rerun_range=options.rerun_range,
-        beam_size=options.beam_size,
-        best_of=options.best_of,
-        temperature=options.temperature,
-        entropy_thold=options.entropy_thold,
-        no_speech_thold=options.no_speech_thold,
-        max_context=options.max_context,
-        threads=options.threads,
+        # The decoder knobs are the declaration's; read them off the resolved
+        # options rather than relisting them (unset stays None = no flag).
+        **{knob.name: getattr(options, knob.name) for knob in DECODER_KNOBS},
     )
     return 0
 

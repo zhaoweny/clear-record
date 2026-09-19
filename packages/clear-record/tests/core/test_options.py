@@ -17,6 +17,8 @@ from clear_record.core import (
     DECODER_KNOB_FIELDS,
     PROFILES,
     RESOLVABLE_FIELDS,
+    RUN_KNOBS,
+    DecoderKnobs,
     PipelineOptions,
     profile_values,
     resolve_options,
@@ -153,8 +155,35 @@ def test_decoder_knobs_only_lists_the_set_ones() -> None:
     assert PipelineOptions(temperature=0.0).decoder_knobs() == {"temperature": 0.0}
 
 
-def test_decoder_knob_fields_are_pipeline_options_fields() -> None:
-    assert set(DECODER_KNOB_FIELDS) <= _fields()
+def test_every_declared_knob_is_a_pipeline_options_field() -> None:
+    assert set(RESOLVABLE_FIELDS) <= _fields()
+
+
+def test_the_decoder_annotation_block_is_the_decoder_rows() -> None:
+    """The field annotations are the one thing Python makes a declarer write
+    twice (``dataclasses`` reads them, so they cannot be generated from the
+    table); this pins them to the decoder rows — a half-added knob fails here."""
+    assert [field.name for field in dataclasses.fields(DecoderKnobs)] == list(
+        DECODER_KNOB_FIELDS
+    )
+
+
+def test_declared_defaults_are_the_options_defaults() -> None:
+    """A row's ``default`` is the resolver's fallback for that field; a drift
+    between the two would quietly move a no-flag run off the built-in value."""
+    for knob in RUN_KNOBS:
+        assert getattr(PipelineOptions(), knob.name) == knob.default, knob.name
+
+
+def test_every_declared_env_var_is_honoured() -> None:
+    """The ``CR_*`` name a row declares is the one the resolver reads, and the
+    row's converter is the one it parses with."""
+    # What the CLI hands the resolver for a run that asked for nothing.
+    asked_for_nothing = PipelineOptions(**dict.fromkeys(RESOLVABLE_FIELDS))
+    for knob in RUN_KNOBS:
+        raw = "4" if knob.convert is int else "0.5"
+        resolved = resolve_options(asked_for_nothing, environ={knob.env: raw})
+        assert getattr(resolved, knob.name) == knob.convert(raw), knob.name
 
 
 def test_resolvable_fields_cover_every_profile_and_env_knob() -> None:

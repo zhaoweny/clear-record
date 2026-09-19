@@ -18,7 +18,14 @@ Date: 2026-09-19
 - [VOICE: owner, 2026-09-19] *"we now have gitea as a staging area and safe to dump all
   the tickets there"*; and, asked for the shape, the owner chose: tickets in the issues
   of a **private mirror repo**, Gitea **canonical**, the full history imported (done
-  tickets landed closed), specs as **wiki pages**.
+  tickets landed closed), and the lane documents on the wiki — a shape the owner revised
+  the same day for the spec, which moved off the wiki to the umbrella ticket (next
+  bullet).
+- [VOICE: owner, 2026-09-19] Asked again once the import had landed, the owner moved the
+  spec's home: a lane's **spec becomes an umbrella ticket** — the spec verbatim as the
+  body, its remaining parts as comments, and a checklist of the lane's tickets — and
+  **when the lane's work is done the spec's job is done**, so the umbrella closes with
+  the lane. The wiki keeps the lane's *other* documents.
 - [VOICE: owner, 2026-09-19] *"the Gitea action is now disabled; we are here on Gitea
   for private tickets"* — so nothing on the instance builds or syncs this repository.
 - [FACT] The repo side carries no automation for the instance: the Gitea repository is a
@@ -31,8 +38,10 @@ Date: 2026-09-19
 ## Decision
 
 - [DECISION] **The canonical tracker is the private Gitea instance**: tickets are
-  issues, specs and lane documents are wiki pages, lane/type/triage metadata are labels.
-  One lane is one label (`lane/<slug>`).
+  issues, a lane's spec is an **umbrella ticket** labelled `type/spec` — its body the
+  spec verbatim, its remaining parts as comments, a checklist of the lane's tickets, and
+  it closes when the lane's work is done — the lane's other documents are wiki pages,
+  lane/type/triage metadata are labels. One lane is one label (`lane/<slug>`).
 - [DECISION] **The Gitea repository is the ticket home, not the code's home, and nothing
   syncs it automatically.** The public repository on GitHub remains where the code lives;
   the Gitea repository exists so tickets and specs sit next to a copy of the code, and

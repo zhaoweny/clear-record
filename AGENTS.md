@@ -6,7 +6,7 @@ Standing instructions for agents working in this repo. Read this first.
 
 ### Issue tracker
 
-Work is tracked on the owner's private Gitea instance (reachable only over the tailnet): tickets are issues, specs are wiki pages. See `docs/agents/issue-tracker.md`.
+Work is tracked on the owner's private Gitea instance (reachable only over the tailnet): tickets are issues, a lane's spec is an umbrella ticket that closes when the lane's work is done, and the lane's remaining documents (`ticket.md`, `02-amendment.md`, `map.md`, …) are wiki pages. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

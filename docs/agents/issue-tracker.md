@@ -8,11 +8,18 @@ only over the tailnet. `.scratch/` is a frozen archive of the pre-migration corp
 
 - **Tickets** — issues in `zhaow/clear-record` on the instance. A **lane** (a former
   feature directory) is a label: `lane/<slug>`.
-- **Specs and lane documents** — wiki pages, one per document: `console-ia/spec`,
-  `service-deployment/02-amendment`.
-- **Labels** — `lane/<slug>`; `type/<t>` from the ticket's `**Type:**` line; the five
-  triage roles from `triage-labels.md`; `status/<value>` when the original status was
-  outside that vocabulary; `from/scratch` on everything imported from the archive.
+- **A lane's spec is an umbrella ticket** — one issue per lane, labelled `type/spec`: its
+  body is the spec verbatim, its remaining parts are comments, and the body carries a
+  checklist of the lane's tickets. It is the lane's entry point, and **the umbrella
+  closes when the lane's work is done** — a finished lane leaves no open spec behind.
+- **The lane's other documents are wiki pages** — one page per document, titled
+  `<lane>/<stem>`: `console-ia/ticket`, `service-deployment/02-amendment`. The set is
+  `ticket.md`, `02-amendment.md`, `map.md`, `order.md`, `user-stories.md`, `framing.md`,
+  `session.md`, `02-machinery.md`.
+- **Labels** — `lane/<slug>`; `type/<t>` from the ticket's `**Type:**` line, plus
+  `type/spec` for a lane's umbrella; the triage roles and the other families recorded in
+  `triage-labels.md`; `status/<value>` when the original status was outside that
+  vocabulary; `from/scratch` on everything imported from the archive.
 - **Closed** is the terminal state: `done`, `wontfix` and `resolved` tickets were
   imported closed, and closing is how completion is recorded.
 
@@ -38,15 +45,19 @@ archive copy at `.scratch/<lane>/issues/<NN>-<slug>.md` remains readable for pro
 
 ## Wayfinding operations
 
-The map is a wiki page (`<effort>/map`); child tickets are issues in that effort's lane,
-with the question in the body. The map's body is three sections — **Notes**,
-**Decisions-so-far**, and **Fog**.
+A lane's work hangs off its umbrella ticket (`type/spec`): that is where the lane's
+specification and the checklist of its tickets live, and it is what says the lane is
+done. The map for an effort is a wiki page (`<effort>/map`); child tickets are issues in
+that effort's lane, with the question in the body. The map's body is three sections —
+**Notes**, **Decisions-so-far**, and **Fog**.
 
 - **Frontier**: open issues in the lane that are unblocked (no open `Blocked by`) and
   unassigned; lowest issue number wins.
 - **Claim**: assign the issue to yourself before any work.
 - **Resolve**: post the answer as a comment, close the issue, then add a context pointer
   (gist + issue link) to the map's Decisions-so-far section in the wiki page.
+- **Spec**: read the lane's umbrella ticket before its tickets, tick the checklist as
+  tickets close, and close the umbrella when the lane's work is done.
 
 ## Citing the tracker from committed files
 

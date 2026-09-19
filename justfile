@@ -74,17 +74,34 @@ agent-setup:
 agent-drive *ARGS:
     uv run --all-packages python scripts/agent_drive.py {{ARGS}}
 
-# One-shot, re-runnable import of the retired local tracker into Gitea issues +
-# wiki pages. Pointer to a Python script because it branches; `--no-project`
-# because it is stdlib-only and imports no project package. Dry-run by DEFAULT:
-# it writes a manifest to `.local/migrate-tracker-manifest.json` and prints the
-# counts, making no network call at all — so it is safe to run anywhere, token
-# or no token.
+# Rerunnable import of the retired local tracker into Gitea issues + wiki pages.
+# Pointer to a Python script because it branches; `--no-project` because it is
+# stdlib-only and imports no project package. Dry-run by DEFAULT: it writes a
+# manifest to `.local/migrate-tracker-manifest.json` and prints the counts, making
+# no network call at all — so it is safe to run anywhere, token or no token.
 #
 # `just migrate-tracker --apply` performs the import. It reads a Gitea token from
 # $GITEA_TOKEN or the `tea` login store and never prints it. Every created issue
 # carries a `<!-- scratch:<lane>/<relpath> sha=… -->` marker, so a second
-# `--apply` creates nothing new: it reconciles the issues it finds instead.
+# `--apply` creates nothing new. It creates what the archive has and the tracker
+# lacks, and leaves everything else exactly as the tracker has it: a ticket
+# closed there is not reopened, a ticket's body or comment edited there is not
+# rewritten, and a wiki page edited there is not overwritten. The tracker is
+# canonical from the cutover on.
+#
+# `--repair-from-archive` is the one thing that re-imposes the archive, and it is
+# for the pre-cutover state alone: it posts the comments, sets each issue's state
+# to the archive's, closed or reopened, restores the blocked-by lines of issues
+# that already exist, overwrites wiki pages that differ, and reports how many
+# issues and pages it changed. It exists to finish an import that died half way
+# *before* the tracker was cut over; on a live tracker it undoes decisions made
+# there, so it is not for one.
+#
+# A lane's `spec.md` is not imported: those files are counted in the report and
+# written nowhere, because the spec's `type/spec` umbrella ticket (ADR-0029)
+# superseded this script's `<lane>/spec` wiki page. Where a lane's spec is a
+# `spec/` directory instead, its documents are wiki pages like the lane's others,
+# and are imported as before.
 #
 # The tracker directory is named by the caller, never defaulted here — the
 # convention keeps that path out of committed files (docs/agents/issue-tracker.md,

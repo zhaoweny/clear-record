@@ -5,22 +5,48 @@
 # ///
 """Import the gitignored local tracker into Gitea issues + wiki pages.
 
-One-shot and re-runnable: the local markdown tracker (docs/agents/issue-tracker.md)
-was retired in favour of Gitea issues, and this is the migration that moves it.
+The migration that moved the tracker out of the working tree (ADR-0029,
+docs/agents/issue-tracker.md). It is a **pre-cutover** tool: it fills the tracker
+in from the archive, and from the cutover on the tracker is canonical, so this
+script has no business there afterwards.
 
 * One issue per ``<lane>/issues/NN-slug.md``. The tracker file is the body of the
   issue, verbatim, behind a provenance marker so a second run creates nothing:
   ``<!-- scratch:<lane>/<relpath> sha=<12 hex> -->`` is the first line, and the
   footer names the origin and the original sha.
-* One wiki page per ``<lane>/spec.md`` (title ``<lane>/spec``) and per other doc
-  (title ``<lane>/<stem>``). Nested docs keep their stem only — the mapping is
+* ``--apply`` creates what the archive has and the tracker lacks, and **never
+  overrides what exists**. An issue its marker proves already exists is left
+  exactly as the tracker has it, whatever the archive says — a ticket closed
+  there is not reopened, a comment or body changed there is not rewritten — and
+  a wiki page that exists is left alone, edited there or not.
+* ``--repair-from-archive`` is the one exception, and it is for the pre-cutover
+  state alone. An import that died between creating an issue and finishing the
+  side effects that follow it — posting the tracker's ``## Comments`` text,
+  closing a ``done`` ticket, writing its ``Blocked by:`` line — left a ticket
+  that every later run skipped. With the flag, an issue that exists is brought
+  back in line with the archive and a wiki page that differs is overwritten, and
+  the run reports how many issues and pages it changed. Run against a tracker
+  that has been cut over, the flag undoes decisions made there, so it is not for
+  a live tracker.
+* **A lane's ``spec.md`` is not imported here.** This script once mapped
+  ``<lane>/spec.md`` to a ``<lane>/spec`` wiki page; the migration superseded
+  that step — a lane's spec is an umbrella **ticket** labelled ``type/spec``,
+  whose body is the spec verbatim plus a checklist of the lane's tickets, a
+  shape this script does not build. ``spec.md`` files are parsed and counted in
+  the report, and written nowhere. A lane whose spec is a ``spec/`` directory is
+  a different case, and untouched: those documents are wiki pages, imported with
+  the lane's others.
+* One wiki page per lane document other than ``spec.md`` (title
+  ``<lane>/<stem>``). Nested docs keep their stem only — the mapping is
   ``<lane>/<stem>``, so ``console-ia/spec/02-auth.md`` becomes
   ``console-ia/02-auth`` and Gitea treats the slash as a subpage.
 * Labels: ``lane/<lane>`` (stable hash-derived colour), ``type/<t>``,
   ``from/scratch``, plus the triage role bare (``ready-for-agent`` …) when the
   ``**Status:**`` value is one of the five roles, else ``status/<value>``. A
   status outside the vocabulary is never promoted to a triage role.
-* ``done``, ``wontfix`` and ``resolved`` are created and then closed.
+* ``done``, ``wontfix`` and ``resolved`` decide only what a **new** issue is: it
+  is created and then closed. The state of an issue that already exists is the
+  tracker's to decide.
 
 Dry-run is the **default** and makes no network call at all — it only parses the
 tracker and writes a manifest. ``--apply`` is the only mode that talks to Gitea;
@@ -46,6 +72,8 @@ Usage (normally via ``just migrate-tracker …``)::
     uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL
     uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL --only LANE
     uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL --apply
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --url URL \
+        --apply --repair-from-archive
 
 Exit status is 0 on success and non-zero if any per-item call failed; the rest of
 the import still runs, and the summary names every failure.
@@ -109,6 +137,13 @@ STATUS_COLOUR = "#bfd4f2"
 # Statuses that mean the work is over: create the issue, then close it.
 CLOSE_STATES = frozenset({"done", "wontfix", "resolved"})
 
+# A lane's ``spec.md`` is the lane's umbrella **ticket** (ADR-0029), not the
+# ``<lane>/spec`` wiki page this script once wrote. Every place the spec.md count
+# is reported carries this sentence, so the count is never read as a page this
+# script made. Only ``spec.md`` is the case: a lane whose spec is a ``spec/``
+# directory keeps its pages.
+SPEC_NOTE = "not written: a lane's spec is its umbrella ticket, not a wiki page"
+
 REQUEST_TIMEOUT = 30
 REQUEST_PAUSE = 0.05  # the instance is small and local: stay gentle, stay serial
 
@@ -168,6 +203,13 @@ class Doc:
 
     @property
     def is_spec(self) -> bool:
+        """A lane's ``spec.md``: an umbrella *ticket*, so not a wiki page here.
+
+        This script's ``<lane>/spec`` wiki mapping is superseded (ADR-0029), so
+        the file is counted and reported, and written nowhere. Only ``spec.md``
+        answers here: a lane whose spec is a ``spec/`` directory keeps every one
+        of its documents as a wiki page.
+        """
         return self.relpath == "spec.md"
 
 
@@ -308,7 +350,10 @@ def parse_issue(path: Path, tracker: Path, lane: str) -> Issue:
 def parse_doc(path: Path, tracker: Path, lane: str) -> Doc:
     relpath = path.relative_to(tracker / lane).as_posix()
     text = path.read_text(encoding="utf-8")
-    title = f"{lane}/spec" if relpath == "spec.md" else f"{lane}/{path.stem}"
+    # One mapping, ``<lane>/<stem>``, ``spec.md`` included: the title survives
+    # only to name the file in the report and the manifest, since ``spec.md`` has
+    # no wiki page any more (``is_spec``).
+    title = f"{lane}/{path.stem}"
     return Doc(
         lane=lane,
         relpath=relpath,
@@ -383,9 +428,8 @@ def summarize(lanes: list[str], issues: list[Issue], docs: list[Doc]) -> dict[st
         "issues_with_comments": sum(1 for issue in issues if issue.comments),
         "blocked_by_refs": sum(len(issue.blocked) for issue in issues),
         "closes": sum(1 for issue in issues if issue.closes),
-        "wiki_pages": len(docs),
-        "wiki_spec_pages": len(specs),
-        "wiki_other_pages": len(docs) - len(specs),
+        "wiki_pages": len(docs) - len(specs),
+        "spec_files": len(specs),
     }
 
 
@@ -420,6 +464,7 @@ def manifest_payload(
     return {
         "generated": date.today().isoformat(),
         "mode": "apply" if args.apply else "dry-run",
+        "repair_from_archive": args.repair_from_archive,
         "tracker": str(tracker),
         "repo": args.repo,
         "url": args.url,
@@ -447,7 +492,9 @@ def manifest_payload(
             }
             for issue in issues
         ],
-        "wiki": [
+        # Every lane document, spec included: ``spec: true`` marks the ones with
+        # no wiki page, because a lane's spec is an umbrella ticket.
+        "docs": [
             {
                 "key": doc.key,
                 "title": doc.title,
@@ -475,23 +522,26 @@ def print_report(
     manifest_path: Path,
 ) -> None:
     mode = "apply" if args.apply else "dry run (no network)"
+    if args.repair_from_archive:
+        mode += " + repair from the archive (pre-cutover)"
     scope = f", --only {args.only}" if args.only else ""
     print(f"migrate-tracker: {mode} — {tracker} -> {args.repo} at {args.url}{scope}")
     print(f"  lanes                  {counts['lanes']}")
     print(
         f"  markdown files         {counts['markdown_files']}"
         f"  ({counts['issues']} issue files"
-        f" + {counts['wiki_spec_pages']} spec.md"
-        f" + {counts['wiki_other_pages']} other docs)"
+        f" + {counts['wiki_pages']} wiki pages"
+        f" + {counts['spec_files']} spec.md files)"
     )
     statuses = ", ".join(f"{name} {n}" for name, n in counts["issue_status"].items())
     print(f"  issue statuses         {statuses}")
     print(
-        f"  issues to close        {counts['closes']}"
-        f"   comments to post {counts['issues_with_comments']}"
+        f"  archive state          closes {counts['closes']}"
+        f"   comments {counts['issues_with_comments']}"
         f"   blocked-by refs {counts['blocked_by_refs']}"
     )
     print(f"  wiki pages             {counts['wiki_pages']}")
+    print(f"  spec.md files          {counts['spec_files']}  {SPEC_NOTE}")
     print(f"  labels                 {len(labels)}: {', '.join(labels)}")
     print(f"  manifest               {manifest_path}")
 
@@ -794,14 +844,19 @@ def reconcile_issue(
     numbers: dict[str, int],
     lookup: dict[str, Issue],
 ) -> list[str]:
-    """Bring an issue a previous run created back in line with the tracker.
+    """Re-impose the archive's side effects on an issue that already exists.
 
-    The marker is written with the body, so finding one proves only that the
-    *issue* was created — not that the side effects that follow it landed. A
-    transient error between those two points used to strand the ticket: the
-    run after it saw the marker and skipped, so the tracker's comments, the
-    closed state, or a ``Blocked by:`` line was lost for good. Each side effect
-    is therefore checked here and repaired, and the repairs are reported.
+    Only ``--repair-from-archive`` calls this, and only for the pre-cutover
+    state. The marker is written with the body, so finding one proves only that
+    the *issue* was created — not that the side effects that follow it landed. A
+    transient error between those two points stranded the ticket: the run after
+    it saw the marker and skipped, so the tracker's comments, the closed state,
+    or a ``Blocked by:`` line was lost for good. Each side effect is therefore
+    checked here and re-imposed, and the repairs are reported and counted.
+
+    From the cutover on the tracker is canonical and this walk is destructive:
+    it reopens what the tracker closed and closes what it opened. That is why it
+    is not the default.
     """
     number = remote["number"]
     repairs: list[str] = []
@@ -882,15 +937,16 @@ def run_apply(
             failures.append(f"label {name}: {exc}")
 
     lookup = ref_lookup(issues)
-    created = present = reconciled = 0
+    repair = args.repair_from_archive
+    created = 0
     deferred: list[Issue] = []
 
-    # Create first, reconcile second. ``numbers`` is only complete once every
-    # issue this pass creates exists, and a repair can need a number a later
-    # creation supplies: reconcile a present ticket whose blocker is created
-    # further down the list, and ``blocker_line`` sees no number for it, so the
-    # ``Blocked by:`` repair is skipped and the run still exits 0 — leaving a
-    # ticket that only a third run (which nobody promised) would fix.
+    # Create first, repair second. ``numbers`` is only complete once every issue
+    # this pass creates exists, and a pre-cutover repair can need a number a
+    # later creation supplies: reconcile a present ticket whose blocker is
+    # created further down the list, and ``blocker_line`` sees no number for it,
+    # so the ``Blocked by:`` repair is skipped and the run still exits 0 —
+    # leaving a ticket that only a third run (which nobody promised) would fix.
     for issue in issues:
         if issue.key in existing:
             continue
@@ -932,37 +988,48 @@ def run_apply(
         print(f"  issue #{number:<4} {issue.key} blocked-by resolved later")
         time.sleep(REQUEST_PAUSE)
 
-    for issue in issues:
-        remote = existing.get(issue.key)
-        if remote is None:
-            continue
-        present += 1
-        try:
-            repairs = reconcile_issue(client, issue, remote, numbers, lookup)
-        except GiteaError as exc:
-            failures.append(f"issue {issue.key} (reconcile): {exc}")
-            continue
-        if repairs:
-            reconciled += 1
-            print(
-                f"  issue #{remote['number']:<4} {issue.key} "
-                f"reconciled: {', '.join(repairs)}"
-            )
+    # An issue the marker shows already exists belongs to the tracker now, and
+    # converging stops there: what the archive says about it — its state, its
+    # body, a comment — is not applied. Only the explicit pre-cutover repair
+    # walks these again.
+    present = [issue for issue in issues if issue.key in existing]
+    repaired = 0
+    if repair:
+        for issue in present:
+            remote = existing[issue.key]
+            try:
+                repairs = reconcile_issue(client, issue, remote, numbers, lookup)
+            except GiteaError as exc:
+                failures.append(f"issue {issue.key} (repair): {exc}")
+                continue
+            if repairs:
+                repaired += 1
+                print(
+                    f"  issue #{remote['number']:<4} {issue.key} "
+                    f"repaired from the archive: {', '.join(repairs)}"
+                )
 
-    wiki_created = wiki_updated = wiki_unchanged = 0
+    # ``spec.md`` has no wiki page any more: a lane's spec is an umbrella ticket,
+    # a shape this script does not build, so it is counted and left unwritten.
+    specs = sum(1 for doc in docs if doc.is_spec)
+    wiki_created = wiki_left = wiki_overwritten = 0
     for doc in docs:
+        if doc.is_spec:
+            continue
         try:
             sub_url = wiki_index.get(doc.title)
             if sub_url is None:
                 client.create_wiki(doc.title, doc.text)
                 wiki_created += 1
-                print(f"  wiki  new    {doc.title} ({doc.key})")
-            elif client.wiki_page(sub_url).rstrip("\n") != doc.text.rstrip("\n"):
+                print(f"  wiki  new         {doc.title} ({doc.key})")
+            elif repair and (
+                client.wiki_page(sub_url).rstrip("\n") != doc.text.rstrip("\n")
+            ):
                 client.edit_wiki(sub_url, doc.title, doc.text)
-                wiki_updated += 1
-                print(f"  wiki  update {doc.title} ({doc.key})")
+                wiki_overwritten += 1
+                print(f"  wiki  overwritten {doc.title} ({doc.key})")
             else:
-                wiki_unchanged += 1
+                wiki_left += 1
         except GiteaError as exc:
             failures.append(f"wiki {doc.key}: {exc}")
         time.sleep(REQUEST_PAUSE)
@@ -977,21 +1044,25 @@ def run_apply(
     outcome = {
         "labels_created": created_labels,
         "issues_created": created,
-        "issues_already_present": present,
-        "issues_reconciled": reconciled,
+        "issues_already_present": len(present),
+        "issues_repaired": repaired,
         "issues_deferred_body_patch": len(deferred),
         "wiki_created": wiki_created,
-        "wiki_updated": wiki_updated,
-        "wiki_unchanged": wiki_unchanged,
+        "wiki_already_present": wiki_left,
+        "wiki_overwritten": wiki_overwritten,
+        "spec_files_not_written": specs,
         "failures": failures,
     }
+    repair_note = f" ({repaired} repaired from the archive)" if repair else ""
     print()
     print(
         f"migrate-tracker: apply — labels +{created_labels}, "
-        f"issues created {created} / already present {present} "
-        f"({reconciled} reconciled), "
-        f"wiki created {wiki_created} / updated {wiki_updated} / unchanged {wiki_unchanged}"
+        f"issues created {created} / already present {len(present)}{repair_note}, "
+        f"wiki created {wiki_created} / already present {wiki_left}"
+        + (f" ({wiki_overwritten} overwritten from the archive)" if repair else "")
     )
+    if specs:
+        print(f"  spec.md files          {specs}  {SPEC_NOTE}")
     if unresolved:
         print(f"  unresolved blocked-by refs: {dict(unresolved)}")
     if failures:
@@ -1015,8 +1086,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="migrate_tracker.py",
         description=(
-            "Import the gitignored local markdown tracker into Gitea issues + "
-            "wiki pages. Dry-run unless --apply is passed."
+            "Import the retired local markdown tracker into Gitea issues + wiki "
+            "pages: create what is missing, never override what the tracker "
+            "already holds. Dry-run unless --apply is passed; the pre-cutover "
+            "repair of an interrupted import needs --apply --repair-from-archive."
         ),
     )
     parser.add_argument(
@@ -1039,6 +1112,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--apply",
         action="store_true",
         help="perform the import (writes to Gitea); default is a dry run with no network",
+    )
+    parser.add_argument(
+        "--repair-from-archive",
+        action="store_true",
+        help=(
+            "with --apply: re-impose the archive on what already exists — post "
+            "missing comments, set each issue's state to the archive's, closed or "
+            "reopened, restore blocked-by lines, overwrite wiki pages that "
+            "differ — and report how many issues and pages it changed. For "
+            "finishing an import that died half way BEFORE the tracker was cut "
+            "over; on a tracker already cut over it undoes decisions made there, "
+            "so it is not for a live tracker"
+        ),
     )
     parser.add_argument("--only", metavar="LANE", help="limit the run to one lane")
     parser.add_argument(
@@ -1095,6 +1181,12 @@ def resolve_url(args: argparse.Namespace) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.repair_from_archive and not args.apply:
+        raise SystemExit(
+            "migrate-tracker: --repair-from-archive needs --apply.\n"
+            "  A dry run makes no network call, so it cannot see which issues "
+            "exist and has nothing to repair."
+        )
     tracker = resolve_tracker(args)
     args.url = resolve_url(args)
     manifest_path = (

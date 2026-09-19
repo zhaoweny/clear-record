@@ -9,7 +9,7 @@ two are indistinguishable — a managed meeting is just a meeting whose
 ``workspace_path`` points inside the managed root, and its uploaded tapes are
 input recordings discovered and run exactly like user-typed paths.
 
-The managed root itself lives in :mod:`clear_record.service.paths` (the one
+The managed root itself lives in :mod:`clear_record.core.paths` (the one
 platformdirs-backed resolver, ``CR_WORKSPACE_ROOT`` override, default
 ``<data>/workspaces/``).
 
@@ -62,10 +62,10 @@ from clear_record.cli.workspace import (
     is_audio,
 )
 from clear_record.core.i18n import deferred
+from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service import tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.models import Meeting, Tape
-from clear_record.service.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service.store import Registry
 
 #: Upload cap when ``CR_MAX_UPLOAD_BYTES`` is unset (8 GiB).

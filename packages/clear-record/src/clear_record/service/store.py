@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from clear_record.core.events import JobEvent
+from clear_record.core.paths import registry_path
 from clear_record.service import tapestore
 from clear_record.service.models import (
     MEETING_STATUSES,
@@ -44,7 +45,6 @@ from clear_record.service.models import (
     RecordingSet,
     Tape,
 )
-from clear_record.service.paths import registry_path
 
 SCHEMA_VERSION = 8
 

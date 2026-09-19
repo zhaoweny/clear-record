@@ -432,25 +432,34 @@ def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:
 def test_declares_the_clear_record_script() -> None:
     """The single dist owns the `clear-record` command (ADR-0009, ADR-0012).
 
-    The entry point targets the CLI layer directly, so `import clear_record`
-    stays light; the old `clearrecord` spelling must not reappear."""
+    The entry point targets the CLI implementation directly — there is no
+    `clear_record.cli.main` alias — so `import clear_record` stays light; the
+    old `clearrecord` spelling must not reappear."""
     scripts = _load(MEMBER_PYPROJECTS[0])["project"]["scripts"]
-    assert scripts.get("clear-record") == "clear_record.cli:main"
+    assert scripts.get("clear-record") == "clear_record.cli.cli:main"
     assert "clearrecord" not in scripts
 
 
 def test_entry_point_resolves_to_the_cli_main() -> None:
-    """The declared entry point actually reaches the CLI implementation."""
-    from clear_record.cli import main
-    from clear_record.cli.cli import main as cli_main
+    """The declared entry point actually reaches the CLI implementation.
 
-    assert main is cli_main
+    The target is read back out of the manifest and resolved, so renaming the
+    module or the attribute fails here instead of at first run."""
+    import importlib
+
+    target = _load(MEMBER_PYPROJECTS[0])["project"]["scripts"]["clear-record"]
+    module_name, _, attribute = target.partition(":")
+    resolved = getattr(importlib.import_module(module_name), attribute)
+
+    from clear_record.cli.cli import main
+
+    assert resolved is main
 
 
 def test_import_clear_record_is_light() -> None:
     """Importing the top-level package must not pull in the heavy CLI stack.
 
-    The console script targets `clear_record.cli:main` precisely so that a
+    The console script targets `clear_record.cli.cli:main` precisely so that a
     plain `import clear_record` does not import numpy/the CLI. Run in a fresh
     interpreter so pytest's own imports cannot mask a regression."""
     code = (

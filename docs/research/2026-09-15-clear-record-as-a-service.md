@@ -44,7 +44,7 @@ Two cross-cutting truths:
   `[project.entry-points."clear_record.commands"]` lists exactly
   `web = clear_record.web:register`, `tray = clear_record.tray:register`,
   `mcp = clear_record.mcp:register`. `[project.scripts]` exposes
-  `clear-record = clear_record.cli:main`.
+  `clear-record = clear_record.cli.cli:main`.
   — `packages/clear-record/pyproject.toml` lines 86–94.
 - **[FACT, repo]** `clear-record web` takes `--host` (default `127.0.0.1`),
   `--port` (default `8765`), `--no-browser` and `--data-dir`.

@@ -1255,7 +1255,7 @@ class RunManager:
             return None
         known = {field.name for field in dataclasses.fields(PipelineOptions)}
         values = {key: value for key, value in run.run_options.items() if key in known}
-        for name in ("audio_files", "formats"):
+        for name in ("audio_files",):
             if values.get(name) is not None:
                 values[name] = tuple(values[name])
         return PipelineOptions(**values)

@@ -43,6 +43,7 @@ from clear_record.cli import auto as _auto
 from clear_record.cli.auto import Message
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
+from clear_record.core.paths import resolve_models_dir, resolve_state_dir
 from clear_record.service.auto import (
     MODEL_LADDER,
     available_backend_ids,
@@ -50,7 +51,6 @@ from clear_record.service.auto import (
 )
 from clear_record.service.hello_tape import HelloTape, write_hello_tape
 from clear_record.service.models import Meeting
-from clear_record.service.paths import resolve_models_dir, resolve_state_dir
 from clear_record.service.setup import SetupError, mcp_server_entry, read_setup_state
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 

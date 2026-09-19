@@ -103,7 +103,7 @@ them for the workspace layout.
   — is what will let that edge go). `core` still declares/uses no third-party
   dependency.
 - [DECISION] The `clear-record` **facade member is gone**: the single dist owns
-  the `clear-record` command (`clear_record.cli:main`) and the top-level
+  the `clear-record` command (`clear_record.cli.cli:main`) and the top-level
   `clear_record` module stays light.
 - [DESIGN] `[tool.pytest.ini_options] testpaths` now points at the one
   `packages/clear-record/tests/`; the root's aggregate extras reference

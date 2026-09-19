@@ -613,14 +613,15 @@ def _fmt_ts(seconds: float) -> str:
 # --------------------------------------------------------------------------- #
 def export(
     directory: str,
-    formats: list[str] | None = None,
     *,
     on_event: EventSink | None = None,
 ) -> dict[str, Path]:
     w = Workspace.at(directory)
     record = w.load_record()
     w.export_dir.mkdir(parents=True, exist_ok=True)
-    wanted = set(formats or ["md", "srt", "vtt", "json"])
+    # The declared artifact set (the spec's "write Markdown/SRT/VTT/JSON
+    # artifacts"); every one of them is written.
+    wanted = {"md", "srt", "vtt", "json"}
     written: dict[str, Path] = {}
     progress = Progress(Step.EXPORT.value, len(wanted), on_event)
     progress.start()
@@ -767,11 +768,7 @@ def _run_reconcile(
 def _run_export(
     directory: str, options: PipelineOptions, on_event: EventSink | None
 ) -> None:
-    export(
-        directory,
-        list(options.formats) if options.formats else None,
-        on_event=on_event,
-    )
+    export(directory, on_event=on_event)
 
 
 def run_cancel_signal(on_event: EventSink | None) -> threading.Event | None:

@@ -43,7 +43,7 @@ Date: 2026-09-13
   dependencies and no `[tool.uv.sources]` (nothing intra-workspace to pin). The
   `apple`/`nvidia`/`amd`/`all` backend extras remain no-op markers (ADR-0005).
 - [DECISION] The dist owns the `clear-record` console script, targeting the CLI
-  layer directly (`clear_record.cli:main`). The top-level `clear_record`
+  layer directly (`clear_record.cli.cli:main`). The top-level `clear_record`
   `__init__.py` is **light** (a docstring only) so `import clear_record` does
   not pull in the CLI or the audio stack (ADR-0010's facade module is gone along
   with the facade dist).

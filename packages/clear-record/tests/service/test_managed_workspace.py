@@ -19,16 +19,15 @@ import pytest
 
 from clear_record.cli.workspace import Workspace, discover_audio
 from clear_record.service.agent_review import AGENT_DIRNAME
-from clear_record.core import paths as core_paths
+from clear_record.core import paths
 from clear_record.service import Registry
 from clear_record.service import managed
-from clear_record.service import paths
 
 
 @pytest.fixture(autouse=True)
 def _no_real_config(tmp_path, monkeypatch):
     """Keep a developer's real config.toml out of every resolution here."""
-    monkeypatch.setattr(core_paths, "config_path", lambda: tmp_path / "absent.toml")
+    monkeypatch.setattr(paths, "config_path", lambda: tmp_path / "absent.toml")
 
 
 @pytest.fixture()
@@ -73,7 +72,7 @@ def test_workspace_root_precedence(tmp_path, monkeypatch) -> None:
     # env beats the config file and the platform default
     config = tmp_path / "config.toml"
     config.write_text(f'[paths]\nworkspace_root = "{tmp_path / "configured"}"\n')
-    monkeypatch.setattr(core_paths, "config_path", lambda: config)
+    monkeypatch.setattr(paths, "config_path", lambda: config)
     assert paths.resolve_workspace_root() == tmp_path / "env"
 
     # the config beats the default

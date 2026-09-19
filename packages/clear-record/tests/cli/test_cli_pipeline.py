@@ -110,7 +110,7 @@ def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
     record = stages.reconcile(wd)
     assert record.metadata["title"] == "rec"
 
-    written = stages.export(wd, formats=["md"])
+    written = stages.export(wd)
     first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
     assert first_line == "# Record — rec"
 
@@ -127,7 +127,7 @@ def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
         RecordDocument(sources=(), alignment=None, segments=())
     )
 
-    written = stages.export(str(wd), formats=["md"])
+    written = stages.export(str(wd))
     first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
     assert first_line == "# Record"
 
@@ -163,7 +163,8 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
     import soundfile as sf
 
     from clear_record.core import Segment
-    from clear_record.engine import SYNTH_SR, make_crosstalk_scene
+    from clear_record.engine import SYNTH_SR
+    from clear_record.engine.synth import make_crosstalk_scene
     from clear_record.cli.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
@@ -211,7 +212,8 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
     import soundfile as sf
 
     from clear_record.core import Segment
-    from clear_record.engine import SYNTH_SR, make_crosstalk_scene
+    from clear_record.engine import SYNTH_SR
+    from clear_record.engine.synth import make_crosstalk_scene
 
     from clear_record.cli.workspace import Workspace
 
@@ -258,7 +260,8 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     import soundfile as sf
 
     from clear_record.core import Segment
-    from clear_record.engine import SYNTH_SR, make_speaker_stems, mix_crosstalk
+    from clear_record.engine import SYNTH_SR, mix_crosstalk
+    from clear_record.engine.synth import make_speaker_stems
 
     from clear_record.cli.workspace import Workspace
 

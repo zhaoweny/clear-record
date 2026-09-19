@@ -12,11 +12,10 @@ from clear_record.engine import (
     attribute_by_source,
     attribute_segments,
     attribute_segments_windowed,
-    make_crosstalk_scene,
     make_scene,
-    make_speaker_stems,
     mix_crosstalk,
 )
+from clear_record.engine.synth import make_crosstalk_scene, make_speaker_stems
 
 
 def _write_devices(tmp_path, devices, prefix: str) -> list[Source]:

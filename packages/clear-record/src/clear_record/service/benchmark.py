@@ -37,8 +37,8 @@ import click
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
 from clear_record.core.i18n import deferred, tr
+from clear_record.core.paths import registry_path
 from clear_record.service.models import PipelineRun
-from clear_record.service.paths import registry_path
 from clear_record.service.runs import cost_of, int_or_none, number_or_none
 from clear_record.service.store import Registry
 

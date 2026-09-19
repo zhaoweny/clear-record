@@ -12,7 +12,7 @@ installs the platform-native directories (ADR-0025). ``clear_record.core`` may
 import no third-party package, so :mod:`clear_record._native_paths` — which
 imports ``platformdirs`` — resolves the defaults and hands them to
 :mod:`clear_record.core.paths`. The console script targets
-:func:`clear_record.cli.main` directly.
+:func:`clear_record.cli.cli.main` directly.
 """
 
 from clear_record._native_paths import install as _install_native_paths

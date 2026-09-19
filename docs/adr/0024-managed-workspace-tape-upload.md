@@ -50,8 +50,8 @@ Date: 2026-09-15
   `workspace_path`; the managed root is app-owned **additionally**, used only by
   a meeting created for it.
 - [DECISION] **Managed root**: `<data>/workspaces/` by default, resolved by the
-  service's one paths resolver
-  (`service.paths.resolve_workspace_root`, ADR-0025), overridable by the
+  one paths resolver
+  (`core.paths.resolve_workspace_root`, ADR-0025), overridable by the
   ``CR_WORKSPACE_ROOT`` environment variable or a `[paths] workspace_root`
   config entry. The tapes are large, so a NAS or a dedicated disk is the
   expected setting. Layout is the **identical** `Workspace` shape
@@ -136,7 +136,7 @@ Date: 2026-09-15
 ## Consequences / review hook
 
 - The managed root becomes one more app-owned directory, so its precedence lives
-  in `service.paths` with the others — a third copy of the precedence is
+  in `core.paths` with the others — a third copy of the precedence is
   explicitly avoided by sharing one `_resolve_app_dir`.
 - `CR_MAX_UPLOAD_BYTES` and `CR_WORKSPACE_ROOT` join the documented `CR_*`
   environment surface; the deployment guide gains an upload section.

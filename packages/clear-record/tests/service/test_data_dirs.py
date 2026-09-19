@@ -10,8 +10,7 @@ redirected to a path that does not exist unless a test supplies one.
 
 from __future__ import annotations
 
-from clear_record.core import paths as core_paths
-from clear_record.service import paths
+from clear_record.core import paths
 
 
 def test_explicit_argument_wins(tmp_path, monkeypatch) -> None:
@@ -27,7 +26,7 @@ def test_env_beats_config_and_default(tmp_path, monkeypatch) -> None:
 def test_config_beats_default(tmp_path, monkeypatch) -> None:
     config = tmp_path / "config.toml"
     config.write_text(f'[paths]\ndata_dir = "{tmp_path / "from-config"}"\n')
-    monkeypatch.setattr(core_paths, "config_path", lambda: config)
+    monkeypatch.setattr(paths, "config_path", lambda: config)
     assert paths.resolve_data_dir() == tmp_path / "from-config"
 
 
@@ -39,7 +38,7 @@ def test_platform_default(tmp_path) -> None:
 def test_malformed_config_is_ignored(tmp_path, monkeypatch) -> None:
     config = tmp_path / "config.toml"
     config.write_text("this is not toml = = =")
-    monkeypatch.setattr(core_paths, "config_path", lambda: config)
+    monkeypatch.setattr(paths, "config_path", lambda: config)
     assert paths.resolve_data_dir() == tmp_path / "app" / "data"
 
 

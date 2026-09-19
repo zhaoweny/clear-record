@@ -22,8 +22,6 @@ third-party package.
 
 from __future__ import annotations
 
-from clear_record.core.paths import ENV_MODELS_DIR
-from clear_record.core.paths import MODELS_DIRNAME as DEFAULT_MODELS_DIRNAME
 from clear_record.core.paths import resolve_models_dir as _resolve_models_dir
 
 
@@ -32,4 +30,4 @@ def resolve_models_dir(models_dir: str | None = None) -> str:
     return str(_resolve_models_dir(models_dir))
 
 
-__all__ = ["DEFAULT_MODELS_DIRNAME", "ENV_MODELS_DIR", "resolve_models_dir"]
+__all__ = ["resolve_models_dir"]

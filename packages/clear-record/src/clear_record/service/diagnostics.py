@@ -40,7 +40,7 @@ import click
 
 from clear_record.core.diagnostics import effective_level, log_event
 from clear_record.core.message import _english, render_message
-from clear_record.service import paths
+from clear_record.core.paths import registry_path
 
 # --- bundle --------------------------------------------------------------- #
 
@@ -634,7 +634,7 @@ def run_diagnose(args) -> int:
 
     registry = None
     data_dir = getattr(args, "data_dir", None)
-    if paths.registry_path(data_dir).is_file():
+    if registry_path(data_dir).is_file():
         registry = Registry.open(data_dir=data_dir)
 
     run_id = getattr(args, "run_id", None)

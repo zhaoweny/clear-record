@@ -25,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.service import paths, setup
+from clear_record.core import paths
+from clear_record.service import setup
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WIZARD_PATH = REPO_ROOT / "scripts" / "agent_setup.py"

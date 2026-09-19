@@ -15,7 +15,7 @@ the train and versioning are
 [`docs/adr/0011-versioning-and-release-train.md`](adr/0011-versioning-and-release-train.md).
 
 `clear-record` is the **sole owner** of the `clear-record` console script
-(`clear_record.cli:main`), so `uvx clear-record` resolves and runs it without the
+(`clear_record.cli.cli:main`), so `uvx clear-record` resolves and runs it without the
 dependency-provided-command warning. The four former `cr-*` members are now
 internal `clear_record` subpackages (ADR-0012). The release machinery that used
 to coordinate the five `cr-*` dists was simplified to one dist for the single
@@ -333,7 +333,7 @@ unzip -p dist/clear_record-${version}-py3-none-any.whl '*/entry_points.txt'
 ```
 
 You should see the `clear_record/{core,engine,providers,cli}` packages,
-`dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli:main`.
+`dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli.cli:main`.
 
 ## The release train is lazy
 

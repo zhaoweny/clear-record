@@ -285,7 +285,6 @@ class PipelineOptions(DecoderKnobs):
     do_diarize: bool | None = None
     speakers: int | None = None
     reference: str | None = None
-    formats: tuple[str, ...] | None = None
     attribute_energy: bool = False
     mixed_source: str | None = None
     window_s: float | None = None

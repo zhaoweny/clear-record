@@ -88,6 +88,25 @@ def test_run_and_calibrate_expose_reference() -> None:
     assert _parse("calibrate", ["dir", "--reference", "b"]).reference == "b"
 
 
+def test_reference_flag_reaches_only_the_stages_that_use_it() -> None:
+    """`--reference` is refused by the stages that cannot act on one.
+
+    Three stage commands accepted it and dropped it: `export` (never read the
+    value), `ingest` (its body passes directory/audio_files/split only) and
+    `transcribe` (it resolved the value into options it never forwarded to the
+    stage), so a copied flag looked accepted and did nothing (ticket 149). They
+    now refuse it — a usage error, not a silent no-op — while the two stages
+    that act on a source reference keep it.
+    """
+    for stage in ("export", "ingest", "transcribe"):
+        result = CliRunner().invoke(_build_group(), [stage, "dir", "--reference", "b"])
+        assert result.exit_code == 2, (stage, result.output)
+        assert "No such option" in result.output + result.stderr, stage
+
+    assert _parse("align", ["dir", "--reference", "b"]).reference == "b"
+    assert _parse("reconcile", ["dir", "--reference", "b"]).reference == "b"
+
+
 def test_attribute_surface_wires_energy_and_mixed_reference() -> None:
     """`attribute` and `run --attribute-energy` expose the cross-talk seam; the
     default `run` leaves energy attribution off (diarize path unchanged)."""

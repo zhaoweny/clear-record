@@ -57,7 +57,7 @@ current machine can actually run.
 The layers are **not** separate distributions — the subpackages hide them behind
 one install name while the import layering (and the vendor-free core) stays
 enforced by a test (ADR-0012, ADR-0004). The console script targets
-`clear_record.cli:main` directly, so `import clear_record` stays light.
+`clear_record.cli.cli:main` directly, so `import clear_record` stays light.
 
 **Code** is [MIT](https://github.com/zhaoweny/clear-record/blob/main/LICENSE); the
 license boundary — including how copyleft is consumed over process/network

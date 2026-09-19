@@ -12,8 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from clear_record.engine import DEFAULT_F0_HZ, SYNTH_SR, make_scene, make_speaker_stems
+from clear_record.engine import DEFAULT_F0_HZ, SYNTH_SR, make_scene
 from clear_record.engine.diarize import pitch_stats
+from clear_record.engine.synth import make_speaker_stems
 
 
 def _periodicity_at(x: np.ndarray, sr: int, f0_hz: float) -> float:

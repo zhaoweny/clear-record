@@ -782,14 +782,17 @@ def _cmd_calibrate(**kwargs: Any) -> int:
 # group assembly
 # --------------------------------------------------------------------------- #
 # One command body per declared stage. The stage order, names and help text come
-# from the spec; only the flags (what a stage accepts) are local. Every stage
-# also carries `--reference`, exactly as the argparse surface did.
+# from the spec; only the flags (what a stage accepts) are local. `--reference`
+# is carried only by the stages that act on a source reference — `align` (the
+# alignment anchor) and `reconcile` (recorded on the record) — plus the run
+# conveniences above; the other stage commands refuse it rather than accept a
+# flag they would drop.
 _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
-    Step.INGEST: (_cmd_ingest, (_PATHS, _CHANNEL, _REFERENCE)),
+    Step.INGEST: (_cmd_ingest, (_PATHS, _CHANNEL)),
     Step.ALIGN: (_cmd_align, (_DIRECTORY, _REFERENCE)),
-    Step.TRANSCRIBE: (_cmd_transcribe, (_DIRECTORY, _BACKEND, _REFERENCE)),
+    Step.TRANSCRIBE: (_cmd_transcribe, (_DIRECTORY, _BACKEND)),
     Step.RECONCILE: (_cmd_reconcile, (_DIRECTORY, _REFERENCE)),
-    Step.EXPORT: (_cmd_export, (_DIRECTORY, _REFERENCE)),
+    Step.EXPORT: (_cmd_export, (_DIRECTORY,)),
 }
 
 #: The conveniences that are not stage-derived, with the argparse-era help text.

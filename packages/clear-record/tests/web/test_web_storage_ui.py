@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.service import Registry, managed, paths
+from clear_record.core import paths
+from clear_record.service import Registry, managed
 from clear_record.web.app import AUDIO_ACCEPT, LANG_COOKIE, create_app
 
 

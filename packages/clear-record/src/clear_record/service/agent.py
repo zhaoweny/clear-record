@@ -65,6 +65,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from clear_record.core.paths import config_path
 from clear_record.core.process import SubprocessRunner
 from clear_record.service.agent_tasks import (
     TASK_KINDS,
@@ -79,7 +80,6 @@ from clear_record.service.agent_tasks import (
     prompt_hash,
     render_prompt,
 )
-from clear_record.service.paths import config_path
 
 #: The seam :class:`CommandRunner` launches the user's command through.
 _RUNNER = SubprocessRunner()

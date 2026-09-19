@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Import the gitignored local tracker (`.scratch/`) into Gitea issues + wiki.
+"""Import the gitignored local tracker into Gitea issues + wiki pages.
 
 One-shot and re-runnable: the local markdown tracker (docs/agents/issue-tracker.md)
 was retired in favour of Gitea issues, and this is the migration that moves it.
@@ -31,12 +31,15 @@ environment can never intercept the target host.
 
 The tracker is environment-local (ADR-0006): this script reads it, never commits
 it, and never invents content — every issue body and wiki page is the source file.
+Its directory is deliberately not defaulted to a path, because the convention keeps
+that path out of committed files (``docs/agents/issue-tracker.md``): pass
+``--tracker DIR``, or set ``CLEAR_RECORD_TRACKER_DIR`` for a scripted run.
 
 Usage (normally via ``just migrate-tracker …``)::
 
-    uv run --no-project scripts/migrate_tracker.py                    # dry run
-    uv run --no-project scripts/migrate_tracker.py --only console-ia  # one lane
-    uv run --no-project scripts/migrate_tracker.py --apply            # import
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR            # dry run
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --only LANE
+    uv run --no-project scripts/migrate_tracker.py --tracker DIR --apply    # import
 
 Exit status is 0 on success and non-zero if any per-item call failed; the rest of
 the import still runs, and the summary names every failure.
@@ -63,6 +66,12 @@ from typing import Any
 
 DEFAULT_URL = "https://gitea.tailnet-00e4.ts.net"
 DEFAULT_REPO = "zhaow/clear-record"
+
+# The tracker root is named by the caller, never defaulted to a path here: the
+# local tracker convention keeps that path out of committed files
+# (docs/agents/issue-tracker.md, and packages/clear-record/tests/test_tracker_refs.py
+# enforces it). The variable is the scripted-run form of `--tracker DIR`.
+TRACKER_ENV = "CLEAR_RECORD_TRACKER_DIR"
 
 TEA_CONFIG = Path.home() / "Library/Application Support/tea/config.yml"
 TEA_LOGIN = "zhaow"
@@ -518,8 +527,8 @@ def resolve_token() -> tuple[str, str]:
         return tea, f"tea login '{TEA_LOGIN}' ({TEA_CONFIG})"
     raise SystemExit(
         "migrate-tracker: no Gitea token.\n"
-        f"  Set GITEA_TOKEN, or `tea login add` a login named '{TEA_LOGIN}' in "
-        f"{TEA_CONFIG}."
+        f"  Set GITEA_TOKEN, or run tea login add for a login named '{TEA_LOGIN}' "
+        f"({TEA_CONFIG})."
     )
 
 
@@ -602,9 +611,9 @@ class Gitea:
 
     # -- issues ------------------------------------------------------------ #
 
-    def existing_issue_markers(self) -> dict[str, int]:
-        """key -> number for everything already imported (all states)."""
-        found: dict[str, int] = {}
+    def existing_issues(self) -> dict[str, dict[str, Any]]:
+        """key -> the issue already imported for that ticket, in any state."""
+        found: dict[str, dict[str, Any]] = {}
         page = 1
         while True:
             batch = self.request(
@@ -618,9 +627,21 @@ class Gitea:
                     continue
                 match = MARKER_RE.search(issue.get("body") or "")
                 if match:
-                    found.setdefault(match.group("key"), issue["number"])
+                    found.setdefault(match.group("key"), issue)
             if len(batch) < 50:
                 return found
+            page += 1
+
+    def issue_comments(self, number: int) -> list[dict[str, Any]]:
+        comments: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            batch = self.request(
+                "GET", f"{self.api}/issues/{number}/comments?limit=50&page={page}"
+            )
+            comments += batch
+            if len(batch) < 50:
+                return comments
             page += 1
 
     def create_issue(self, title: str, body: str, label_ids: list[int]) -> int:
@@ -756,6 +777,46 @@ def ref_lookup(issues: list[Issue]) -> dict[str, Issue]:
     return lookup
 
 
+def reconcile_issue(
+    client: Gitea,
+    issue: Issue,
+    remote: dict[str, Any],
+    numbers: dict[str, int],
+    lookup: dict[str, Issue],
+) -> list[str]:
+    """Bring an issue a previous run created back in line with the tracker.
+
+    The marker is written with the body, so finding one proves only that the
+    *issue* was created — not that the side effects that follow it landed. A
+    transient error between those two points used to strand the ticket: the
+    run after it saw the marker and skipped, so the tracker's comments, the
+    closed state, or a ``Blocked by:`` line was lost for good. Each side effect
+    is therefore checked here and repaired, and the repairs are reported.
+    """
+    number = remote["number"]
+    repairs: list[str] = []
+    if issue.comments:
+        wanted = issue.comments.strip("\n")
+        posted = any(
+            (comment.get("body") or "").strip("\n") == wanted
+            for comment in client.issue_comments(number)
+        )
+        if not posted:
+            client.comment(number, issue.comments)
+            repairs.append("comment")
+        time.sleep(REQUEST_PAUSE)
+    if (remote.get("state") == "closed") != issue.closes:
+        client.patch_issue(number, {"state": "closed" if issue.closes else "open"})
+        repairs.append("closed" if issue.closes else "reopened")
+        time.sleep(REQUEST_PAUSE)
+    blocked = blocker_line(issue, numbers, lookup)
+    if blocked is not None and blocked not in (remote.get("body") or ""):
+        client.patch_issue(number, {"body": build_body(issue, numbers, lookup)})
+        repairs.append("blocked-by")
+        time.sleep(REQUEST_PAUSE)
+    return repairs
+
+
 # --------------------------------------------------------------------------- #
 # The two modes
 # --------------------------------------------------------------------------- #
@@ -791,7 +852,7 @@ def run_apply(
 
     failures: list[str] = []
     try:
-        numbers: dict[str, int] = dict(client.existing_issue_markers())
+        existing = client.existing_issues()
         known_labels = client.labels()
         wiki_index = client.wiki_index()
     except GiteaError as exc:
@@ -799,6 +860,7 @@ def run_apply(
             f"migrate-tracker: cannot read {args.repo} at {args.url} — {exc}\n"
             "  --apply assumes the target repository exists and the token may read it."
         ) from None
+    numbers: dict[str, int] = {key: issue["number"] for key, issue in existing.items()}
     wanted = labels_needed(issues)
 
     created_labels = 0
@@ -810,11 +872,23 @@ def run_apply(
             failures.append(f"label {name}: {exc}")
 
     lookup = ref_lookup(issues)
-    created = skipped = 0
+    created = present = reconciled = 0
     deferred: list[Issue] = []
     for issue in issues:
-        if issue.key in numbers:
-            skipped += 1
+        remote = existing.get(issue.key)
+        if remote is not None:
+            present += 1
+            try:
+                repairs = reconcile_issue(client, issue, remote, numbers, lookup)
+            except GiteaError as exc:
+                failures.append(f"issue {issue.key} (reconcile): {exc}")
+                continue
+            if repairs:
+                reconciled += 1
+                print(
+                    f"  issue #{remote['number']:<4} {issue.key} "
+                    f"reconciled: {', '.join(repairs)}"
+                )
             continue
         pending_refs = [
             ref
@@ -842,15 +916,16 @@ def run_apply(
         time.sleep(REQUEST_PAUSE)
 
     for issue in deferred:
+        number = numbers[issue.key]
+        if blocker_line(issue, numbers, lookup) is None:
+            print(f"  issue #{number:<4} {issue.key} blocked-by left unresolved")
+            continue
         try:
-            client.patch_issue(
-                numbers[issue.key], {"body": build_body(issue, numbers, lookup)}
-            )
-            print(
-                f"  issue #{numbers[issue.key]:<4} {issue.key} blocked-by resolved later"
-            )
+            client.patch_issue(number, {"body": build_body(issue, numbers, lookup)})
         except GiteaError as exc:
             failures.append(f"issue {issue.key} (blocked-by): {exc}")
+            continue
+        print(f"  issue #{number:<4} {issue.key} blocked-by resolved later")
         time.sleep(REQUEST_PAUSE)
 
     wiki_created = wiki_updated = wiki_unchanged = 0
@@ -881,7 +956,8 @@ def run_apply(
     outcome = {
         "labels_created": created_labels,
         "issues_created": created,
-        "issues_skipped": skipped,
+        "issues_already_present": present,
+        "issues_reconciled": reconciled,
         "issues_deferred_body_patch": len(deferred),
         "wiki_created": wiki_created,
         "wiki_updated": wiki_updated,
@@ -891,7 +967,8 @@ def run_apply(
     print()
     print(
         f"migrate-tracker: apply — labels +{created_labels}, "
-        f"issues created {created} / already present {skipped}, "
+        f"issues created {created} / already present {present} "
+        f"({reconciled} reconciled), "
         f"wiki created {wiki_created} / updated {wiki_updated} / unchanged {wiki_unchanged}"
     )
     if unresolved:
@@ -917,17 +994,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="migrate_tracker.py",
         description=(
-            "Import the gitignored local markdown tracker (.scratch/) into Gitea "
-            "issues + wiki pages. Dry-run unless --apply is passed."
+            "Import the gitignored local markdown tracker into Gitea issues + "
+            "wiki pages. Dry-run unless --apply is passed."
         ),
     )
     parser.add_argument(
         "--tracker",
         metavar="DIR",
-        help="tracker root (default: <repo>/.scratch)",
+        help=f"tracker root; required unless ${TRACKER_ENV} names it",
     )
-    parser.add_argument("--repo", default=DEFAULT_REPO, metavar="OWNER/NAME")
-    parser.add_argument("--url", default=DEFAULT_URL, metavar="URL")
+    parser.add_argument(
+        "--repo",
+        default=DEFAULT_REPO,
+        metavar="OWNER/NAME",
+        help=f"target repository (default: {DEFAULT_REPO})",
+    )
+    parser.add_argument(
+        "--url",
+        default=DEFAULT_URL,
+        metavar="URL",
+        help=f"Gitea base URL (default: {DEFAULT_URL})",
+    )
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -946,13 +1033,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args([arg for arg in raw if arg != "--"])
 
 
+def resolve_tracker(args: argparse.Namespace) -> Path:
+    """The tracker root: ``--tracker DIR``, else ``$CLEAR_RECORD_TRACKER_DIR``.
+
+    Failing loudly beats guessing: the tracker holds environment-local data
+    (ADR-0006), and the tool that reads it should be pointed at it by the human
+    who owns it rather than scanning the working tree for something plausible.
+    """
+    if args.tracker:
+        return Path(args.tracker).expanduser().resolve()
+    from_env = os.environ.get(TRACKER_ENV, "").strip()
+    if from_env:
+        return Path(from_env).expanduser().resolve()
+    raise SystemExit(
+        "migrate-tracker: no tracker directory.\n"
+        f"  Pass --tracker DIR, or set {TRACKER_ENV}. The tracker is gitignored\n"
+        "  and environment-local, so nothing here knows where it is; see\n"
+        "  docs/agents/issue-tracker.md for the convention."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    tracker = (
-        Path(args.tracker).expanduser().resolve()
-        if args.tracker
-        else repo_root() / ".scratch"
-    )
+    tracker = resolve_tracker(args)
     manifest_path = (
         Path(args.manifest).expanduser().resolve()
         if args.manifest

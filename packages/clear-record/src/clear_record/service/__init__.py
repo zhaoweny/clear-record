@@ -167,7 +167,7 @@ from clear_record.service.runs import (
     cost_of,
     estimate_eta_s,
 )
-from clear_record.service.store import SCHEMA_VERSION, Registry
+from clear_record.service.store import Registry
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 from clear_record.service.webhooks import (
     ALL_EVENTS,
@@ -254,7 +254,6 @@ __all__ = [
     "Registry",
     "RunManager",
     "RunState",
-    "SCHEMA_VERSION",
     "SIGNATURE_HEADER",
     "TERMINAL_STATUSES",
     "TASKS",

@@ -6,13 +6,63 @@ app, no network), so the store is trusted independently of any adapter.
 
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
+
 import pytest
+from alembic import command
+from alembic.script import ScriptDirectory
 
 from clear_record.service import Registry
+from clear_record.service.store import _alembic_config
 
 
 def _registry(tmp_path) -> Registry:
     return Registry.open(db_path=tmp_path / "registry.sqlite3")
+
+
+def _registry_at(db_path: Path, revision: str) -> None:
+    """Build a registry at one revision of its schema's history.
+
+    The retired ladder's steps are the revisions now, so an older registry is
+    made the way this build makes one: by upgrading to that revision.
+    """
+    command.upgrade(_alembic_config(db_path), revision)
+
+
+def _ladder_left_it(db_path: Path, version: int) -> None:
+    """Give a registry the shape the retired ladder left behind at one version.
+
+    The ladder kept its version in ``schema_version`` and knew nothing of
+    Alembic, so a registry from a release before this build looks like this.
+    """
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("DROP TABLE alembic_version")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        )
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+
+
+def _version_tables(db_path: Path) -> list[str]:
+    """Which version states a registry carries: the ladder's and Alembic's."""
+    with sqlite3.connect(str(db_path)) as conn:
+        return sorted(
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name IN ('schema_version', 'alembic_version')"
+            )
+        )
+
+
+def _seed_project(db_path: Path) -> None:
+    """A project row as an existing registry would already have one."""
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO project (slug, name, notes, created_at)"
+            " VALUES ('ops', 'Ops', '', 'now')"
+        )
 
 
 def test_create_and_list_projects(tmp_path) -> None:
@@ -229,75 +279,48 @@ def test_run_and_artifact_rows(tmp_path) -> None:
         reg.set_meeting_status(meeting.id, "bogus")
 
 
-def test_v1_registry_upgrades_forward(tmp_path) -> None:
-    """An existing v1 database gains the v2 tables on open (forward-only)."""
-    import sqlite3
-
-    from clear_record.service.store import _SCHEMA_V1
-
+def test_a_registry_at_revision_one_gains_every_later_revision(tmp_path) -> None:
+    """An existing registry at the first revision gains the later ones on open."""
     db = tmp_path / "registry.sqlite3"
-    conn = sqlite3.connect(str(db))
-    conn.executescript(_SCHEMA_V1)
-    conn.execute("INSERT INTO schema_version (version) VALUES (1)")
-    conn.execute(
-        "INSERT INTO project (slug, name, notes, created_at) VALUES ('ops', 'Ops', '', 'now')"
-    )
-    conn.commit()
-    conn.close()
+    _registry_at(db, "0001")
+    _seed_project(db)
 
     reg = Registry(db)
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
 
 
-def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
-    """An existing v3 database gains every later column and table on open."""
-    import sqlite3
-
-    from clear_record.service.store import (
-        SCHEMA_VERSION,
-        _SCHEMA_V1,
-        _SCHEMA_V2,
-        _SCHEMA_V3,
-    )
-
+def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> None:
+    """An existing registry at revision three gains every later one on open."""
     db = tmp_path / "registry.sqlite3"
-    conn = sqlite3.connect(str(db))
-    for ddl in (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3):
-        conn.executescript(ddl)
-    conn.execute("INSERT INTO schema_version (version) VALUES (3)")
-    conn.execute(
-        "INSERT INTO project (slug, name, notes, created_at)"
-        " VALUES ('ops', 'Ops', '', 'now')"
-    )
-    conn.execute(
-        "INSERT INTO meeting (project_id, slug, title, status, created_at)"
-        " VALUES (1, 'kickoff', 'Kickoff', 'new', 'now')"
-    )
-    conn.commit()
-    conn.close()
+    _registry_at(db, "0003")
+    _seed_project(db)
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "INSERT INTO meeting (project_id, slug, title, status, created_at)"
+            " VALUES (1, 'kickoff', 'Kickoff', 'new', 'now')"
+        )
 
     reg = Registry(db)
-    assert SCHEMA_VERSION == 8
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
-    # v5: an uploaded tape can be recorded and joins the meeting's tape set.
+    # Revision 0005: an uploaded tape can be recorded and joins the meeting's tape set.
     tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
-    # v6: a run carries its durable options and its persisted event stream.
+    # Revision 0006: a run carries its durable options and its persisted event stream.
     run = reg.create_run(meeting.id, run_options={"backend": "apple"})
     assert reg.get_run(run.id).run_options == {"backend": "apple"}
     assert reg.count_run_events(run.id) == 0
-    # v7: a run records where it came from, and the claim records its owner.
+    # Revision 0007: a run records where it came from, and the claim records its owner.
     assert reg.get_run(run.id).origin is None  # a seeded row has no origin
     queued = reg.create_run(meeting.id, origin="console")
     claimed = reg.claim_run(queued.id, owner="peer:1")
     assert claimed is not None
     assert (claimed.origin, claimed.owner) == ("console", "peer:1")
     assert claimed.heartbeat_at is not None
-    # v8: a run can be linked to the run it resumes, and carry a cancel request.
+    # Revision 0008: a run can be linked to the run it resumes, and carry a cancel request.
     assert claimed.resumes_run_id is None and claimed.cancel_requested_at is None
     resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
     assert resumed.resumes_run_id == run.id
@@ -310,3 +333,113 @@ def test_v3_registry_gains_meeting_notes_and_tapes(tmp_path) -> None:
     assert stopped is not None and stopped.status == "stopped"
     # And a run that is not queued any more is left to its owner.
     assert reg.stop_run(claimed.id, ended_at="now", progress={}) is None
+
+
+def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
+    """A registry the ladder left behind opens, keeps its rows, and is current.
+
+    This is the registry an upgrading user has: the ladder's tables with its
+    ``schema_version`` row and no revision recorded. Opening it must place it at
+    that version — not re-run the revisions it already has — and run the rest.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0003")
+    _ladder_left_it(db, 3)
+    _seed_project(db)
+
+    reg = Registry(db)
+    assert [p.slug for p in reg.list_projects()] == ["ops"]
+    # Every later revision is in place: notes (0004), tapes (0005), a run's
+    # durable options (0006) and its ownership (0007) all answer.
+    meeting = reg.create_meeting("ops", "Kickoff")
+    assert reg.update_meeting(meeting.id, notes="story").notes == "story"
+    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    assert reg.list_tapes(meeting.id) == [tape]
+    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+
+
+def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
+    """A revision this build does not carry is refused, not half-read."""
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0008")
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = '9999'")
+
+    with pytest.raises(
+        RuntimeError, match="9999 is not one this build carries.*upgrade clear-record"
+    ):
+        Registry(db)
+
+    # The refusal ran nothing: the registry still records what it recorded.
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "9999",
+        )
+
+
+def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path) -> None:
+    """The guard the retired ladder enforced survives: a newer version is refused."""
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0008")
+    _ladder_left_it(db, 99)
+
+    with pytest.raises(
+        RuntimeError, match="99 is newer than this build carries.*upgrade clear-record"
+    ):
+        Registry(db)
+
+    # Nothing was applied and nothing was stamped: the refusal comes first.
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (99,)
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'alembic_version'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_a_registry_path_with_a_query_character_opens(tmp_path) -> None:
+    """A `?` in the path is a filename character, not the start of a URL query.
+
+    The migration hands SQLAlchemy the URL object it built and never URL text:
+    read back out of text, the `?` becomes a query and a *different* file is the
+    one that gets migrated.
+    """
+    db = tmp_path / "what?" / "registry.sqlite3"
+
+    reg = Registry(db)
+
+    assert reg.create_project("Ops").slug == "ops"
+    assert db.exists()
+    assert not (tmp_path / "what").exists()  # the file the text form creates
+
+
+def test_a_migrated_ladder_registry_still_reads_for_an_older_build(tmp_path) -> None:
+    """A build from before Alembic must still be able to read what this one migrates.
+
+    The ladder's row is the only version state such a build reads, and the head
+    revision's schema is the ladder's own last one, so the row is left at the
+    head's number: a build comparing it with its own version finds them equal and
+    opens the registry, instead of running DDL it already has.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0005")
+    _ladder_left_it(db, 5)
+
+    Registry(db)
+
+    # The head's number, which is what the row has to say (`0005` -> `0008`).
+    head = ScriptDirectory.from_config(_alembic_config(db)).get_current_head()
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (
+            int(head),
+        )
+
+    # The other side of the same boundary: a registry *this* build creates
+    # carries no such record at all, so a build from before Alembic runs its
+    # ladder there and stops at the first step that is not idempotent (the notes
+    # column). Nothing the app owns is changed before it does.
+    fresh = tmp_path / "fresh.sqlite3"
+    Registry(fresh)
+    assert _version_tables(fresh) == ["alembic_version"]

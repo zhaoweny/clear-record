@@ -12,9 +12,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from alembic import command
 
 from clear_record.service import Registry, archive_meeting, verify_archive
 from clear_record.service.archive import MANIFEST_FILENAME
+from clear_record.service.store import _alembic_config
 
 
 def _registry(tmp_path) -> Registry:
@@ -186,21 +188,15 @@ def test_archive_root_must_be_chosen(tmp_path) -> None:
     assert Path(archive.root_path).parent == explicit.resolve() / "ops"
 
 
-def test_v2_registry_upgrades_forward(tmp_path) -> None:
-    """An existing v2 database gains the v3 archive table on open (forward-only)."""
-    from clear_record.service.store import _SCHEMA_V1, _SCHEMA_V2
-
+def test_a_registry_at_revision_two_gains_the_archive_table(tmp_path) -> None:
+    """An existing registry at revision two gains the archive table on open."""
     db = tmp_path / "registry.sqlite3"
-    conn = sqlite3.connect(str(db))
-    conn.executescript(_SCHEMA_V1)
-    conn.executescript(_SCHEMA_V2)
-    conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    conn.execute(
-        "INSERT INTO project (slug, name, notes, created_at)"
-        " VALUES ('ops', 'Ops', '', 'now')"
-    )
-    conn.commit()
-    conn.close()
+    command.upgrade(_alembic_config(db), "0002")
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "INSERT INTO project (slug, name, notes, created_at)"
+            " VALUES ('ops', 'Ops', '', 'now')"
+        )
 
     registry = Registry(db)
     assert [p.slug for p in registry.list_projects()] == ["ops"]

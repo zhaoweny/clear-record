@@ -1,17 +1,21 @@
 """The SQLite registry: projects and their glossary terms.
 
-One database (stdlib :mod:`sqlite3`, no dependency) holds the **app-owned**
-project/glossary state under the platform data directory (ADR-0025). Audio,
-workspaces and archives stay as files elsewhere; the registry stores metadata
-only (ADR-0007/ADR-0013).
+One database (stdlib :mod:`sqlite3`; SQLAlchemy reaches it for the schema's
+history only, through Alembic) holds the **app-owned** project/glossary state
+under the platform data directory (ADR-0025). Audio, workspaces and archives
+stay as files elsewhere; the registry stores metadata only (ADR-0007/ADR-0013).
 
 Design notes:
 
 - **Opening a connection per operation** keeps the store safe to call from the
   web app's threadpool without sharing a connection across threads. SQLite
   connections are cheap; correctness beats pooling here.
-- **Forward-only migration** behind a ``schema_version`` table. A database from a
-  newer version fails loudly rather than being silently misread.
+- **Alembic owns the schema, and the registry migrates when it opens**
+  (ADR-0030). The revisions live in :mod:`clear_record.service.migrations`; a
+  registry of any older version is moved forward on open, and one recorded at a
+  revision this build does not carry fails loudly rather than being silently
+  misread. The migration is forward-only — a revision is upgraded, never
+  unwound.
 - **Slugs are stable, human-readable ids.** A project is addressable by slug in
   the API, the GUI and any agent context; ids stay internal.
 """
@@ -26,6 +30,11 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from sqlalchemy.engine import URL
 
 from clear_record.core.events import JobEvent
 from clear_record.core.paths import registry_path
@@ -46,192 +55,104 @@ from clear_record.service.models import (
     Tape,
 )
 
-SCHEMA_VERSION = 8
+# --- the schema's history, owned by Alembic (ADR-0030) --------------------- #
+#
+# The revisions in `clear_record.service.migrations` are this registry's schema.
+# They are the retired ladder's steps, adopted one for one and verbatim: the
+# ladder's version numbers became the revision ids, its DDL became the revision
+# bodies, and no table, column, index or constraint changed with the adoption.
 
-_SCHEMA_V1 = """
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER NOT NULL
-);
+#: Where the schema's history lives. Named as a package resource rather than a
+#: path, so that one value resolves both in a checkout (the member is installed
+#: editable) and in an installed wheel; the repository's `alembic.ini` carries
+#: the same value for the developer CLI.
+_SCRIPT_LOCATION = "clear_record.service:migrations"
 
-CREATE TABLE IF NOT EXISTS project (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug                 TEXT NOT NULL UNIQUE,
-    name                 TEXT NOT NULL,
-    notes                TEXT NOT NULL DEFAULT '',
-    default_archive_root TEXT,
-    created_at           TEXT NOT NULL
-);
+#: The retired ladder's version table, and what it is for now.
+#:
+#: Only a registry that carried it *before* this build has one: the ladder
+#: created it and revision 0001 deliberately does not, so a registry this build
+#: creates has no such record. Where it exists, the row is read once to place the
+#: stamp and then left at the head revision's number — a build from before
+#: Alembic reads *this* row, the head's schema is the ladder's own last one, and
+#: the number is what lets that build treat the ladder as already applied
+#: instead of re-running it. Where it does not exist, such a build runs the
+#: ladder instead and stops at the first step that is not idempotent, v4's
+#: ``ALTER TABLE meeting ADD COLUMN notes`` ("duplicate column name"), its
+#: earlier steps adding nothing but this table. A revision that changes a shape
+#: the ladder describes, rather than adding to it, is what would revisit this.
+_LEGACY_VERSION_TABLE = "schema_version"
 
-CREATE TABLE IF NOT EXISTS glossary_term (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    term        TEXT NOT NULL,
-    reading     TEXT,
-    aliases     TEXT,
-    definition  TEXT,
-    status      TEXT NOT NULL DEFAULT 'candidate',
-    added_by    TEXT NOT NULL DEFAULT 'human',
-    notes       TEXT,
-    created_at  TEXT NOT NULL,
-    UNIQUE (project_id, term)
-);
 
-CREATE INDEX IF NOT EXISTS glossary_term_project ON glossary_term (project_id);
-"""
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        is not None
+    )
 
-# v2 — the meeting/run/artifact spine: a project's meetings, the tapes chosen
-# for each, the pipeline runs against them, and the artifacts they produce.
-_SCHEMA_V2 = """
-CREATE TABLE IF NOT EXISTS meeting (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id     INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    slug           TEXT NOT NULL,
-    title          TEXT NOT NULL,
-    recorded_at    TEXT,
-    workspace_path TEXT,
-    status         TEXT NOT NULL DEFAULT 'new',
-    created_at     TEXT NOT NULL,
-    UNIQUE (project_id, slug)
-);
 
-CREATE TABLE IF NOT EXISTS recording_set (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    meeting_id INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
-    paths      TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
+def _alembic_config(db_path: Path) -> Config:
+    """The configuration one registry's migration runs with.
 
-CREATE TABLE IF NOT EXISTS pipeline_run (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    meeting_id    INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
-    status        TEXT NOT NULL,
-    backend       TEXT,
-    model         TEXT,
-    language      TEXT,
-    options       TEXT,
-    started_at    TEXT,
-    ended_at      TEXT,
-    error         TEXT,
-    progress      TEXT,
-    created_at    TEXT NOT NULL
-);
+    Built in code rather than read from an ``alembic.ini``, so that an installed
+    distribution migrates with no config file beside it; the repository's
+    ``alembic.ini`` names the same ``script_location`` and no other option it
+    sets differs.
+    """
+    config = Config()
+    config.set_main_option("script_location", _SCRIPT_LOCATION)
+    # The path travels as a URL *object*, never as URL text: a `?` in a path is
+    # read back out of the text as a query, and the registry that gets migrated
+    # is then a different file. `env.py` reads this attribute.
+    config.attributes["database_url"] = URL.create("sqlite", database=str(db_path))
+    return config
 
-CREATE TABLE IF NOT EXISTS artifact (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    meeting_id   INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
-    run_id       INTEGER REFERENCES pipeline_run(id) ON DELETE SET NULL,
-    kind         TEXT NOT NULL,
-    path         TEXT NOT NULL,
-    sha256       TEXT,
-    bytes        INTEGER,
-    produced_by  TEXT NOT NULL DEFAULT 'pipeline',
-    review_state TEXT NOT NULL DEFAULT 'final',
-    created_at   TEXT NOT NULL
-);
 
-CREATE INDEX IF NOT EXISTS meeting_project ON meeting (project_id);
-CREATE INDEX IF NOT EXISTS pipeline_run_meeting ON pipeline_run (meeting_id);
-CREATE INDEX IF NOT EXISTS artifact_meeting ON artifact (meeting_id);
-"""
+def _revision_history(config: Config) -> tuple[frozenset[str], str]:
+    """Every revision this build carries, and the newest of them."""
+    script = ScriptDirectory.from_config(config)
+    return (
+        frozenset(entry.revision for entry in script.walk_revisions()),
+        ", ".join(script.get_heads()),
+    )
 
-# v3 — the archive spine: each immutable, checksummed copy of a meeting's tapes
-# and record. The files live in the user's archive root; the registry stores the
-# copy's paths and the manifest's checksum (ADR-0006/ADR-0007).
-_SCHEMA_V3 = """
-CREATE TABLE IF NOT EXISTS archive (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    meeting_id      INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
-    project_id      INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    root_path       TEXT NOT NULL,
-    manifest_path   TEXT NOT NULL,
-    manifest_sha256 TEXT NOT NULL,
-    created_at      TEXT NOT NULL
-);
 
-CREATE INDEX IF NOT EXISTS archive_meeting ON archive (meeting_id);
-"""
+def _pending_stamp(
+    conn: sqlite3.Connection, known: frozenset[str], head: str
+) -> str | None:
+    """The revision a registry that predates Alembic stands at, if any.
 
-# v4 — the story: meetings gain a free-text ``notes`` column so the user's
-# narrative (and an agent's draft) has a durable home beside the glossary
-# (ticket 21's tuning loop). Project notes already exist from v1.
-_SCHEMA_V4 = """
-ALTER TABLE meeting ADD COLUMN notes TEXT NOT NULL DEFAULT '';
-"""
-
-# v5 — the managed workspace (ADR-0024): a tape uploaded to the node is recorded
-# with the copy's integrity facts (``sha256`` and ``bytes``), which the path-only
-# recording set cannot carry. The tape's path is also added to the meeting's
-# recording set, so the pipeline (runs/archive) reads an upload exactly like a
-# user-typed path.
-_SCHEMA_V5 = """
-CREATE TABLE IF NOT EXISTS tape (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    meeting_id INTEGER NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
-    path       TEXT NOT NULL,
-    sha256     TEXT NOT NULL,
-    bytes      INTEGER NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS tape_meeting ON tape (meeting_id);
-"""
-
-# v6 — durable run state and the node queue: the live event stream is persisted
-# per run (so the run view replays after a restart), and a run records the
-# resolved options it will execute with (so a queued run survives a restart and
-# is picked back up). Runs are ordered by id as the node's FIFO.
-_SCHEMA_V6 = """
-CREATE TABLE IF NOT EXISTS run_event (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id     INTEGER NOT NULL REFERENCES pipeline_run(id) ON DELETE CASCADE,
-    seq        INTEGER NOT NULL,
-    payload    TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE (run_id, seq)
-);
-
-CREATE INDEX IF NOT EXISTS run_event_run ON run_event (run_id);
-
-ALTER TABLE pipeline_run ADD COLUMN run_options TEXT;
-"""
-
-# RUN-02: who a run belongs to. ``origin`` is the surface that started it;
-# ``owner`` the process that claimed it (the conditional transition that makes
-# the queue cross-process); ``heartbeat_at`` the owner's last proof of life,
-# refreshed while it executes. All three are NULL for a run recorded before this
-# version — read as unknown, never guessed.
-_SCHEMA_V7 = """
-ALTER TABLE pipeline_run ADD COLUMN origin TEXT;
-
-ALTER TABLE pipeline_run ADD COLUMN owner TEXT;
-
-ALTER TABLE pipeline_run ADD COLUMN heartbeat_at TEXT;
-"""
-
-# RUN-04: cancel and resume. ``resumes_run_id`` links a run to the run it
-# continues (the chunk cache is what actually makes it cheaper; this is what makes
-# the link visible). ``cancel_requested_at`` is a *request* on a ``running`` run:
-# only its owner may end it, so the column records who asked and when, and the
-# owner's next look at the row turns it into the terminal ``stopped``. Both are
-# NULL for a run that neither resumes nor was asked to stop.
-_SCHEMA_V8 = """
-ALTER TABLE pipeline_run ADD COLUMN resumes_run_id INTEGER;
-
-ALTER TABLE pipeline_run ADD COLUMN cancel_requested_at TEXT;
-"""
-
-# Forward-only: each entry is (version it produces, DDL). A fresh registry runs
-# them all; an existing one runs only those newer than its stored version.
-_MIGRATIONS: tuple[tuple[int, str], ...] = (
-    (1, _SCHEMA_V1),
-    (2, _SCHEMA_V2),
-    (3, _SCHEMA_V3),
-    (4, _SCHEMA_V4),
-    (5, _SCHEMA_V5),
-    (6, _SCHEMA_V6),
-    (7, _SCHEMA_V7),
-    (8, _SCHEMA_V8),
-)
+    Two shapes arrive from before this build: a registry Alembic has already
+    stamped (it stands at the revision it records) and one the hand-rolled
+    ladder wrote (its ``schema_version`` names that revision directly, because
+    the revision ids *are* the ladder's version numbers, adopted along with its
+    DDL). Either way, a registry that records something this build does not
+    carry — a newer release's revision — raises here, before any revision runs:
+    half-understanding a schema is worse than refusing to open it.
+    """
+    if _has_table(conn, "alembic_version"):
+        for row in conn.execute("SELECT version_num FROM alembic_version"):
+            if row[0] not in known:
+                raise RuntimeError(
+                    f"registry schema revision {row[0]} is not one this build "
+                    f"carries (its newest is {head}); upgrade clear-record"
+                )
+        return None
+    if not _has_table(conn, _LEGACY_VERSION_TABLE):
+        return None  # no registry here yet: every revision runs from the base
+    row = conn.execute(f"SELECT version FROM {_LEGACY_VERSION_TABLE}").fetchone()
+    version = int(row[0]) if row is not None else 0
+    if version == 0:
+        return None  # the ladder's own "nothing ran yet"
+    revision = f"{version:04d}"
+    if revision not in known:
+        raise RuntimeError(
+            f"registry schema version {version} is newer than this build "
+            f"carries (its newest revision is {head}); upgrade clear-record"
+        )
+    return revision
 
 
 def _now() -> str:
@@ -265,8 +186,7 @@ class Registry:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            self._migrate(conn)
+        self._migrate()
 
     @classmethod
     def open(
@@ -299,29 +219,34 @@ class Registry:
         finally:
             conn.close()
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
-        exists = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
-        ).fetchone()
-        if exists is None:
-            for _, ddl in _MIGRATIONS:
-                conn.executescript(ddl)
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-            )
-            return
-        row = conn.execute("SELECT version FROM schema_version").fetchone()
-        version = int(row["version"]) if row else 0
-        if version > SCHEMA_VERSION:
-            raise RuntimeError(
-                f"registry schema version {version} is newer than this build "
-                f"supports ({SCHEMA_VERSION}); upgrade clear-record"
-            )
-        for target, ddl in _MIGRATIONS:
-            if target > version:
-                conn.executescript(ddl)
-        if version < SCHEMA_VERSION:
-            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    def _migrate(self) -> None:
+        """Bring the registry to the schema this build carries, as it opens.
+
+        An existing registry of any older version moves forward here: this is
+        the auto-migration the hand-rolled ladder used to do, now Alembic's. A
+        registry recording a revision this build does not carry is refused
+        first (see :func:`_pending_stamp`) — before any revision runs, and
+        before anything reads it as its own.
+        """
+        config = _alembic_config(self.db_path)
+        known, head = _revision_history(config)
+        with self._connect() as conn:
+            legacy = _has_table(conn, _LEGACY_VERSION_TABLE)
+            stamp = _pending_stamp(conn, known, head)
+        if stamp is not None:
+            # A registry the hand-rolled ladder wrote: it already stands at
+            # that revision, so record where it is and let the upgrade below
+            # run only the revisions it is missing.
+            command.stamp(config, stamp)
+        command.upgrade(config, "head")
+        if legacy:
+            # Level the ladder's row with the head — it is what an older build
+            # reads (see `_LEGACY_VERSION_TABLE`), and the head revision's
+            # number is the ladder's own last version.
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE {_LEGACY_VERSION_TABLE} SET version = ?", (int(head),)
+                )
 
     # --- projects ---------------------------------------------------------- #
     def _unique_slug(self, conn: sqlite3.Connection, name: str) -> str:
@@ -1511,4 +1436,4 @@ class Registry:
         return self._archive(row)
 
 
-__all__ = ["SCHEMA_VERSION", "Registry"]
+__all__ = ["Registry"]

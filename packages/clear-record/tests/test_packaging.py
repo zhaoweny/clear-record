@@ -53,7 +53,19 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # set with the CLI port (ADR-0022): it is pure Python, zero transitive deps.
 # `platformdirs` joined with ADR-0025: the one platform-native path resolver,
 # MIT, zero dependencies (imported at the package root, never in `core`).
-RUNTIME_DEPS = {"click", "json-repair", "numpy", "platformdirs", "soundfile"}
+# `alembic`/`sqlalchemy` joined with ADR-0030: Alembic owns the registry's schema
+# and it migrates when the process opens it, and the `bench`/`diagnose` entry
+# points ship in the base distribution and reach the registry — so unlike the
+# web/tray/MCP stacks these cannot be an extra with an actionable hint.
+RUNTIME_DEPS = {
+    "alembic",
+    "click",
+    "json-repair",
+    "numpy",
+    "platformdirs",
+    "soundfile",
+    "sqlalchemy",
+}
 
 # The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
 # They must not leak into the base dependencies: a CLI-only install stays
@@ -254,6 +266,65 @@ def test_web_template_guard_catches_a_deleted_template(tmp_path: Path) -> None:
     assert victim in EXPECTED_WEB_TEMPLATES
     (copied / victim).unlink()
     assert _missing_web_templates(copied) == [victim]
+
+
+# The registry's schema history is read at run time, never imported: the store
+# names it as the string `clear_record.service:migrations`, so a revision or the
+# environment falling out of the install breaks no import — it breaks the first
+# open of a registry, in a distribution that has already launched. Frozen for
+# the same reason the web assets are.
+EXPECTED_MIGRATIONS = frozenset(
+    {
+        "env.py",
+        "script.py.mako",
+        "versions/0001_project_and_glossary.py",
+        "versions/0002_meeting_run_and_artifact.py",
+        "versions/0003_archive.py",
+        "versions/0004_meeting_notes.py",
+        "versions/0005_tape.py",
+        "versions/0006_run_state_and_events.py",
+        "versions/0007_run_ownership.py",
+        "versions/0008_run_cancel_and_resume.py",
+    }
+)
+
+
+def _missing_migrations(migrations: Path) -> list[str]:
+    """Expected schema-history files absent from a migrations directory.
+
+    Split out so a test can prove a deletion is caught, not just assumed.
+    """
+    present = {
+        path.relative_to(migrations).as_posix()
+        for path in migrations.rglob("*")
+        if path.is_file()
+    }
+    return sorted(EXPECTED_MIGRATIONS - present)
+
+
+def test_the_schema_history_ships_with_the_package() -> None:
+    """Alembic's script location resolves inside the installed package.
+
+    The store names it as a package resource, so the registry of an installed
+    distribution migrates at open with no configuration beside it (ADR-0030).
+    """
+    migrations = PACKAGE_DIRS[0] / "src" / "clear_record" / "service" / "migrations"
+    missing = _missing_migrations(migrations)
+    assert not missing, f"missing schema history: {missing}"
+
+
+def test_schema_history_guard_catches_a_deleted_revision(tmp_path: Path) -> None:
+    """Removing a revision must fail the guard, not pass silently.
+
+    Nothing imports a revision, so only the expected-set check can notice it.
+    """
+    source = PACKAGE_DIRS[0] / "src" / "clear_record" / "service" / "migrations"
+    copied = tmp_path / "migrations"
+    shutil.copytree(source, copied)
+    victim = "versions/0005_tape.py"
+    assert victim in EXPECTED_MIGRATIONS
+    (copied / victim).unlink()
+    assert _missing_migrations(copied) == [victim]
 
 
 def _just_recipe(name: str) -> str:

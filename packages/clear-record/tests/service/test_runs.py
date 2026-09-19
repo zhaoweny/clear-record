@@ -826,7 +826,10 @@ def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
         holder = sqlite3.connect(str(registry.db_path))
         try:
             holder.execute("BEGIN IMMEDIATE")
-            holder.execute("UPDATE schema_version SET version = version")
+            # A write that changes nothing, to hold the write lock. The
+            # schema's version row is the safe target because it holds exactly
+            # one row.
+            holder.execute("UPDATE alembic_version SET version_num = version_num")
             holding.set()
             time.sleep(0.3)
         finally:

@@ -33,14 +33,19 @@ this repository.
 
 | Package | Version | License |
 | --- | --- | --- |
+| [`alembic`](https://pypi.org/project/alembic/) | 1.20.0 | MIT |
 | [`click`](https://pypi.org/project/click/) | 8.5.0 | BSD-3-Clause |
 | [`json-repair`](https://pypi.org/project/json-repair/) | 0.63.4 | MIT |
 | [`numpy`](https://pypi.org/project/numpy/) | 2.5.3 | BSD-3-Clause (the wheel also bundles code under 0BSD, MIT, Zlib and CC0-1.0) |
 | [`platformdirs`](https://pypi.org/project/platformdirs/) | 4.11.8 | MIT |
 | [`soundfile`](https://pypi.org/project/soundfile/) | 0.14.0 | BSD-3-Clause; the wheel bundles **libsndfile** (LGPL-2.1) including **libmp3lame** (LGPL-2+) and **libmpg123** (LGPL-2.1) |
+| [`sqlalchemy`](https://pypi.org/project/sqlalchemy/) | 2.0.54 | MIT |
 | [`cffi`](https://pypi.org/project/cffi/) *(transitive, via soundfile)* | 2.1.1 | MIT-0 |
+| [`greenlet`](https://pypi.org/project/greenlet/) *(transitive, via sqlalchemy; x86_64, aarch64 or ppc64le Linux, and Windows)* | 3.5.6 | MIT AND PSF-2.0 (the wheel also ships `LICENSE.PSF` beside `LICENSE`) |
+| [`mako`](https://pypi.org/project/mako/) *(transitive, via alembic)* | 1.4.1 | MIT |
+| [`markupsafe`](https://pypi.org/project/markupsafe/) *(transitive, via mako)* | 3.0.3 | BSD-3-Clause |
 | [`pycparser`](https://pypi.org/project/pycparser/) *(transitive, via cffi)* | 3.0 | BSD-3-Clause |
-| [`typing-extensions`](https://pypi.org/project/typing-extensions/) *(transitive, via soundfile)* | 4.16.0 | PSF-2.0 |
+| [`typing-extensions`](https://pypi.org/project/typing-extensions/) *(transitive, via soundfile, alembic and sqlalchemy)* | 4.16.0 | PSF-2.0 |
 
 ### Development-only dependencies
 

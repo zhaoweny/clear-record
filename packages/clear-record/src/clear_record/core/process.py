@@ -55,7 +55,9 @@ DEFAULT_CANCEL_GRACE_S = 1.0
 
 
 class ProcessCancelled(RuntimeError):
-    """Raised when a runner is asked to launch a child after cancellation."""
+    """Raised when a runner refuses a launch after cancellation, or when the
+    run's own cancel signal (RUN-04) arrives while a launched child is still
+    running."""
 
 
 class ProcessRunner(Protocol):
@@ -315,11 +317,13 @@ class CancellableProcessRunner:
         """PIDs of the children this runner launched and is still waiting on.
 
         The transcribe pool samples its decoder workers' resident memory through
-        this: a child is listed from its launch until its communicate() call
-        returns, and only this runner launched it, so a caller samples exactly
-        one pool's work and never an unrelated process. A child that has already
-        exited is reaped here and left out, so a caller can never read a
-        zombie's empty /proc entry and mistake it for zero memory.
+        this: a child is listed from its launch until it is reaped — when
+        :meth:`run`'s wait on it returns, or when :meth:`stop` ends a child
+        launched through :meth:`start` — and only this runner launched it, so a
+        caller samples exactly one pool's work and never an unrelated process. A
+        child that has already exited is reaped here and left out, so a caller
+        can never read a zombie's empty /proc entry and mistake it for zero
+        memory.
         """
         with self._lock:
             procs = list(self._procs)

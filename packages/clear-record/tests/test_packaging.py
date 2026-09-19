@@ -432,9 +432,9 @@ def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:
 def test_declares_the_clear_record_script() -> None:
     """The single dist owns the `clear-record` command (ADR-0009, ADR-0012).
 
-    The entry point targets the CLI implementation directly — there is no
-    `clear_record.cli.main` alias — so `import clear_record` stays light; the
-    old `clearrecord` spelling must not reappear."""
+    The entry point targets the CLI implementation directly — the old
+    `clear_record.cli:main` alias is gone — so `import clear_record` stays
+    light; the old `clearrecord` spelling must not reappear."""
     scripts = _load(MEMBER_PYPROJECTS[0])["project"]["scripts"]
     assert scripts.get("clear-record") == "clear_record.cli.cli:main"
     assert "clearrecord" not in scripts

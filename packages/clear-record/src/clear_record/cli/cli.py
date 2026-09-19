@@ -15,8 +15,11 @@ The parser is **Click** (ADR-0022). The two properties the port must keep are:
 A run knob — its flag spelling, its ``CR_*`` binding, its type and its ``--help``
 text — is declared once, in ``core.options.RUN_KNOBS``; the options for
 ``transcribe``/``run``/``calibrate`` are generated from those rows. Each generated
-option still carries ``envvar=``, so the name stays discoverable in ``--help`` and
-the ADR-0007 precedence (flag > env > config > default) lives in one mechanism.
+option still carries ``envvar=``, so the name stays discoverable in ``--help``,
+and the resolution order — flag > ``CR_*`` environment > profile > built-in
+default — lives in one mechanism (:func:`clear_record.core.resolve_options`).
+That chain is a run knob's own, not ADR-0007's app-directory precedence, which
+has a config-file layer and no profile.
 The ``CR_*`` reads that live outside the CLI (``providers``, ``service``, ``web``,
 ``core.diagnostics``) are deliberately left where they are.
 

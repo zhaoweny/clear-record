@@ -29,10 +29,16 @@
        available. The current page is marked, never by colour alone. #}
     <nav class="app-nav" hx-boost="true" aria-label="{{ tr('Main navigation') }}">
       <a href="/"{% if nav == 'projects' %} aria-current="page"{% endif %}>{{ tr("Projects") }}</a>
+      <a href="/activity"{% if nav == 'activity' %} aria-current="page"{% endif %}>{{ tr("Activity") }}</a>
       <a href="/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>{{ tr("Settings") }}</a>
       {% if setup_incomplete %}<a href="/setup"{% if nav == 'setup' %} aria-current="page"{% endif %}>{{ tr("Setup") }}</a>{% endif %}
     </nav>
-    <span class="badge" id="status">{% block status %}{{ tr("ready") }}{% endblock %}</span>
+    {# The status chip: what this node is doing right now (RUN-03), fed by
+       `page()` from the same registry the Activity page renders — never a
+       literal. It links to that page, so the header's short answer is one click
+       from the detail; a page may still override the chip's own text through
+       `{% block status %}`. #}
+    <a class="badge status-{{ chip.state }}" id="status" href="/activity">{% block status %}{{ chip.label }}{% endblock %}</a>
     {# The language switcher, beside the header's other controls: a plain form
        POST and a page reload — no client-side i18n framework. Each option is
        its own endonym so the control is legible in either locale; the current

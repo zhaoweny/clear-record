@@ -304,6 +304,52 @@ def test_the_status_section_carries_diagnostics_and_the_hello_check(tmp_path) ->
     assert 'id="hello-check"' in page.text
 
 
+def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> None:
+    """RUN-02: the console lists the registry's queue, not one manager's memory.
+
+    The MCP server is another writer with its own manager over the same registry;
+    the row it enqueues is what the console's Status section shows, and the row
+    records the origin the status data can report. The run here is executed by
+    the console's own manager, which is how queued work from any writer drains.
+    """
+    import dataclasses
+    import threading
+    import time
+
+    from clear_record.service import PipelineOptions, RunManager
+
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    release = threading.Event()
+    manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
+    client = TestClient(
+        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    )
+
+    registry.create_project("Ops")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    registry.set_recording_set(meeting.id, [str(tape)])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        origin="mcp",
+    )
+    try:
+        for _ in range(1000):
+            if registry.get_run(run.id).status == "running":
+                break
+            time.sleep(0.005)
+        page = client.get("/settings/status")
+        assert registry.get_run(run.id).origin == "mcp"
+        assert page.status_code == 200
+        assert "Kickoff" in page.text  # the queue panel lists the other writer's run
+    finally:
+        release.set()
+        manager.shutdown(timeout=5)
+
+
 def test_the_agent_flow_has_one_panel_and_two_entry_points(tmp_path) -> None:
     client = _client(tmp_path)
 

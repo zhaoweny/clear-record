@@ -88,3 +88,15 @@ _DESCRIPTION: Final[str] = (
 def pipeline_spec() -> PipelineSpec:
     """The canonical pipeline description used by the CLI and docs."""
     return PipelineSpec(name="clear-record", stages=_STAGES, description=_DESCRIPTION)
+
+
+class RunCancelled(Exception):
+    """A run stopped because its cancel was requested (RUN-04).
+
+    Raised where a pipeline checks its cancel signal — at a stage boundary in
+    :func:`clear_record.cli.stages.run`, and between chunks inside the transcribe
+    pool — so a cancellation lands on a boundary the work can be stopped at,
+    never mid-write. The run's owner turns it into the run's terminal ``stopped``
+    state; nothing else catches it, and a caller that is not running a pipeline
+    (the CLI's own Ctrl-C path) never sees it.
+    """

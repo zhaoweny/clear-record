@@ -328,11 +328,14 @@ clear-record transcribe <dir> --backend apple --model medium   # picks up glossa
 ## Web console (optional)
 
 A local desktop-style console for the daily work, with the control plane kept
-separate from it: four surfaces, four jobs
+separate from it: five surfaces, five jobs
 ([ADR-0027](docs/adr/0027-console-information-architecture.md)).
 
 - **Projects** — the daily workspace: the project list, then a project's own
   Overview, Meetings, Glossary and Media.
+- **Activity** — what this node is doing right now: the shared queue's running
+  and queued runs across every project (stage, progress, derived speed, model
+  and backend, origin, machine) and the newest finished ones.
 - **Settings** — the control plane: models, backends, agent, MCP, storage and
   status — configured occasionally, read often.
 - **Setup** — system readiness: the first-run and upgrade path (welcome,
@@ -395,15 +398,16 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 ([deployment guide §4](docs/service-deployment.md)).
 
 > **Status:** the console is the page information architecture of ADR-0027 —
-> Projects, a project's Overview/Meetings/Glossary/Media, Settings, Setup and
-> the one agent flow. It covers the multi-project glossary table, meetings and
-> tape sets, running tapes with progress and a live run view, tape upload into a
-> managed workspace, and the archive view. The **agent tasks** (glossary
-> collection, transcript check, minutes) run on the runner seam and land as
-> reviewable drafts (ADR-0018), and the setup path's hello-world acceptance test
-> proves tape → transcription → transcript, localizing a failure to a leg (`tts`,
-> `backend`, `model`, `transcribe`). The real agent round-trip over MCP is proven
-> by the optional `just agent-drive` — see [docs/architecture.md](docs/architecture.md).
+> Projects, a project's Overview/Meetings/Glossary/Media, Activity, Settings,
+> Setup and the one agent flow. It covers the multi-project glossary table,
+> meetings and tape sets, running tapes with progress and a live run view, tape
+> upload into a managed workspace, and the archive view. The **agent tasks**
+> (glossary collection, transcript check, minutes) run on the runner seam and
+> land as reviewable drafts (ADR-0018), and the setup path's hello-world
+> acceptance test proves tape → transcription → transcript, localizing a
+> failure to a leg (`tts`, `backend`, `model`, `transcribe`). The real agent
+> round-trip over MCP is proven by the optional `just agent-drive` — see
+> [docs/architecture.md](docs/architecture.md).
 
 ### Desktop app (macOS · Windows)
 

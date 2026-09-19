@@ -66,6 +66,14 @@ for (const scheme of ["light", "dark"] as const) {
       await shoot(page, "meeting", size, scheme);
     });
 
+    // The pipeline status page (RUN-03): the live queue and the history, with
+    // the header chip fed from the same reads.
+    test(`activity ${size.tag} ${scheme}`, async ({ page }) => {
+      await page.goto("/activity");
+      await page.locator(".activity .run").first().waitFor();
+      await shoot(page, "activity", size, scheme);
+    });
+
     // One capture per Settings section: the split is the point of this ticket.
     for (const section of [
       { slug: "models", name: "models", marker: ".table-settings" },

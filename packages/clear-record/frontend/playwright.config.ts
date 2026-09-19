@@ -22,6 +22,9 @@ export default defineConfig({
   reporter: [["list"]],
   timeout: 30_000,
   expect: { timeout: 10_000 },
+  // The seed leaves a process holding one run in flight for the whole suite
+  // (RUN-03); this ends it after the last test.
+  globalTeardown: "./e2e/teardown.ts",
   use: {
     baseURL,
     trace: "retain-on-failure",

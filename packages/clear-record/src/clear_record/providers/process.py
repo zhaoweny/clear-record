@@ -60,22 +60,49 @@ class SubprocessRunner:
         )
 
 
+#: How long a launch waits before looking at the cancel signals again. Small
+#: enough that a cancelled run stops promptly, long enough that the poll costs
+#: nothing beside a decode that runs for seconds.
+_CANCEL_POLL_S = 0.1
+
+
 class CancellableProcessRunner:
     """Track this runner's children so a pool can terminate them on cancel.
 
     One instance per pool: :meth:`terminate_all` only touches children started
     through this instance, so a second concurrent pool is unaffected. Instances
     are safe to share across the pool's worker threads.
+
+    ``cancel`` is the *run's* cancel signal (RUN-04), when this pool belongs to a
+    run: an event another thread sets — the console asking a run to stop. It is
+    read through :attr:`cancelled` beside this runner's own flag, so the pool's
+    existing checks need no second condition: a requested cancel stops the pool
+    exactly like Ctrl-C does.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cancel: threading.Event | None = None) -> None:
         self._procs: list[subprocess.Popen] = []
         self._lock = threading.Lock()
         self._cancelled = threading.Event()
+        self._cancel = cancel
 
     @property
     def cancelled(self) -> bool:
-        return self._cancelled.is_set()
+        """Whether a cancellation was requested: this runner's, or the run's."""
+        return self._cancelled.is_set() or self.run_cancelled
+
+    @property
+    def run_cancelled(self) -> bool:
+        """Whether the **run** asked this pool to stop (RUN-04).
+
+        Deliberately distinct from :attr:`cancelled`, which also covers this
+        runner's own flag — the one the pool sets in its interruption handler
+        while it kills its children. Only the run's own signal means "report this
+        chunk as cancelled": the pool's flag must leave the backends seeing
+        exactly what they saw before it existed, a child killed out from under
+        them, which is how the CLI's Ctrl-C reports itself.
+        """
+        return self._cancel is not None and self._cancel.is_set()
 
     def cancel(self) -> None:
         """Signal cancellation; later launches fail fast (see ``run``)."""
@@ -89,7 +116,7 @@ class CancellableProcessRunner:
         text: bool = True,
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess:
-        if self._cancelled.is_set():
+        if self.cancelled:
             raise ProcessCancelled("process runner cancelled before launch")
         proc = subprocess.Popen(
             cmd,
@@ -100,10 +127,17 @@ class CancellableProcessRunner:
         with self._lock:
             self._procs.append(proc)
         try:
-            out, err = proc.communicate(timeout=timeout)
+            out, err = self._wait(proc, cmd, timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
+            self._forget(proc)
+            raise
+        except ProcessCancelled:
+            # A cancel while this child was decoding (RUN-04): it is killed here,
+            # where its handle is, rather than waiting for the decode to end — the
+            # chunk is reported as cancelled, not as a decoder failure.
+            self._terminate(proc)
             self._forget(proc)
             raise
         except BaseException:
@@ -116,6 +150,36 @@ class CancellableProcessRunner:
             raise
         self._forget(proc)
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+    def _wait(
+        self, proc: subprocess.Popen, cmd: list[str], timeout: float | None
+    ) -> tuple[str | None, str | None]:
+        """Wait for a child, honouring a cancel that arrives while it runs.
+
+        ``communicate`` blocks until the child exits, so on its own it can only
+        notice a cancellation *before* a launch or *after* the results are in.
+        This waits in short slices instead and raises :class:`ProcessCancelled`
+        as soon as a cancel is requested — which is what lets a run's stop reach a
+        decode that is already in flight, and what kills a decoder that never
+        returns. The caller's own ``timeout`` still means exactly what it meant:
+        an expired deadline raises ``subprocess.TimeoutExpired``.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if self.run_cancelled:
+                raise ProcessCancelled("process runner cancelled while decoding")
+            slice_s = _CANCEL_POLL_S
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                slice_s = min(slice_s, remaining)
+            try:
+                return proc.communicate(timeout=slice_s)
+            except subprocess.TimeoutExpired:
+                # Not our deadline: look at the cancel signals and keep waiting.
+                # Whatever the child has written is kept by the next call.
+                continue
 
     def live_pids(self) -> tuple[int, ...]:
         """PIDs of the children this runner launched and is still waiting on.

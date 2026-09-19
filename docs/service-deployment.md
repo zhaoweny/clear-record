@@ -463,25 +463,58 @@ console process's memory:
 
 - **The event stream is persisted** per run as it arrives, so the live view
   replays after a restart instead of 404ing.
-- **Startup reconciliation** moves any run left `running` by a dead process to
+- **An orphaned run is reconciled**, at startup and by a queue whose next turn is
+  blocked behind it. Every run records its owner as `host:pid`, so a run whose
+  owner process is **gone** is an orphan at once: a killed console's run becomes
   **`interrupted`** (distinct from `failed`: the node died, the work did not
-  necessarily fail) and records the reason on the run. The meeting follows.
-  After a restart you see the run as interrupted with its progress still
-  readable, and you can start a new run.
+  necessarily fail) with the reason recorded on the run, its progress still
+  readable, and you can start a new run. The meeting follows. When the owner is
+  not a process this node can see — another host, or a run recorded before the
+  owner column existed — the owner's refreshed **heartbeat** decides instead, and
+  the run is reaped once that beat goes stale. A **stalled** owner (a process that
+  still exists but has stopped reporting) keeps its run `running` and keeps
+  holding the node and the meeting: the queue fails closed rather than admitting a
+  second pipeline beside work that may still be progressing.
 - **The active-run guard is read from the registry**, so a stale `running` row
   can no longer be silently doubled by a second start.
+
+[FACT, repo] Every writer shares **one queue**. The console and the agent's MCP
+server both enqueue into the same registry FIFO, and the move from `queued` to
+`running` is **one conditional update**, so exactly one of them executes a run:
+a second claimant loses cleanly and goes back to waiting, and a run the node is
+already busy with is not claimable at all. Each run records the **origin** it was
+started from — `console`, `api`, `mcp` or `cli` — so the row itself says where
+the work came from.
 
 [DESIGN] The node runs **one pipeline run at a time** — a persisted FIFO queue
 in the registry. Starting a run while another is executing **enqueues** it and
 reports its position (position 1 is next) instead of refusing the different
 meeting, so two meetings no longer fight over one GPU. Queued work survives a
 restart and is picked back up. This is deliberately minimal: no priorities, no
-cancellation, no per-meeting concurrency.
+pausing a run (only cancel and resume), no per-meeting concurrency.
+
+[FACT, repo] A run can be **cancelled** while it is queued or running, and a run
+that stopped early can be **resumed** (RUN-04):
+
+- **Queued**: cancelled outright. The row becomes `stopped` before anything claims
+  it, so nothing runs it and a restart does not resurrect it.
+- **Running**: *asked* to stop. Only the process executing a run may end it — its
+  pipeline is mid-write in a workspace — so a cancel records a request on the row
+  and the owner stops at its next safe boundary (a stage boundary, or between
+  chunks in transcribe's pool, which also terminates the decoder children it
+  launched) and writes `stopped` itself. A process that is stalled cannot read the
+  request: its run stays `running`, which is why the console can say a run was
+  *asked* to stop without claiming that it did.
+- **Resume** starts a *new* run continuing the old one's work: it runs the
+  previous run's own resolved options with `resume` on, so it re-uses the chunks
+  the cache still holds, and the row records which run it resumes. The chunk
+  cache is app-owned and keyed by the workspace path — a re-run from another
+  workspace, another machine or a moved directory, decodes from scratch.
 
 [FACT] `clear-record serve` stops draining the queue when it exits (a clean
-`SIGTERM` included); a run still executing is left for startup reconciliation on
-the next boot, and the resumable chunk cache means resuming it is cheap
-(`docs/architecture.md` §8).
+`SIGTERM` included); a run still executing dies with the process, so the next
+start reconciles it at once, and the resumable chunk cache means resuming it is
+cheap (`docs/architecture.md` §8).
 
 ## 6. What this does not cover
 

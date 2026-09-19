@@ -310,6 +310,8 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     assert started.status_code == 202
     run_id = started.json()["run"]["id"]
     assert started.json()["state"]["status"] in {"queued", "running"}
+    # RUN-02: the JSON API is not the console, and the run says so.
+    assert started.json()["run"]["origin"] == "api"
 
     console.gate.set()
     state = console.manager.wait(run_id, timeout=10)
@@ -502,6 +504,8 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     )
     assert started.status_code == 200
     run_id = console.registry.list_runs(meeting["id"])[0].id
+    # RUN-02: the console is the surface that started it, and it is recorded.
+    assert console.registry.get_run(run_id).origin == "console"
     assert "<progress" in started.text
     assert 'hx-trigger="every 1s"' in started.text
     assert f'hx-get="/ui/runs/{run_id}"' in started.text
@@ -521,6 +525,54 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert 'hx-trigger="every 1s"' not in done.text
 
     assert client.get("/ui/runs/999").status_code == 404
+
+
+def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
+    """RUN-04 in the console: cancel a live run, resume one that stopped.
+
+    The controls come from the run's row, so a run another writer started offers
+    them too. Cancelling a running run is a *request* — the console's own manager
+    honours it at its next report — and the fragment that comes back shows what
+    the run is now: resumable, with the cache rule stated where the button is.
+    """
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+    client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    started = client.post(
+        f"/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
+    )
+    run_id = console.registry.list_runs(meeting["id"])[0].id
+    assert f'hx-post="/ui/runs/{run_id}/cancel"' in started.text
+
+    # The run is parked in its pipeline (the fixture's gate): the cancel is
+    # recorded, and the fragment says so rather than pretending it stopped.
+    requested = client.post(f"/ui/runs/{run_id}/cancel")
+    assert requested.status_code == 200
+    assert console.registry.get_run(run_id).status == "running"
+    assert console.registry.get_run(run_id).cancel_requested_at is not None
+    assert "asking the run to stop" in requested.text
+
+    # Let the pipeline report: the next report stops it, terminally.
+    console.gate.set()
+    assert console.manager.wait(run_id, timeout=10).status == "stopped"
+    stopped = client.get(f"/ui/runs/{run_id}")
+    assert f'hx-post="/ui/runs/{run_id}/resume"' in stopped.text
+    assert "keyed by this workspace" in stopped.text  # the cache rule, stated
+    assert console.registry.meeting_by_id(meeting["id"]).status == "ready"
+
+    # Resuming starts a new run, linked to the one it continues.
+    resumed = client.post(f"/ui/runs/{run_id}/resume")
+    assert resumed.status_code == 200
+    new_id = console.registry.list_runs(meeting["id"])[0].id
+    assert new_id != run_id
+    assert console.registry.get_run(new_id).resumes_run_id == run_id
+    assert f"resumed from run {run_id}" in resumed.text
+
+    assert client.post("/ui/runs/999/cancel").status_code == 404
+    assert client.post("/ui/runs/999/resume").status_code == 404
 
 
 def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:

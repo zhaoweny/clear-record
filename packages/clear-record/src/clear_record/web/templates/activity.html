@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tr("Activity") }} · clear-record{% endblock %}
+
+{% block body %}
+{# The pipeline status page (RUN-03): one node's answer to "what is
+   clear-record doing right now". The shared queue's live runs across every
+   project first — a run an agent's MCP server or the CLI started is here with
+   the same fields as one this console started (RUN-02) — then the newest
+   finished runs, each with the outcome it recorded. The header chip is fed
+   from the same registry reads, so the header and this page cannot disagree. #}
+<section class="content activity">
+  <div class="workspace-head">
+    <h2>{{ tr("Activity") }}</h2>
+  </div>
+  {# One node's view: the rows name the machine that measured or claimed them,
+     and there is deliberately no aggregation across nodes (a non-goal). #}
+  <p class="muted">{{ tr("This node") }}: {{ machine }}</p>
+
+  <h3>{{ tr("In flight") }}</h3>
+  {% for row in live %}
+  {% include "_activity_run.html" %}
+  {% else %}
+  <div class="empty">{{ tr("No runs queued or running.") }}</div>
+  {% endfor %}
+
+  <h3>{{ tr("Recently finished") }}</h3>
+  {% for row in history %}
+  {% include "_activity_run.html" %}
+  {% else %}
+  <div class="empty">{{ tr("No finished runs yet.") }}</div>
+  {% endfor %}
+</section>
+{% endblock %}

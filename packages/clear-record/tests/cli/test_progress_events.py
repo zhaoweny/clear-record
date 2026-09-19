@@ -7,11 +7,12 @@ event sequence is observed end to end rather than mocked.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
-from clear_record.core import JobEvent, Segment, Step
+from clear_record.core import JobEvent, RunCancelled, Segment, Step, log_path
 
 
 def _write_tone(
@@ -68,7 +69,7 @@ def test_stages_emit_progress_and_keep_text_output(tmp_path, capsys) -> None:
 def test_run_threads_the_sink_to_every_stage(tmp_path, monkeypatch) -> None:
     received = []
 
-    def fake_runner(directory, options, on_event) -> None:
+    def fake_runner(directory, options, on_event, cancel=None) -> None:
         received.append(on_event)
 
     monkeypatch.setattr(stages, "_STAGE_RUNNERS", {step: fake_runner for step in Step})
@@ -78,3 +79,38 @@ def test_run_threads_the_sink_to_every_stage(tmp_path, monkeypatch) -> None:
 
     assert len(received) == len(list(Step))
     assert all(handler is sink for handler in received)
+
+
+def test_a_sink_that_stops_the_run_stops_the_pipeline(tmp_path, monkeypatch) -> None:
+    """A sink raising ``RunCancelled`` unwinds the pipeline where it was called.
+
+    This is how a run's cancel reaches the work (RUN-04): every stage announces
+    itself through the sink, and the run queue's sink raises there when the run's
+    signal is set. The stage announcing itself is the last thing that runs — the
+    stages after it are never entered — and the exception reaches the caller
+    rather than being recorded as a failure.
+    """
+    ran: list[str] = []
+    events: list[JobEvent] = []
+
+    def fake_runner(directory, options, on_event, cancel=None) -> None:
+        ran.append("ran")
+        on_event(JobEvent(stage="ingest", index=0, total=1))
+
+    monkeypatch.setattr(stages, "_STAGE_RUNNERS", {step: fake_runner for step in Step})
+
+    def stopping_sink(event: JobEvent) -> None:
+        events.append(event)
+        raise RunCancelled("the run was cancelled")
+
+    with pytest.raises(RunCancelled):
+        stages.run(str(tmp_path), on_event=stopping_sink)
+
+    assert ran == ["ran"], "the announcing stage ran; the rest never started"
+    assert events and events[0].stage == "ingest"
+
+    # A cancellation is an outcome, not a failed pipeline: the log says the run
+    # stopped, and nothing reports the pipeline as having failed.
+    log = log_path().read_text(encoding="utf-8")
+    assert "cli.run.stopped" in log
+    assert "cli.run.failed" not in log

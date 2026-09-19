@@ -692,7 +692,7 @@ def test_a_managed_and_a_dir_workspace_are_indistinguishable_to_the_stages(
 
     for meeting in (managed_meeting, dir_meeting):
         manager = RunManager(registry, pipeline=fake_pipeline)
-        run = manager.start(meeting)
+        run = manager.start(meeting, origin="console")
         state = manager.wait(run.id, timeout=10)
         assert state.status == "done"
 

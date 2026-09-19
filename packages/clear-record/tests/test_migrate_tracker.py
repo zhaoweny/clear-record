@@ -284,7 +284,7 @@ def test_a_blocker_that_never_landed_is_not_reported_as_resolved(
     assert "Blocked by: #" not in str(first["body"])
 
 
-def test_a_blocker_a_later_creation_supplies_lands_in_the_same_run(
+def test_a_blocker_supplied_by_a_later_creation_lands_in_the_same_run(
     importer: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Creation comes first, so the repair sees the number the run just got.

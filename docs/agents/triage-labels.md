@@ -30,7 +30,7 @@ for the ticket's state.
 
 | Family            | Values                                                             | Meaning |
 | ----------------- | ------------------------------------------------------------------ | ------- |
-| `lane/<slug>`     | one per lane — 22 lanes                                            | The lane (a former feature directory) the ticket belongs to; `lane/<slug>` is how committed prose names it |
+| `lane/<slug>`     | one per lane                                                       | The lane (a former feature directory) the ticket belongs to; `lane/<slug>` is how committed prose names it |
 | `type/<t>`        | the ticket's `**Type:**` line, plus `type/spec`                     | The ticket's kind; `type/spec` marks a lane's umbrella ticket, whose body is the lane's spec |
 | `status/<value>`  | the original `**Status:**` value when it was not one of the five roles — `done`, `resolved` and the like | The imported state, recorded as a label because the roles did not cover it |
 | `from/scratch`    | always the same string on every imported ticket                     | Marks everything that came from the frozen archive (ADR-0029), so imported work is distinguishable from work begun here |

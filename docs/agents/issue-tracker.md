@@ -9,9 +9,9 @@ only over the tailnet. `.scratch/` is a frozen archive of the pre-migration corp
 - **Tickets** — issues in `zhaow/clear-record` on the instance. A **lane** (a former
   feature directory) is a label: `lane/<slug>`.
 - **A lane's spec is an umbrella ticket** — one issue per lane, labelled `type/spec`: its
-  body is the spec verbatim, its remaining parts are comments, and the body carries a
-  checklist of the lane's tickets. It is the lane's entry point, and **the umbrella
-  closes when the lane's work is done** — a finished lane leaves no open spec behind.
+  body is the spec verbatim plus a checklist of the lane's tickets, and its remaining
+  parts are comments. It is the lane's entry point, and **the umbrella closes when the
+  lane's work is done** — a finished lane leaves no open spec behind.
 - **The lane's other documents are wiki pages** — one page per document, titled
   `<lane>/<stem>`: `console-ia/ticket`, `service-deployment/02-amendment`. The set is
   `ticket.md`, `02-amendment.md`, `map.md`, `order.md`, `user-stories.md`, `framing.md`,

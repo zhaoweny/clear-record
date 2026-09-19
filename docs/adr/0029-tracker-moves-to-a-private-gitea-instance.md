@@ -71,7 +71,7 @@ Date: 2026-09-19
   issues a remote agent can claim.
 - The cost is the opposite of ADR-0026's: the corpus is no longer freely wipeable, and
   ticket work now needs the instance up. That is the trade the move makes: wipeability is
-  the price paid for reachability from every checkout and worktree, cross-lane labels,
+  the price paid for reachability from every checkout and worktree, labels that cross lanes,
   and real state history.
 
 ## Alternatives considered

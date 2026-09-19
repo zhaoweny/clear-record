@@ -241,8 +241,8 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   | Laptop / phone | client / control surface |
   | NAS | raw tapes + derived artifacts |
 
-  Research pointers (dated, primary-source notes — **not** project decisions or
-  measured results; see `docs/research/` and the tracker's `hardware-backends`
+  Research pointers (dated notes — desk research or measured kit tests; **not**
+  project decisions; see `docs/research/` and the tracker's `hardware-backends`
   lane):
 
   - **Intel:** reachable through the existing `whisper-cli` + ggml seam —
@@ -257,6 +257,12 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   - **Mobile / edge:** no phone SoC is a node (client / control surface only),
     and Rockchip has **no upstream ggml backend**, so it stays outside the
     current seam. `docs/research/2026-09-14-mobile-edge-npus.md`.
+  - **Capture rig (4 transmitters / 2 receivers):** the receiver's 4-channel USB
+    capture works on Linux with no vendor driver; the cross-host channel map is
+    provable; the room microphone is the alignment reference (defaulting to the
+    first source resolves 3 of 17 sources, naming the room resolves 15 of 17);
+    measured placement quality and the alignment recipe are in the note.
+    `docs/research/2026-09-19-four-transmitter-wireless-rig.md`.
 
 ---
 
@@ -331,7 +337,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
 docs/adr/                     decision records, one file per decision
-docs/research/                dated primary-source research notes (Intel · DGX Spark · mobile/edge)
+docs/research/                dated research notes (Intel · DGX Spark · mobile/edge · capture rig)
 docs/vox/voice-of-owner.md    owner voice
 ```
 

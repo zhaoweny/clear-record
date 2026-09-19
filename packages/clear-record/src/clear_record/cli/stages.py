@@ -18,6 +18,7 @@ from pathlib import Path
 import soundfile as sf
 
 from clear_record.core import (
+    DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
     ChunkScope,
@@ -261,6 +262,16 @@ def transcribe(
     the backend and the opt-in plugin probe, resolve the model once
     (single-threaded, before the pool), then persist and print the result.
     """
+    # Captured before any other local exists in this frame: exactly the
+    # decoder-knob values this call received, keyed by the shared declaration
+    # (``DECODER_KNOB_FIELDS``) rather than restated a second time below when
+    # ``TranscriptionOptions`` is built. A knob this function's signature does
+    # not yet accept would already have failed at the call above; a knob this
+    # dict does not yet know about (the declaration grew and this frame's
+    # keyword-only parameters did not follow) raises ``KeyError`` here, loudly,
+    # instead of the value silently never reaching the backend.
+    _received = locals()
+    decoder_values = {name: _received[name] for name in DECODER_KNOB_FIELDS}
     w = Workspace.at(directory)
     try:
         scope = ChunkScope.parse(rerun_sources, rerun_range)
@@ -353,13 +364,7 @@ def transcribe(
                 resume=resume,
                 jobs=jobs,
                 scope=scope,
-                beam_size=beam_size,
-                best_of=best_of,
-                temperature=temperature,
-                entropy_thold=entropy_thold,
-                no_speech_thold=no_speech_thold,
-                max_context=max_context,
-                threads=threads,
+                **decoder_values,
             ),
             workspace=w,
             on_event=on_event,
@@ -732,14 +737,11 @@ def _run_transcribe(
         check_plugin=options.check_plugin,
         rerun_sources=options.rerun_sources,
         rerun_range=options.rerun_range,
-        beam_size=options.beam_size,
-        best_of=options.best_of,
-        temperature=options.temperature,
-        entropy_thold=options.entropy_thold,
-        no_speech_thold=options.no_speech_thold,
-        max_context=options.max_context,
-        threads=options.threads,
         on_event=on_event,
+        # Every set decoder knob, derived from ``options`` (a ``PipelineOptions``,
+        # which carries the shared ``DecoderKnobs`` fields) rather than restated
+        # by name here: a knob the declaration grows still reaches the stage.
+        **options.decoder_knobs(),
     )
     sources, _ = Workspace.at(directory).load_manifest()
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to

@@ -9,7 +9,7 @@ two are indistinguishable — a managed meeting is just a meeting whose
 ``workspace_path`` points inside the managed root, and its uploaded tapes are
 input recordings discovered and run exactly like user-typed paths.
 
-The managed root itself lives in :mod:`clear_record.service.paths` (the one
+The managed root itself lives in :mod:`clear_record.core.paths` (the one
 platformdirs-backed resolver, ``CR_WORKSPACE_ROOT`` override, default
 ``<data>/workspaces/``).
 
@@ -62,16 +62,11 @@ from clear_record.cli.workspace import (
     is_audio,
 )
 from clear_record.core.i18n import deferred
+from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
+from clear_record.service import tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.models import Meeting, Tape
-from clear_record.service.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service.store import Registry
-
-#: Subdirectory of a managed workspace holding the uploaded tapes. It is not one
-#: of ``Workspace``'s own directories and not in ``SKIP_DIRS``, so
-#: ``discover_audio`` finds the tapes: to the pipeline an upload is an input
-#: recording like any other.
-TAPES_DIRNAME = "tapes"
 
 #: Upload cap when ``CR_MAX_UPLOAD_BYTES`` is unset (8 GiB).
 DEFAULT_MAX_UPLOAD_BYTES = 8 * 1024**3
@@ -273,7 +268,8 @@ def upload_tape(
 ) -> Tape:
     """Stream one uploaded tape to the meeting's managed workspace.
 
-    Guards run first (filename, extension, cap, disk, upload id). The body is
+    Guards run first (the upload id, the declared size, free space, then the
+    filename and extension). The body is
     then copied in blocks to a sibling ``.part`` file, ``fsync``-ed and
     atomically renamed; the tape is recorded — checksum and size — only after
     the rename. Any failure (a truncated body included) removes the partial file
@@ -297,19 +293,18 @@ def upload_tape(
     resolved_root = managed_root(root)
     workspace = Path(meeting.workspace_path)
     _require_within(workspace, resolved_root)
-    tapes_dir = _safe_mkdir(workspace / TAPES_DIRNAME, root=resolved_root)
-    target = _unique_target(tapes_dir, name)
-    if target.is_symlink():
-        raise UploadRejected(
-            deferred("refusing to write to the symlink {path}"), path=str(target)
-        )
+    tapes = _safe_mkdir(tapestore.tapes_dir(workspace), root=resolved_root)
+    # `tapestore.unique_path` never hands back a symlinked name (its own
+    # on-disk check treats one as taken), so there is no reachable symlink
+    # guard to restate here.
+    target = tapestore.unique_path(tapes, name)
 
     cap = max_upload_bytes()
     # A client id names its own scratch file (so a resume layer can find it); a
     # request without one gets a short random name that cannot collide with a
     # sibling upload. Either way the name is not the tape name, which may be near
     # the filesystem's 255-byte limit.
-    part = _scratch_path(tapes_dir, token)
+    part = _scratch_path(tapes, token)
     digest = hashlib.sha256()
     written = 0
     created = False
@@ -341,7 +336,7 @@ def upload_tape(
             os.fsync(handle.fileno())
         os.replace(part, target)
         replaced = True
-        _fsync_dir(tapes_dir)
+        _fsync_dir(tapes)
         return registry.register_tape(
             meeting.id, path=str(target), sha256=digest.hexdigest(), bytes=written
         )
@@ -705,24 +700,10 @@ def _refuse_occupied_upload_id(meeting: Meeting, upload_id: str) -> None:
     """
     if not meeting.workspace_path:
         return
-    partial = _scratch_path(Path(meeting.workspace_path) / TAPES_DIRNAME, upload_id)
+    workspace = Path(meeting.workspace_path)
+    partial = _scratch_path(tapestore.tapes_dir(workspace), upload_id)
     if partial.is_symlink() or partial.exists():
         raise _resume_not_supported(upload_id)
-
-
-def _unique_target(directory: Path, name: str) -> Path:
-    """A destination filename that does not collide, mirroring the archive's
-    disagreement-free suffixes (``a.wav`` -> ``a-2.wav``)."""
-    candidate = directory / name
-    if not candidate.exists() and not candidate.is_symlink():
-        return candidate
-    stem, suffix = Path(name).stem, Path(name).suffix
-    n = 2
-    while True:
-        candidate = directory / f"{stem}-{n}{suffix}"
-        if not candidate.exists() and not candidate.is_symlink():
-            return candidate
-        n += 1
 
 
 def _fsync_dir(directory: Path) -> None:
@@ -853,7 +834,11 @@ def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
         top = rel[0] if rel else ""
         bucket = _BUCKET_DIRS.get(top)
         if bucket is None:
-            bucket = "tapes" if top == TAPES_DIRNAME or is_audio(path) else "records"
+            bucket = (
+                "tapes"
+                if top == tapestore.TAPES_DIRNAME or is_audio(path)
+                else "records"
+            )
         buckets[bucket] += size
     return {key: (value, unreadable) for key, value in buckets.items()}
 
@@ -1005,7 +990,6 @@ __all__ = [
     "MAX_UPLOAD_ID_LENGTH",
     "ResumeNotSupported",
     "STORAGE_BUCKETS",
-    "TAPES_DIRNAME",
     "UnsafeFilename",
     "UploadRejected",
     "UploadTooLarge",

@@ -51,5 +51,18 @@ light/dark desktop/mobile screenshots to `.local/e2e/screenshots/` for visual
 review, alongside the component gallery that loads the shipped `app.css`.
 
 `just e2e` is **not** part of `just verify`: it needs bun, Python and a
-downloaded browser. `just e2e-install` fetches Chromium into
-`.local/ms-playwright` once.
+downloaded browser. Before it seeds, boots or launches a spec it runs
+`scripts/check_e2e_provisioning.py` — a pointer script, since it branches —
+which exits non-zero naming the fix for whichever piece a fresh worktree
+lacks: `bun install --frozen-lockfile --cwd packages/clear-record/frontend`
+for the dependencies, `just e2e-install` for the browser. Without the guard a
+missing dependency dies at `playwright: command not found` (exit 127), and a
+missing browser fails once per spec in `browserType.launch` — one line
+instead of a diagnosis session.
+
+`just e2e-install` fetches Chromium into `.local/ms-playwright` **per
+machine**, not per worktree: the download lands once in the main checkout's
+`.local/ms-playwright`, and a worktree shares it only when its own
+`.local/ms-playwright` is a symlink there — a link environment provisioning
+makes, not a committed step. A worktree without the link downloads its own
+copy. Point a run at another location with `PLAYWRIGHT_BROWSERS_PATH`.

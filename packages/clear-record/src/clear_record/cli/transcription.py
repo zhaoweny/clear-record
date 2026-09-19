@@ -36,10 +36,10 @@ from pathlib import Path
 import soundfile as sf
 
 from clear_record.core import (
-    DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
     ChunkScope,
+    DecoderKnobs,
     EventSink,
     Progress,
     RunCancelled,
@@ -48,6 +48,11 @@ from clear_record.core import (
     Source,
 )
 from clear_record.core.i18n import deferred, tr
+from clear_record.core.process import (
+    CancellableProcessRunner,
+    ProcessCancelled,
+    SubprocessRunner,
+)
 from clear_record.engine import (
     changed_terms,
     clean_segments,
@@ -56,7 +61,6 @@ from clear_record.engine import (
     write_chunk,
 )
 from clear_record.engine.audio import read_audio
-from clear_record.providers import CancellableProcessRunner, ProcessCancelled
 
 from clear_record.cli.workspace import (
     ChunkCache,
@@ -79,7 +83,7 @@ class UnsupportedDecoderKnob(ValueError):
 
 
 @dataclasses.dataclass(frozen=True)
-class TranscriptionOptions:
+class TranscriptionOptions(DecoderKnobs):
     """Everything that shapes a run and its chunk-cache key.
 
     ``model`` is passed through to the backend as written (the backend resolves
@@ -89,6 +93,11 @@ class TranscriptionOptions:
     ``scope`` is a re-run scope, not part of the cache key: it decides which
     chunks this run is allowed to re-decode, while the cache key decides which
     chunks *may* be reused at all.
+
+    The decoder knobs come from the shared declaration
+    (:class:`~clear_record.core.DecoderKnobs`, the decoder rows of
+    ``core.RUN_KNOBS``): this type restates none of them, and ``None`` means
+    unset, so the backend's own default applies.
     """
 
     model: str | None = None
@@ -100,23 +109,6 @@ class TranscriptionOptions:
     resume: bool = True
     jobs: int = 0
     scope: ChunkScope | None = None
-    # Decoder knobs; ``None`` = unset (the backend's own default applies).
-    beam_size: int | None = None
-    best_of: int | None = None
-    temperature: float | None = None
-    entropy_thold: float | None = None
-    no_speech_thold: float | None = None
-    max_context: int | None = None
-    threads: int | None = None
-
-    def decoder_knobs(self) -> dict[str, object]:
-        """The decoder knobs that are set, keyed by field name."""
-        out: dict[str, object] = {}
-        for name in DECODER_KNOB_FIELDS:
-            value = getattr(self, name)
-            if value is not None:
-                out[name] = value
-        return out
 
 
 @dataclasses.dataclass(frozen=True)
@@ -221,7 +213,7 @@ _MODEL_VRAM_GB: dict[str, float] = {
     "turbo": 1.7,
     "distil-large-v3": 2.2,
 }
-# An unrecognised checkpoint is assumed to be a large model: that can only
+# An unrecognized checkpoint is assumed to be a large model: that can only
 # lower the default, never raise it.
 _UNKNOWN_MODEL_VRAM_GB = _MODEL_VRAM_GB["large"]
 # VRAM floor assumed when the GPU cannot be probed. 8 GB matches the sizing
@@ -245,11 +237,14 @@ _UMA_MEMORY_SHARE = 0.5
 _PROC_MEMINFO = Path("/proc/meminfo")
 _DEFAULT_MAX_JOBS = 4
 
+#: The seam the advisory ``nvidia-smi`` probe is launched through.
+_RUNNER = SubprocessRunner()
+
 
 def model_vram_gb(model: str | None) -> float:
     """Approximate resident VRAM (GB) for one ``whisper-cli`` process.
 
-    Accepts a size name, a ``ggml-*.bin`` filename, or a path. A quantisation
+    Accepts a size name, a ``ggml-*.bin`` filename, or a path. A quantization
     suffix (``-q5_0``) is ignored, which over-estimates the model and so errs on
     the safe side; an unknown name is treated as ``large``.
     """
@@ -303,7 +298,7 @@ def detect_vram_gb() -> float | None:
     if not smi:
         return None
     try:
-        proc = subprocess.run(
+        proc = _RUNNER.run(
             [smi, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,

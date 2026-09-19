@@ -42,9 +42,15 @@ import threading
 import urllib.request
 from collections.abc import Callable
 
-from clear_record.core import DECODER_KNOB_FIELDS, Segment, TranscriptionResult
+from clear_record.core import (
+    DECODER_KNOBS,
+    DECODER_KNOB_FIELDS,
+    Segment,
+    TranscriptionResult,
+)
 from clear_record.core.i18n import deferred
 from clear_record.core.message import Message
+from clear_record.core.process import ProcessRunner, SubprocessRunner
 
 from clear_record.providers.apple_speech import AppleSpeechBackend
 from clear_record.providers.base import (
@@ -59,7 +65,9 @@ from clear_record.providers.ggml_hashes import (
     verify_model_sha256,
 )
 from clear_record.providers.paths import resolve_models_dir
-from clear_record.providers.process import ProcessRunner, SubprocessRunner
+
+#: The seam for this module's one-shot probes (``whisper-cli --version``).
+_RUNNER = SubprocessRunner()
 
 
 def _make_segment(
@@ -235,7 +243,7 @@ def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
     return None
 
 
-# Recognised GPU families for the opt-in plugin-load probe, mapped to the
+# Recognized GPU families for the opt-in plugin-load probe, mapped to the
 # substrings the CLI / backend plugins print. The probe accepts the debug-build
 # ``load_backend: loaded <name> backend`` line as well as a backend's own device
 # banner (``ggml_vulkan:``, ``ggml_cuda``, ...), because release builds compile
@@ -377,7 +385,7 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
     try:
         # ``--version`` still runs ``ggml_backend_load_all()`` (the first thing
         # ``main`` does) and then exits, so no model is touched.
-        proc = subprocess.run(
+        proc = _RUNNER.run(
             [cli, "--version"], capture_output=True, text=True, timeout=30
         )
         output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
@@ -497,7 +505,7 @@ _GGML_MODEL_REPO = "ggerganov/whisper.cpp/resolve/main"
 # Socket timeout per read/write: a stalled connection must not block a pool
 # worker (or the single-threaded prefetch) indefinitely.
 _GGML_DOWNLOAD_TIMEOUT_S = 60
-# Serialise first-use downloads. The model can be requested by many pool
+# Serialize first-use downloads. The model can be requested by many pool
 # workers at once (``AppleBackend`` is ``parallelizable``), and without this
 # every worker would stream into the same temp and race ``os.replace``. One
 # lock makes the check-and-download single-flight.
@@ -565,7 +573,7 @@ def download_ggml_model(model: str, model_dir: str | None = None) -> str:
 def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> str:
     """Download ``ggml-<name>.bin`` to ``candidate`` (single-flight).
 
-    A process-wide lock serialises the check-and-download, and each call streams
+    A process-wide lock serializes the check-and-download, and each call streams
     to its own temp file, so concurrent workers can neither interleave writes nor
     lose the ``os.replace`` race. A model with a pinned digest is verified
     **before** the rename (see :mod:`clear_record.providers.ggml_hashes`), so a
@@ -659,19 +667,29 @@ def _load_whispercli_json(path: str, backend_id: str, stdout: str) -> dict:
     return data
 
 
-# whisper-cli's long flags for the tunable decoder knobs, keyed by the option
-# field name (``core.DECODER_KNOB_FIELDS``). A flag is added only when its knob is
-# set, so an unset knob leaves the built command exactly as it was before these
-# knobs existed. Kept in lock-step with ``DECODER_KNOB_FIELDS`` by a test.
-_DECODER_FLAGS: dict[str, str] = {
-    "beam_size": "--beam-size",
-    "best_of": "--best-of",
-    "temperature": "--temperature",
-    "entropy_thold": "--entropy-thold",
-    "no_speech_thold": "--no-speech-thold",
-    "max_context": "--max-context",
-    "threads": "--threads",
-}
+def _decoder_flags() -> dict[str, str]:
+    """whisper-cli's long flag per decoder knob, from the run-knob declaration
+    (``core.options.RUN_KNOBS``, which is where a flagless row would show up).
+
+    Every decoder knob must name one: a knob this adapter cannot express would be
+    silently dropped from the built command, which is the drift the declaration
+    exists to prevent, so it is a programming error here rather than a user's
+    quietly untuned decode.
+    """
+    flags: dict[str, str] = {}
+    for knob in DECODER_KNOBS:
+        if not knob.provider_flag:
+            raise RuntimeError(
+                f"decoder knob {knob.name!r} declares no whisper-cli flag"
+            )
+        flags[knob.name] = knob.provider_flag
+    return flags
+
+
+#: The flag per decoder knob, keyed by the option field name (the declaration's
+#: decoder rows). A flag is added only when its knob is set, so an unset knob
+#: leaves the built command exactly as it was before these knobs existed.
+_DECODER_FLAGS: dict[str, str] = _decoder_flags()
 
 
 class _WhisperCliBackend(BackendBase):
@@ -782,14 +800,22 @@ class _WhisperCliBackend(BackendBase):
         model_dir: str | None = None,
         initial_prompt: str | None = None,
         process_runner: ProcessRunner | None = None,
-        beam_size: int | None = None,
-        best_of: int | None = None,
-        temperature: float | None = None,
-        entropy_thold: float | None = None,
-        no_speech_thold: float | None = None,
-        max_context: int | None = None,
-        threads: int | None = None,
+        **decoder_knobs: object,
     ) -> TranscriptionResult:
+        """Transcribe one file with ``whisper-cli``.
+
+        The decoder knobs arrive as keywords named by the run-knob declaration
+        (``core.RUN_KNOBS``); taking them as a mapping rather than one parameter
+        each is what keeps this adapter from restating the table, so a new knob
+        is a row there and nothing here. A keyword that is not a declared decoder
+        knob is a caller's error and is rejected, never ignored.
+        """
+        unknown = sorted(set(decoder_knobs) - set(DECODER_KNOB_FIELDS))
+        if unknown:
+            raise TypeError(
+                "transcribe() got an unexpected keyword argument(s): "
+                + ", ".join(repr(name) for name in unknown)
+            )
         cli = _find_whisper_cli()
         if cli is None:  # defensive: available() already checked this
             raise RuntimeError("whisper-cli not found on PATH (set CR_WHISPER_CLI).")
@@ -812,17 +838,11 @@ class _WhisperCliBackend(BackendBase):
                 "-of",
                 out_prefix,
             ]
-            knobs = {
-                "beam_size": beam_size,
-                "best_of": best_of,
-                "temperature": temperature,
-                "entropy_thold": entropy_thold,
-                "no_speech_thold": no_speech_thold,
-                "max_context": max_context,
-                "threads": threads,
-            }
-            for name, flag in _DECODER_FLAGS.items():
-                value = knobs[name]
+            # One flag per set knob, straight from the declaration: an unset knob
+            # (absent, or None) adds nothing, so the built command is unchanged
+            # for a caller that asks for no tuning.
+            for knob_name, flag in _DECODER_FLAGS.items():
+                value = decoder_knobs.get(knob_name)
                 if value is not None:
                     cmd += [flag, str(value)]
             if initial_prompt:

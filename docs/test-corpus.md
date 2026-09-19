@@ -72,7 +72,7 @@ by **大家车言论** (car-review KOL panel).
 speaker's nearest mic is the cleanest source** → speech needs the least
 separation/recovery. This is a genuine **multi-source `align`** case and
 motivates the **closest-mic-wins** rule in `reconcile` (per-channel ⇒
-`speaker ≈ source`, minimising diarization work).
+`speaker ≈ source`, minimizing diarization work).
 
 **Cross-talk and the room reference.** `[FACT]` Close lavaliers do not isolate
 one voice: each mic still picks up its neighbours, so a "closest mic" can carry a

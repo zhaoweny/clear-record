@@ -10,14 +10,19 @@ explicitly asks for it.
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
+from clear_record.core.process import SubprocessRunner
+
 _FFMPEG = shutil.which("ffmpeg")
+
+#: The seam ``ffmpeg`` is launched through: a one-shot decode with no grace or
+#: cancellation of its own, whose non-zero exit stays a ``CalledProcessError``.
+_RUNNER = SubprocessRunner()
 
 
 class AudioDecodeError(RuntimeError):
@@ -36,7 +41,9 @@ def _decode_with_ffmpeg(path: Path, target_sr: int | None) -> tuple[np.ndarray, 
         if target_sr:
             cmd += ["-ar", str(target_sr)]
         cmd += [str(out)]
-        subprocess.run(cmd, check=True, capture_output=True)
+        # Bytes output and ``check`` both keep what this decode has always done:
+        # a failed ``ffmpeg`` raises ``subprocess.CalledProcessError``.
+        _RUNNER.run(cmd, capture_output=True, text=False, check=True)
         return read_audio(out, target_sr=target_sr)
 
 

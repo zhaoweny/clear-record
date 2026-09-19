@@ -201,7 +201,7 @@ def test_exports_stay_untranslated(pseudo, tmp_path) -> None:
     Workspace.at(workspace).write_record(
         RecordDocument(sources=(), alignment=None, segments=())
     )
-    written = stages.export(str(workspace), formats=["md"])
+    written = stages.export(str(workspace))
     text = written["md"].read_text(encoding="utf-8")
     assert text.splitlines()[0] == "# Record"
     assert "«" not in text

@@ -43,7 +43,7 @@ Date: 2026-09-13
   dependencies and no `[tool.uv.sources]` (nothing intra-workspace to pin). The
   `apple`/`nvidia`/`amd`/`all` backend extras remain no-op markers (ADR-0005).
 - [DECISION] The dist owns the `clear-record` console script, targeting the CLI
-  layer directly (`clear_record.cli:main`). The top-level `clear_record`
+  layer directly (`clear_record.cli.cli:main`). The top-level `clear_record`
   `__init__.py` is **light** (a docstring only) so `import clear_record` does
   not pull in the CLI or the audio stack (ADR-0010's facade module is gone along
   with the facade dist).
@@ -51,10 +51,12 @@ Date: 2026-09-13
   `packages/clear-record/tests/test_layering.py`, now enforces what packaging
   used to: it parses the `clear_record` source with the stdlib `ast` module and
   asserts (a) `core` imports no third-party package and no sibling layer, (b) the
-  allowed internal edges — `engine → core`, `providers → core`, `cli →
-  {core, engine, providers}` — and (c) no internal layer imports
-  `clear_record.cli`. It is dependency-free, and it must genuinely fail when the
-  rule is broken.
+  allowed internal edges — at this date `engine → core`, `providers → core`,
+  `cli → {core, engine, providers}`, the edges between the four `cr_*` layers the
+  collapse kept (ADR-0013 added `service` and `web` the next day, ADR-0016 and
+  ADR-0017 `tray` and `mcp`, so the guard's DAG is eight layers today) — and (c)
+  that `core`, `engine` and `providers` do not import `clear_record.cli`. It is
+  dependency-free, and it must genuinely fail when the rule is broken.
 - [DESIGN] The workspace is **kept** (root is still a virtual project with
   `members = ["packages/*"]`), so a future GUI/MCP server is a *new* member, not
   a reparenting. The root's aggregate extras now reference
@@ -99,3 +101,29 @@ Date: 2026-09-13
   `uv version`; the lockstep script is gone").
 - Revisit if a future member (GUI, MCP server) is added — it becomes a second
   workspace member/dist, not a new subpackage of `clear_record`.
+
+## Update (2026-09-19) — clause (c) stated in the guard's own terms
+
+- [FACT] Clause (c) above was written as "no internal layer imports
+  `clear_record.cli`". It held for the four layers this ADR named; ADR-0013
+  added `service` and `web` to the guard the next day, and `service` imports the
+  CLI package **deliberately** — ten of `service`'s modules do:
+  `service.agent_flow`, `service.auto`, `service.benchmark`,
+  `service.diagnostics`, `service.glossary`, `service.hello_tape`,
+  `service.managed`, `service.runs`, `service.setup` and `service.transcript` —
+  because the stage wiring the pipeline runs is still
+  `clear_record.cli.stages`. The guard's `ALLOWED_INTERNAL` carries
+  `service → cli` as an edge and its docstring says so, so what
+  `test_no_layer_imports_the_cli` enforces is the narrower rule: **`core`,
+  `engine` and `providers` never import `cli`**.
+- [FACT] The edge list in (b) is likewise the edges between the four `cr_*`
+  layers at this ADR's date, not the eight-layer DAG the guard enforces today
+  (ADR-0004's Update carries that form); `test_layering.py`'s `ALLOWED_INTERNAL`
+  is the source of truth for it.
+- [DECISION: spec author, 2026-09-19] The **stronger** rule — no layer above
+  `cli` imports it — is scheduled rather than held, reviewed by the owner when
+  the spec was dispatched: the pipeline module (item `C3`, the next sprint's
+  headline; [ADR-0030](0030-persistence-layer-and-the-restructure-order.md))
+  moves the stage wiring out of the CLI package, which is what lets the
+  `service → cli` edge go. Restate this clause and the guard together when it
+  lands; until then the guard is the rule and the stronger clause is not.

@@ -58,7 +58,7 @@ from pathlib import Path
 from clear_record.cli.auto import Message
 from clear_record.core import i18n
 from clear_record.core.i18n import tr
-from clear_record.service.paths import config_path
+from clear_record.core.paths import config_path
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
     MCP_SERVER_NAME,

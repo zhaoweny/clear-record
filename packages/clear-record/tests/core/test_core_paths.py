@@ -6,7 +6,10 @@ pin the precedence, every default, and — the reason migration is part of the
 change — that an existing pre-platformdirs install is **adopted** rather than
 orphaned. The models kind has two legacy shapes: the pre-platformdirs XDG data
 directory (adopted with the data dir), and the pre-kind-split ``<cwd>/models``
-(adopted only when it *looks like* a ggml cache, because ``<cwd>`` is arbitrary).
+(adopted only when the recognizer installed from above says so, because
+``<cwd>`` is arbitrary). The recognizer itself — the vendor's artifact names —
+is the provider layer's knowledge, and its tests live with it
+(:mod:`clear_record.providers.model_cache`).
 """
 
 from __future__ import annotations
@@ -139,22 +142,50 @@ def test_models_adopt_under_the_adopted_data_dir(tmp_path, install, capsys) -> N
 
 
 # --- migration: the old <cwd>/models default -------------------------------- #
-def _legacy_cwd_cache(tmp_path: Path) -> Path:
-    """A fake legacy ``<cwd>/models`` holding one completed ggml download."""
-    cache = tmp_path / "models"
-    cache.mkdir()
-    (cache / "ggml-small.bin").write_bytes(b"weights")
-    return cache
+def _legacy_cwd_models(tmp_path: Path) -> Path:
+    """A fake legacy ``<cwd>/models`` directory; its name is all it has."""
+    candidate = tmp_path / "models"
+    candidate.mkdir()
+    return candidate
 
 
-def test_legacy_cwd_models_is_adopted_when_it_holds_a_ggml_cache(
+@pytest.fixture()
+def recognize_anything(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for the recognizer the provider layer installs (see below)."""
+
+    def _anything(_directory: Path) -> bool:
+        return True
+
+    monkeypatch.setattr(paths, "_recognize_models", _anything)
+
+
+def test_models_adoption_takes_the_recognizers_word(
     tmp_path, install, monkeypatch, capsys
 ) -> None:
-    install(_dirs(tmp_path))
-    legacy = _legacy_cwd_cache(tmp_path)
-    monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
-    assert paths.resolve_models_dir() == legacy
+    """Core spells no artifact name: it adopts on whatever the recognizer says.
 
+    Which names mean a cache of our weights is the provider layer's knowledge
+    (:mod:`clear_record.providers.model_cache`); here only the rule is pinned.
+    With a recognizer that has not been installed — core's default — or one that
+    says no, the legacy ``<cwd>/models`` is left alone: ``<cwd>`` is wherever the
+    command ran, so its name proves nothing. A positive one adopts it in place,
+    with the notice.
+    """
+    install(_dirs(tmp_path))
+    legacy = _legacy_cwd_models(tmp_path)
+    monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
+
+    # The recognizer of a process that never imported the provider layer.
+    monkeypatch.setattr(paths, "_recognize_models", paths._nothing_recognized)
+    assert paths.resolve_models_dir() == tmp_path / "native" / "data" / "models"
+    assert "adopting" not in capsys.readouterr().err
+
+    monkeypatch.setattr(paths, "_recognize_models", lambda _directory: False)
+    assert paths.resolve_models_dir() == tmp_path / "native" / "data" / "models"
+    assert "adopting" not in capsys.readouterr().err
+
+    monkeypatch.setattr(paths, "_recognize_models", lambda _directory: True)
+    assert paths.resolve_models_dir() == legacy
     notice = capsys.readouterr().err
     assert "adopting" in notice
     assert str(legacy) in notice
@@ -163,10 +194,10 @@ def test_legacy_cwd_models_is_adopted_when_it_holds_a_ggml_cache(
 
 
 def test_the_models_adoption_notice_is_printed_once(
-    tmp_path, install, monkeypatch, capsys
+    tmp_path, install, monkeypatch, capsys, recognize_anything
 ) -> None:
     install(_dirs(tmp_path))
-    _legacy_cwd_cache(tmp_path)
+    _legacy_cwd_models(tmp_path)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
     paths.resolve_models_dir()
     assert "adopting" in capsys.readouterr().err
@@ -176,54 +207,31 @@ def test_the_models_adoption_notice_is_printed_once(
 
 
 def test_cwd_models_is_not_adopted_when_the_native_dir_exists(
-    tmp_path, install, monkeypatch, capsys
+    tmp_path, install, monkeypatch, capsys, recognize_anything
 ) -> None:
     install(_dirs(tmp_path))
-    _legacy_cwd_cache(tmp_path)
+    _legacy_cwd_models(tmp_path)
     (tmp_path / "native" / "data" / "models").mkdir(parents=True)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
     assert paths.resolve_models_dir() == tmp_path / "native" / "data" / "models"
     assert "adopting" not in capsys.readouterr().err
 
 
-def test_a_cwd_models_that_is_not_a_ggml_cache_is_not_adopted(
-    tmp_path, install, monkeypatch, capsys
-) -> None:
-    """``<cwd>`` is wherever the command ran, so a shared name proves nothing."""
-    install(_dirs(tmp_path))
-    (tmp_path / "models").mkdir()
-    (tmp_path / "models" / "README.md").write_text("not weights")
-    monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
-    assert paths.resolve_models_dir() == tmp_path / "native" / "data" / "models"
-    assert "adopting" not in capsys.readouterr().err
-
-
-def test_a_cwd_models_with_only_a_partial_download_is_not_adopted(
-    tmp_path, install, monkeypatch, capsys
-) -> None:
-    install(_dirs(tmp_path))
-    (tmp_path / "models").mkdir()
-    (tmp_path / "models" / "ggml-small.bin.4242.0.part").write_bytes(b"half")
-    monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
-    assert paths.resolve_models_dir() == tmp_path / "native" / "data" / "models"
-    assert "adopting" not in capsys.readouterr().err
-
-
 def test_an_explicit_models_dir_beats_adoption_without_a_notice(
-    tmp_path, install, monkeypatch, capsys
+    tmp_path, install, monkeypatch, capsys, recognize_anything
 ) -> None:
     install(_dirs(tmp_path))
-    _legacy_cwd_cache(tmp_path)
+    _legacy_cwd_models(tmp_path)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
     assert paths.resolve_models_dir(tmp_path / "explicit") == tmp_path / "explicit"
     assert "adopting" not in capsys.readouterr().err
 
 
 def test_a_cwd_models_override_beats_adoption_without_a_notice(
-    tmp_path, install, monkeypatch, capsys
+    tmp_path, install, monkeypatch, capsys, recognize_anything
 ) -> None:
     install(_dirs(tmp_path))
-    _legacy_cwd_cache(tmp_path)
+    _legacy_cwd_models(tmp_path)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
     monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "env-models"))
     assert paths.resolve_models_dir() == tmp_path / "env-models"
@@ -231,10 +239,10 @@ def test_a_cwd_models_override_beats_adoption_without_a_notice(
 
 
 def test_a_config_models_dir_beats_adoption_without_a_notice(
-    tmp_path, install, monkeypatch, capsys
+    tmp_path, install, monkeypatch, capsys, recognize_anything
 ) -> None:
     install(_dirs(tmp_path))
-    _legacy_cwd_cache(tmp_path)
+    _legacy_cwd_models(tmp_path)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)
     config = tmp_path / "config.toml"
     config.write_text(f'[paths]\nmodels_dir = "{tmp_path / "cfg-models"}"\n')

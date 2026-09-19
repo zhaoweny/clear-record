@@ -28,7 +28,12 @@ Two deliberate scoping choices:
   files that are not ignored** — so a freshly written document is caught before
   it is ever staged, and `just verify` agrees with CI.
 - Only five files are exempt, because they are the ones that define or explain
-  the boundary itself.
+  the boundary itself. This guard's own membership is the rule's **one recorded
+  exception**: a ban has to write down the name it bans, so the hostname literal
+  below is the one committed place it may stand. The owner accepted it standing
+  when it was raised, on 2026-09-19 — recorded beside the rule it excepts in
+  ``docs/agents/issue-tracker.md``; any *other* file naming it is a finding, not
+  a second exception.
 
 The scan **fails loudly when it cannot enumerate tracked files**. A guard that
 silently passes when it cannot see the tree is worse than no guard at all.
@@ -63,6 +68,9 @@ IGNORED_PATH_ROOTS = (".scratch",)
 # Hostnames of private services a committed file must not name: the tracker's
 # Gitea instance, reachable only over the owner's tailnet (ADR-0029).
 #
+# The literal below is the guard's own exception to its own rule — the ban must
+# name what it bans — so it is exempt here and nowhere else; see ``EXEMPT``.
+#
 # A hostname is not a path root, so it needs its own matcher. The scheme of a
 # ``https://host/…`` URL makes the leading token look like an absolute path, so
 # the path rule above deliberately lets it through; the host itself is the
@@ -72,8 +80,14 @@ PRIVATE_HOSTS = ("gitea.tailnet-00e4.ts.net",)
 
 # Files exempt because they define or explain the boundary: the ignore rule
 # itself, the standing instructions, the tracker convention, the ADR that moves
-# the tracker (which must name the archive it freezes), and this guard (whose
-# docstring must name the directory and the hostname ban to explain what it bans).
+# the tracker (which must name the archive it freezes), and this guard.
+#
+# This guard's membership is the **owner-accepted exception** to the hostname
+# ban, not an oversight: a ban has to name what it bans, so ``PRIVATE_HOSTS``
+# contains the one committed literal that may stand, and the docstring/comment
+# here is the only committed prose that may discuss it. The owner accepted it
+# standing when it was raised, on 2026-09-19 — recorded beside the rule in
+# ``docs/agents/issue-tracker.md``; a second file naming the host is a finding.
 EXEMPT = frozenset(
     {
         ".gitignore",

@@ -24,7 +24,8 @@ from clear_record.cli import stages
 from clear_record.cli.transcription import WorkerRssSampler
 from clear_record.cli.workspace import Workspace
 from clear_record.core import RecordDocument, Segment, Source, TranscriptionResult
-from clear_record.providers import BackendBase, BackendInfo, CancellableProcessRunner
+from clear_record.core.process import CancellableProcessRunner
+from clear_record.providers import BackendBase, BackendInfo
 from clear_record.service import (
     PipelineOptions,
     Registry,

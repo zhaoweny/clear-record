@@ -43,6 +43,7 @@ from clear_record.cli import auto as _auto
 from clear_record.cli.auto import Message
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
+from clear_record.core.paths import resolve_models_dir, resolve_state_dir
 from clear_record.service.auto import (
     MODEL_LADDER,
     available_backend_ids,
@@ -50,7 +51,6 @@ from clear_record.service.auto import (
 )
 from clear_record.service.hello_tape import HelloTape, write_hello_tape
 from clear_record.service.models import Meeting
-from clear_record.service.paths import resolve_models_dir, resolve_state_dir
 from clear_record.service.setup import SetupError, mcp_server_entry, read_setup_state
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 
@@ -78,7 +78,7 @@ HELLO_CHECK_DIRNAME = "hello-check"
 _SCRATCH_PROJECT = "hello-world-check"
 _SCRATCH_MEETING = "hello-world"
 
-#: Serialises the scratch workspace against concurrent "Try it" clicks. The
+#: Serializes the scratch workspace against concurrent "Try it" clicks. The
 #: console is local and single-user (ADR-0013); this is belt-and-braces so two
 #: requests cannot interleave ingest/transcribe in one directory.
 _CHECK_LOCK = threading.Lock()
@@ -137,7 +137,7 @@ def _on_disk_checkpoint() -> Path | None:
     **Never downloads.** A missing checkpoint is the ``model`` finding, reported
     before the pipeline runs so a web request can never trigger a first-use
     download. The concrete path — not the size name — is returned, so a
-    quantised file (``ggml-large-v3-q5_0.bin``) resolves as-is.
+    quantized file (``ggml-large-v3-q5_0.bin``) resolves as-is.
     """
     candidates = model_paths_on_disk()
     if not candidates:

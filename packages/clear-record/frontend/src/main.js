@@ -16,7 +16,7 @@ import "./app.css";
 // tag did.
 window.htmx = htmx;
 
-// Alpine does not self-initialise in its bundled ESM build (only the CDN build
+// Alpine does not self-initialize in its bundled ESM build (only the CDN build
 // does), so start it explicitly. It waits for the DOM itself.
 window.Alpine = Alpine;
 Alpine.start();

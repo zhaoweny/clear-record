@@ -19,6 +19,7 @@ import pytest
 
 import clear_record.providers.apple_speech as apple_speech
 from clear_record.core import Segment, TranscriptionResult
+from clear_record.core.process import CancellableProcessRunner
 from clear_record.providers import (
     APPLE_SPEECH_BACKEND_ID,
     RUNTIME_SYSTEM,
@@ -26,7 +27,6 @@ from clear_record.providers import (
     AppleSpeechError,
     AppleSpeechHelper,
     AppleSpeechUnavailable,
-    CancellableProcessRunner,
     SpeechProbe,
     get_backend,
     probe_ggml_plugin_load,
@@ -90,7 +90,7 @@ class _FakeHelper:
 class _RunnerObject:
     """A ``ProcessRunner``-shaped object: it has ``.run`` but no ``__call__``.
 
-    ``providers.process.CancellableProcessRunner`` is exactly this shape, so a
+    ``core.process.CancellableProcessRunner`` is exactly this shape, so a
     test driving this object exercises the contract the pipeline passes.
     """
 

@@ -10,20 +10,11 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 
+import click
 import pytest
 
-from clear_record.core import PROFILES, PipelineOptions
+from clear_record.core import PROFILES, RUN_KNOBS, PipelineOptions
 from clear_record.cli.cli import _build_group, _pipeline_options
-
-DECODER_FLAGS = {
-    "beam_size": "--beam-size",
-    "best_of": "--best-of",
-    "temperature": "--temperature",
-    "entropy_thold": "--entropy-thold",
-    "no_speech_thold": "--no-speech-thold",
-    "max_context": "--max-context",
-    "threads": "--threads",
-}
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +38,24 @@ def _param(command: str, name: str):
     )
 
 
+def test_the_knob_table_is_the_cli_surface() -> None:
+    """The declaration is the flag: spelling, ``CR_*`` binding, type and help all
+    come from the row, on every command that carries the backend option group. A
+    knob whose row is not rendered here would silently vanish from the CLI."""
+    for command in ("transcribe", "run", "calibrate"):
+        params = {
+            param.name: param for param in _build_group().commands[command].params
+        }
+        for knob in RUN_KNOBS:
+            param = params.get(knob.name)
+            assert param is not None, f"{command} has no --{knob.name}"
+            assert tuple(param.opts) == knob.cli
+            assert param.envvar == knob.env
+            assert param.type is click.types.convert_type(knob.convert)
+            assert param.help == knob.help
+            assert param.default is None
+
+
 def test_profile_and_decoder_flags_default_to_unset_on_every_backend_command() -> None:
     for command in ("transcribe", "run", "calibrate"):
         ns = _parse(command, ["dir"])
@@ -55,8 +64,8 @@ def test_profile_and_decoder_flags_default_to_unset_on_every_backend_command() -
         assert ns.profile is None
         # The resolver-managed knobs default to None (unset), not to the concrete
         # built-in value, so an explicit `--jobs 0` stays explicit.
-        for field in ("chunk_seconds", "overlap_seconds", "jobs", *DECODER_FLAGS):
-            assert getattr(ns, field) is None, f"{command} defaulted {field}"
+        for knob in RUN_KNOBS:
+            assert getattr(ns, knob.name) is None, f"{command} defaulted {knob.name}"
 
 
 def test_profile_choices_come_from_the_table() -> None:

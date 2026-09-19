@@ -1263,6 +1263,7 @@ def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
     assert registry.claim_run(run.id, owner="peer:not-a-pid") is not None
     reaped = registry.interrupt_run(
         run.id,
+        observed=registry.get_run(run.id),  # nothing beat it: the compare wins
         ended_at="2026-01-01T00:00:00+00:00",
         error=RESTART_REASON,
         progress={"interrupted": True},
@@ -1363,6 +1364,65 @@ def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path, monkeypatch) -> N
         assert registry.meeting_by_id(meeting.id).status == "recorded"
     finally:
         manager.shutdown(timeout=5)
+
+
+def test_a_reap_cannot_overwrite_a_run_its_owner_refreshed(tmp_path) -> None:
+    """A beat written during reconciliation wins the reap (a stale observation).
+
+    Reconciliation decides from a snapshot — a heartbeat that had gone stale —
+    and a live owner beats every couple of seconds, so the row can go from
+    "stale" to "beaten a moment ago" between the read that judged it dead and the
+    write that would interrupt it. Interrupting it anyway would record a stop that
+    never happened on a run whose owner is provably alive, so the transition is a
+    compare-and-swap against the **ownership and heartbeat the decision was based
+    on**: the beat wins, the run is left exactly as it was, and the reap reports
+    the stale observation rather than an interruption it did not make.
+
+    Staging the gap: the snapshot row is handed in directly, exactly as the
+    reaper's read left it — the same stage the finished-run test above sets up for
+    the ``status`` half of the compare, here for the heartbeat half.
+    """
+    from clear_record.core import read_recent
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(meeting.id, origin="console")
+    # The owner is one the pid probe cannot resolve, so the **heartbeat** is what
+    # decides here: an owner that looks like a live pid would hold the run on a
+    # machine that happens to have that pid, and the test would be about the probe
+    # instead of about the beat.
+    unreadable = f"{platform.node()}:{'9' * 24}"
+    assert registry.claim_run(run.id, owner=unreadable) is not None
+    registry.set_meeting_status(meeting.id, "running")
+    assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
+    stale = registry.get_run(run.id)  # what the reaper judged dead from
+
+    # The owner is alive and keeps beating: the row is no longer the stale one.
+    assert registry.heartbeat_run(run.id)
+    beaten = registry.get_run(run.id).heartbeat_at
+    assert beaten != stale.heartbeat_at
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    try:
+        assert manager._reap_dead_runs([stale]) == []  # a loss is not a reap
+        kept = registry.get_run(run.id)
+        assert (kept.status, kept.error) == ("running", None)
+        assert kept.heartbeat_at == beaten
+        assert registry.meeting_by_id(meeting.id).status == "running"
+    finally:
+        manager.shutdown(timeout=5)
+
+    # And the loss is reported for what it was: a stale observation of a run that
+    # is still running, i.e. an owner that refreshed its beat under the decision.
+    reports = [
+        json.loads(line) for line in read_recent(200) if "reconcile_stale" in line
+    ]
+    report = next(row for row in reports if row["run_id"] == run.id)
+    assert report["status"] == "running"
+    assert report["observed_heartbeat_at"] == "2020-01-01T00:00:00+00:00"
+    assert report["heartbeat_at"] == beaten
 
 
 def test_a_heartbeat_ahead_of_the_clock_is_not_evidence_of_life(tmp_path) -> None:

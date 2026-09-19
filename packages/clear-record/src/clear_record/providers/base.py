@@ -7,8 +7,7 @@ from typing import Protocol
 
 from clear_record.core import TranscriptionResult
 from clear_record.core.message import Message
-
-from clear_record.providers.process import ProcessRunner
+from clear_record.core.process import ProcessRunner
 
 BackendId = str
 
@@ -76,9 +75,9 @@ class BackendInfo:
     # coarse progress and resume (ADR-0019).
     chunked: bool = True
     # Which decoder knobs this backend can honour, by their option field name
-    # (see ``core.DECODER_KNOB_FIELDS``). A requested knob outside this set makes
-    # the transcribe stage fail loudly rather than silently drop it; the default
-    # is "none", so a backend must opt in explicitly.
+    # (the decoder rows of ``core.options.RUN_KNOBS``). A requested knob outside
+    # this set makes the transcribe stage fail loudly rather than silently drop
+    # it; the default is "none", so a backend must opt in explicitly.
     decoder_knobs: tuple[str, ...] = ()
 
     @property
@@ -143,11 +142,15 @@ class Backend(Protocol):
         ``model_dir`` is where to download/read model weights. ``initial_prompt``
         biases decoding toward a glossary of names/terms. ``process_runner``
         optionally overrides how the backend launches its CLI, so a caller can
-        scope cancellation to its own children (see ``clear_record.providers.process``).
+        scope cancellation to its own children (see ``clear_record.core.process``).
 
         The trailing decoder knobs are optional; a backend advertises which it
         supports via :attr:`BackendInfo.decoder_knobs` and must implement the
-        rest. ``None`` means "unset" — the backend's own default applies.
+        rest. ``None`` means "unset" — the backend's own default applies. The
+        knobs a caller may pass are the declaration, ``core.options.RUN_KNOBS``;
+        an adapter may accept them as one ``**decoder_knobs`` mapping instead of
+        one keyword each, so it need not restate it — the whisper-cli adapter
+        does.
         """
         ...
 

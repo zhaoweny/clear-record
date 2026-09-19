@@ -4,7 +4,7 @@ Status: research note (desk research, no hardware run)
 Date: 2026-09-14
 Ticket: the local tracker's `hardware-backends` lane, ticket 01
 Provenance: every factual claim is cited to a primary source (upstream repo,
-vendor doc, or licence text). Items that could not be verified are labelled
+vendor doc, or license text). Items that could not be verified are labelled
 `[OPEN]`.
 
 ## 0. Method
@@ -20,8 +20,8 @@ against Intel/OpenVINO's own documentation.
   (version 0.24.0, 2026-09-14). Source: <https://github.com/ggml-org/ggml>.
 - `ggml-org/llama.cpp` `docs/backend/{SYCL,OPENVINO}.md` on `master` (the
   ggml backends live in llama.cpp and are vendored into whisper.cpp).
-- OpenVINO / OpenVINO GenAI docs and licence files, Intel's own technical
-  article and GPU-driver docs, and `intel/llvm` licence text.
+- OpenVINO / OpenVINO GenAI docs and license files, Intel's own technical
+  article and GPU-driver docs, and `intel/llvm` license text.
 
 ## 1. Verdict (summary)
 
@@ -221,7 +221,7 @@ and that offline compilation/blobs are for development only:
 <https://docs.openvino.ai/2025/openvino-workflow/running-inference/inference-devices-and-modes/npu-device.html>.
 
 `[FACT]` In the `ggml-openvino` backend, the NPU path is **stateless only** and
-specialises around `Q4_0`-class quantization; `GGML_OPENVINO_CACHE_DIR` is "not
+specializes around `Q4_0`-class quantization; `GGML_OPENVINO_CACHE_DIR` is "not
 supported on NPU devices":
 <https://github.com/ggml-org/llama.cpp/blob/master/docs/backend/OPENVINO.md>.
 
@@ -257,7 +257,7 @@ limitations", and notes Whisper GenAI support arrived in OpenVINO 2024.5
 This is a second model-provisioning format, distinct from clear-record's
 existing `ggml-*.bin` download.
 
-### 4.2 Licence (verified, not assumed)
+### 4.2 License (verified, not assumed)
 
 `[FACT]` The `openvino.genai` repository is **Apache-2.0** (README "License"
 section + the repo's `LICENSE`):
@@ -300,7 +300,7 @@ adds a second model format and breaks the ADR property.
 | `ggml-openvino` (CPU/GPU/**NPU**) | system `whisper-cli` + `libggml-openvino` plugin | **Yes, essentially** — same subprocess; needs an `openvino` family, OpenVINO runtime presence, and a device hint passed to the child | none new (plugin) |
 | OpenVINO GenAI `ASRPipeline` | `openvino-genai` Python package | **No** — in-process library | **new in-process family** |
 
-`[FACT]` The existing adapter already parameterises exactly these knobs:
+`[FACT]` The existing adapter already parameterizes exactly these knobs:
 `_WhisperCliBackend(gpu_backends=(...), device_check=..., system=...)` plus a
 plugin-glob table `_GGML_BACKEND_PATTERNS = {"vulkan": ("libggml-vulkan*.so*",),
 "hip": ..., "cuda": ..., "metal": ...}` — visible in
@@ -330,12 +330,12 @@ README names only x86 CPUs and Intel GPUs (not NPU):
 <https://github.com/ggml-org/whisper.cpp/blob/master/README.md#openvino-support>,
 <https://github.com/ggml-org/whisper.cpp/blob/master/src/openvino/whisper-openvino-encoder.cpp>.
 
-## 6. Q5 — Licence per option against ADR-0003
+## 6. Q5 — License per option against ADR-0003
 
 ADR-0003 prefers permissive and permits copyleft only across process/network
 boundaries (`docs/adr/0003-license-boundary.md`).
 
-| Component | Licence | Source |
+| Component | License | Source |
 |---|---|---|
 | `whisper.cpp` (incl. `ggml-sycl`, `ggml-vulkan`, `ggml-openvino`) | MIT | <https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE>, <https://github.com/ggml-org/ggml/blob/master/LICENSE> |
 | `ggml-sycl` headers | MIT (© Intel) | <https://github.com/ggml-org/ggml/blob/master/src/ggml-sycl/ggml-sycl.cpp> |
@@ -349,7 +349,7 @@ above are permissive, and in any case each is reached from
 never imported by `clear_record.core`. The Linux Intel GPU *kernel* driver
 (`i915`/`xe`) is GPL, but that is the same OS-driver situation the existing AMD
 (`amdgpu`) and NVIDIA paths already live with, and it is not linked into the
-app; `[OPEN]` I did not separately verify the licence text of the Intel userspace
+app; `[OPEN]` I did not separately verify the license text of the Intel userspace
 driver packages (they are not required for Vulkan-on-Mesa).
 
 ## 7. Recommendation
@@ -396,7 +396,7 @@ driver packages (they are not required for Vulkan-on-Mesa).
   documents the older encoder-only `WHISPER_OPENVINO` path). `[OPEN]`
 - The Intel marketing name for the NPU (avoided; described by platform
   generation per OpenVINO's own tables).
-- Licence text of the Intel userspace GPU/NPU driver packages (not required for
+- License text of the Intel userspace GPU/NPU driver packages (not required for
   the Mesa/Vulkan path).
 
 ## 10. Sources (primary)
@@ -427,7 +427,7 @@ Vendor docs
   <https://openvinotoolkit.github.io/openvino.genai/docs/use-cases/speech-recognition/>,
   <https://docs.openvino.ai/2025/openvino-workflow-generative/inference-with-genai/inference-with-genai-on-npu.html>
 
-Licences
+Licenses
 - whisper.cpp / ggml MIT; OpenVINO + OpenVINO GenAI Apache-2.0; intel/llvm
   Apache-2.0 WITH LLVM-exception (links in §6).
 

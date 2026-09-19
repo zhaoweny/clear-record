@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-17 20:46+0800\n"
+"POT-Creation-Date: 2026-09-19 22:12+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -157,36 +157,36 @@ msgstr ""
 msgid "--auto: chose {decisions}; inputs: {inputs}."
 msgstr "--auto：选择了 {decisions}；输入：{inputs}。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:76
+#: packages/clear-record/src/clear_record/cli/cli.py:81
 msgid "clear-record: from many recordings to one clear record."
 msgstr "clear-record：从众多录音到一份清晰的记录。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#: packages/clear-record/src/clear_record/cli/cli.py:79
+#: packages/clear-record/src/clear_record/cli/cli.py:84
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/cli/cli.py:235
+#: packages/clear-record/src/clear_record/cli/cli.py:240
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:251
+#: packages/clear-record/src/clear_record/cli/cli.py:256
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
 msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:271
+#: packages/clear-record/src/clear_record/cli/cli.py:276
 #, python-brace-format
 msgid ""
 "{path} is a file, not a directory: this command expects a directory of "
 "audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:677
+#: packages/clear-record/src/clear_record/cli/cli.py:621
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -198,81 +198,81 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:828
+#: packages/clear-record/src/clear_record/cli/cli.py:768
 #, python-brace-format
 msgid ""
 "[next] the record is in {directory}/export; review it and accept the "
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:870
+#: packages/clear-record/src/clear_record/cli/cli.py:813
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:885
+#: packages/clear-record/src/clear_record/cli/cli.py:828
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:892
+#: packages/clear-record/src/clear_record/cli/cli.py:835
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:899
+#: packages/clear-record/src/clear_record/cli/cli.py:842
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:906
+#: packages/clear-record/src/clear_record/cli/cli.py:849
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:913
+#: packages/clear-record/src/clear_record/cli/cli.py:856
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:541
+#: packages/clear-record/src/clear_record/cli/transcription.py:536
 msgid ""
 "[transcribe] a re-run scope only means something when cached chunks may "
 "be reused, but resume is off; drop one of the two."
 msgstr "[transcribe] 只有当缓存片段可能被复用时，重新运行范围才有意义，但 resume 已关闭；请去掉两者之一。"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:551
+#: packages/clear-record/src/clear_record/cli/transcription.py:546
 #, python-brace-format
 msgid ""
 "[transcribe] re-run scope names source(s) not in the manifest: {unknown} "
 "(available: {available})."
 msgstr "[transcribe] 重新运行范围指定了清单中不存在的来源：{unknown}（可用：{available}）。"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:574
+#: packages/clear-record/src/clear_record/cli/transcription.py:569
 #, python-brace-format
 msgid ""
 "[transcribe] re-run scope ({scope}) selects no chunk of {looked_at}; it "
 "would re-decode nothing. Widen the range or drop the scope."
 msgstr "[transcribe] 重新运行范围（{scope}）没有选中 {looked_at} 的任何片段；不会重新解码任何内容。请放宽范围或去掉该范围。"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:593
+#: packages/clear-record/src/clear_record/cli/transcription.py:588
 msgid "no decoder worker ran: every chunk was reused from the cache"
 msgstr "没有解码工作进程运行：所有分块均复用了缓存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:596
+#: packages/clear-record/src/clear_record/cli/transcription.py:591
 msgid "no decoder worker's memory could be sampled during the transcribe stage"
 msgstr "转写阶段无法采样任何解码工作进程的内存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:599
+#: packages/clear-record/src/clear_record/cli/transcription.py:594
 msgid "peak worker memory is not measurable on this platform"
 msgstr "该平台无法测量工作进程峰值内存"
 
-#: packages/clear-record/src/clear_record/cli/transcription.py:874
+#: packages/clear-record/src/clear_record/cli/transcription.py:869
 #, python-brace-format
 msgid ""
 "[transcribe] backend '{backend}' cannot honour decoder option(s): "
 "{unsupported}. It supports: {supported}."
 msgstr "[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupported}。它支持：{supported}。"
 
-#: packages/clear-record/src/clear_record/core/paths.py:177
+#: packages/clear-record/src/clear_record/core/paths.py:187
 #, python-brace-format
 msgid ""
 "clear-record: adopting the existing pre-platformdirs {label} directory at"
@@ -282,7 +282,7 @@ msgstr ""
 "clear-record：正在沿用 platformdirs 之前已有的 {label} 目录 {legacy}；请将其移动到 {native} "
 "以使用平台原生布局（ADR-0025）。{hint}"
 
-#: packages/clear-record/src/clear_record/core/paths.py:342
+#: packages/clear-record/src/clear_record/core/paths.py:353
 msgid " Set CR_MODELS_DIR to pin a different models directory."
 msgstr " 设置 CR_MODELS_DIR 可指定其他模型目录。"
 
@@ -321,17 +321,17 @@ msgid ""
 " than the start."
 msgstr "重跑范围 {whole!r} 的结束时间不晚于开始时间；结束必须晚于开始。"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:238
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:243
 #, python-brace-format
 msgid "Apple SpeechTranscriber ({source}) returned non-list 'segments': {type}."
 msgstr "Apple SpeechTranscriber（{source}）返回的 'segments' 不是列表：{type}。"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:250
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:255
 #, python-brace-format
 msgid "Apple SpeechTranscriber ({source}) returned a non-object segment: {entry}."
 msgstr "Apple SpeechTranscriber（{source}）返回的 segment 不是对象：{entry}。"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:370
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:376
 #, python-brace-format
 msgid ""
 "Apple SpeechTranscriber is reachable only through its Swift-only API, so "
@@ -343,105 +343,105 @@ msgstr ""
 "会在首次使用时编译一个小型辅助程序。请用 `xcode-select --install` 安装 Swift 工具链，或将 {env} "
 "设置为预编译的辅助程序。"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:385
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:391
 #, python-brace-format
 msgid "could not create the Apple speech helper cache directory {path}: {error}"
 msgstr "无法创建 Apple 语音辅助程序缓存目录 {path}：{error}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:412
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:424
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:418
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:430
 #, python-brace-format
 msgid "could not compile the Apple speech helper: {detail}"
 msgstr "无法编译 Apple 语音辅助程序：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:421
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:427
 msgid "could not compile the Apple speech helper"
 msgstr "无法编译 Apple 语音辅助程序"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:437
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:443
 #, python-brace-format
 msgid "could not install the compiled Apple speech helper: {error}"
 msgstr "无法安装编译后的 Apple 语音辅助程序：{error}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:515
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:521
 #, python-brace-format
 msgid "the Apple speech helper timed out after {seconds} seconds"
 msgstr "Apple 语音辅助程序在 {seconds} 秒后超时"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:523
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:529
 #, python-brace-format
 msgid "could not run the Apple speech helper: {error}"
 msgstr "无法运行 Apple 语音辅助程序：{error}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:532
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:538
 #, python-brace-format
 msgid "the Apple speech helper failed (exit {code}): {detail}"
 msgstr "Apple 语音辅助程序失败（退出码 {code}）：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:535
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:541
 #, python-brace-format
 msgid "the Apple speech helper failed (exit {code})"
 msgstr "Apple 语音辅助程序失败（退出码 {code}）"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:545
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:551
 msgid ""
 "the Apple speech helper produced no result (it may not support "
 "SpeechAnalyzer on this OS)"
 msgstr "Apple 语音辅助程序未产生结果（此 OS 可能不支持 SpeechAnalyzer）"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:556
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:562
 #, python-brace-format
 msgid "the Apple speech helper returned unreadable JSON: {error}"
 msgstr "Apple 语音辅助程序返回了无法解析的 JSON：{error}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:565
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:571
 #, python-brace-format
 msgid "the Apple speech helper returned non-object JSON: {type}"
 msgstr "Apple 语音辅助程序返回了非对象 JSON：{type}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:613
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:623
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:619
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:629
 #, python-brace-format
 msgid "requires macOS {major}+ (this is {host})"
 msgstr "需要 macOS {major}+（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:633
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:639
 #, python-brace-format
 msgid "Apple Speech is unavailable: {detail}"
 msgstr "Apple Speech 不可用：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:641
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:647
 #, python-brace-format
 msgid "Apple Speech probe failed: {detail}"
 msgstr "Apple Speech 探测失败：{detail}"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:650
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:656
 msgid "SpeechTranscriber reports the on-device model unavailable on this device"
 msgstr "SpeechTranscriber 报告本机上的设备端模型不可用"
 
-#: packages/clear-record/src/clear_record/providers/apple_speech.py:657
+#: packages/clear-record/src/clear_record/providers/apple_speech.py:663
 msgid "Apple SpeechTranscriber (macOS 26+, on-device)"
 msgstr "Apple SpeechTranscriber（macOS 26+，设备端）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:732
+#: packages/clear-record/src/clear_record/providers/backends.py:750
 #, python-brace-format
 msgid "requires {target} (this is {host})"
 msgstr "需要 {target}（当前为 {host}）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:739
+#: packages/clear-record/src/clear_record/providers/backends.py:757
 msgid "whisper-cli not found on PATH (set CR_WHISPER_CLI)"
 msgstr "在 PATH 上找不到 whisper-cli（请设置 CR_WHISPER_CLI）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:748
+#: packages/clear-record/src/clear_record/providers/backends.py:766
 #, python-brace-format
 msgid "no ggml {families} plugin found (see CR_GGML_BACKEND_DIRS)"
 msgstr "找不到 ggml {families} 插件（参见 CR_GGML_BACKEND_DIRS）"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:755
+#: packages/clear-record/src/clear_record/providers/backends.py:773
 msgid "no matching GPU device found"
 msgstr "找不到匹配的 GPU 设备"
 
-#: packages/clear-record/src/clear_record/providers/backends.py:761
+#: packages/clear-record/src/clear_record/providers/backends.py:779
 #, python-brace-format
 msgid "whisper-cli + ggml {families} plugin"
 msgstr "whisper-cli + ggml {families} 插件"
@@ -644,118 +644,113 @@ msgstr "用于对比的参考转写文本文件（WER/相似度）"
 msgid "override the app data directory (default: CR_DATA_DIR / platform dir)"
 msgstr "覆盖应用数据目录（默认：CR_DATA_DIR / 平台目录）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:108
+#: packages/clear-record/src/clear_record/service/managed.py:103
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
 msgid "Tapes"
 msgstr "录音带"
 
-#: packages/clear-record/src/clear_record/service/managed.py:109
+#: packages/clear-record/src/clear_record/service/managed.py:104
 msgid "Transcripts and records"
 msgstr "转写与记录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:110
+#: packages/clear-record/src/clear_record/service/managed.py:105
 msgid "Audio copies"
 msgstr "音频副本"
 
-#: packages/clear-record/src/clear_record/service/managed.py:111
+#: packages/clear-record/src/clear_record/service/managed.py:106
 msgid "Exports"
 msgstr "导出"
 
-#: packages/clear-record/src/clear_record/service/managed.py:112
+#: packages/clear-record/src/clear_record/service/managed.py:107
 msgid "Agent run directories"
 msgstr "智能体运行目录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:113
+#: packages/clear-record/src/clear_record/service/managed.py:108
 msgid "Chunk cache"
 msgstr "分块缓存"
 
-#: packages/clear-record/src/clear_record/service/managed.py:114
+#: packages/clear-record/src/clear_record/service/managed.py:109
 msgid "Model weights"
 msgstr "模型权重"
 
-#: packages/clear-record/src/clear_record/service/managed.py:292
+#: packages/clear-record/src/clear_record/service/managed.py:288
 #, python-brace-format
 msgid "{name!r} is not an audio tape; allowed extensions: {extensions}"
 msgstr "{name!r} 不是音频录音；允许的扩展名：{extensions}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:304
-#, python-brace-format
-msgid "refusing to write to the symlink {path}"
-msgstr "拒绝写入符号链接 {path}"
-
-#: packages/clear-record/src/clear_record/service/managed.py:358
+#: packages/clear-record/src/clear_record/service/managed.py:353
 msgid ""
 "the disk filled while writing the upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:523
+#: packages/clear-record/src/clear_record/service/managed.py:518
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:544
+#: packages/clear-record/src/clear_record/service/managed.py:539
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:551
+#: packages/clear-record/src/clear_record/service/managed.py:546
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:563
+#: packages/clear-record/src/clear_record/service/managed.py:558
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:570
+#: packages/clear-record/src/clear_record/service/managed.py:565
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:575
+#: packages/clear-record/src/clear_record/service/managed.py:570
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 bytes"
 msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:595
+#: packages/clear-record/src/clear_record/service/managed.py:590
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:638
+#: packages/clear-record/src/clear_record/service/managed.py:633
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:658
+#: packages/clear-record/src/clear_record/service/managed.py:653
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:679
+#: packages/clear-record/src/clear_record/service/managed.py:674
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:967
+#: packages/clear-record/src/clear_record/service/managed.py:952
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:978
+#: packages/clear-record/src/clear_record/service/managed.py:963
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -765,34 +760,34 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:991
+#: packages/clear-record/src/clear_record/service/managed.py:976
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
 "and this node cannot resume one; start again with a new upload id"
 msgstr "ID 为 {id!r} 的上传正在进行或已中断，而此节点无法续传；请使用新的上传 ID 重新开始"
 
-#: packages/clear-record/src/clear_record/service/runs.py:693
+#: packages/clear-record/src/clear_record/service/runs.py:738
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:699
+#: packages/clear-record/src/clear_record/service/runs.py:744
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:703
+#: packages/clear-record/src/clear_record/service/runs.py:748
 msgid "a run is already in flight for this meeting"
 msgstr "此会议已有一个正在进行的运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:838
+#: packages/clear-record/src/clear_record/service/runs.py:883
 msgid "this run is still in flight; cancel it first"
 msgstr "该运行仍在进行中；请先取消它"
 
-#: packages/clear-record/src/clear_record/service/runs.py:843
+#: packages/clear-record/src/clear_record/service/runs.py:888
 msgid "this run did not record the options it ran with, so it cannot be resumed"
 msgstr "该运行未记录其运行参数，无法继续"
 
-#: packages/clear-record/src/clear_record/service/runs.py:849
+#: packages/clear-record/src/clear_record/service/runs.py:894
 msgid "the run's meeting no longer exists"
 msgstr "该运行所属的会议已不存在"
 
@@ -1067,7 +1062,7 @@ msgstr ""
 "    Serve 在前台运行，并随此控制台一起停止。"
 
 #: packages/clear-record/src/clear_record/web/app.py:190
-#: packages/clear-record/src/clear_record/web/app.py:1416
+#: packages/clear-record/src/clear_record/web/app.py:1424
 msgid "Models"
 msgstr "模型"
 
@@ -1107,165 +1102,165 @@ msgstr "无法读取 multipart 上传：{error}"
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:713
+#: packages/clear-record/src/clear_record/web/app.py:721
 msgid "Not configured"
 msgstr "未配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:715
+#: packages/clear-record/src/clear_record/web/app.py:723
 msgid "Configuration problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:717
+#: packages/clear-record/src/clear_record/web/app.py:725
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:719
-#: packages/clear-record/src/clear_record/web/app.py:730
+#: packages/clear-record/src/clear_record/web/app.py:727
+#: packages/clear-record/src/clear_record/web/app.py:738
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
 msgid "No delivery yet"
 msgstr "尚未投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:720
+#: packages/clear-record/src/clear_record/web/app.py:728
 msgid "Configured"
 msgstr "已配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:725
+#: packages/clear-record/src/clear_record/web/app.py:733
 msgid "Config problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/app.py:727
+#: packages/clear-record/src/clear_record/web/app.py:735
 msgid "Failing"
 msgstr "投递失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:729
-#: packages/clear-record/src/clear_record/web/app.py:765
+#: packages/clear-record/src/clear_record/web/app.py:737
+#: packages/clear-record/src/clear_record/web/app.py:773
 msgid "Delivered"
 msgstr "已投递"
 
-#: packages/clear-record/src/clear_record/web/app.py:767
+#: packages/clear-record/src/clear_record/web/app.py:775
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/app.py:1126
+#: packages/clear-record/src/clear_record/web/app.py:1134
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:1128
+#: packages/clear-record/src/clear_record/web/app.py:1136
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/app.py:1130
+#: packages/clear-record/src/clear_record/web/app.py:1138
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/app.py:1132
+#: packages/clear-record/src/clear_record/web/app.py:1140
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/app.py:1134
+#: packages/clear-record/src/clear_record/web/app.py:1142
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/app.py:1136
+#: packages/clear-record/src/clear_record/web/app.py:1144
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/app.py:1137
+#: packages/clear-record/src/clear_record/web/app.py:1145
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:1163
+#: packages/clear-record/src/clear_record/web/app.py:1171
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/app.py:1277
+#: packages/clear-record/src/clear_record/web/app.py:1285
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1412
+#: packages/clear-record/src/clear_record/web/app.py:1420
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/app.py:1413
+#: packages/clear-record/src/clear_record/web/app.py:1421
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/app.py:1414
+#: packages/clear-record/src/clear_record/web/app.py:1422
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/app.py:1415
+#: packages/clear-record/src/clear_record/web/app.py:1423
 msgid "Config"
 msgstr "配置"
 
-#: packages/clear-record/src/clear_record/web/app.py:1512
+#: packages/clear-record/src/clear_record/web/app.py:1520
 #, python-brace-format
 msgid "running {count}"
 msgstr "运行中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/app.py:1517
+#: packages/clear-record/src/clear_record/web/app.py:1525
 #, python-brace-format
 msgid "queued {count}"
 msgstr "排队中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/app.py:1520
+#: packages/clear-record/src/clear_record/web/app.py:1528
 msgid "needs attention"
 msgstr "需要处理"
 
-#: packages/clear-record/src/clear_record/web/app.py:1521
+#: packages/clear-record/src/clear_record/web/app.py:1529
 msgid "idle"
 msgstr "空闲"
 
-#: packages/clear-record/src/clear_record/web/app.py:1640
+#: packages/clear-record/src/clear_record/web/app.py:1648
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1691
+#: packages/clear-record/src/clear_record/web/app.py:1699
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1732
+#: packages/clear-record/src/clear_record/web/app.py:1740
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1967
+#: packages/clear-record/src/clear_record/web/app.py:1975
 #, python-brace-format
 msgid "No draft {run_id} for this meeting."
 msgstr "此会议没有草稿 {run_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2147
-#: packages/clear-record/src/clear_record/web/app.py:2166
+#: packages/clear-record/src/clear_record/web/app.py:2155
+#: packages/clear-record/src/clear_record/web/app.py:2174
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/app.py:2402
-#: packages/clear-record/src/clear_record/web/app.py:2446
+#: packages/clear-record/src/clear_record/web/app.py:2410
+#: packages/clear-record/src/clear_record/web/app.py:2454
 msgid "The endpoint did not answer a test call."
 msgstr "该端点未响应测试调用。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2414
+#: packages/clear-record/src/clear_record/web/app.py:2422
 #, python-brace-format
 msgid "Recorded {endpoint} in {path}."
 msgstr "已将 {endpoint} 记录到 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2438
+#: packages/clear-record/src/clear_record/web/app.py:2446
 msgid "The model could not be pulled."
 msgstr "无法拉取该模型。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2456
+#: packages/clear-record/src/clear_record/web/app.py:2464
 #, python-brace-format
 msgid "Pulled {model} and recorded it."
 msgstr "已拉取 {model} 并记录。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2484
+#: packages/clear-record/src/clear_record/web/app.py:2492
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2516
+#: packages/clear-record/src/clear_record/web/app.py:2524
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
@@ -1331,7 +1326,7 @@ msgid "machine"
 msgstr "机器"
 
 #: packages/clear-record/src/clear_record/web/templates/_activity_run.html:56
-#: packages/clear-record/src/clear_record/web/templates/_run.html:88
+#: packages/clear-record/src/clear_record/web/templates/_run.html:86
 #, python-brace-format
 msgid "resumed from run {run_id}"
 msgstr "继续自运行 {run_id}"
@@ -2953,4 +2948,7 @@ msgstr "忽略初始设置"
 
 #~ msgid "ready"
 #~ msgstr "就绪"
+
+#~ msgid "refusing to write to the symlink {path}"
+#~ msgstr "拒绝写入符号链接 {path}"
 

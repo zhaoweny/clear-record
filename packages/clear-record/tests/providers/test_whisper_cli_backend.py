@@ -20,6 +20,7 @@ import urllib.error
 import pytest
 
 import clear_record.providers.backends as backends
+from clear_record.core import DECODER_KNOBS, DECODER_KNOB_FIELDS
 from clear_record.providers.backends import (
     AmdBackend,
     AppleBackend,
@@ -870,43 +871,44 @@ def test_transcribe_without_knobs_leaves_the_command_unchanged(
 
 
 def test_transcribe_builds_each_decoder_flag_when_set(tmp_path, monkeypatch) -> None:
+    """Every decoder knob the declaration names reaches the command as its own
+    declared flag, with the value it was given. The flag and the sample value are
+    read off the declaration, so this states no second copy of the knob list."""
     captured: list[list[str]] = []
     _capture_command(monkeypatch, captured)
 
+    values = {
+        knob.name: knob.convert("4") if knob.convert is int else knob.convert("0.5")
+        for knob in DECODER_KNOBS
+    }
     AmdBackend().transcribe(
-        str(tmp_path / "a.wav"),
-        model=_stub_model(tmp_path),
-        beam_size=4,
-        best_of=3,
-        temperature=0.2,
-        entropy_thold=2.0,
-        no_speech_thold=0.5,
-        max_context=64,
-        threads=8,
+        str(tmp_path / "a.wav"), model=_stub_model(tmp_path), **values
     )
 
     (cmd,) = captured
-    for flag, value in (
-        ("--beam-size", "4"),
-        ("--best-of", "3"),
-        ("--temperature", "0.2"),
-        ("--entropy-thold", "2.0"),
-        ("--no-speech-thold", "0.5"),
-        ("--max-context", "64"),
-        ("--threads", "8"),
-    ):
-        assert flag in cmd, f"{flag} missing from {cmd}"
-        assert cmd[cmd.index(flag) + 1] == value
+    for knob in DECODER_KNOBS:
+        assert knob.provider_flag in cmd, f"{knob.provider_flag} missing from {cmd}"
+        assert cmd[cmd.index(knob.provider_flag) + 1] == str(values[knob.name])
 
 
-def test_decoder_flag_map_matches_the_core_knob_fields() -> None:
-    from clear_record.core import DECODER_KNOB_FIELDS
+def test_every_decoder_knob_declares_a_distinct_whisper_cli_flag() -> None:
+    """The declaration is where the knob/flag pairing lives; `_decoder_flags`
+    builds the command's map from these rows and raises if one has no flag, so
+    this states the invariant that build depends on: one flag per knob."""
+    flags = [knob.provider_flag for knob in DECODER_KNOBS]
 
-    assert set(backends._DECODER_FLAGS) == set(DECODER_KNOB_FIELDS)
+    assert all(flags), "a decoder knob declares no whisper-cli flag"
+    assert len(set(flags)) == len(flags), f"two knobs share a flag: {flags}"
+
+
+def test_transcribe_rejects_a_keyword_that_is_not_a_declared_knob() -> None:
+    """The adapter takes the knobs as keywords rather than parameters, so it must
+    refuse a name the declaration does not have: a typo has to be an error, not
+    an argument quietly dropped on the floor."""
+    with pytest.raises(TypeError, match="beam_sizee"):
+        AmdBackend().transcribe("a.wav", beam_sizee=5)
 
 
 def test_all_whisper_cli_backends_advertise_the_decoder_knobs() -> None:
-    from clear_record.core import DECODER_KNOB_FIELDS
-
     for backend in (AppleBackend(), AmdBackend(), NvidiaBackend()):
         assert backend.info.decoder_knobs == DECODER_KNOB_FIELDS

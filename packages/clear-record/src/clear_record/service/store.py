@@ -28,6 +28,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from clear_record.core.events import JobEvent
+from clear_record.core.paths import registry_path
+from clear_record.service import tapestore
 from clear_record.service.models import (
     MEETING_STATUSES,
     RUN_ORIGINS,
@@ -43,7 +45,6 @@ from clear_record.service.models import (
     RecordingSet,
     Tape,
 )
-from clear_record.service.paths import registry_path
 
 SCHEMA_VERSION = 8
 
@@ -695,18 +696,12 @@ class Registry:
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
         with self._connect() as conn:
-            cur = conn.execute(
-                "INSERT INTO recording_set (meeting_id, paths, created_at) VALUES (?, ?, ?)",
-                (meeting_id, json.dumps(clean), _now()),
-            )
-            return self._recording_set_row(conn, cur.lastrowid)
+            set_id = tapestore.write_set(conn, meeting_id, clean, _now())
+            return self._recording_set_row(conn, set_id)
 
     def latest_recording_set(self, meeting_id: int) -> RecordingSet | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
-                (meeting_id,),
-            ).fetchone()
+            row = tapestore.latest_set(conn, meeting_id)
         return self._recording_set(row) if row else None
 
     # --- uploaded tapes ---------------------------------------------------- #
@@ -722,29 +717,22 @@ class Registry:
 
         One transaction, so the integrity facts and the tape set the pipeline
         reads can never disagree: the path is appended to the latest set (or a
-        first set is created), then the tape row is written.
+        first set is created), then the tape row is written. The edit is
+        :mod:`clear_record.service.tapestore`'s (the one owner of a meeting's
+        tape storage); this method owns the guard and the transaction.
         """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
         with self._connect() as conn:
-            latest = conn.execute(
-                "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
-                (meeting_id,),
-            ).fetchone()
-            paths = list(json.loads(latest["paths"])) if latest else []
-            if path not in paths:
-                paths.append(path)
-            conn.execute(
-                "INSERT INTO recording_set (meeting_id, paths, created_at)"
-                " VALUES (?, ?, ?)",
-                (meeting_id, json.dumps(paths), _now()),
+            tape_id = tapestore.record_tape(
+                conn,
+                meeting_id,
+                path=path,
+                sha256=sha256,
+                size=bytes,
+                created_at=_now(),
             )
-            cur = conn.execute(
-                "INSERT INTO tape (meeting_id, path, sha256, bytes, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (meeting_id, path, sha256, bytes, _now()),
-            )
-            return self._tape_row(conn, cur.lastrowid)
+            return self._tape_row(conn, tape_id)
 
     def list_tapes(self, meeting_id: int) -> list[Tape]:
         with self._connect() as conn:
@@ -763,31 +751,15 @@ class Registry:
 
         The file is the caller's to unlink (the store owns no filesystem). When
         the deleted tape was the meeting's last one, the tape set is cleared
-        rather than left pointing at a file that no longer exists.
+        rather than left pointing at a file that no longer exists. The edit is
+        :mod:`clear_record.service.tapestore`'s, in this method's transaction.
         """
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM tape WHERE id = ?", (tape_id,)).fetchone()
             if row is None:
                 raise KeyError(tape_id)
             tape = self._tape(row)
-            conn.execute("DELETE FROM tape WHERE id = ?", (tape_id,))
-            latest = conn.execute(
-                "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
-                (tape.meeting_id,),
-            ).fetchone()
-            if latest is not None:
-                remaining = [p for p in json.loads(latest["paths"]) if p != tape.path]
-                if remaining:
-                    conn.execute(
-                        "INSERT INTO recording_set (meeting_id, paths, created_at)"
-                        " VALUES (?, ?, ?)",
-                        (tape.meeting_id, json.dumps(remaining), _now()),
-                    )
-                else:
-                    conn.execute(
-                        "DELETE FROM recording_set WHERE meeting_id = ?",
-                        (tape.meeting_id,),
-                    )
+            tapestore.forget_tape(conn, tape, created_at=_now())
             return tape
 
     # --- pipeline runs ----------------------------------------------------- #
@@ -1042,6 +1014,11 @@ class Registry:
         cancellation contract — and its own terminal write is what the run finally
         says. The value returned is for the caller (and its tests) to see which of
         the two happened.
+
+        A landed beat is also what protects a run whose reap is already in
+        flight: :meth:`interrupt_run` compares the row against the heartbeat a
+        reap decided from, so a beat written while that decision was being made
+        is the owner saying it is alive, and the run is left alone.
         """
         at = at or _now()
         with self._connect() as conn:
@@ -1054,24 +1031,49 @@ class Registry:
         return landed
 
     def interrupt_run(
-        self, run_id: int, *, ended_at: str, error: str, progress: dict
+        self,
+        run_id: int,
+        *,
+        observed: PipelineRun,
+        ended_at: str,
+        error: str,
+        progress: dict,
     ) -> PipelineRun | None:
         """Move a ``running`` run whose owner is gone to ``interrupted``.
 
         The conditional counterpart of :meth:`claim_run`, and conditional for the
         same reason: a reaper decides from a **snapshot** — a heartbeat that had
-        gone stale — and writes afterwards, so the owner may have finished and
-        recorded its own outcome in between. ``None`` means the transition lost
-        that race; the caller then leaves the row (and the meeting) alone,
-        because a run that reached its own end is not an orphan, whatever its
-        heartbeat said a moment ago.
+        gone stale — and writes afterwards, so the row may not be the one it
+        judged by the time it writes. ``observed`` is that snapshot, and the
+        statement compares the row against the **ownership and heartbeat the
+        decision was based on**, not just the status. Three things can move the row
+        in between: the owner finishing (:meth:`update_run`), a peer's reap
+        already landing (this same method, from another node), or — the case
+        this compare exists for — the owner refreshing its heartbeat
+        (:meth:`heartbeat_run`) because it was alive all along. Each moves the
+        row before this write can, so each wins the compare.
+
+        ``None`` means the compare lost: the row is not the one judged dead, so
+        the caller has a **stale observation** on its hands rather than an
+        interruption, and it leaves the row (and the meeting) alone. A run that
+        reached its own end is not an orphan, whatever its heartbeat said a moment
+        ago, and a run whose owner refreshed its heartbeat during the decision is
+        one whose owner is provably alive.
         """
         with self._connect() as conn:
             cur = conn.execute(
                 "UPDATE pipeline_run SET status = 'interrupted', ended_at = ?,"
                 " error = ?, progress = ?"
-                " WHERE id = ? AND status = 'running'",
-                (ended_at, error, json.dumps(progress), run_id),
+                " WHERE id = ? AND status = 'running'"
+                " AND owner IS ? AND heartbeat_at IS ?",
+                (
+                    ended_at,
+                    error,
+                    json.dumps(progress),
+                    run_id,
+                    observed.owner,
+                    observed.heartbeat_at,
+                ),
             )
             if cur.rowcount == 0:
                 return None

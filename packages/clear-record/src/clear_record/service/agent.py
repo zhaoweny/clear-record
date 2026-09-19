@@ -65,6 +65,8 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from clear_record.core.paths import config_path
+from clear_record.core.process import SubprocessRunner
 from clear_record.service.agent_tasks import (
     TASK_KINDS,
     AgentTask,
@@ -78,7 +80,9 @@ from clear_record.service.agent_tasks import (
     prompt_hash,
     render_prompt,
 )
-from clear_record.service.paths import config_path
+
+#: The seam :class:`CommandRunner` launches the user's command through.
+_RUNNER = SubprocessRunner()
 
 # --- errors ----------------------------------------------------------------- #
 
@@ -284,6 +288,11 @@ class CommandRunner(Runner):
     a shell**, so a placeholder value can never be reinterpreted as syntax. The
     command must exit ``0`` and write its answer to ``{output_file}``; anything
     else is a :class:`RunnerError`.
+
+    ``runner`` overrides how the child is launched — a ``subprocess.run``-shaped
+    callable, so tests drive the whole runner with it faked. The default is the
+    shared seam (:mod:`clear_record.core.process`), which is what keeps this
+    layer's one child process inside the same launch path as every other.
     """
 
     kind = "command"
@@ -306,7 +315,7 @@ class CommandRunner(Runner):
         self.template = template
         self.model = label or None
         self.timeout = timeout
-        self._runner = runner or subprocess.run
+        self._runner = runner or _RUNNER.run
         self._environ = environ
 
     def run(self, request: RunnerRequest) -> RunnerOutput:

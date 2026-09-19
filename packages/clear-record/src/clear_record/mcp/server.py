@@ -3,7 +3,7 @@
 This module is the **adapter** half of ADR-0017: it turns ``clear_record.service``
 operations into MCP tools and answers over stdio. Every tool method is a thin
 translation of a service call — a lookup, a registry read/write or a run
-start — and returns a plain, JSON-serialisable ``dict``. All domain behaviour
+start — and returns a plain, JSON-serializable ``dict``. All domain behaviour
 (validation, status transitions, event recording) stays in the service; none of
 it is reimplemented here.
 
@@ -72,7 +72,7 @@ INSTRUCTIONS = (
 
 
 def _as_dict(obj: Any) -> dict[str, Any]:
-    """A dataclass instance as a plain, JSON-serialisable dict."""
+    """A dataclass instance as a plain, JSON-serializable dict."""
     return dataclasses.asdict(obj)
 
 

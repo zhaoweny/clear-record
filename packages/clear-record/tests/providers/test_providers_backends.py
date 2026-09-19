@@ -3,13 +3,17 @@ importing any GPU framework."""
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
+from clear_record.core import DECODER_KNOB_FIELDS
 from clear_record.core.i18n import deferred
 from clear_record.core.message import Message
 from clear_record.providers import (
     APPLE_SPEECH_BACKEND_ID,
     Availability,
+    Backend,
     BackendBase,
     BackendInfo,
     available_backend_ids,
@@ -82,6 +86,16 @@ def test_get_backend_unknown_raises() -> None:
 def test_backend_base_prepare_is_a_no_op() -> None:
     """A backend with no downloadable model inherits the no-op default."""
     assert BackendBase().prepare("small", "/tmp/models") is None
+
+
+def test_the_backend_protocol_names_every_declared_decoder_knob() -> None:
+    """The protocol is what a caller reads to know which knobs it may pass; the
+    declaration (``core.options.RUN_KNOBS``) is the list, so a new knob is a
+    keyword here too. Pinned rather than remembered: no static check ties a
+    ``Protocol`` member to the table."""
+    params = set(inspect.signature(Backend.transcribe).parameters)
+
+    assert set(DECODER_KNOB_FIELDS) <= params
 
 
 def test_whisper_cli_prepare_resolves_a_local_model(tmp_path) -> None:

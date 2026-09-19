@@ -88,14 +88,22 @@ them for the workspace layout.
   workspace is kept (`members = ["packages/*"]` now resolves to one member), so
   a future GUI/MCP member is still a new member, not a reparenting. See
   [ADR-0012](0012-single-distribution.md).
-- [DECISION] The dependency edges are unchanged in substance —
-  `engine → core`, `providers → core`, `cli → {core, engine, providers}` — but
-  are now subpackage imports enforced by
+- [DECISION] The dependency edges are unchanged in substance for the four
+  `cr_*` layers — `engine → core`, `providers → core`,
+  `cli → {core, engine, providers}` — and are now subpackage imports enforced by
   `packages/clear-record/tests/test_layering.py` rather than by
-  member-to-member packaging. `core` still declares/uses no third-party
+  member-to-member packaging. That list is not the whole enforced DAG: ADR-0013
+  extended the guard to `service` and `web` the next day, ADR-0016 and
+  ADR-0017 to `tray` and `mcp`, so the eight layers of the single dist are what
+  `test_layering.py`'s `ALLOWED_INTERNAL` is the source of truth for —
+  `service → cli` among the allowed edges, deliberately, because the pipeline's
+  stage wiring still lives in `clear_record.cli.stages` (ADR-0012's 2026-09-19
+  Update states the clause that supersedes the stronger reading; the pipeline
+  module — `C3`, [ADR-0030](0030-persistence-layer-and-the-restructure-order.md)
+  — is what will let that edge go). `core` still declares/uses no third-party
   dependency.
 - [DECISION] The `clear-record` **facade member is gone**: the single dist owns
-  the `clear-record` command (`clear_record.cli:main`) and the top-level
+  the `clear-record` command (`clear_record.cli.cli:main`) and the top-level
   `clear_record` module stays light.
 - [DESIGN] `[tool.pytest.ini_options] testpaths` now points at the one
   `packages/clear-record/tests/`; the root's aggregate extras reference

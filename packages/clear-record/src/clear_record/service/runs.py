@@ -517,7 +517,12 @@ class RunManager:
         A process that *exists* is believed over its heartbeat, so a run whose
         owner is stalled holds its meeting and the node rather than being declared
         an orphan: that is deliberate, and it is why the two cases (a killed
-        process, a stalled one) do not need to be told apart by a deadline.
+        process, a stalled one) do not need to be told apart by a deadline. The
+        *write* is a compare-and-swap against the ownership and the heartbeat the
+        decision was based on — the store's own
+        :meth:`~clear_record.service.store.Registry.interrupt_run` — so an owner
+        that beats while the decision is being made keeps its run: a stale
+        observation is reported and the row is left alone.
         """
         interrupted = self._reap_dead_runs(self._registry.runs_with_status("running"))
         if interrupted:
@@ -538,6 +543,11 @@ class RunManager:
         and the drain loop — the loop reaps too, because a run left ``running``
         by a peer that died would otherwise block the node behind a run nobody
         is executing.
+
+        A reap that loses its compare-and-swap is not one of those transitions:
+        the row is left exactly as it is and the stale observation is reported
+        instead (see :meth:`_report_stale_observation`), so a returned id is a run
+        this call really did interrupt.
         """
         now = _dt.datetime.now(_dt.UTC)
         interrupted: list[int] = []
@@ -550,6 +560,7 @@ class RunManager:
             # complete are still in its persisted event stream.
             reaped = self._registry.interrupt_run(
                 run.id,
+                observed=run,
                 ended_at=ended_at,
                 error=RESTART_REASON,
                 progress=self._progress(
@@ -557,9 +568,15 @@ class RunManager:
                 ),
             )
             if reaped is None:
-                # The owner finished in the meantime: the run is not an orphan,
-                # and its own terminal record (and the meeting status that
-                # followed it) is the truth, not this snapshot's verdict.
+                # The compare lost: the row is not the one this decision was
+                # based on. The owner finished in the meantime — its own terminal
+                # record (and the meeting status that followed it) is the truth,
+                # not this snapshot's verdict — or it refreshed its heartbeat,
+                # which is the owner saying it is alive after all. Either way this
+                # is a **stale observation**, so the run is left exactly as it is
+                # and that observation, not the reap that did not happen, is what
+                # gets reported.
+                self._report_stale_observation(run)
                 continue
             meeting = self._registry.meeting_by_id(run.meeting_id)
             if meeting is not None and meeting.status == "running":
@@ -574,6 +591,34 @@ class RunManager:
             )
             interrupted.append(run.id)
         return interrupted
+
+    def _report_stale_observation(self, run: PipelineRun) -> None:
+        """Report a reaper whose compare-and-swap lost, and why.
+
+        The decision was made on a snapshot read from the registry
+        (:meth:`~clear_record.service.store.Registry.runs_with_status`), and the
+        row moved before the write in the store's
+        :meth:`~clear_record.service.store.Registry.interrupt_run` landed: the run
+        is untouched, so there is no interruption to announce. The row is re-read
+        to say *which* observation went stale, because the two are worth telling
+        apart on the log. A run still ``running`` had its owner refresh its
+        heartbeat during the decision — that owner is alive, and the snapshot's
+        stale beat was the only thing suggesting otherwise — while any other
+        status means some earlier transition got there first: the owner's own end,
+        or a peer's reap. Both are observations of a row as it is, which is
+        exactly why neither is reported as a reap.
+        """
+        current = self._registry.get_run(run.id)
+        log_event(
+            "info",
+            "runs",
+            "run.reconcile_stale",
+            run_id=run.id,
+            meeting_id=run.meeting_id,
+            status="gone" if current is None else current.status,
+            observed_heartbeat_at=run.heartbeat_at,
+            heartbeat_at=None if current is None else current.heartbeat_at,
+        )
 
     def _is_dead(self, run: PipelineRun, now: _dt.datetime) -> bool:
         """Whether no live process holds ``run`` (RUN-02's ownership evidence).
@@ -1210,7 +1255,7 @@ class RunManager:
             return None
         known = {field.name for field in dataclasses.fields(PipelineOptions)}
         values = {key: value for key, value in run.run_options.items() if key in known}
-        for name in ("audio_files", "formats"):
+        for name in ("audio_files",):
             if values.get(name) is not None:
                 values[name] = tuple(values[name])
         return PipelineOptions(**values)

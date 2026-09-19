@@ -202,7 +202,7 @@ def _web_command():
 
 
 # --- resolving the tailnet name ------------------------------------------- #
-def test_resolve_reads_dns_name_and_normalises_the_trailing_dot(fake_tailscale) -> None:
+def test_resolve_reads_dns_name_and_normalizes_the_trailing_dot(fake_tailscale) -> None:
     fake = fake_tailscale(
         status=_completed("tailscale", "status", stdout=_status_json())
     )

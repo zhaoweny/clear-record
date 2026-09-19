@@ -13,7 +13,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from clear_record.service import Registry, managed, paths
+from clear_record.core import paths
+from clear_record.service import Registry, managed
 from clear_record.service.setup import MCP_SERVER_NAME
 from clear_record.web import app as web_app
 from clear_record.web.app import LANG_COOKIE, SETTINGS_SECTIONS, create_app

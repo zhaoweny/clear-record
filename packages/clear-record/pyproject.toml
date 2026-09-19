@@ -95,7 +95,7 @@ tray = ["pyside6>=6.7"]
 agents = ["mcp>=2"]
 
 [project.scripts]
-clear-record = "clear_record.cli:main"
+clear-record = "clear_record.cli.cli:main"
 
 # Optional surfaces register their subcommands here so the CLI never imports
 # them (ADR-0013). The bundled web console is the first provider. `diagnose` is

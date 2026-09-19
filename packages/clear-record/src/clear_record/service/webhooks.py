@@ -49,7 +49,7 @@ from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from clear_record.service.paths import config_path
+from clear_record.core.paths import config_path
 
 # --- the event vocabulary -------------------------------------------------- #
 

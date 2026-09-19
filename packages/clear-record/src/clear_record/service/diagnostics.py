@@ -40,7 +40,7 @@ import click
 
 from clear_record.core.diagnostics import effective_level, log_event
 from clear_record.core.message import _english, render_message
-from clear_record.service import paths
+from clear_record.core.paths import registry_path
 
 # --- bundle --------------------------------------------------------------- #
 
@@ -294,7 +294,7 @@ def build_bundle(facts: BundleFacts) -> str:
             "Every path keeps its shape (separators, depth, suffixes) but each component"
         )
         out.append(
-            "name is replaced by a stable hash, so it is recognisable, not identifying."
+            "name is replaced by a stable hash, so it is recognizable, not identifying."
         )
     out.append("")
     out.append("# version")
@@ -634,7 +634,7 @@ def run_diagnose(args) -> int:
 
     registry = None
     data_dir = getattr(args, "data_dir", None)
-    if paths.registry_path(data_dir).is_file():
+    if registry_path(data_dir).is_file():
         registry = Registry.open(data_dir=data_dir)
 
     run_id = getattr(args, "run_id", None)

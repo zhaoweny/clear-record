@@ -197,7 +197,7 @@ def make_speaker_stems(
         if non_overlapping:
             t = max(t, end_s)
 
-    # One shared normalisation: the sum still peaks at 0.8 exactly as before.
+    # One shared normalization: the sum still peaks at 0.8 exactly as before.
     mixed = np.zeros(n, dtype=np.float32)
     for stem in stems:
         mixed += stem

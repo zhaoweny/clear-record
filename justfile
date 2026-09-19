@@ -74,17 +74,34 @@ agent-setup:
 agent-drive *ARGS:
     uv run --all-packages python scripts/agent_drive.py {{ARGS}}
 
-# One-shot, re-runnable import of the retired local tracker into Gitea issues +
-# wiki pages. Pointer to a Python script because it branches; `--no-project`
-# because it is stdlib-only and imports no project package. Dry-run by DEFAULT:
-# it writes a manifest to `.local/migrate-tracker-manifest.json` and prints the
-# counts, making no network call at all — so it is safe to run anywhere, token
-# or no token.
+# Rerunnable import of the retired local tracker into Gitea issues + wiki pages.
+# Pointer to a Python script because it branches; `--no-project` because it is
+# stdlib-only and imports no project package. Dry-run by DEFAULT: it writes a
+# manifest to `.local/migrate-tracker-manifest.json` and prints the counts, making
+# no network call at all — so it is safe to run anywhere, token or no token.
 #
 # `just migrate-tracker --apply` performs the import. It reads a Gitea token from
 # $GITEA_TOKEN or the `tea` login store and never prints it. Every created issue
 # carries a `<!-- scratch:<lane>/<relpath> sha=… -->` marker, so a second
-# `--apply` creates nothing new: it reconciles the issues it finds instead.
+# `--apply` creates nothing new. It creates what the archive has and the tracker
+# lacks, and leaves everything else exactly as the tracker has it: a ticket
+# closed there is not reopened, a ticket's body or comment edited there is not
+# rewritten, and a wiki page edited there is not overwritten. The tracker is
+# canonical from the cutover on.
+#
+# `--repair-from-archive` is the one thing that re-imposes the archive, and it is
+# for the pre-cutover state alone: it posts the comments, sets each issue's state
+# to the archive's, closed or reopened, restores the blocked-by lines of issues
+# that already exist, overwrites wiki pages that differ, and reports how many
+# issues and pages it changed. It exists to finish an import that died half way
+# *before* the tracker was cut over; on a live tracker it undoes decisions made
+# there, so it is not for one.
+#
+# A lane's `spec.md` is not imported: those files are counted in the report and
+# written nowhere, because the spec's `type/spec` umbrella ticket (ADR-0029)
+# superseded this script's `<lane>/spec` wiki page. Where a lane's spec is a
+# `spec/` directory instead, its documents are wiki pages like the lane's others,
+# and are imported as before.
 #
 # The tracker directory is named by the caller, never defaulted here — the
 # convention keeps that path out of committed files (docs/agents/issue-tracker.md,
@@ -95,6 +112,55 @@ agent-drive *ARGS:
 # $CLEAR_RECORD_GITEA_URL), `--manifest PATH`.
 migrate-tracker *ARGS:
     uv run --no-project scripts/migrate_tracker.py {{ARGS}}
+
+# The tracker's history has a way back (ADR-0029: the instance is the one place
+# ticket history lives, and `gitea dump` inside its container is the backup
+# lever). This is the check that a dump really holds the tracker. Pointer to a
+# Python script because it branches; `--no-project` because it is stdlib-only and
+# imports no project package.
+#
+# The dump itself is taken on the host that runs the container — `docker exec -u
+# git <container> gitea dump`, then a `docker cp` of the zip out — and kept
+# outside the repository (`.local/backups/`), never committed. `--dump FILE`
+# audits one with no network at all: it opens the zip, opens the SQLite database
+# inside it read-only, and counts the tickets, comments, wiki pages, users,
+# labels and attachments it holds. `--url URL` (or $CLEAR_RECORD_GITEA_URL)
+# additionally compares those counts, the issue numbers and a sample of issues —
+# title, state, body digest, created and updated timestamps, comments,
+# attachments — against the instance's API. The token comes from $GITEA_TOKEN or
+# the `tea` login store, and is never printed; the host is never defaulted, so no
+# committed file names it.
+#
+# The verdict separates the two questions a comparison can answer. FAIL (exit 1)
+# means the source is missing what the dump holds — a ticket, a comment, a page, a
+# label or an account the dump has and the instance does not, which is what a
+# restore that dropped it produces, and what a dump from another instance looks
+# like. DRIFT (exit 0) means the dump holds everything it should and the source
+# has moved on since it was taken — expected against a live instance. MATCH
+# (exit 0) means the two agree.
+#
+# `just tracker-restore` is the other half — take the dump where the instance
+# runs, restore it here with the local Gitea, and audit there, where the verdict
+# must read MATCH. docs/tracker-backup.md is the procedure, the evidence each run
+# leaves, and who runs it.
+tracker-backup *ARGS:
+    uv run --no-project scripts/audit_tracker_backup.py {{ARGS}}
+
+# The restore half of the drill: take the dump where the instance runs (through
+# the operator's Docker endpoint, `--context`/`--docker-host`), restore it HERE
+# with this machine's own Gitea, and audit the restored copy — where the verdict
+# must read MATCH. Pointer to a Python script because it branches; `--no-project`
+# because it is stdlib-only and imports no project package.
+#
+# It refuses to restore across Gitea versions: the local binary must be the
+# release the source runs, or the drill would be testing a forward migration
+# instead. The restored instance binds 127.0.0.1 only, and carries the dump's own
+# database, so the operator's token authenticates against it and the audit reads
+# it exactly as it reads the source. `--dry-run` prints the whole sequence,
+# including what a reader with no Docker at all would run.
+# docs/tracker-backup.md carries the procedure, the evidence and who runs it.
+tracker-restore *ARGS:
+    uv run --no-project scripts/restore_tracker_dump.py {{ARGS}}
 
 # Build the console's compiled assets into
 # packages/clear-record/src/clear_record/web/static/ (needs bun; ADR-0023). The
@@ -109,21 +175,43 @@ web-assets:
 web-assets-check:
     uv run --no-project scripts/check_web_assets.py
 
+# Where `e2e` and `e2e-install` keep the Playwright browser: `.local/` is
+# gitignored, so the download stays out of the repo and out of the OS browser
+# cache. A caller may point the run elsewhere by exporting
+# PLAYWRIGHT_BROWSERS_PATH (which is also how the guard below is exercised
+# against an empty directory).
+e2e_browsers_path := env_var_or_default("PLAYWRIGHT_BROWSERS_PATH", justfile_directory() / ".local" / "ms-playwright")
+
 # Browser end-to-end and visual review for the console (Playwright +
 # Chromium). Seeds a throwaway data dir, boots the real server against it,
 # drives the UI headlessly, and writes screenshots to .local/e2e/screenshots.
 # It needs bun, Python and a downloaded browser, so it is NOT part of `verify`.
+#
+# The browser download is PER MACHINE by convention, not per worktree: it lands
+# once in the main checkout's `.local/ms-playwright`, and a worktree shares that
+# copy when its own `.local/ms-playwright` symlinks there (three levels up) — a
+# link environment provisioning makes, not a committed step. On a machine
+# provisioned that way `just e2e-install` is a one-off rather than a step per
+# tree; a worktree without the link downloads its own copy.
+# The first line below is the provisioning guard: it checks before the seed
+# runs, before the server boots and before the first spec, and exits non-zero
+# naming the command that provides whichever piece is missing — the frontend's
+# dependencies (`bun install --frozen-lockfile --cwd
+# packages/clear-record/frontend`) or the browser (`just e2e-install`). It is a
+# pointer to a Python script because it branches.
+#
 # The seed writes the setup marker, so it must resolve the same state dir the
 # server will (playwright.config.ts sets CR_STATE_DIR for the webServer; the
 # seed runs as a separate process).
 e2e:
+    PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} uv run --no-project scripts/check_e2e_provisioning.py
     CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state uv run --all-packages python packages/clear-record/frontend/e2e/seed.py
-    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e
+    CR_DATA_DIR=.local/e2e/data CR_STATE_DIR=.local/e2e/state E2E_SHOTS=.local/e2e/screenshots PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} bun run --cwd packages/clear-record/frontend e2e
 
 # One-time Chromium download for `e2e`. The browser lands in `.local/` so it
 # stays out of the repo and out of the OS cache.
 e2e-install:
-    PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.local/ms-playwright bun run --cwd packages/clear-record/frontend e2e:install
+    PLAYWRIGHT_BROWSERS_PATH={{e2e_browsers_path}} bun run --cwd packages/clear-record/frontend e2e:install
 
 # Message catalogs (Babel, build-time only; see docs/i18n.md). Source strings are
 # the English message IDs in the code and templates; `i18n-extract` merges new

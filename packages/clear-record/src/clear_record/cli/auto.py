@@ -69,7 +69,7 @@ BACKEND_PREFERENCE: tuple[str, ...] = (
 
 #: Models ``--auto`` may choose, smallest to largest. These are the size names
 #: the ggml resolver accepts (``providers.backends._resolve_ggml_model``);
-#: quantisation is a backend detail, so the ladder is by size only.
+#: quantization is a backend detail, so the ladder is by size only.
 MODEL_LADDER: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
 
 #: A candidate model "fits" when the existing ``auto_jobs`` heuristic can afford
@@ -405,7 +405,7 @@ def model_paths_on_disk(model_dir: str | None = None) -> tuple[Path, ...]:
 
     The one place the ``ggml-*.bin`` scan lives: :func:`models_on_disk` derives
     the size names from it, and a caller that needs the concrete file (a
-    quantised name cannot be reconstructed from its normalized size) reads it
+    quantized name cannot be reconstructed from its normalized size) reads it
     here. Uses the single models-directory resolver (``model_dir`` ->
     ``CR_MODELS_DIR`` -> ``<data>/models``); a missing directory is empty.
     """

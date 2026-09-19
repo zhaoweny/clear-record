@@ -8,6 +8,8 @@ as unavailable rather than failing the whole pipeline.
 
 from __future__ import annotations
 
+from clear_record.core.paths import install_models_recognizer
+
 from clear_record.providers.apple_speech import (
     AppleSpeechBackend,
     AppleSpeechError,
@@ -36,13 +38,8 @@ from clear_record.providers.base import (
     RUNTIME_WHISPER_CLI,
     WINDOWS_AI_BACKEND_ID,
 )
+from clear_record.providers.model_cache import looks_like_model_cache
 from clear_record.providers.paths import resolve_models_dir
-from clear_record.providers.process import (
-    CancellableProcessRunner,
-    ProcessCancelled,
-    ProcessRunner,
-    SubprocessRunner,
-)
 from clear_record.providers.tts import (
     Synthesis,
     TtsEngine,
@@ -66,15 +63,11 @@ __all__ = [
     "BackendBase",
     "BackendId",
     "BackendInfo",
-    "CancellableProcessRunner",
     "DEFAULT_MODEL",
     "PluginLoadProbe",
-    "ProcessCancelled",
-    "ProcessRunner",
     "RUNTIME_SYSTEM",
     "RUNTIME_WHISPER_CLI",
     "SpeechProbe",
-    "SubprocessRunner",
     "Synthesis",
     "TtsEngine",
     "TtsError",
@@ -91,3 +84,10 @@ __all__ = [
     "synthesize",
     "synthesize_clip",
 ]
+
+# The legacy ``<cwd>/models`` recognizer is this layer's knowledge — the vendor
+# artifact names are the format's own — and the core's adoption rule consumes it
+# rather than spelling them (ADR-0025). Installing it on any import of this layer
+# is what keeps every resolver that goes through ``core.paths`` — the CLI's, the
+# service's, the console's — adopting a pre-move checkout's weights the same way.
+install_models_recognizer(looks_like_model_cache)

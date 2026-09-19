@@ -127,7 +127,7 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji";
-  /* The record's face. System-native: no bytes, no licence, and CJK falls back
+  /* The record's face. System-native: no bytes, no license, and CJK falls back
      to the platform's own serif. */
   --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino,
     "Book Antiqua", Georgia, "Times New Roman", serif;

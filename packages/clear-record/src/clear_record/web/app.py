@@ -45,6 +45,13 @@ from clear_record.core import (
 )
 from clear_record.core import i18n
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
+from clear_record.core.paths import (
+    config_path,
+    resolve_data_dir,
+    resolve_logs_dir,
+    resolve_models_dir,
+    resolve_state_dir,
+)
 from clear_record.service import (
     BACKEND_AUTO,
     BUNDLE_FILENAME,
@@ -94,13 +101,6 @@ from clear_record.service.auto import (
     render_message as render_service_message,
 )
 from clear_record.service.diagnostics import backend_status, machine_description
-from clear_record.service.paths import (
-    config_path,
-    resolve_data_dir,
-    resolve_logs_dir,
-    resolve_models_dir,
-    resolve_state_dir,
-)
 
 #: The service's own number reader, so a record's or a queued run's options field
 #: is parsed the one way (bools are not numbers, a string is not a figure).

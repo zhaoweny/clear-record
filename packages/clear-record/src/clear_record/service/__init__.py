@@ -13,6 +13,15 @@ metadata, never audio blobs.
 from __future__ import annotations
 
 from clear_record.core.diagnostics import log_event, logs_dir, read_recent
+from clear_record.core.paths import (
+    APP,
+    REGISTRY_FILENAME,
+    WORKSPACES_DIRNAME,
+    config_path,
+    registry_path,
+    resolve_data_dir,
+    resolve_workspace_root,
+)
 from clear_record.service.agent import (
     ENV_API_KEY_ENV,
     ENV_ENDPOINT,
@@ -145,15 +154,6 @@ from clear_record.service.models import (
     Project,
     RecordingSet,
     Tape,
-)
-from clear_record.service.paths import (
-    APP,
-    REGISTRY_FILENAME,
-    WORKSPACES_DIRNAME,
-    config_path,
-    registry_path,
-    resolve_data_dir,
-    resolve_workspace_root,
 )
 from clear_record.service.runs import (
     HEARTBEAT_INTERVAL_S,

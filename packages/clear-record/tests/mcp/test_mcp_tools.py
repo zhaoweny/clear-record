@@ -8,7 +8,7 @@ with no ASR backend and no GPU.
 
 The tool logic itself is a thin translation of ``clear_record.service``; the
 service's own behaviour is covered by ``tests/service/``. These tests assert the
-*adapter*: the surface exists, results are JSON-serialisable, and failures come
+*adapter*: the surface exists, results are JSON-serializable, and failures come
 back actionable rather than as crashes.
 """
 

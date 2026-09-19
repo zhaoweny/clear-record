@@ -61,6 +61,7 @@ from pathlib import Path
 
 from clear_record.cli.auto import Message
 from clear_record.core.i18n import deferred
+from clear_record.core.paths import config_path, resolve_state_dir
 from clear_record.service.agent import (
     EndpointRunner,
     RunnerError,
@@ -68,7 +69,6 @@ from clear_record.service.agent import (
     load_agent_config,
     reset_default_config,
 )
-from clear_record.service.paths import config_path, resolve_state_dir
 
 # --- errors ----------------------------------------------------------------- #
 

@@ -20,7 +20,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from clear_record.cli.auto import Message
-from clear_record.service import Registry, paths, setup
+from clear_record.core import paths
+from clear_record.service import Registry, setup
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 

@@ -1014,6 +1014,11 @@ class Registry:
         cancellation contract — and its own terminal write is what the run finally
         says. The value returned is for the caller (and its tests) to see which of
         the two happened.
+
+        A landed beat is also what protects a run whose reap is already in
+        flight: :meth:`interrupt_run` compares the row against the heartbeat a
+        reap decided from, so a beat written while that decision was being made
+        is the owner saying it is alive, and the run is left alone.
         """
         at = at or _now()
         with self._connect() as conn:
@@ -1026,24 +1031,48 @@ class Registry:
         return landed
 
     def interrupt_run(
-        self, run_id: int, *, ended_at: str, error: str, progress: dict
+        self,
+        run_id: int,
+        *,
+        observed: PipelineRun,
+        ended_at: str,
+        error: str,
+        progress: dict,
     ) -> PipelineRun | None:
         """Move a ``running`` run whose owner is gone to ``interrupted``.
 
         The conditional counterpart of :meth:`claim_run`, and conditional for the
         same reason: a reaper decides from a **snapshot** — a heartbeat that had
-        gone stale — and writes afterwards, so the owner may have finished and
-        recorded its own outcome in between. ``None`` means the transition lost
-        that race; the caller then leaves the row (and the meeting) alone,
-        because a run that reached its own end is not an orphan, whatever its
-        heartbeat said a moment ago.
+        gone stale — and writes afterwards, so the row may not be the one it
+        judged by the time it writes. ``observed`` is that snapshot, and the
+        statement compares the row against the **ownership and heartbeat the
+        decision was based on**, not just the status. Two writers can move the row
+        in between: the owner finishing (:meth:`update_run`), or — the case this
+        compare exists for — the owner refreshing its heartbeat
+        (:meth:`heartbeat_run`) because it was alive all along. Both are evidence
+        newer than the snapshot that said "dead", so both win.
+
+        ``None`` means the compare lost: the row is not the one judged dead, so
+        the caller has a **stale observation** on its hands rather than an
+        interruption, and it leaves the row (and the meeting) alone. A run that
+        reached its own end is not an orphan, whatever its heartbeat said a moment
+        ago, and a run whose owner refreshed its heartbeat during the decision is
+        one whose owner is provably alive.
         """
         with self._connect() as conn:
             cur = conn.execute(
                 "UPDATE pipeline_run SET status = 'interrupted', ended_at = ?,"
                 " error = ?, progress = ?"
-                " WHERE id = ? AND status = 'running'",
-                (ended_at, error, json.dumps(progress), run_id),
+                " WHERE id = ? AND status = 'running'"
+                " AND owner IS ? AND heartbeat_at IS ?",
+                (
+                    ended_at,
+                    error,
+                    json.dumps(progress),
+                    run_id,
+                    observed.owner,
+                    observed.heartbeat_at,
+                ),
             )
             if cur.rowcount == 0:
                 return None

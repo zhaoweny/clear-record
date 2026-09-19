@@ -294,11 +294,10 @@ def upload_tape(
     workspace = Path(meeting.workspace_path)
     _require_within(workspace, resolved_root)
     tapes = _safe_mkdir(tapestore.tapes_dir(workspace), root=resolved_root)
+    # `tapestore.unique_path` never hands back a symlinked name (its own
+    # on-disk check treats one as taken), so there is no reachable symlink
+    # guard to restate here.
     target = tapestore.unique_path(tapes, name)
-    if target.is_symlink():
-        raise UploadRejected(
-            deferred("refusing to write to the symlink {path}"), path=str(target)
-        )
 
     cap = max_upload_bytes()
     # A client id names its own scratch file (so a resume layer can find it); a

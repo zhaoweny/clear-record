@@ -68,8 +68,10 @@ migration in flight can leave a repository and its rows disagreeing. What this
 drill can do about that is notice: the audit compares counts and a deterministic
 sample, so a torn read shows up as DRIFT (or FAIL) rather than passing silently.
 If the tracker can ever be paused, take the dump with it stopped and the
-question goes away. The other limit is LFS: the object store lives at a path of
-its own beside the repository root and is not in the dump.
+question goes away. The other limit is LFS: Gitea's default puts the object
+store at ``data/lfs``, inside the AppDataPath the dump already carries, and the
+tracker's issues and wiki do not use it, so there is nothing this drill needs
+to copy separately.
 
 Requirements, and the honest limits: ``docker`` on ``PATH`` only when the dump is
 *this* script's job (``--take-dump``, or ``--container`` to read its image) — a

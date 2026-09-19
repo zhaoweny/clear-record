@@ -342,12 +342,19 @@ run (or `--keep`) leaves it standing, for a look before the next run clears it.
 
 ## Who runs it, and how often
 
-**Decided: nobody is scheduled, and no runner is appointed.** The owner takes a
-remote backup by hand when they judge one is needed — a dump, and the audit and
-restore drill above, run on the owner's own machine. Nothing in this repository
-schedules it: Gitea Actions is disabled on the instance (ADR-0029), and the
-GitHub-side CI cannot reach a tailnet-only host. So the cadence is *ad hoc, on
-the owner's judgement*, and the mechanism does not depend on it.
+**Decided by the owner, 2026-09-19: nobody is scheduled, and no runner is
+appointed.** The owner takes a remote backup by hand when they judge one is
+needed — a dump, and the audit and restore drill above, run on the owner's own
+machine. Nothing in this repository schedules it: Gitea Actions is disabled on
+the instance (ADR-0029), and the GitHub-side CI cannot reach a tailnet-only
+host. So the cadence is *ad hoc, on the owner's judgement*, and the mechanism
+does not depend on it. The same judgement covers the copy this drill cannot
+make for itself: an off-site copy of a dump is made by hand, when the owner
+decides one is warranted, onto storage this machine is not — the drill has no
+opinion on where, only on whether the copy in hand is good, which is what its
+own run already answered. The evidence that a run happened at all is the
+drill's own record (`drill.json`, under `.local/restore-drill/`), left on the
+machine that ran it.
 
 Who *can* run each half, and what it takes:
 

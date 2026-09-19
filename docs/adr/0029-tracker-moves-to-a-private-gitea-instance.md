@@ -56,12 +56,16 @@ Date: 2026-09-19
 - [DECISION] **The naming rule stands, and now covers the instance too.** A committed
   file names *the tracker's `<lane>` lane* — never `.scratch/<lane>/`, never the
   instance hostname or a ticket URL. The dead-end argument that motivated ADR-0026
-  applies unchanged to a tailnet-only host: a public reader can follow neither.
+  applies unchanged to a tailnet-only host: a public reader can follow neither. The
+  guard that enforces this has itself to name the hostname it bans — that one
+  recorded exception lives beside the rule in `docs/agents/issue-tracker.md`, not
+  here.
 - [DECISION] **The arrow still points one way.** A ticket links to `docs/`; a committed
   file never links back into the tracker. A finding that must be citable graduates into
   `docs/`.
 - [DECISION] Enforced by `packages/clear-record/tests/test_tracker_refs.py`; the guard
-  gains the instance hostname alongside its existing gitignored path roots.
+  gains the instance hostname alongside its existing gitignored path roots (see
+  `docs/agents/issue-tracker.md`'s recorded exception for the guard's own carve-out).
 
 ## Rationale
 

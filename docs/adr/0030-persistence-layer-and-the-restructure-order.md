@@ -136,3 +136,10 @@ not a committed document.
   parked rather than rejected.
 - Revisit if a second registry grows — the mapping's entity classes are the
   place a second persistence shape would show up as a decision, not a copy.
+- **Batch 1's dead-export deletion removed a user-visible flag.** `--reference`
+  is gone from `ingest`, `transcribe` and `export` — the three stage commands
+  that took it and silently ignored it — and stays exactly where it is honoured:
+  `align` (the alignment reference) and `reconcile` (the merge's preferred
+  source), plus `run`/`calibrate`, which thread it to both. A script that passed
+  `--reference` to one of the three now gets Click's own "no such option" rather
+  than a silently accepted no-op.

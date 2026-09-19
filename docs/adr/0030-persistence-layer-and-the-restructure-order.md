@@ -44,7 +44,7 @@ not a committed document.
      reach; the vendor artifact name out of `core`; the pass-through modules and
      dead exports deleted — beside the fixes filed on top of them: the
      reconciliation compare-and-set, the e2e gate's provisioning hint, and the
-     importer's authority over the frozen archive.
+     importer no longer taking the frozen archive as authoritative.
   2. **Batch 2 — the persistence work**, the decisions below: Alembic at open,
      the SQLAlchemy mapping, the per-meeting uniqueness index, Pydantic at the
      boundaries.

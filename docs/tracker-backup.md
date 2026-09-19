@@ -24,7 +24,7 @@ Three words, held to throughout: a **dump** is one `gitea dump` archive; the
 file a run writes — the audit's, and the drill's own `drill.json`. The scripts,
 the records' keys and the justfile recipes say `source` in that sense too.
 
-## The record that has to survive
+## The list that has to survive
 
 The dump is the tracker when it holds: the issues themselves (tickets, closed
 ones included, and the umbrella specs), the comments on them, the wiki pages, the
@@ -74,17 +74,19 @@ What is inside the zip is what the restore has to put back:
 
 | in the zip | what it is |
 | --- | --- |
-| `data/gitea.db` | the database — SQLite; the whole record above except the wiki |
+| `data/gitea.db` | the database — SQLite; the whole list above except the wiki |
 | `data/conf/app.ini` | the instance's configuration |
 | `data/` (`avatars/`, `indexers/`, `jwt/`, …) | the AppDataPath: the files the database points at |
 | `repos/<owner>/<name>.git`, `repos/<owner>/<name>.wiki.git` | the repository root: the mirrored code, and the wiki |
 | `gitea-db.sql` | the same database as SQL text (`data/gitea.db` is what is read) |
 | `app.ini` | a copy of the configuration at the archive root |
 
-One thing the dump does **not** carry: an LFS object store, which an instance
-keeps at a path of its own beside the repository root. The tracker's issues and
-wiki do not use LFS, so the drill does not need it; an instance whose *code*
-clones use it needs that directory copied separately.
+LFS is not a path of its own beside the repository root: Gitea's default is
+`data/lfs`, inside the AppDataPath the table above already carries — the
+drill's own generated configuration writes `[lfs] PATH = {data}/lfs`. The
+tracker's issues and wiki do not use LFS, so neither the audit nor the drill
+counts it; an instance whose *code* clones do use LFS gets those objects back
+with the rest of `data/`, with nothing to copy separately.
 
 ## 2. Audit the dump
 
@@ -263,9 +265,16 @@ Exit status, and what each means:
 
 | status | meaning |
 | --- | --- |
-| 0 | the restored copy read MATCH; the source comparison, when the source was named, read MATCH or DRIFT |
-| 1 | the drill did not pass: a **FAIL** verdict — something the dump holds and the compared instance does not — an audit that wrote no record, or a named source that could not be read |
+| 0 | the restored copy read MATCH — that verdict alone decides the status. When a source was named, its comparison (MATCH, DRIFT or **FAIL**) is printed and recorded, but does not change it |
+| 1 | the restored copy did not read MATCH: a **FAIL** verdict against the dump, or an audit that wrote no record |
 | 2 | the run was refused before or during the restore: a missing prerequisite or bad input (no Docker, a version mismatch, an unreadable dump, a scratch directory this drill did not write), an instance that would not come up, or a path or listen address outside the scratch root |
+
+**A source-side FAIL does not fail the run.** The restore already proved itself
+against the dump before the source was even asked, so status 0 can carry a
+`source comparison: FAIL` line — the source is missing something the dump
+holds. A caller scripting against the exit status alone will not see that;
+reading the printed line, or `drill.json`'s `verdict.source`, is how it is
+caught.
 
 A restore that started always leaves `drill.json`, including when it failed: the
 record names the failure rather than being absent, which is when it is worth most.
@@ -304,10 +313,13 @@ because there is nothing to record yet:
 An audit record names the moment, the dump's path, size and **sha256**, the counts
 on both sides, the names compared (issue numbers, wiki page titles, label names),
 the sampled issues with a per-field verdict and the value behind every mismatch,
-the lost and drift lines, and the verdict. A run is evidenced by that file, and a
-verdict is tied to one exact dump by its hash — the same dump audited twice leaves
-two records carrying the same sha256, and a dump that changed leaves a different
-one.
+the lost and drift lines, and the verdict. A run is evidenced by that file, and
+the sha256 is how a reader ties a record to the exact dump it audited: auditing
+the same dump file again reproduces the same hash, a changed or different dump a
+different one. The path is not that proof — `just tracker-backup` writes the one
+default path (`--record` names another), so auditing the same dump twice without
+`--record` overwrites the first record rather than leaving a second; keeping more
+than one means naming a distinct `--record` path each time.
 
 The drill's record (`drill.json`) is what ties the two audits together: the
 dump's provenance (its path, size, sha256, and whether this run took it, and the
@@ -319,9 +331,14 @@ started always leaves a record of where it stopped. Nothing in it names the
 instance.
 
 All of it lives under `.local/` with the environment, for the reason the dump
-does: the records name the instance they compared against. None of it is
-committed, and it is not collected anywhere. Nothing prunes it either; a run
-leaves its files where they land.
+does: the records name the instance they compared against, and none of it is
+committed. What accumulates is the dumps: `.local/backups/` gains one zip per
+`just tracker-backup`/`--take-dump` run, and nothing here prunes the old ones —
+that housekeeping is the operator's. The scratch directory is the opposite:
+`.local/restore-drill/` (or `--scratch DIR`) is wiped and rebuilt at the start
+of every run — a directory this drill did not mark is refused, never silently
+reused — and its extracted payload is removed again on a pass; only a failed
+run (or `--keep`) leaves it standing, for a look before the next run clears it.
 
 ## Who runs it, and how often
 

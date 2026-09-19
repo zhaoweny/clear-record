@@ -107,8 +107,10 @@ Date: 2026-09-13
 - [FACT] Clause (c) above was written as "no internal layer imports
   `clear_record.cli`". It held for the four layers this ADR named; ADR-0013
   added `service` and `web` to the guard the next day, and `service` imports the
-  CLI package **deliberately** — `service.agent_flow`, `service.auto`,
-  `service.benchmark`, `service.glossary` and `service.hello_tape` all do —
+  CLI package **deliberately** — ten of `service`'s modules do:
+  `service.agent_flow`, `service.auto`, `service.benchmark`,
+  `service.diagnostics`, `service.glossary`, `service.hello_tape`,
+  `service.managed`, `service.runs`, `service.setup` and `service.transcript` —
   because the stage wiring the pipeline runs is still
   `clear_record.cli.stages`. The guard's `ALLOWED_INTERNAL` carries
   `service → cli` as an edge and its docstring says so, so what

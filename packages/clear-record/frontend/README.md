@@ -57,16 +57,10 @@ just e2e           # seed, boot the real console, run the specs, write screensho
 screenshots to `.local/e2e/screenshots/` (gitignored) for the visual review, and
 its specs assert the htmx wiring those captures show.
 
-The browser download is per **machine** by convention, not per worktree: it
-lands once in the main checkout's `.local/ms-playwright`, and a worktree shares
-that copy when its own `.local/ms-playwright` is a symlink to it — the link comes
-from environment provisioning, not from a committed step. `just e2e` provisions
-nothing; it checks first and fails immediately, naming the fix — `bun install
---frozen-lockfile --cwd packages/clear-record/frontend` when the dependencies
-are not installed, `just e2e-install` when the browser is not — rather than
-letting a fresh worktree die on `playwright: command not found` or one
-`browserType.launch` failure per spec. Point a run at another browser copy with
-`PLAYWRIGHT_BROWSERS_PATH`.
+`just e2e` checks its own provisioning first and fails immediately, naming the
+fix, rather than dying mid-run on a missing dependency or browser; see
+[docs/frontend-assets.md](../../../docs/frontend-assets.md) for the guard and
+the per-machine, not per-worktree, browser download it covers.
 
 ### Filenames are stable, not content-hashed
 

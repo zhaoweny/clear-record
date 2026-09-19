@@ -1134,7 +1134,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "     runs this audit against the restored copy, where the verdict\n"
             "     must read MATCH. It refuses to restore across Gitea versions.\n"
             "docs/tracker-backup.md carries the recipe, the evidence and who\n"
-            "runs it. Exit status: 0 for MATCH and DRIFT, 1 for FAIL."
+            "runs it. Exit status: 0 for MATCH and DRIFT, 1 for FAIL, 2 for a\n"
+            "missing or unreadable input."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

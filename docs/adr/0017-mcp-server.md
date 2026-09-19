@@ -66,7 +66,7 @@ Date: 2026-09-14
   - artifacts: `list_artifacts`, `read_transcript`;
   - agent drafts (ADR-0018): `list_agent_drafts`, `read_agent_draft`,
     `run_agent_task`, `accept_agent_draft`, `reject_agent_draft`.
-- [DECISION] Tools return **structured, JSON-serialisable** values (annotated
+- [DECISION] Tools return **structured, JSON-serializable** values (annotated
   `dict`/`list[dict]`), so the SDK publishes an output schema and an agent gets
   machine-readable data. Anticipated failures (unknown project/meeting, no tape
   set, unknown run, invalid status) are raised as the SDK's **`ToolError`** with

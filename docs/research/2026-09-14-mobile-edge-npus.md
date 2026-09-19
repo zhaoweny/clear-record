@@ -81,11 +81,11 @@ is Apple's on-device inference path. `[FACT]` `whisper.cpp` has a **Core ML**
 path that runs the **encoder on the ANE**: "more than x3 faster compared with
 CPU-only execution", shipped via `-DWHISPER_COREML=1` and a generated
 `.mlmodelc` (<https://github.com/ggml-org/whisper.cpp>, "Core ML support").
-`[FACT]` Apple publishes an ANE-optimised transformer reference implementation
+`[FACT]` Apple publishes an ANE-optimized transformer reference implementation
 (<https://github.com/apple-aiml-research/ml-ane-transformers>; the repo is what
 the `ane_transformers` conversion dependency comes from). `[OPEN]` That repo's
-licence is reported by the GitHub API as "Other / NOASSERTION", i.e. **not a
-confirmed permissive licence**; verify before depending on it.
+license is reported by the GitHub API as "Other / NOASSERTION", i.e. **not a
+confirmed permissive license**; verify before depending on it.
 
 **ggml / whisper.cpp backend.** `[FACT]` **Metal is the shipped, hot-tested
 clear-record path** on Apple (ADR-0005 Update, 2026-09-11: verified end-to-end on
@@ -95,10 +95,10 @@ M4, 164 segments). `[FACT]` Core ML (ANE) exists upstream in `whisper.cpp` as an
 "community experiment" with an **ANE-native encoder roughly 2× that Core ML
 path"; the primary repo for that experiment was not located here.
 
-**Licence.** `[FACT]` `whisper.cpp` is **MIT**
+**License.** `[FACT]` `whisper.cpp` is **MIT**
 (<https://github.com/ggml-org/whisper.cpp>). Apple frameworks (Core ML, the
 `Speech` framework) are OS-provided, not redistributable open source. The
-conversion tooling licences (`coremltools`, `ane_transformers`) are `[OPEN]`.
+conversion tooling licenses (`coremltools`, `ane_transformers`) are `[OPEN]`.
 
 **Verdict.** `[SUGGESTION]` **macOS Apple Silicon = already a plausible node
 (shipped).** **iOS/iPadOS phone = client / control surface only.** A phone cannot
@@ -143,7 +143,7 @@ single C ABI that runs LLMs/VLMs over either `llama.cpp`/ggml (CPU, Adreno GPU,
 Hexagon NPU) or QNN — again **LLM/VLM, not ASR**
 (<https://github.com/qualcomm/GenieX>, <https://github.com/qualcomm/GenieX/blob/main/sdk/README.md>).
 
-**Licence.** `[FACT]` The QNN/QAIRT SDK is **proprietary and license-gated**: the
+**License.** `[FACT]` The QNN/QAIRT SDK is **proprietary and license-gated**: the
 product page carries a "Product license agreement" and the install flow requires
 a Qualcomm ID and explicit license activation
 (`qpm-cli --license-activate qualcomm_ai_engine_direct`)
@@ -187,7 +187,7 @@ and the backend list places **Hexagon + OpenCL** there
 (<https://github.com/ggml-org/llama.cpp/blob/master/docs/backend/snapdragon/README.md>).
 `whisper.cpp` has no Snapdragon backend.
 
-**Licence.** `[FACT]` Same proprietary, license-gated QNN/QAIRT as above. Windows
+**License.** `[FACT]` Same proprietary, license-gated QNN/QAIRT as above. Windows
 AI APIs additionally impose the MSIX + `systemAIModels` packaging constraint.
 
 **Verdict.** `[SUGGESTION]` **Out of scope for the mobile/edge lane.** If this
@@ -222,7 +222,7 @@ SDK) (<https://docs.pytorch.org/executorch/main/backends-mediatek.html>).
 **ggml / whisper.cpp backend.** `[FACT]` **None** — MediaTek appears in neither
 the `whisper.cpp` nor the `llama.cpp` backend lists.
 
-**Licence.** `[FACT]` The NeuroPilot SDK is **proprietary and gated**; the full
+**License.** `[FACT]` The NeuroPilot SDK is **proprietary and gated**; the full
 SDK requires an NDA (above). The LiteRT/ExecuTorch paths are open *delegates*
 but still require the vendor runtime.
 
@@ -295,10 +295,10 @@ only, excluding pre/post-processing)
   `tiny.en`/`base.en` on the RK3588 NPU (FP16 matmul) and claims **30× real-time**
   on tiny.en, "2× faster than faster-whisper's int8"; its own TODO list still has
   larger models, int8/int4 matmuls, async launches and timestamp decoding
-  (<https://github.com/moonshine-ai/useful-transformers>). `[FACT]` Its licence is
+  (<https://github.com/moonshine-ai/useful-transformers>). `[FACT]` Its license is
   **GPL-3.0** and its last code push was **2024-08-07** (GitHub API,
   <https://api.github.com/repos/moonshine-ai/useful-transformers>). `[OPEN]` A
-  separate daemon `boundarybitlabs/rkwhisper` exists; maturity/licence not
+  separate daemon `boundarybitlabs/rkwhisper` exists; maturity/license not
   assessed (<https://github.com/boundarybitlabs/rkwhisper>). `[FACT]` A
   `jianglu/whisper_RK3588` fork (MIT) explicitly **self-describes as
   un-adapted** ("it's not already adapted to be used on RK3588")
@@ -308,8 +308,8 @@ only, excluding pre/post-processing)
   RKNN models or rkllama" (`antonioacg/rknpu-rk3588`, GPL-2.0 — community source)
   (<https://github.com/antonioacg/rknpu-rk3588>).
 
-**Licence.** `[FACT]` The **RKNN SDK / Toolkit is proprietary**, under the
-"RKNN SDK License": a royalty-free copyright licence limited to design/develop/
+**License.** `[FACT]` The **RKNN SDK / Toolkit is proprietary**, under the
+"RKNN SDK License": a royalty-free copyright license limited to design/develop/
 test of applications **compatible with Rockchip products**, with
 no-reverse-engineering, no re-licensing, PRC governing law, and no support
 obligation (<https://github.com/airockchip/rknn-toolkit2/blob/master/LICENSE>).
@@ -328,7 +328,7 @@ official and strongest community ASR paths are **non-ggml RKNN** and the
 community Whisper project is **GPL-3.0 / stale**; and the SDK is **proprietary**.
 Adopting it would mean a **new non-`whisper-cli` runtime family**, with the same
 "changes the property ADR-0005 fixes" cost as the `SpeechTranscriber`/OpenVINO
-question — plus a licence review. It also converts the **NAS** (a storage role in
+question — plus a license review. It also converts the **NAS** (a storage role in
 §5) into a compute node, which is a scope expansion, and §7 shows the project's
 deliberate pattern of excluding appliance-fleet/pod directions.
 
@@ -336,7 +336,7 @@ deliberate pattern of excluding appliance-fleet/pod directions.
 
 ## Verdict summary
 
-| Platform | Class | OS speech API | Accelerator SDK | ggml / whisper.cpp backend | Licence | Verdict |
+| Platform | Class | OS speech API | Accelerator SDK | ggml / whisper.cpp backend | License | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
 | Apple A/M | phone + Mac node | `SpeechAnalyzer`/`SpeechTranscriber` (iOS 26) | Core ML / ANE, Metal | Metal (shipped, mature); Core ML encoder (upstream, not used) | `whisper.cpp` MIT; Apple OS frameworks proprietary | macOS: **node (shipped)**; iPhone: **client only** |
 | Qualcomm Snapdragon 8 | phone | Android `SpeechRecognizer` (on-device API 31+) | QNN / QAIRT (Hexagon HTP) | `llama.cpp` Hexagon (`[In Progress]`, "experimental"), OpenCL/Adreno — LLM only; **none in `whisper.cpp`** | QNN proprietary, license-gated | **client only** |
@@ -351,11 +351,11 @@ deliberate pattern of excluding appliance-fleet/pod directions.
   says "on-device" only; the Apple API pages are JS-rendered.
 - `[OPEN]` The primary repo/benchmark for the ADR-0005-noted June-2026
   **ANE-native encoder ~2× Core ML** experiment.
-- `[OPEN]` Licences of `coremltools` and Apple's `ane_transformers`
+- `[OPEN]` Licenses of `coremltools` and Apple's `ane_transformers`
   (`ml-ane-transformers` GitHub API reports "NOASSERTION").
 - `[OPEN]` Whether any Qualcomm QNN backend exists for **`whisper.cpp`** outside
   the upstream tree (none found); the same for MediaTek and Rockchip.
-- `[OPEN]` `boundarybitlabs/rkwhisper` maturity, licence, and whether it is
+- `[OPEN]` `boundarybitlabs/rkwhisper` maturity, license, and whether it is
   packaged/maintained.
 - `[OPEN]` Exact QNN/QAIRT redistribution terms (behind the SDK's `LICENSE.pdf`).
 - `[OPEN]` Whether a Rockchip board could serve as a *cheap always-on node*

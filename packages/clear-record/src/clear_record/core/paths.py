@@ -141,7 +141,7 @@ def install_models_recognizer(recognize: Callable[[Path], bool]) -> None:
 def _dirs() -> DefaultDirs:
     if _defaults is None:  # pragma: no cover - ``import clear_record`` installs
         raise RuntimeError(
-            "clear-record app directories were not initialised; "
+            "clear-record app directories were not initialized; "
             "import clear_record before resolving a path"
         )
     return _defaults

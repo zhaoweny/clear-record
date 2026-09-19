@@ -243,7 +243,7 @@ def _find_ggml_gpu_backend(families: tuple[str, ...]) -> str | None:
     return None
 
 
-# Recognised GPU families for the opt-in plugin-load probe, mapped to the
+# Recognized GPU families for the opt-in plugin-load probe, mapped to the
 # substrings the CLI / backend plugins print. The probe accepts the debug-build
 # ``load_backend: loaded <name> backend`` line as well as a backend's own device
 # banner (``ggml_vulkan:``, ``ggml_cuda``, ...), because release builds compile
@@ -505,7 +505,7 @@ _GGML_MODEL_REPO = "ggerganov/whisper.cpp/resolve/main"
 # Socket timeout per read/write: a stalled connection must not block a pool
 # worker (or the single-threaded prefetch) indefinitely.
 _GGML_DOWNLOAD_TIMEOUT_S = 60
-# Serialise first-use downloads. The model can be requested by many pool
+# Serialize first-use downloads. The model can be requested by many pool
 # workers at once (``AppleBackend`` is ``parallelizable``), and without this
 # every worker would stream into the same temp and race ``os.replace``. One
 # lock makes the check-and-download single-flight.
@@ -573,7 +573,7 @@ def download_ggml_model(model: str, model_dir: str | None = None) -> str:
 def _download_ggml_model(model: str, name: str, base: str, candidate: str) -> str:
     """Download ``ggml-<name>.bin`` to ``candidate`` (single-flight).
 
-    A process-wide lock serialises the check-and-download, and each call streams
+    A process-wide lock serializes the check-and-download, and each call streams
     to its own temp file, so concurrent workers can neither interleave writes nor
     lose the ``os.replace`` race. A model with a pinned digest is verified
     **before** the rename (see :mod:`clear_record.providers.ggml_hashes`), so a

@@ -19,7 +19,7 @@ from collections.abc import Iterable, Sequence
 
 from clear_record.core import Segment
 
-# A short token that is entirely a bracketed/parenthesised expression.
+# A short token that is entirely a bracketed/parenthesized expression.
 _MARKER_RE = re.compile(r"^\s*[\[\(（【]\s*[^\[\]\(\)（）【】]*\s*[\]\)）】]\s*$")
 # A token made only of music/symbol/punctuation characters.
 _MUSIC_RE = re.compile(r"^[\s♪♫♬♩#*\-–—._]+$")

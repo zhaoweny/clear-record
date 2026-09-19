@@ -235,7 +235,7 @@ def test_the_checkpoint_probe_prefers_the_default_model(tmp_path, monkeypatch) -
     assert agent_flow._on_disk_checkpoint() == models / "ggml-small.bin"
 
 
-def test_the_checkpoint_probe_returns_the_concrete_quantised_path(
+def test_the_checkpoint_probe_returns_the_concrete_quantized_path(
     tmp_path, monkeypatch
 ) -> None:
     models = tmp_path / "models"
@@ -243,7 +243,7 @@ def test_the_checkpoint_probe_returns_the_concrete_quantised_path(
     (models / "ggml-large-v3-q5_0.bin").write_bytes(b"m")
     monkeypatch.setenv("CR_MODELS_DIR", str(models))
 
-    # The path, not the normalised size name: passing "large-v3" would send the
+    # The path, not the normalized size name: passing "large-v3" would send the
     # backend looking for ggml-large-v3.bin and trigger a download.
     assert agent_flow._on_disk_checkpoint() == models / "ggml-large-v3-q5_0.bin"
 

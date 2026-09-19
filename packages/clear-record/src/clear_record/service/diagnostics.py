@@ -294,7 +294,7 @@ def build_bundle(facts: BundleFacts) -> str:
             "Every path keeps its shape (separators, depth, suffixes) but each component"
         )
         out.append(
-            "name is replaced by a stable hash, so it is recognisable, not identifying."
+            "name is replaced by a stable hash, so it is recognizable, not identifying."
         )
     out.append("")
     out.append("# version")

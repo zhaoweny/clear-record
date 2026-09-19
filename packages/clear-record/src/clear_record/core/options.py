@@ -199,7 +199,7 @@ DECODER_KNOB_FIELDS: tuple[str, ...] = tuple(knob.name for knob in DECODER_KNOBS
 #: mean "unset", and the resolver fills it from ``CR_*`` env → profile → built-in
 #: default. The CLI defaults these flags to ``None`` (never to the concrete
 #: default), so an explicit value that *equals* the default — ``--jobs 0``, the
-#: documented "auto" — is still recognised as explicit and beats a profile or the
+#: documented "auto" — is still recognized as explicit and beats a profile or the
 #: environment. Every profile key and every ``CR_*`` knob is a row of the
 #: declaration, so this is derived rather than restated.
 RESOLVABLE_FIELDS: tuple[str, ...] = tuple(knob.name for knob in RUN_KNOBS)

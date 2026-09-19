@@ -66,7 +66,7 @@ def test_per_chunk_glossary_digests_survive_a_round_trip(tmp_path) -> None:
     assert chunk_glossary(stored) == {0: "aaaa", 1: "bbbb"}
     assert plan_matches(stored, _key()) is True
     # The digest of the run's own glossary is derivable, so a chunk that is
-    # already current is recognisable.
+    # already current is recognizable.
     assert glossary_digest("Acme") == glossary_digest("Acme")
     assert glossary_digest("Acme") != glossary_digest("Acme Ltd")
 

@@ -197,7 +197,7 @@ class _Group(click.Group):
     """A group that owns the CLI-wide verbosity contract.
 
     ``invoke`` runs after the group's own options are parsed but before the
-    subcommand's are, so it normalises the level from the group flag and any
+    subcommand's are, so it normalizes the level from the group flag and any
     subcommand ``-v`` still gets the last word. ``add_command`` gives every
     command — built-in or contributed through an entry point — the same ``-v``.
     """
@@ -439,7 +439,7 @@ def _knob_options(slot: str) -> list:
     Each generated option states itself once, from its row: the spelling, the
     type, the ``CR_*`` binding and the help. The default is always ``None``
     ("unset"), never the concrete built-in value, so an explicit flag that equals
-    the default — ``--jobs 0``, the documented "auto" — is still recognised as
+    the default — ``--jobs 0``, the documented "auto" — is still recognized as
     explicit and beats a profile or the environment (see
     :func:`clear_record.core.resolve_options`).
     """

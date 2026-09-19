@@ -50,7 +50,7 @@ def host_name(value: str | None) -> str | None:
 
     Strips a ``:port`` suffix and IPv6 brackets, lowercases, and drops a
     trailing FQDN dot, so ``[::1]:8765``, ``127.0.0.1:8765`` and ``LOCALHOST.``
-    all normalise to the names the guard compares.
+    all normalize to the names the guard compares.
     """
     if value is None:
         return None
@@ -92,7 +92,7 @@ def is_loopback_host(name: str | None) -> bool:
 
 
 def normalize_hosts(values: Iterable[str]) -> frozenset[str]:
-    """Normalise configured hostnames to the form :func:`is_trusted` compares."""
+    """Normalize configured hostnames to the form :func:`is_trusted` compares."""
     return frozenset(name for value in values if (name := host_name(value)))
 
 

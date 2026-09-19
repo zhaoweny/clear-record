@@ -78,7 +78,7 @@ HELLO_CHECK_DIRNAME = "hello-check"
 _SCRATCH_PROJECT = "hello-world-check"
 _SCRATCH_MEETING = "hello-world"
 
-#: Serialises the scratch workspace against concurrent "Try it" clicks. The
+#: Serializes the scratch workspace against concurrent "Try it" clicks. The
 #: console is local and single-user (ADR-0013); this is belt-and-braces so two
 #: requests cannot interleave ingest/transcribe in one directory.
 _CHECK_LOCK = threading.Lock()
@@ -137,7 +137,7 @@ def _on_disk_checkpoint() -> Path | None:
     **Never downloads.** A missing checkpoint is the ``model`` finding, reported
     before the pipeline runs so a web request can never trigger a first-use
     download. The concrete path — not the size name — is returned, so a
-    quantised file (``ggml-large-v3-q5_0.bin``) resolves as-is.
+    quantized file (``ggml-large-v3-q5_0.bin``) resolves as-is.
     """
     candidates = model_paths_on_disk()
     if not candidates:

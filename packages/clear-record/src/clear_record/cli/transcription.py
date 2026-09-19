@@ -213,7 +213,7 @@ _MODEL_VRAM_GB: dict[str, float] = {
     "turbo": 1.7,
     "distil-large-v3": 2.2,
 }
-# An unrecognised checkpoint is assumed to be a large model: that can only
+# An unrecognized checkpoint is assumed to be a large model: that can only
 # lower the default, never raise it.
 _UNKNOWN_MODEL_VRAM_GB = _MODEL_VRAM_GB["large"]
 # VRAM floor assumed when the GPU cannot be probed. 8 GB matches the sizing
@@ -244,7 +244,7 @@ _RUNNER = SubprocessRunner()
 def model_vram_gb(model: str | None) -> float:
     """Approximate resident VRAM (GB) for one ``whisper-cli`` process.
 
-    Accepts a size name, a ``ggml-*.bin`` filename, or a path. A quantisation
+    Accepts a size name, a ``ggml-*.bin`` filename, or a path. A quantization
     suffix (``-q5_0``) is ignored, which over-estimates the model and so errs on
     the safe side; an unknown name is treated as ``large``.
     """

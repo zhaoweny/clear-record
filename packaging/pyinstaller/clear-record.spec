@@ -15,7 +15,7 @@ imported only *dynamically* (through the `clear_record.commands` entry point and
 lazy imports), so they are listed as hidden imports; `copy_metadata("clear-record")`
 keeps the entry point resolvable inside the frozen app, which is what makes
 `clear-record web` and `clear-record tray` work there too. Because
-`clear_record.tray.app` is analysed here, its deferred `PySide6` imports are seen
+`clear_record.tray.app` is analyzed here, its deferred `PySide6` imports are seen
 and the PyInstaller PySide6 hooks collect the Qt plugins and libraries.
 
 Unsigned: see packaging/pyinstaller/README.md for the macOS Gatekeeper and

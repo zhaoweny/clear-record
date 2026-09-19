@@ -233,7 +233,7 @@ def synthesize_clip(
 def _normalize_lang(lang: str) -> str:
     """A language tag as ``en_us``/``zh``: strip encoding and unify separators.
 
-    An empty tag normalises to ``""`` -- "no tag" -- so a caller that wants the
+    An empty tag normalizes to ``""`` -- "no tag" -- so a caller that wants the
     English default must apply it explicitly and a voice carrying no locale can
     never be mistaken for an English one. ``C``/``POSIX`` is the process default
     and keeps the English rendering.
@@ -250,8 +250,8 @@ def _normalize_lang(lang: str) -> str:
 def _match_voice(voices: Sequence[TtsVoice], lang: str) -> TtsVoice | None:
     """The best voice for ``lang``: exact locale first, then base language.
 
-    ``lang`` arrives normalised, but a voice tag is kept as the engine printed
-    it, so both sides are normalised here -- ``en-GB`` and ``zh-HK`` must match
+    ``lang`` arrives normalized, but a voice tag is kept as the engine printed
+    it, so both sides are normalized here -- ``en-GB`` and ``zh-HK`` must match
     ``en_gb`` and ``zh_hk`` rather than silently falling through to the engine
     default.
     """

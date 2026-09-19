@@ -1,7 +1,7 @@
 """Shared in-process MCP client helpers for the tests/mcp suites.
 
 Both test modules drive the same SDK client (Client(server)) and assert the
-same two shapes -- a structured, JSON-serialisable result and an actionable
+same two shapes -- a structured, JSON-serializable result and an actionable
 is_error message -- so the helpers live here once instead of as a copy in
 each file.
 """

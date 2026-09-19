@@ -59,7 +59,7 @@ UNKNOWN_KIND_MSGID = deferred("unknown task kind {kind}; known kinds: {known}")
 
 
 def unknown_kind(kind: str) -> Message:
-    """The one error for an unrecognised task kind, naming the known kinds.
+    """The one error for an unrecognized task kind, naming the known kinds.
 
     A :class:`~clear_record.core.message.Message` so the task seam can raise it
     as English (``str``) and the meeting surface can raise its ID plus

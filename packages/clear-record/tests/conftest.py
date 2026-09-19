@@ -59,7 +59,7 @@ def _hermetic_english_environment(monkeypatch: pytest.MonkeyPatch, tmp_path):
         ),
     )
     monkeypatch.setattr(paths, "_notified", set())
-    # Neutralise the legacy ``<cwd>/models`` candidate: see the module docstring.
+    # Neutralize the legacy ``<cwd>/models`` candidate: see the module docstring.
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path / "no-such-cwd")
     i18n.reset()
     yield

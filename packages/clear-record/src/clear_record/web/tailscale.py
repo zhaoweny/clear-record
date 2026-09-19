@@ -279,7 +279,7 @@ def _status_error(proc, tailscale_bin: str) -> TailscaleError:
 def resolve_dns_name(*, tailscale_bin: str | None = None) -> str:
     """This machine's tailnet DNS name, from ``tailscale status --json``.
 
-    Prefers ``Self.DNSName`` (normalising its trailing dot); falls back to
+    Prefers ``Self.DNSName`` (normalizing its trailing dot); falls back to
     ``Self.HostName`` + ``CurrentTailnet.MagicDNSSuffix`` when the field is
     absent. Raises :class:`TailscaleError` when Tailscale is down, unauthenticated
     or reports nothing usable.

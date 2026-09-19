@@ -171,7 +171,7 @@ def test_trusted_hosts_env_allows_a_proxys_public_hostname(
 
 
 # --- The pure helpers, at their edges ------------------------------------- #
-def test_host_name_normalises_ports_brackets_and_case() -> None:
+def test_host_name_normalizes_ports_brackets_and_case() -> None:
     assert guard.host_name("127.0.0.1:8765") == "127.0.0.1"
     assert guard.host_name("[::1]:8765") == "::1"
     assert guard.host_name("LOCALHOST.") == "localhost"

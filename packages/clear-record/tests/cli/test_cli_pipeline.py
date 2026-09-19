@@ -870,7 +870,7 @@ def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> N
     # Unknown / missing models are assumed large, which can only lower the cap.
     assert auto_jobs(10, None, 8.0) == 1
 
-    # Name parsing covers filenames, paths and quantisation suffixes.
+    # Name parsing covers filenames, paths and quantization suffixes.
     assert model_vram_gb("ggml-large-v3.bin") == 3.7
     assert model_vram_gb("/models/ggml-large-v3-q5_0.bin") == 3.7
     assert model_vram_gb("medium") == 2.1

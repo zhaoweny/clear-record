@@ -31,11 +31,12 @@ import datetime as _dt
 import hashlib
 import os
 import platform as _platform
-import sqlite3
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
@@ -1160,10 +1161,12 @@ class RunManager:
                     # pid probe cannot decide, this beat *is* the only evidence a
                     # run is alive, so a dead thread means a still-executing run
                     # looks dead 30 s later and its meeting and the node are freed.
+                    # The registry raises SQLAlchemy's errors (ADR-0030), which
+                    # wrap the driver's own.
                     landed = self._registry.heartbeat_run(run_id)
                     asked_to_stop = landed and self._registry.cancel_requested(run_id)
                     reaped = not landed and self._was_reaped(run_id)
-                except sqlite3.Error as exc:
+                except SQLAlchemyError as exc:
                     # Report it once per run and keep beating — the error says the
                     # node cannot *prove* the run is alive, not that it is not.
                     self._report_beat_failure(run_id, f"{type(exc).__name__}: {exc}")

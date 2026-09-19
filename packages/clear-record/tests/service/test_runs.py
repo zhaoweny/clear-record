@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from clear_record.cli.workspace import Workspace
 from clear_record.core import JobEvent, Progress, resolve_options
@@ -620,7 +621,8 @@ class _UnreadableBeats:
     Everything else is the wrapped registry — the manager claims, drains and reads
     through it unchanged. ``heartbeat_run`` reports that the beat did not land, so
     the heartbeat thread goes on to read the row (``get_run``), which is where this
-    fake raises while ``raise_on_read`` is set.
+    fake raises while ``raise_on_read`` is set: it raises the error the registry's
+    reads now arrive as, since SQLAlchemy wraps the driver's own (ADR-0030).
     """
 
     def __init__(self, registry: Registry) -> None:
@@ -634,7 +636,9 @@ class _UnreadableBeats:
 
     def get_run(self, run_id: int):
         if self.raise_on_read:
-            raise sqlite3.OperationalError("database is locked")
+            raise OperationalError(
+                "SELECT 1", {}, sqlite3.OperationalError("database is locked")
+            )
         return self._registry.get_run(run_id)
 
     def __getattr__(self, name):

@@ -94,9 +94,9 @@ def test_reference_flag_reaches_only_the_stages_that_use_it() -> None:
     Three stage commands accepted it and dropped it: `export` (never read the
     value), `ingest` (its body passes directory/audio_files/split only) and
     `transcribe` (it resolved the value into options it never forwarded to the
-    stage), so a copied flag looked accepted and did nothing (ticket 149). They
-    now refuse it — a usage error, not a silent no-op — while the two stages
-    that act on a source reference keep it.
+    stage), so a copied flag looked accepted and did nothing. They now refuse it
+    — a usage error, not a silent no-op — while the two stages that act on a
+    source reference keep it.
     """
     for stage in ("export", "ingest", "transcribe"):
         result = CliRunner().invoke(_build_group(), [stage, "dir", "--reference", "b"])

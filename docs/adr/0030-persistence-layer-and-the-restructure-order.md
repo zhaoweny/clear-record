@@ -143,3 +143,13 @@ not a committed document.
   source), plus `run`/`calibrate`, which thread it to both. A script that passed
   `--reference` to one of the three now gets Click's own "no such option" rather
   than a silently accepted no-op.
+- **The mapping changes the class a registry failure arrives as.** With SQLAlchemy
+  between the store and `sqlite3`, a duplicate is raised as
+  `sqlalchemy.exc.IntegrityError` and a locked database as
+  `OperationalError`/`SQLAlchemyError` — SQLAlchemy's own errors, which *wrap* the
+  driver's exception rather than being it. Every catch inside this tree was
+  retargeted with the mapping (`service/runs.py`'s heartbeat guard most visibly),
+  so in-tree callers are unaffected; an **out-of-tree** caller that catches
+  `sqlite3.IntegrityError`, or `sqlite3.Error` around a registry call, now catches
+  nothing and must catch the SQLAlchemy class — or `sqlalchemy.exc.SQLAlchemyError`
+  where it means the whole family.

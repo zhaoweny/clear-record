@@ -7,9 +7,17 @@ run's hook — and the same one the developer CLI uses:
 
     alembic -x db=/path/to/registry.sqlite3 upgrade head
 
-``target_metadata`` is ``None``: the tables are hand-written statements in the
-revisions, and the mapping that will name them is later work in this lane. This
-change adds no table, column or index.
+``target_metadata`` is ``None``, and that is a **decision, not a deferral**
+(ADR-0030): the revisions are the schema's single source of truth and stay
+hand-written, while :mod:`clear_record.service.entities` maps the same tables as
+a *query* shape that never emits DDL. Its ``Base.metadata`` must not be handed to
+``context.configure`` — wiring it would make ``--autogenerate`` diff against a
+mapping that is not the schema's authority. Measured against today's mapping,
+that diff is nine ``alter_column`` calls, one per table's ``id`` (SQLite reflects
+an ``INTEGER PRIMARY KEY`` as nullable; the mapping declares it not), seven
+``drop_index``, ten ``drop_constraint``/``create_foreign_key`` pairs, and — on a
+registry the retired ladder wrote — ``drop_table('schema_version')``, the table
+``store._migrate`` still reads. This change adds no table, column or index.
 """
 
 from __future__ import annotations
@@ -56,9 +64,9 @@ def run_migrations_online() -> None:
     """Migrate the registry on a connection of this run's own.
 
     The connection is not pooled and does not outlive the run: the registry's
-    operations keep their own connection discipline (one connection per
-    operation), and the session lifecycle the mapping will bring belongs to the
-    change that brings it.
+    own operations keep their connection discipline (a connection per unit of
+    work, from the engine the registry owns), and this run takes a connection of
+    its own rather than one of theirs.
     """
     connectable = create_engine(_database_url(), poolclass=pool.NullPool)
     with connectable.connect() as connection:

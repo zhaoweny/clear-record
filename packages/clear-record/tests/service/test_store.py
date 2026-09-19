@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
+from sqlalchemy import UniqueConstraint, event
 
-from clear_record.service import Registry
+from clear_record.service import Registry, entities
 from clear_record.service.store import _alembic_config
 
 
@@ -443,3 +444,133 @@ def test_a_migrated_ladder_registry_still_reads_for_an_older_build(tmp_path) -> 
     fresh = tmp_path / "fresh.sqlite3"
     Registry(fresh)
     assert _version_tables(fresh) == ["alembic_version"]
+
+
+# --- the mapping the registry reads and writes through (ADR-0030) ----------- #
+
+
+def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
+    """Alembic owns the schema; the entities only describe it (ADR-0030).
+
+    So the two can drift, and a drift is silent until a query fails or a value
+    comes back wrong: a revision that adds a column the mapping does not carry, a
+    mapped column no table has, a mapped type the table does not hold, or a
+    uniqueness the DDL declares and the mapping has forgotten — which is the one
+    that turns a duplicate into an ``IntegrityError`` the store reads as "already
+    exists". ``--autogenerate`` cannot catch any of it while ``target_metadata``
+    stays ``None`` by decision (``migrations/env.py``), so this is the net: every
+    table, every column with its type and nullability, and every declared
+    uniqueness, against revision 0008's own schema.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+    mapped_columns = {
+        name: {
+            column.name: (str(column.type), column.nullable) for column in table.columns
+        }
+        for name, table in entities.Base.metadata.tables.items()
+    }
+    mapped_uniques = {
+        name: {
+            frozenset(column.name for column in constraint.columns)
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+        for name, table in entities.Base.metadata.tables.items()
+    }
+    with sqlite3.connect(str(db)) as conn:
+        names = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name NOT IN ('alembic_version', 'sqlite_sequence')"
+            )
+        ]
+        # PRAGMA table_info is (cid, name, type, notnull, dflt_value, pk). An
+        # ``INTEGER PRIMARY KEY`` is the rowid and is not reported NOT NULL, but
+        # it can never be null — which is how the mapping declares it.
+        actual_columns = {
+            name: {
+                column[1]: (column[2].upper(), column[3] == 0 and column[5] == 0)
+                for column in conn.execute(f'PRAGMA table_info("{name}")')
+            }
+            for name in names
+        }
+        # PRAGMA index_list is (seq, name, unique, origin, partial): origin ``u``
+        # is a UNIQUE constraint of the table's own DDL (``pk`` is the rowid's,
+        # and ``c`` an index a revision created separately).
+        actual_uniques = {
+            name: {
+                frozenset(
+                    column[2]
+                    for column in conn.execute(f'PRAGMA index_info("{index[1]}")')
+                )
+                for index in conn.execute(f'PRAGMA index_list("{name}")')
+                if index[2] == 1 and index[3] == "u"
+            }
+            for name in names
+        }
+
+    assert set(mapped_columns) == set(actual_columns)
+    for name in sorted(actual_columns):
+        mapped, stored = mapped_columns[name], actual_columns[name]
+        assert mapped == stored, f"{name} columns: " + ", ".join(
+            f"{key}: mapped={mapped.get(key)!r} actual={stored.get(key)!r}"
+            for key in sorted(set(mapped) | set(stored))
+            if mapped.get(key) != stored.get(key)
+        )
+        assert mapped_uniques[name] == actual_uniques[name], (
+            f"{name} uniques: mapped={mapped_uniques[name]!r}"
+            f" actual={actual_uniques[name]!r}"
+        )
+
+
+def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
+    """The two atomic transitions stay one statement each (ADR-0030).
+
+    The claim and the reconciliation are kept as Core expressions because their
+    guarantee *is* the statement: the write lock decides the claim inside it, and
+    the compare travels to the database with it. A mapping that read the row,
+    decided in Python and wrote it back would keep this file's behaviour tests
+    green — nothing here contends — and lose that guarantee, so what is asserted
+    is the shape: the transition is the call's **first** statement (there is no
+    read before it to decide from), and the values the decision rests on are that
+    statement's own parameters.
+    """
+    reg = _registry(tmp_path)
+    reg.create_project("Ops")
+    meeting = reg.create_meeting("ops", "Kickoff")
+    run = reg.create_run(meeting.id)
+
+    seen: list[tuple[str, tuple]] = []
+
+    @event.listens_for(reg._engine, "before_cursor_execute")
+    def _record(_conn, _cursor, statement, parameters, _context, _many) -> None:
+        seen.append((" ".join(statement.split()), parameters))
+
+    claimed = reg.claim_run(run.id, owner="host:1")
+    assert claimed is not None and claimed.status == "running"
+    assert len(seen) == 2, seen  # the transition, and the row it wrote read back
+    statement, parameters = seen[0]
+    assert statement.startswith("UPDATE pipeline_run")
+    assert "EXISTS" in statement.upper()  # the node's rule, inside the WHERE
+    assert "host:1" in parameters and run.id in parameters
+
+    seen.clear()
+    reaped = reg.interrupt_run(
+        run.id, observed=claimed, ended_at="now", error="gone", progress={}
+    )
+    assert reaped is not None and reaped.status == "interrupted"
+    assert len(seen) == 2, seen
+    statement, parameters = seen[0]
+    assert statement.startswith("UPDATE pipeline_run")
+    assert claimed.owner in parameters and claimed.heartbeat_at in parameters
+
+    # The behaviour the shape buys: the same snapshot again is a stale one, and
+    # a stale observation does not interrupt a row it no longer describes.
+    assert (
+        reg.interrupt_run(
+            run.id, observed=claimed, ended_at="later", error="stale", progress={}
+        )
+        is None
+    )

@@ -542,3 +542,22 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
   LLM-shaped jobs (glossary management, correction, minutes) are **agent work**.
   **The tuning loop is emergent**: expose the tools and it happens in
   conversation.
+
+## v0.3 scope and milestones (2026-09-21)
+
+- [DECISION] **v0.3.0 is a consolidation release** (owner, 2026-09-21): it ships the work already on
+  `main` since `v0.2.0`, plus the truth and hardening work needed to publish it, plus the release
+  mechanics. The live/dictation requirement recorded in the local tracker the same day is **deferred
+  to 0.4**, where it is the headline; it is designed without a release date.
+- [DECISION] **One release milestone** holds every in-scope ticket; the three stages — trunk truth and
+  hardening, harness backend and release preparation, release — are the order of work. *(First cut as
+  three stage milestones; merged to one by the owner the same day.)*
+- [DECISION] **Harness and infrastructure work carries no milestone**: the local tracker's
+  `agent-workflow` lane and the instance-operations tickets are the machinery that produces the
+  release, not release scope.
+- [VOICE: owner, 2026-09-21] Verbatim: *"v0.3 would drop in-process BYOK features and become a backend
+  for AI harness agents"*. Consequence: the app stops being an LLM client — the endpoint runner, the
+  console's agent flow and the model-credential plumbing go — and the **MCP surface becomes the only
+  agent integration**, with the user's harness doing the model work. It is the release's one breaking
+  change, and the foundation the deferred 0.4 requirement stands on. The option wording of the three
+  decisions above is agent-authored; the quoted item is the owner's.

@@ -55,10 +55,11 @@ not a committed document.
   statement must be exactly what the database does — the run claim, the
   reconciliation compare-and-set — the SQLAlchemy **Core** expression is kept
   rather than reconstructed out of mapped objects.
-- [DECISION: owner, 2026-09-19] **Alembic is adopted as revision one, and runs
-  at open.** Revision one is the schema the registry already has: adopting the
-  tool changes no table and moves no data, and every later schema change is a
-  revision on top of it. The process applies the revisions when it opens the
+- [DECISION: owner, 2026-09-19] **Alembic is adopted, and runs at open.** The
+  revisions are the retired ladder's own steps, one apiece: revision `0001` is
+  the ladder's v1 (the project and glossary tables) and `0008` is its last step,
+  so adopting the tool changes no table and moves no data, and every later schema
+  change is a revision on top of them. The process applies the revisions when it opens the
   registry, so an ordinary start yields a current schema with no separate
   migration step for the user.
 - [DECISION: owner, 2026-09-19] **Pydantic v2 at the boundaries only.** The

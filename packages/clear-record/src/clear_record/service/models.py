@@ -64,6 +64,33 @@ MEETING_STATUSES = ("new", "ready", "running", "recorded", "failed", "interrupte
 #: startup, and its event stream stays readable.
 RUN_STATUSES = ("queued", "running", "done", "failed", "stopped", "interrupted")
 
+#: The runs that are **in flight**: a run a meeting already has, as opposed to one
+#: it had. This is the classification the whole tree reads — the run manager's
+#: guard (:meth:`~clear_record.service.store.Registry.active_run_for_meeting`),
+#: its claim and its reconciliation compare-and-set, the claim's node-wide clause,
+#: the console's run views, and the mapping's own index predicate
+#: (:class:`~clear_record.service.entities.PipelineRun`) — so that
+#: "one run in flight per meeting" cannot come to mean two things.
+#:
+#: Two places must spell the pair out again rather than import it: revision
+#: ``0009``'s ``CREATE UNIQUE INDEX … WHERE`` and its reconciliation statement,
+#: because a revision states its own DDL (the schema's history is frozen, and a
+#: released revision cannot import today's application). ``tests/service/test_store.py``
+#: compares that predicate with this declaration, and the terminal tuple below is
+#: derived from it, so the copies cannot drift apart unnoticed.
+ACTIVE_RUN_STATUSES = ("queued", "running")
+
+#: The runs that are **over**: the complement of :data:`ACTIVE_RUN_STATUSES`, in
+#: :data:`RUN_STATUSES` order. Derived rather than restated, so a seventh status
+#: is classified by landing in the vocabulary alone.
+TERMINAL_STATUSES = tuple(
+    status for status in RUN_STATUSES if status not in ACTIVE_RUN_STATUSES
+)
+
+#: The terminal runs a **resume** may continue (RUN-04): ``done`` is not one of
+#: them — re-running a finished meeting is the run form's job, not a resume.
+RESUMABLE_STATUSES = tuple(status for status in TERMINAL_STATUSES if status != "done")
+
 #: Which surface **started** a run (RUN-02). ``console`` is the local console UI,
 #: ``api`` the HTTP JSON API (a script or an integration), ``mcp`` the stdio MCP
 #: server an agent harness drives, ``cli`` the command line. It is recorded when
@@ -215,6 +242,7 @@ class Archive:
 
 
 __all__ = [
+    "ACTIVE_RUN_STATUSES",
     "Archive",
     "Artifact",
     "GlossaryTerm",
@@ -222,10 +250,12 @@ __all__ = [
     "MEETING_STATUSES",
     "PipelineRun",
     "Project",
+    "RESUMABLE_STATUSES",
     "RecordingSet",
     "RUN_ORIGINS",
     "RUN_STATUSES",
     "TERM_AUTHORS",
     "TERM_STATUSES",
+    "TERMINAL_STATUSES",
     "Tape",
 ]

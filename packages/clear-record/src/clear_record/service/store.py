@@ -73,23 +73,27 @@ from sqlalchemy import (
     Select,
     Table,
     Text,
+    case,
     create_engine,
     event,
     func,
     insert,
     inspect,
+    or_,
     select,
     update,
 )
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from clear_record.core.events import JobEvent
+from clear_record.core.i18n import tr
 from clear_record.core.paths import registry_path
 from clear_record.service import entities, tapestore
 from clear_record.service.models import (
+    ACTIVE_RUN_STATUSES,
     MEETING_STATUSES,
     RUN_ORIGINS,
     RUN_STATUSES,
@@ -104,7 +108,7 @@ from clear_record.service.models import (
     RecordingSet,
     Tape,
 )
-from clear_record.service.run_options import read_run_options
+from clear_record.service.run_options import KEPT_OPTIONS_LEAD, read_run_options
 
 # --- the schema's history, owned by Alembic (ADR-0030) --------------------- #
 #
@@ -119,19 +123,34 @@ from clear_record.service.run_options import read_run_options
 #: the same value for the developer CLI.
 _SCRIPT_LOCATION = "clear_record.service:migrations"
 
+#: The retired ladder's last version number, as the ladder itself wrote it.
+#:
+#: The ladder's own ``SCHEMA_VERSION`` when this build adopted its steps: its
+#: numbers became the revision ids ``0001``–``0008``, and its last step was 8.
+#: This is a **fixed number of the retired ladder**, never derived from the head
+#: revision's id. A revision added on top of the ladder (``0009``, and every one
+#: after it) must not move the number an older build compares *itself* with, and
+#: a head id need not be a number at all — Alembic's own default is a hex uuid,
+#: which ``migrations/env.py`` pins away from this chain for exactly this reason.
+_LADDER_VERSION = 8
+
 #: The retired ladder's version table, and what it is for now.
 #:
 #: Only a registry that carried it *before* this build has one: the ladder
 #: created it and revision 0001 deliberately does not, so a registry this build
 #: creates has no such record. Where it exists, the row is read once to place the
-#: stamp and then left at the head revision's number — a build from before
-#: Alembic reads *this* row, the head's schema is the ladder's own last one, and
-#: the number is what lets that build treat the ladder as already applied
-#: instead of re-running it. Where it does not exist, such a build runs the
-#: ladder instead and stops at the first step that is not idempotent, v4's
-#: ``ALTER TABLE meeting ADD COLUMN notes`` ("duplicate column name"), its
-#: earlier steps adding nothing but this table. A revision that changes a shape
-#: the ladder describes, rather than adding to it, is what would revisit this.
+#: stamp and then levelled at :data:`_LADDER_VERSION` — a build from before
+#: Alembic reads *this* row, the number is the ladder's own last version, and
+#: that is what lets such a build treat the ladder as already applied instead of
+#: re-running it. Levelling it at the *head* revision's number would do the
+#: opposite: the number would sit above what that build supports, and it refuses
+#: the registry outright ("registry schema version 9 is newer than this build
+#: supports (8)") even though the schema is one it can read. Where this table
+#: does not exist, such a build runs the ladder instead and stops at the first
+#: step it cannot re-run, v4's ``ALTER TABLE meeting ADD COLUMN notes``
+#: ("duplicate column name"), its earlier steps adding nothing but this table. A
+#: revision that changes a shape the ladder describes, rather than adding to it,
+#: is what would revisit this.
 _LEGACY_VERSION_TABLE = "schema_version"
 
 #: Alembic's own version table.
@@ -204,34 +223,82 @@ def _alembic_config(db_path: Path) -> Config:
     return config
 
 
-def _revision_history(config: Config) -> tuple[frozenset[str], str]:
-    """Every revision this build carries, and the newest of them."""
+def _revision_history(config: Config) -> tuple[frozenset[str], str, tuple[str, ...]]:
+    """Every revision this build carries, its newest, and the chain head-first.
+
+    ``lineage`` is the order the steps were applied in — ``walk_revisions``
+    yields heads first — and it is what lets a version table holding several rows
+    be reduced to the one that says how far the schema actually got: the chain is
+    linear, so the schema carries every step up to the *head-most* row, and the
+    lower rows are stale records of steps already applied.
+    """
     script = ScriptDirectory.from_config(config)
-    return (
-        frozenset(entry.revision for entry in script.walk_revisions()),
-        ", ".join(script.get_heads()),
+    lineage = tuple(entry.revision for entry in script.walk_revisions())
+    return frozenset(lineage), ", ".join(script.get_heads()), lineage
+
+
+def _stamped_revisions(conn: Connection) -> tuple[str, ...]:
+    """The revisions the registry's Alembic version table records."""
+    return tuple(row[0] for row in conn.execute(select(_ALEMBIC_VERSION.c.version_num)))
+
+
+def _reduce_version_rows(
+    conn: Connection, rows: tuple[str, ...], lineage: tuple[str, ...]
+) -> None:
+    """Leave one row in a version table a race gave several.
+
+    Alembic reads more than one row as a **multi-head** state and refuses every
+    upgrade from it (``Requested revision 0009 overlaps with other requested
+    revisions 0008``), so a registry in this state never opens again — the
+    failure two surfaces starting at once left behind while nothing serialized
+    them. The rows it wrote record steps that *ran*, the chain is linear, and the
+    schema therefore carries every step up to the head-most of them: that row is
+    the one kept, the rest are deleted. The write happens inside the migration's
+    own transaction, lock held, so a step that then fails rolls the repair back
+    with everything else.
+    """
+    keep = min(rows, key=lineage.index)
+    conn.execute(
+        _ALEMBIC_VERSION.delete().where(_ALEMBIC_VERSION.c.version_num != keep)
     )
 
 
-def _pending_stamp(conn: Connection, known: frozenset[str], head: str) -> str | None:
+def _pending_stamp(
+    conn: Connection, known: frozenset[str], head: str, lineage: tuple[str, ...]
+) -> str | None:
     """The revision a registry that predates Alembic stands at, if any.
 
-    Two shapes arrive from before this build: a registry Alembic has already
-    stamped (it stands at the revision it records) and one the hand-rolled
-    ladder wrote (its ``schema_version`` names that revision directly, because
-    the revision ids *are* the ladder's version numbers, adopted along with its
-    DDL). Either way, a registry that records something this build does not
-    carry — a newer release's revision — raises here, before any revision runs:
-    half-understanding a schema is worse than refusing to open it.
+    Three shapes arrive from before this build: a registry Alembic has already
+    stamped (it stands at the revision it records), one the hand-rolled ladder
+    wrote (its ``schema_version`` names that revision directly, because the
+    revision ids *are* the ladder's version numbers, adopted along with its
+    DDL), and one whose version table exists but holds no row — an open that died
+    between Alembic's creation of that table and its final stamp. That last shape
+    is a **misplaced stamp, not "no registry here yet"**: the schema under it is
+    built to *some* point, so the read falls through to the ladder's own row, and
+    where there is none every revision replays from the base. A replay is safe
+    because no step needs a schema it cannot find: the create-table steps are
+    ``IF NOT EXISTS``, each step that adds a column is guarded on that column
+    (revisions 0004, 0006, 0007, 0008), and revision 0009 verifies the index it
+    finds instead of assuming its own ran.
+
+    A registry that records something this build does not carry — a newer
+    release's revision — raises here, before any revision runs:
+    half-understanding a schema is worse than refusing to open it. The one write
+    this read makes is the multi-row repair (:func:`_reduce_version_rows`).
     """
     if _has_table(conn, _ALEMBIC_VERSION_TABLE):
-        for (revision,) in conn.execute(select(_ALEMBIC_VERSION.c.version_num)):
+        rows = _stamped_revisions(conn)
+        for revision in rows:
             if revision not in known:
                 raise RuntimeError(
                     f"registry schema revision {revision} is not one this build "
                     f"carries (its newest is {head}); upgrade clear-record"
                 )
-        return None
+        if len(rows) > 1:
+            _reduce_version_rows(conn, rows, lineage)
+        if rows:
+            return None
     if not _has_table(conn, _LEGACY_VERSION_TABLE):
         return None  # no registry here yet: every revision runs from the base
     row = conn.execute(select(_LEGACY_VERSION.c.version)).first()
@@ -309,6 +376,25 @@ def _term_query() -> Select[tuple[entities.GlossaryTerm, str]]:
     )
 
 
+class RegistryLocked(RuntimeError):
+    """Another surface holds the registry's write lock while it migrates.
+
+    The registry migrates when it opens (ADR-0030), and two surfaces share one
+    file (RUN-02), so one open can meet another's migration.
+    :meth:`Registry._migrate` takes SQLite's write lock for the whole step, so
+    this is what a lock still held after the driver's busy timeout means — the
+    other surface is mid-step, and this open did not wait past its timeout. It is
+    a *transient* state with one remedy, so the message names the file and says
+    so; the exception it came from stays chained as the cause.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(
+            f"another surface is migrating the registry at {db_path} and still "
+            f"holds its write lock; nothing was changed — retry"
+        )
+
+
 class Registry:
     """The single owner of the SQLite registry and its read/writes."""
 
@@ -376,25 +462,59 @@ class Registry:
         registry recording a revision this build does not carry is refused
         first (see :func:`_pending_stamp`) — before any revision runs, and
         before anything reads it as its own.
+
+        **One opener at a time, from the first read.** The registry is shared by
+        the console and an agent's MCP server (RUN-02) and both migrate at open,
+        so the whole step — the version tables' read, the stamp, the revisions
+        and the ladder row — runs on **one connection holding SQLite's write
+        lock from before that read** (``BEGIN IMMEDIATE``), and the revisions run
+        on that same connection (``migrations/env.py`` takes it from the
+        configuration). Two openers therefore take the lock in turn instead of
+        interleaving, and one that fails rolls back to exactly the registry the
+        other left. Without it the retired ladder's ``CREATE TABLE IF NOT
+        EXISTS`` steps tolerated two openers and Alembic's do not: the loser died
+        on the version table's own DDL (``table alembic_version already exists``)
+        or, worse, left that table recording two revisions, which no later open
+        can read (see :func:`_reduce_version_rows`).
         """
         config = _alembic_config(self.db_path)
-        known, head = _revision_history(config)
+        known, head, lineage = _revision_history(config)
         with self._engine.connect() as conn:
-            legacy = _has_table(conn, _LEGACY_VERSION_TABLE)
-            stamp = _pending_stamp(conn, known, head)
-        if stamp is not None:
-            # A registry the hand-rolled ladder wrote: it already stands at
-            # that revision, so record where it is and let the upgrade below
-            # run only the revisions it is missing.
-            command.stamp(config, stamp)
-        command.upgrade(config, "head")
-        if legacy:
-            # Level the ladder's row with the head — it is what an older build
-            # reads (see `_LEGACY_VERSION_TABLE`), and the head revision's
-            # number is the ladder's own last version.
-            with self._engine.connect() as conn:
-                conn.execute(update(_LEGACY_VERSION).values(version=int(head)))
+            # The write lock, taken before anything is read: SQLite refuses to
+            # upgrade a read transaction, and a decision read outside the lock is
+            # a decision another opener can invalidate before it is written.
+            try:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+            except OperationalError as exc:
+                # The lock belongs to another surface and it is still migrating:
+                # transient, so the message says what to do instead of letting a
+                # traceback speak for it.
+                raise RegistryLocked(self.db_path) from exc
+            try:
+                legacy = _has_table(conn, _LEGACY_VERSION_TABLE)
+                stamp = _pending_stamp(conn, known, head, lineage)
+                # The revisions run on this connection, inside this lock.
+                config.attributes["connection"] = conn
+                if stamp is not None:
+                    # A registry the hand-rolled ladder wrote: it already stands
+                    # at that revision, so record where it is and let the upgrade
+                    # below run only the revisions it is missing.
+                    command.stamp(config, stamp)
+                command.upgrade(config, "head")
+                if legacy:
+                    # Level the ladder's row at the ladder's own last version —
+                    # the number a build from before Alembic compares itself
+                    # with, and the one that lets it treat the ladder as already
+                    # applied (see `_LEGACY_VERSION_TABLE`).
+                    conn.execute(
+                        update(_LEGACY_VERSION).values(version=_LADDER_VERSION)
+                    )
                 conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                config.attributes.pop("connection", None)
 
     # --- projects ---------------------------------------------------------- #
     @staticmethod
@@ -972,23 +1092,36 @@ class Registry:
         would be rolled back with the exception (a session whose body raises
         commits nothing), leaving the row stuck and the queue behind it blocked.
 
-        The ``run_options`` column is cleared in the same statement: its text is
-        already quoted into ``error``, and a column nobody can read is a row the
-        console cannot even show as failed. Only a ``queued`` or ``running`` row
-        is moved, so a run that finished is never rewritten by a caller that read
-        a stale list. Returns whether a row moved.
+        The ``run_options`` column is cleared in the same statement, and its text
+        is **carried into ``error``** — the reader's message names the fields that
+        failed, never the values, so the column is the only copy of what the row
+        held and clearing it alone would destroy it. The statement reads the
+        column and writes both fields itself (SQL's own concatenation), so no
+        other writer can slip between the read and the clear. Only a ``queued`` or
+        ``running`` row is moved, so a run that finished is never rewritten by a
+        caller that read a stale list. Returns whether a row moved.
         """
         with self._session() as session:
             result = session.execute(
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status.in_(("queued", "running")),
+                    entities.PipelineRun.status.in_(ACTIVE_RUN_STATUSES),
                 )
                 .values(
                     status="failed",
                     ended_at=_now(),
-                    error=error,
+                    error=error
+                    + case(
+                        (
+                            or_(
+                                entities.PipelineRun.run_options.is_(None),
+                                entities.PipelineRun.run_options == "",
+                            ),
+                            "",
+                        ),
+                        else_=tr(KEPT_OPTIONS_LEAD) + entities.PipelineRun.run_options,
+                    ),
                     run_options=None,
                 )
             )
@@ -1024,7 +1157,7 @@ class Registry:
                 select(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.meeting_id == meeting_id,
-                    entities.PipelineRun.status.in_(("queued", "running")),
+                    entities.PipelineRun.status.in_(ACTIVE_RUN_STATUSES),
                 )
                 .order_by(entities.PipelineRun.id.desc())
                 .limit(1)
@@ -1595,8 +1728,13 @@ class Registry:
             created_at=row.created_at,
         )
 
-    @staticmethod
-    def _run(row: entities.PipelineRun) -> PipelineRun:
+    def _run(self, row: entities.PipelineRun) -> PipelineRun:
+        """The boundary value for one run row, validating its stored options.
+
+        The one mapper that is an instance method rather than a ``@staticmethod``:
+        the read seam's warning is keyed by the registry a row belongs to, and the
+        row itself does not carry that.
+        """
         return PipelineRun(
             id=row.id,
             meeting_id=row.meeting_id,
@@ -1614,7 +1752,10 @@ class Registry:
             # registry hands a run on, and a row that no longer fits fails loudly
             # instead of arriving reduced (ADR-0030, `service.run_options`).
             run_options=read_run_options(
-                row.id, row.run_options, meeting_id=row.meeting_id
+                row.id,
+                row.run_options,
+                meeting_id=row.meeting_id,
+                registry=str(self.db_path),
             ),
             progress=json.loads(row.progress) if row.progress else None,
             origin=row.origin,
@@ -1652,4 +1793,4 @@ class Registry:
         )
 
 
-__all__ = ["Registry"]
+__all__ = ["Registry", "RegistryLocked"]

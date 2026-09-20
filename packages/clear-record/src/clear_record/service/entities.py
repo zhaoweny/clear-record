@@ -42,6 +42,24 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from clear_record.service.models import ACTIVE_RUN_STATUSES
+
+
+def _active_predicate() -> str:
+    """The index's partial predicate, from the one active-status declaration.
+
+    ``status IN ('queued', 'running')`` — the *text* has to be built here because
+    SQLAlchemy wants a literal for ``sqlite_where``, and it is built from
+    :data:`~clear_record.service.models.ACTIVE_RUN_STATUSES` so the mapping cannot
+    disagree with the guard that reads the same set.
+    """
+    rendered = ", ".join(f"'{status}'" for status in ACTIVE_RUN_STATUSES)
+    return f"status IN ({rendered})"
+
+
+#: The predicate the mapping declares and revision 0009 creates.
+_ACTIVE_PREDICATE = _active_predicate()
+
 
 class Base(DeclarativeBase):
     """The registry's declarative base: table shapes, no DDL of its own."""
@@ -134,15 +152,17 @@ class PipelineRun(Base):
     #: One active run per meeting, stated where every writer must obey it.
     #: Partial, so it constrains the *active* run and not the meeting's history: a
     #: ``done``/``failed``/``stopped``/``interrupted`` run holds nothing, and the
-    #: meeting starts again. This is the index revision 0009 creates; the guard in
-    #: :meth:`Registry.active_run_for_meeting` reads the same two states, and the
-    #: index is what decides when two submissions race past it.
+    #: meeting starts again. This is the index revision 0009 creates, and its
+    #: predicate is built from the one declaration of what "active" means
+    #: (:data:`~clear_record.service.models.ACTIVE_RUN_STATUSES`) rather than
+    #: spelling the pair again — the revision has to spell it (a revision states
+    #: its own DDL), and ``tests/service/test_store.py`` compares the two.
     __table_args__ = (
         Index(
             "pipeline_run_active_meeting",
             "meeting_id",
             unique=True,
-            sqlite_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text(_ACTIVE_PREDICATE),
         ),
     )
 
@@ -164,8 +184,8 @@ class PipelineRun(Base):
     origin: Mapped[str | None] = mapped_column(Text)
     owner: Mapped[str | None] = mapped_column(Text)
     heartbeat_at: Mapped[str | None] = mapped_column(Text)
-    #: A plain column, not a foreign key: the revision added it as one, and the
-    #: reference is checked by the store rather than by the table.
+    #: A plain column, not a foreign key: revision 0008 added it without one, and
+    #: its reference is checked by the store rather than by the table.
     resumes_run_id: Mapped[int | None] = mapped_column(Integer)
     cancel_requested_at: Mapped[str | None] = mapped_column(Text)
 

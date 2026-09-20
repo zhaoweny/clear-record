@@ -616,13 +616,12 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
 
 
 def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
-    """One unreadable row must not stop the node's queue (R3).
+    """One unreadable row must not stop the node's queue.
 
-    Both reads the drain makes walk rows and stop at the row they refuse, so a
-    single row this build cannot read hid every run queued behind it — and killed
-    the queue thread, so every respawn died the same way, leaving queued work
-    stopped silently. The row is failed instead, with the reader's own message in
-    its record, and the run behind it still moves.
+    The reads walk rows and stop at the row they refuse, so a single row this
+    build cannot read hid every run queued behind it — and killed the queue
+    thread, so every respawn died the same way, leaving queued work stopped
+    silently. The row is failed instead, and the run behind it still moves.
     """
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -659,6 +658,11 @@ def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     assert quarantined.error is not None
     assert f"run {refused.id}" in quarantined.error
     assert "jobs" in quarantined.error
+    # The reader's message names the fields that failed, never their values, so
+    # the column it came from is the only copy of what the row held: clearing it
+    # puts the text in the run's own record instead of dropping it.
+    assert '{"backend": "apple", "jobs": "many"}' in quarantined.error
+    assert quarantined.run_options is None
 
 
 # --- the node queue: one run at a time ------------------------------------- #
@@ -2027,3 +2031,79 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
         wall_seconds=300.0,
     )
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
+
+
+def test_a_running_row_the_build_cannot_read_does_not_stop_the_node(tmp_path) -> None:
+    """The same refusal, one status over, must not stop the process starting.
+
+    Reconciliation reads the ``running`` rows from the constructor, and that is
+    the object every surface builds before it can serve anything: ``create_app``
+    registers its exception handler *after* the manager exists, and the MCP server
+    and the tray build the same one. So one unreadable ``running`` row used to take
+    the whole surface down with a traceback, where the same row in status
+    ``queued`` was failed and the queue carried on.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    with sqlite3.connect(str(registry.db_path)) as conn:
+        conn.execute(
+            "UPDATE pipeline_run SET status = 'running', started_at = 'now',"
+            " owner = 'somewhere:1', heartbeat_at = 'now', run_options = ?"
+            " WHERE id = ?",
+            ('{"backend": "apple", "jobs": "many"}', run.id),
+        )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)  # must not raise
+
+    quarantined = registry.get_run(run.id)
+    assert quarantined is not None and quarantined.status == "failed"
+    assert f"run {run.id}" in (quarantined.error or "")
+    assert "jobs" in (quarantined.error or "")
+    assert registry.active_run_for_meeting(meeting.id) is None
+    manager.shutdown()
+
+
+def test_a_claim_that_fails_does_not_stop_the_queue(tmp_path, monkeypatch) -> None:
+    """The claim is one statement, and its failure must not end the drain.
+
+    ``cr-run-queue`` calls the claim outside its own guard, so any error from it —
+    a locked registry, a disk error, a row that stopped being readable between the
+    drain's read and the claim — ended the thread. The queue then stopped quietly:
+    the queued run stayed ``queued`` until the next submission or a restart, and
+    nothing in the run's own record said why. The failure is reported now and the
+    next pass tries the run again.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    real_claim = Registry.claim_run
+    attempts = {"n": 0}
+
+    def flaky_claim(self, run_id, *, owner):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OperationalError("SELECT 1", {}, Exception("database is locked"))
+        return real_claim(self, run_id, owner=owner)
+
+    monkeypatch.setattr(Registry, "claim_run", flaky_claim)
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    assert manager.wait(run.id, timeout=10).status == "done"
+    assert attempts["n"] >= 2
+    assert manager._scheduler is not None and manager._scheduler.is_alive()
+    manager.shutdown()

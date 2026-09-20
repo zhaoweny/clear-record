@@ -60,6 +60,11 @@ jobs:
           uv venv .smoke-venv
           uv pip install --python .smoke-venv --find-links dist "clear-record==${version}"
           .smoke-venv/bin/clear-record --help
+          # The registry migrates when it opens (ADR-0030), and that chain is
+          # shipped inside the wheel: opening one here is what proves the chain
+          # the user gets is the chain that ran, not just that the console script
+          # imports.
+          .smoke-venv/bin/python -c "import pathlib, tempfile; from clear_record.service import Registry; db = pathlib.Path(tempfile.mkdtemp()) / 'registry.sqlite3'; Registry.open(db_path=db).create_project('smoke'); print('migrated at open:', db.name)"
       - name: Upload the dist
         uses: actions/upload-artifact@v7
         with:

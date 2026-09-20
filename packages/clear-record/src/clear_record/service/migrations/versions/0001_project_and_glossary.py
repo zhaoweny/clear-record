@@ -5,7 +5,9 @@ Revises: nothing (an empty registry)
 
 The history opens at the ladder's first step: the app-owned project and
 glossary tables. Revisions 0002–0009 carry a registry from there to today's
-tables, and this change adds no table, column or index. The one statement of
+schema, and the *adoption* of the ladder's steps adds no table, column or index:
+what they describe is the schema the registry already has (0009 alone alters
+data, and only rows the product itself raced into — see that revision). The one statement of
 the ladder's step that has no counterpart here is its own ``schema_version``
 table: the version state is ``alembic_version`` from this revision on, and
 an existing registry's ``schema_version`` is read once, when it is adopted.

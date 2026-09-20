@@ -6,7 +6,7 @@
    unknown for both, because nothing has measured them yet. `row` is the dict
    web/app.py builds once; the header chip is fed from the same reads. #}
 {% set run = row.run %}
-{% set live = run.status in ("queued", "running") %}
+{% set live = row.live %}
 <div class="run status-{{ run.status }}">
   <div class="run-head">
     <span class="badge status-{{ run.status }}">{{ run.status }}</span>

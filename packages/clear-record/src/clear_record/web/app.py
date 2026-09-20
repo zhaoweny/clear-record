@@ -52,7 +52,9 @@ from clear_record.core.paths import (
     resolve_state_dir,
 )
 from clear_record.service import (
+    ACTIVE_RUN_STATUSES,
     BACKEND_AUTO,
+    RUN_IN_FLIGHT,
     BUNDLE_FILENAME,
     TASK_KINDS,
     TERM_STATUSES,
@@ -75,6 +77,7 @@ from clear_record.service import (
     ProjectCountOut,
     ProjectOut,
     Registry,
+    RESUMABLE_STATUSES,
     RunManager,
     RunOut,
     Runner,
@@ -706,12 +709,6 @@ def _run_speed_so_far(run: PipelineRun, event: JobEvent | None) -> float | None:
     return round(audio / event.elapsed_s, 3)
 
 
-#: The statuses a run can be resumed from: it is over, and continuing it is a
-#: new run that re-uses the chunk cache (RUN-04). ``done`` is not one of them —
-#: re-running a finished meeting is the run form's job, not a resume.
-RESUMABLE_STATUSES = ("stopped", "interrupted", "failed")
-
-
 def _run_controls(row: PipelineRun | None, *, status: str) -> dict:
     """The cancel/resume controls a run fragment shows (RUN-04).
 
@@ -720,7 +717,7 @@ def _run_controls(row: PipelineRun | None, *, status: str) -> dict:
     resume says which run it continues.
     """
     return {
-        "cancellable": status in ("queued", "running"),
+        "cancellable": status in ACTIVE_RUN_STATUSES,
         "cancel_requested": bool(row.cancel_requested_at) if row is not None else False,
         "resumable": status in RESUMABLE_STATUSES,
         "resumes_run_id": row.resumes_run_id if row is not None else None,
@@ -756,7 +753,7 @@ def _run_context(
         last = state.last
         context["meeting_id"] = state.meeting_id
         context["message"] = last.message if last else ""
-        context["polling"] = state.status in ("queued", "running")
+        context["polling"] = state.status in ACTIVE_RUN_STATUSES
         context["axes"] = axes
         context.update(_run_controls(row, status=state.status))
         if history_eta_s is not None:
@@ -1508,7 +1505,7 @@ def create_app(
     def status_context() -> dict:
         """Version, the resolved directories, the queue and backend availability."""
         queue = []
-        for run in registry.runs_with_status("queued", "running"):
+        for run in registry.runs_with_status(*ACTIVE_RUN_STATUSES):
             meeting = registry.meeting_by_id(run.meeting_id)
             queue.append(
                 {
@@ -1549,7 +1546,7 @@ def create_app(
         meeting = registry.meeting_by_id(run.meeting_id)
         slug = meeting.project_slug if meeting else ""
         recorded = run_axes(run)["speed"]
-        live = run.status in ("queued", "running")
+        live = run.status in ACTIVE_RUN_STATUSES
         event = registry.latest_run_event(run.id) if live else None
         eta_s = event.eta_s if event else None
         if run.status == "running":
@@ -1561,6 +1558,9 @@ def create_app(
                 eta_s = history_eta_s
         return {
             "run": run,
+            # Which fragment the row is: the run is in flight (ACTIVE_RUN_STATUSES),
+            # so `_activity_run.html` reads the one classification, not its own copy.
+            "live": live,
             "project_slug": slug,
             "project_name": projects.get(slug, slug),
             "meeting_slug": meeting.slug if meeting else "",
@@ -2968,9 +2968,9 @@ def create_app(
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         if runs.active_state(meeting_id) is not None:
-            raise HTTPException(
-                status_code=409, detail="a run is already in flight for this meeting"
-            )
+            # The service's own sentence (see `runs.RUN_IN_FLIGHT`), not a copy:
+            # the guard and the index must read the same to this client.
+            raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
         options = PipelineOptions(
             backend=body.backend,
             model=body.model,

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 import warnings
 from typing import Any, get_type_hints
 
@@ -58,6 +59,7 @@ from pydantic import (
     create_model,
 )
 
+from clear_record.core.i18n import deferred
 from clear_record.core.options import (
     RESOLVABLE_FIELDS,
     SUPERSEDED_KEYS,
@@ -68,9 +70,10 @@ from clear_record.core.options import (
 class MalformedRunOptions(ValueError):
     """A stored run-options row that no longer fits the options of a run.
 
-    Raised where the row is read, naming the run and every field that failed —
-    the registry that has drifted from this build says so at the seam instead of
-    the run executing with a reduced set of options. A :class:`ValueError`, like
+    Raised where the row is read, naming the run and its failing fields — or,
+    for text that is not JSON at all, the parse error. The registry that has
+    drifted from this build says so at the seam instead of the run executing with
+    a reduced set of options. A :class:`ValueError`, like
     the other refusals a bad value earns in this layer.
 
     ``run_id`` and ``meeting_id`` identify the row the refusal is about, so a
@@ -91,12 +94,41 @@ class MalformedRunOptions(ValueError):
         self.meeting_id = meeting_id
 
 
+#: What the registry writes before a refused row's own text, when it takes that
+#: text out of the column no reader can read and puts it in the run's ``error``
+#: (``Registry.fail_unreadable_run``). The text is the user's only copy of what
+#: the row held — the reader's refusal names the fields that failed, never the
+#: values — so it is carried into the record verbatim rather than dropped, and
+#: this is the frame that says so. A frame, so it is translated where the row is
+#: written (``docs/i18n.md``: the console renders ``run.error``).
+KEPT_OPTIONS_LEAD = deferred(
+    "\nthe stored options this build cannot read are kept below, exactly as the "
+    "row held them:\n"
+)
+
+
 class SupersededRunOptions(UserWarning):
     """A stored row carried a key a released build wrote and this build does not.
 
     Warned once per read that dropped one, naming the run and the key: the run
     still runs, but it runs without what that key asked for.
     """
+
+
+#: The rows this process has already warned about, as ``(registry, run)``. The
+#: warning belongs to the *row*, not to one read of it: the registry re-reads a
+#: live run's row on every drain pass (about once a second) and in every
+#: console/agent request, so a warning per read would be a line a second for as
+#: long as the run's row keeps the settled key — which is until something
+#: rewrites the column, and nothing does. The registry is part of the key because
+#: a run id is only unique inside one: two registries on one machine both have a
+#: run 1, and each row's warning is worth having. Bounded by the number of rows
+#: an earlier release left behind, per registry this process opened.
+_warned_superseded: set[tuple[str, int]] = set()
+
+#: Guards :data:`_warned_superseded` — reads run on the drain thread, in the
+#: registry's callers and in the web app's threadpool.
+_warned_lock = threading.Lock()
 
 
 def row_fields() -> dict[str, tuple[Any, Any]]:
@@ -140,8 +172,10 @@ def row_model() -> type[BaseModel]:
 #: The model a stored row is validated by.
 RunOptionsRow = row_model()
 
-#: The one adapter the read seam uses (ADR-0030's ``TypeAdapter``).
-RUN_OPTIONS_ROW: TypeAdapter[BaseModel] = TypeAdapter(RunOptionsRow)
+#: The one adapter the read seam uses (ADR-0030's ``TypeAdapter``). Private: the
+#: seam's published surface is :func:`read_run_options` and the exception it
+#: raises, and nothing outside this module builds the adapter itself.
+_RUN_OPTIONS_ROW: TypeAdapter[BaseModel] = TypeAdapter(RunOptionsRow)
 
 
 def _detail(exc: ValidationError) -> str:
@@ -177,6 +211,7 @@ def read_run_options(
     stored: str | None,
     *,
     meeting_id: int | None = None,
+    registry: str | None = None,
 ) -> dict[str, Any] | None:
     """One stored options row as a plain dict, or ``None`` when the run has none.
 
@@ -192,6 +227,10 @@ def read_run_options(
     shapes survive the round trip (``audio_files`` comes back a tuple, as
     :class:`PipelineOptions` declares it) and the caller can rebuild the options
     without a second pass of coercion.
+
+    ``registry`` names the registry the row belongs to (:meth:`Registry._run`
+    passes its own path), which is what the settle step's once-per-row warning is
+    keyed by — a run id alone is unique only inside one registry.
     """
     if not stored:
         return None
@@ -209,7 +248,7 @@ def read_run_options(
         # dict: strict mode reads a JSON array as the tuple the options declare,
         # while a dict input would have to be a tuple already — the one place
         # where "the row came from a JSON column" has to be said out loud.
-        row = RUN_OPTIONS_ROW.validate_json(json.dumps(raw), strict=True)
+        row = _RUN_OPTIONS_ROW.validate_json(json.dumps(raw), strict=True)
     except ValidationError as exc:
         raise MalformedRunOptions(
             f"run {run_id} carries malformed options: {_detail(exc)}",
@@ -217,21 +256,27 @@ def read_run_options(
             meeting_id=meeting_id,
         ) from exc
     if dropped:
-        # One warning per read, however many keys it dropped — the run is named
-        # once and every key it lost is named with it.
-        warnings.warn(
-            f"run {run_id} was queued by an earlier release and carries "
-            f"{', '.join(sorted(dropped))}, which this build does not have; the "
-            f"run reads on without it",
-            SupersededRunOptions,
-            stacklevel=3,
-        )
+        # One warning per *run* in this process, however many keys it dropped and
+        # however often the row is read (see `_warned_superseded`): the run is
+        # named once and every key it lost is named with it.
+        key = (registry or "", run_id)
+        with _warned_lock:
+            first_read = key not in _warned_superseded
+            _warned_superseded.add(key)
+        if first_read:
+            warnings.warn(
+                f"run {run_id} was queued by an earlier release and carries "
+                f"{', '.join(sorted(dropped))}, which this build does not have; the "
+                f"run reads on without it",
+                SupersededRunOptions,
+                stacklevel=3,
+            )
     return dict(row.model_dump())
 
 
 __all__ = [
+    "KEPT_OPTIONS_LEAD",
     "MalformedRunOptions",
-    "RUN_OPTIONS_ROW",
     "RunOptionsRow",
     "SupersededRunOptions",
     "read_run_options",

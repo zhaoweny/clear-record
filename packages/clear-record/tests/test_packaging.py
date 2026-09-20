@@ -418,8 +418,8 @@ def test_e2e_provisioning_guard_reports_each_missing_piece(tmp_path: Path) -> No
     Run in a synthetic tree — the guard resolves the repo root from its own
     path — because whether the real tree has `node_modules` depends on who is
     running the suite, and both branches have to be pinned either way. A
-    regression here is this ticket's whole failure mode: a fresh worktree's gate
-    reporting one `browserType.launch` error per spec instead of one line.
+    regression here is the failure mode this guard exists for: a fresh worktree's
+    gate reporting one `browserType.launch` error per spec instead of one line.
     """
     guard = tmp_path / "scripts" / "check_e2e_provisioning.py"
     guard.parent.mkdir(parents=True)

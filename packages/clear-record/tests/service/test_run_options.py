@@ -122,11 +122,12 @@ def test_the_released_row_is_todays_fields_plus_the_superseded_keys() -> None:
 
 
 def test_a_row_an_earlier_release_wrote_still_reads(tmp_path) -> None:
-    """The released line's ``formats`` is settled, not refused (R1/B1).
+    """The released line's ``formats`` is settled, not refused.
 
-    Before this, the row refused: it carried a key no current field has, and the
-    registry that held it read as malformed for every caller — so an upgrade
-    broke the runs the release had queued.
+    The released line wrote that key and this build has no field for it, so
+    without the tolerance the row would be malformed for every caller and an
+    upgrade would break the runs the release left queued. The tolerance is
+    ``SUPERSEDED_KEYS`` and nothing else: a key no build ever wrote still fails.
     """
     registry, run_id = _seeded_run(tmp_path)
     _store(registry, run_id, _RELEASED_ROW)
@@ -220,8 +221,9 @@ def test_a_stored_value_the_field_cannot_read_fails_loudly(
     """A wrong kind of value used to reach ``PipelineOptions`` unchanged.
 
     Read strictly, so the near misses a json-shaped guess would accept — the
-    string ``"30"`` for a number, ``"yes"`` for a boolean — are refused too: the
-    ticket's failure is a *mistyped* field, and a coerced one is exactly that.
+    string ``"30"`` for a number, ``"yes"`` for a boolean — are refused too: a
+    mistyped field is the failure this seam exists for, and a coerced value is
+    exactly that.
     """
     registry, run_id = _seeded_run(tmp_path)
     row = _written_row(registry, run_id)
@@ -337,12 +339,15 @@ def test_the_row_shape_is_derived_from_the_declaration_not_restated(
     monkeypatch,
 ) -> None:
     """One place: the declaration's row, plus the annotation the value type needs
-    anyway — the two edits a knob already is (``core.options`` says so itself).
+    anyway — the two edits *this model* needs (a knob's full set of hand-written
+    sites is larger, and ``core.options`` names them: the ``Backend`` protocol's
+    keyword and the stage's ``transcribe`` keyword are pinned to the declaration
+    by their own tests).
 
-    The service layer names no knob, so a knob the declaration grows is a field
-    of the row without a third edit. This grows one in those two places and
-    watches the model pick it up; before the derivation, the field list would
-    have had to be written out again here.
+    The service layer names no knob, so a knob the declaration grows is a field of
+    the row without a third edit. This grows one in those two places and watches
+    the model pick it up; before the derivation, the field list would have had to
+    be written out again here.
     """
     hints = get_type_hints(PipelineOptions)
     grown = dataclasses.make_dataclass(
@@ -362,3 +367,22 @@ def test_the_row_shape_is_derived_from_the_declaration_not_restated(
 
     assert "synthetic_knob" in row.model_fields
     assert set(row.model_fields) == {field.name for field in dataclasses.fields(grown)}
+
+
+def test_the_superseded_warning_is_per_row_not_per_read(tmp_path) -> None:
+    """A row that loses a key says so once, however often it is read.
+
+    The registry re-reads a live run's row on every drain pass (about once a
+    second) and in every console or agent request, and nothing rewrites the column
+    the settled key sits in — so a warning per *read* was one line a second for as
+    long as that row kept the key. The warning belongs to the row.
+    """
+    registry, run_id = _seeded_run(tmp_path)
+    _store(registry, run_id, _RELEASED_ROW)
+
+    with pytest.warns(SupersededRunOptions) as warned:
+        registry.get_run(run_id)
+        registry.get_run(run_id)
+        registry.get_run(run_id)
+
+    assert len(warned) == 1

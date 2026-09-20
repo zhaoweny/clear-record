@@ -1,24 +1,46 @@
-"""Registry behaviour: projects and the multi-project glossary table.
+"""Registry behaviour and its schema's history.
 
-These exercise the service seam directly (external behaviour, temp DB — no web
-app, no network), so the store is trusted independently of any adapter.
+Projects and the multi-project glossary table, and the revisions a registry
+migrates through when it opens: the schema the Alembic revisions own, the
+mapping that mirrors it, the ladder's row that lets a build from before Alembic
+read what this one migrated, and the one-active-run index revision 0009 puts
+over a meeting. These exercise the service seam directly (external behaviour,
+temp DB — no web app, no network), so the store is trusted independently of any
+adapter.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import re
+import shutil
 import sqlite3
+import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
-from sqlalchemy import UniqueConstraint, event
+from sqlalchemy import URL, UniqueConstraint, create_engine, event
+from sqlalchemy.pool import NullPool
 
 from clear_record.core import PipelineOptions
-from clear_record.service import Registry, entities
-from clear_record.service.store import _alembic_config
+from clear_record.service import (
+    ACTIVE_RUN_STATUSES,
+    Registry,
+    RegistryLocked,
+    entities,
+)
+from clear_record.service import store as store_module
+from clear_record.service.store import _LADDER_VERSION, _alembic_config
+
+#: The repository root: the tree this test's git history lives in.
+_REPO = Path(__file__).resolve().parents[4]
+
+#: Where the revisions are, for the tests that copy the chain to a temp tree.
+_MIGRATIONS = Path(store_module.__file__).resolve().parent / "migrations"
 
 
 def _registry(tmp_path) -> Registry:
@@ -458,31 +480,76 @@ def test_a_registry_path_with_a_query_character_opens(tmp_path) -> None:
     assert not (tmp_path / "what").exists()  # the file the text form creates
 
 
-def test_a_migrated_ladder_registry_still_reads_for_an_older_build(tmp_path) -> None:
-    """A build from before Alembic must still be able to read what this one migrates.
+def _retired_ladder_store() -> types.ModuleType:
+    """The retired ladder's own store module, from the last commit that carried it.
 
-    The ladder's row is the only version state such a build reads, and the head
-    revision's schema is the ladder's own last one, so the row is left at the
-    head's number: a build comparing it with its own version finds them equal and
-    opens the registry, instead of running DDL it already has.
+    The property a registry this build migrated must keep — a build from *before*
+    Alembic opens it — is about that build's own code, so no fixture can stand in
+    for it: the code has to run. The wheel ships no old build, so the history is
+    the source, and the commit is found by **content** (the newest commit whose
+    blob still carries the ladder's version constant) rather than by a revision
+    id, which a rebase or a squash would invalidate.
     """
+    path = "packages/clear-record/src/clear_record/service/store.py"
+    listed = subprocess.run(
+        ["git", "rev-list", "--all", "--", path],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+    if listed.returncode != 0:  # no history to read (an installed tree, a tarball)
+        pytest.skip("no git history to read the retired ladder's store from")
+    for commit in listed.stdout.split():
+        blob = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            cwd=_REPO,
+            capture_output=True,
+            text=True,
+        )
+        if blob.returncode == 0 and "SCHEMA_VERSION" in blob.stdout:
+            module = types.ModuleType("retired_ladder_store")
+            exec(compile(blob.stdout, f"<{commit}:{path}>", "exec"), module.__dict__)
+            return module
+    pytest.skip("no commit in this history carries the retired ladder")
+
+
+def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
+    """A build from before Alembic READ the registry this build migrated.
+
+    The ladder's row in ``schema_version`` is the only version state such a build
+    reads, and it compares that row with its **own** last version: the row is
+    therefore levelled at the ladder's own number (8), never at the head revision's
+    id (9 today) — a number above what that build supports is refused outright
+    ("registry schema version 9 is newer than this build supports (8)"), which
+    makes an upgrade one-way for no reason at all.
+
+    The retired build runs here rather than being described: its own store module
+    is read out of the history and its own ``Registry`` opens the file.
+    """
+    ladder = _retired_ladder_store()
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0005")
     _ladder_left_it(db, 5)
+    _seed_project(db)
 
-    Registry(db)
+    Registry(db)  # this build migrates it, and levels the ladder's row
 
-    # The head's number, which is what the row has to say (`0005` -> `0009`).
-    head = ScriptDirectory.from_config(_alembic_config(db)).get_current_head()
+    reg = ladder.Registry(str(db))  # the retired build reads its own row
+    assert [project.slug for project in reg.list_projects()] == ["ops"]
     with sqlite3.connect(str(db)) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
-            int(head),
+            ladder.SCHEMA_VERSION,
         )
+    assert ladder.SCHEMA_VERSION == _LADDER_VERSION
+    # And the head really is above the ladder, so the levelling is doing work.
+    head = ScriptDirectory.from_config(_alembic_config(db)).get_current_head()
+    assert head is not None and int(head) > _LADDER_VERSION
 
     # The other side of the same boundary: a registry *this* build creates
     # carries no such record at all, so a build from before Alembic runs its
-    # ladder there and stops at the first step that is not idempotent (the notes
-    # column). Nothing the app owns is changed before it does.
+    # ladder there and stops at the first step it cannot re-run (the notes
+    # column) — which is why the row is written for the registries the ladder
+    # itself wrote, and only for those.
     fresh = tmp_path / "fresh.sqlite3"
     Registry(fresh)
     assert _version_tables(fresh) == ["alembic_version"]
@@ -550,6 +617,17 @@ def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
         }
         for name, table in entities.Base.metadata.tables.items()
     }
+    # Every foreign key the mapping declares, as (column, target table, ondelete).
+    # The schema mixes ``CASCADE`` with ``SET NULL`` (``artifact.run_id``), so an
+    # ``ON DELETE`` drift is a rule that changes what a delete does — silently,
+    # until something is deleted.
+    mapped_foreign_keys = {
+        name: {
+            (fk.parent.name, fk.column.table.name, fk.ondelete)
+            for fk in table.foreign_keys
+        }
+        for name, table in entities.Base.metadata.tables.items()
+    }
     with sqlite3.connect(str(db)) as conn:
         names = [
             row[0]
@@ -604,6 +682,16 @@ def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
             }
             for name in names
         }
+        # PRAGMA foreign_key_list is (id, seq, table, from, to, on_update,
+        # on_delete, match). SQLite reports "NO ACTION" for the default, which is
+        # what the mapping spells as no ``ondelete`` at all.
+        actual_foreign_keys = {
+            name: {
+                (row[3], row[2], None if row[6] == "NO ACTION" else row[6])
+                for row in conn.execute(f'PRAGMA foreign_key_list("{name}")')
+            }
+            for name in names
+        }
 
     assert set(mapped_columns) == set(actual_columns)
     for name in sorted(actual_columns):
@@ -620,6 +708,10 @@ def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
         assert mapped_unique_indexes[name] == actual_unique_indexes[name], (
             f"{name} unique indexes: mapped={mapped_unique_indexes[name]!r}"
             f" actual={actual_unique_indexes[name]!r}"
+        )
+        assert mapped_foreign_keys[name] == actual_foreign_keys[name], (
+            f"{name} foreign keys: mapped={mapped_foreign_keys[name]!r}"
+            f" actual={actual_foreign_keys[name]!r}"
         )
 
 
@@ -678,11 +770,14 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     Two submissions racing past the guard wrote two active runs for one meeting,
     and a unique index cannot be created over those rows — a registry like that
     would refuse to open, on every start, forever. So revision 0009 reconciles
-    before it creates the index: one active run per meeting survives (a
-    ``running`` row over a ``queued`` one, else the oldest), the rest end as
-    ``interrupted`` with the reason the user reads on the row, and a meeting that
-    holds a single active run — or none — is left exactly as it was. The registry
-    is current afterwards, and the rule bites from there on.
+    before it creates the index, and the keeper is the run the service would still
+    call live: a ``running`` row **that names an owner** is kept (SQL cannot probe
+    the owner's process, and anything weaker would risk interrupting a run that is
+    really executing and admitting a second pipeline beside it), and among the
+    rest the meeting's **newest** run wins — the submission the user just made,
+    not the stale one they resubmitted because it looked stuck. The rest end as
+    ``interrupted``, with a reason that names the run that survived, and a meeting
+    that holds one active run — or none — is left exactly as it was.
     """
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
@@ -691,7 +786,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
             "INSERT INTO project (slug, name, notes, created_at)"
             " VALUES ('ops', 'Ops', '', 'now')"
         )
-        for slug in ("kickoff", "standup", "retro"):
+        for slug in ("kickoff", "standup", "retro", "rehearsal"):
             conn.execute(
                 "INSERT INTO meeting (project_id, slug, title, status, created_at)"
                 " VALUES (1, ?, ?, 'running', 'now')",
@@ -705,36 +800,41 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
                 # What the race left: two queued runs for one meeting...
                 (1, "queued", None, None),
                 (1, "queued", None, None),
-                # ... and a running run with a queued one behind it.
+                # ... and a running run that names an owner, with a queued one
+                # behind it.
                 (2, "queued", None, None),
                 (2, "running", "now", "host:1"),
                 # What the rule wants: one active run, and a run that had ended.
                 (3, "queued", None, None),
                 (3, "done", "now", None),
+                # A running run nothing can be executing — the shape every row the
+                # retired ladder wrote has, no owner at all — and the submission
+                # the user made after it: the queued one survives.
+                (4, "running", "now", None),
+                (4, "queued", None, None),
             ),
         )
 
     reg = Registry(db)
 
-    # The oldest of the two queued runs is the meeting's; the later one is ended,
-    # with the reason written where the console reads an interrupted run's why.
-    keeper, loser = sorted(reg.list_runs(1), key=lambda run: run.id)
-    assert (keeper.id, keeper.status, keeper.ended_at, keeper.error) == (
-        1,
+    # The newest of the two queued runs is the meeting's; the older one is ended,
+    # and its reason names the run that survived.
+    older, newer = sorted(reg.list_runs(1), key=lambda run: run.id)
+    assert (older.id, older.status) == (1, "interrupted")
+    assert older.ended_at is not None
+    assert "run 2" in (older.error or "")
+    assert (newer.id, newer.status, newer.ended_at, newer.error) == (
+        2,
         "queued",
         None,
         None,
     )
-    assert (loser.id, loser.status) == (2, "interrupted")
-    assert loser.ended_at is not None
-    assert loser.error == (
-        "this meeting had more than one active run, and one run per meeting is "
-        "what the registry keeps"
-    )
 
-    # A running row is the meeting's one, whatever a queued row behind it says.
+    # A running row that names an owner is the meeting's one, whatever a queued
+    # row behind it says.
     waiting, running = sorted(reg.list_runs(2), key=lambda run: run.id)
     assert (waiting.id, waiting.status) == (3, "interrupted")
+    assert "run 4" in (waiting.error or "")
     assert (running.id, running.status, running.ended_at) == (4, "running", None)
 
     # And a meeting with nothing to reconcile is untouched.
@@ -746,6 +846,13 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
         None,
     )
     assert (ended.id, ended.status) == (6, "done")
+
+    # A running row with no owner is one nothing can be executing: the user's
+    # later submission is kept instead of it.
+    dead, submitted = sorted(reg.list_runs(4), key=lambda run: run.id)
+    assert (dead.id, dead.status) == (7, "interrupted")
+    assert "run 8" in (dead.error or "")
+    assert (submitted.id, submitted.status) == (8, "queued")
 
     assert _index_sql(db, "pipeline_run_active_meeting") is not None
     with sqlite3.connect(str(db)) as conn:
@@ -809,3 +916,288 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
         )
         is None
     )
+
+
+def test_a_version_table_holding_two_revisions_opens_and_is_reduced(tmp_path) -> None:
+    """Two rows in ``alembic_version`` read as a multi-head state, and were fatal.
+
+    This is what two surfaces opening one registry at once left behind while
+    nothing serialized the migration: ``Requested revision 0009 overlaps with
+    other requested revisions 0008`` on every later open — the user's rows still
+    in the file, and the console, the MCP server and the tray unable to start.
+    Opening it reduces the table to the head-most revision, which is the one the
+    schema actually carries: the rows recorded steps that ran, the chain is
+    linear, and the schema holds every step up to the newest of them.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+    _seed_project(db)
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute("INSERT INTO alembic_version (version_num) VALUES ('0008')")
+
+    reg = Registry(db)
+
+    assert [project.slug for project in reg.list_projects()] == ["ops"]
+    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            ("0009",)
+        ]
+
+
+def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
+    """A stamp that never landed is a misplaced stamp, not "no registry here yet".
+
+    An open killed between Alembic's creation of ``alembic_version`` and its final
+    stamp leaves that table present and empty over a schema built to *some* point.
+    Reading it as a registry with no history replays every revision from the base,
+    and the ladder's steps were not re-runnable: the replay died on ``duplicate
+    column name: notes``, and every later open died with it. The create-table
+    steps are ``IF NOT EXISTS``, each step that adds a column is guarded on that
+    column, and revision 0009 leaves the index it finds when that index is its
+    own — so the replay converges and the registry is current again.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+    _seed_project(db)
+    index_before = _index_sql(db, "pipeline_run_active_meeting")
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute("DELETE FROM alembic_version")
+
+    reg = Registry(db)
+
+    assert [project.slug for project in reg.list_projects()] == ["ops"]
+    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    assert _index_sql(db, "pipeline_run_active_meeting") == index_before
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            ("0009",)
+        ]
+
+
+def _engine_timing_out_box(path: Path, timeout: float = 0.2):
+    """An engine like the registry's own, with a busy timeout a test can wait out."""
+    engine = create_engine(
+        URL.create("sqlite", database=str(path)),
+        poolclass=NullPool,
+        connect_args={"timeout": timeout},
+    )
+
+    @event.listens_for(engine, "connect")
+    def _foreign_keys_on(dbapi_connection, _record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+
+    return engine
+
+
+def test_a_migration_another_surface_holds_is_refused_with_a_message(
+    tmp_path, monkeypatch
+) -> None:
+    """The transient state is named, and says what to do, where a traceback was.
+
+    The registry migrates when it opens (ADR-0030), so one surface can meet
+    another's migration: the step takes SQLite's write lock for the whole of it
+    and waits for that lock up to the driver's timeout. What comes out when the
+    lock is still held is :class:`RegistryLocked` — the file named, nothing
+    changed, ``retry`` — instead of the raw driver error, which arrived as an
+    ``OperationalError`` traceback from a start-up path that has no user to read
+    it.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+    monkeypatch.setattr(
+        store_module, "_engine", lambda path: _engine_timing_out_box(path)
+    )
+    holder = sqlite3.connect(str(db))
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute("UPDATE project SET name = 'busy'")
+        with pytest.raises(RegistryLocked) as raised:
+            Registry(db)
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert str(db) in str(raised.value)
+    assert "retry" in str(raised.value)
+
+
+def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
+    tmp_path,
+) -> None:
+    """A look-alike object must not make the one-active-run rule optional.
+
+    ``CREATE UNIQUE INDEX IF NOT EXISTS`` accepted whatever already carried the
+    name — so a plain index someone had created by hand left the rule unenforced
+    while the mapping and the parity test still declared it, and the revision's
+    whole point was lost in silence. Revision 0009 now compares what it finds: its
+    own DDL is left alone (a re-run converges on it), anything else refuses the
+    registry with the object's own DDL in the message, and the reconciliation the
+    revision had already run is rolled back with it.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0008")
+    _seed_project(db)
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
+        )
+
+    with pytest.raises(RuntimeError) as raised:
+        Registry(db)
+
+    assert "pipeline_run_active_meeting" in str(raised.value)
+    assert _index_sql(db, "pipeline_run_active_meeting") == _normalized(
+        "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
+    )
+    with sqlite3.connect(str(db)) as conn:
+        # Nothing was half-applied: the refused open left the registry at 0008.
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            ("0008",)
+        ]
+
+
+def test_the_database_rule_names_the_active_statuses_the_service_declares(
+    tmp_path,
+) -> None:
+    """One declaration of what "active" means, and the database's copy of it.
+
+    The guard the run manager reads, the claim, the reconciliation's compare, the
+    console's run views and the mapping all read ``ACTIVE_RUN_STATUSES``; revision
+    0009 states its own ``WHERE``, because a revision states its own DDL and
+    cannot import today's application. This reads the *built* index's predicate
+    back and compares it with the declaration. The reconciliation's copy of the
+    same pair is exercised by the survivor rule above, which cannot pass if it
+    drifts.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+
+    rendered = ", ".join(f"'{status}'" for status in ACTIVE_RUN_STATUSES)
+    assert (
+        _index_predicate(_index_sql(db, "pipeline_run_active_meeting"))
+        == f"status IN ({rendered})"
+    )
+
+
+def test_a_revision_written_the_documented_way_is_numbered_like_the_chain(
+    tmp_path,
+) -> None:
+    """``alembic revision -m`` names a new revision in the chain's own numbering.
+
+    ``script.py.mako`` writes ``${up_revision}``, and Alembic's default for it is a
+    hex uuid — which is why the ladder's number is a fixed constant
+    (``store._LADDER_VERSION``) and never read off the head id. The ids stay
+    decimal because ``alembic.ini`` runs ``env.py`` for ``revision`` too, and
+    ``env.py`` names the file after the newest revision: the documented workflow
+    cannot produce a hex id without that configuration changing.
+    """
+    script_location = tmp_path / "migrations"
+    shutil.copytree(_MIGRATIONS, script_location)
+    ini = tmp_path / "alembic.ini"
+    ini.write_text(
+        f"[alembic]\nscript_location = {script_location}\n"
+        "revision_environment = true\n",
+        encoding="utf-8",
+    )
+
+    made = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(ini),
+            "revision",
+            "-m",
+            "a next change",
+        ],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+
+    assert made.returncode == 0, made.stderr
+    written = sorted(script_location.glob("versions/0010_a_next_change.py"))
+    assert [path.name for path in written] == ["0010_a_next_change.py"]
+    assert 'revision: str = "0010"' in written[0].read_text(encoding="utf-8")
+
+
+def test_the_alembic_ini_names_the_history_this_build_opens() -> None:
+    """The developer CLI reads the same history the application does.
+
+    ``store._SCRIPT_LOCATION`` is what an installed wheel resolves (a package
+    resource) and ``alembic.ini`` carries the same value for the developer CLI.
+    Nothing read the ini, so a rename in one place would have pointed the other at
+    a directory with no revisions while the application kept working — the drift
+    only a human notices. The ini's ``revision_environment`` is part of the same
+    contract: it is what makes ``alembic revision`` run ``env.py``, where the ids
+    are pinned to the chain's numbering.
+    """
+    ini = (_REPO / "alembic.ini").read_text(encoding="utf-8")
+
+    assert f"script_location = {store_module._SCRIPT_LOCATION}" in ini
+    assert "revision_environment = true" in ini
+
+
+def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> None:
+    """The schema's history is built under the same FK rule as the app's writes.
+
+    SQLite sets ``PRAGMA foreign_keys`` per connection and defaults it **off**, so
+    the registry's engine turns it on for every connection it makes. The migration
+    used to run on a connection of its own, with the default: invisible until a
+    revision rebuilds a table (the create-copy-drop-rename pattern), where the
+    copy's constraints are whatever the DDL says under a rule nothing had set.
+
+    The chain is driven here the way the developer CLI drives it, over a copy with
+    one added revision that records the pragma it ran under.
+    """
+    script_location = tmp_path / "migrations"
+    shutil.copytree(_MIGRATIONS, script_location)
+    (script_location / "versions" / "0010_pragma_probe.py").write_text(
+        '"""A probe revision: record the FK pragma this migration runs under."""\n'
+        "\n"
+        "from alembic import op\n"
+        "\n"
+        'revision: str = "0010"\n'
+        'down_revision: str | None = "0009"\n'
+        "branch_labels = None\n"
+        "depends_on = None\n"
+        "\n"
+        "\n"
+        "def upgrade() -> None:\n"
+        '    value = op.get_bind().exec_driver_sql("PRAGMA foreign_keys").scalar()\n'
+        '    op.execute(f"CREATE TABLE pragma_probe AS SELECT {int(value)}'
+        ' AS foreign_keys")\n'
+        "\n"
+        "\n"
+        "def downgrade() -> None:\n"
+        '    raise NotImplementedError("forward-only")\n',
+        encoding="utf-8",
+    )
+    ini = tmp_path / "alembic.ini"
+    ini.write_text(
+        f"[alembic]\nscript_location = {script_location}\n", encoding="utf-8"
+    )
+    db = tmp_path / "registry.sqlite3"
+
+    migrated = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(ini),
+            "-x",
+            f"db={db}",
+            "upgrade",
+            "head",
+        ],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+
+    assert migrated.returncode == 0, migrated.stderr
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT foreign_keys FROM pragma_probe").fetchone() == (1,)

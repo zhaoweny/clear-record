@@ -1,6 +1,6 @@
 """Guided agent setup: detect a local endpoint, verify it, record the choice.
 
-ADR-0018's onboarding half (ticket 20): get a user from "installed" to "a task
+ADR-0018's onboarding half: get a user from "installed" to "a task
 ran" **without hand-editing TOML**. This module owns the steps that reach a
 working runner, and nothing that *runs* a task — the runner seam
 (:mod:`clear_record.service.agent`) stays the only executor.
@@ -988,7 +988,7 @@ def remember_harness(harness: Harness) -> dict:
     return update_setup_state(harness=harness.path)
 
 
-# --- the version marker (first run vs after an update, ticket 04) ----------- #
+# --- the version marker (first run vs after an update) ---------------------- #
 
 
 def current_version() -> str:

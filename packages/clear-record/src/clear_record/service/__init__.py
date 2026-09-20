@@ -143,11 +143,14 @@ from clear_record.service.managed import (
     workspace_usage,
 )
 from clear_record.service.models import (
+    ACTIVE_RUN_STATUSES,
     MEETING_STATUSES,
+    RESUMABLE_STATUSES,
     RUN_ORIGINS,
     RUN_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
+    TERMINAL_STATUSES,
     Archive,
     Artifact,
     GlossaryTerm,
@@ -162,7 +165,7 @@ from clear_record.service.runs import (
     HEARTBEAT_STALE_S,
     PipelineOptions,
     RESTART_REASON,
-    TERMINAL_STATUSES,
+    RUN_IN_FLIGHT,
     RunManager,
     RunState,
     RunSummary,
@@ -192,7 +195,7 @@ from clear_record.service.schemas import (
     TranscriptOut,
     out_model,
 )
-from clear_record.service.store import Registry
+from clear_record.service.store import Registry, RegistryLocked
 from clear_record.service.transcript import TranscriptSlice, read_transcript
 from clear_record.service.webhooks import (
     ALL_EVENTS,
@@ -215,7 +218,7 @@ from clear_record.service.webhooks import (
 )
 
 # The guided agent flow and its hello-world acceptance/diagnostic check
-# (ticket 05). Imported last on purpose: it reaches clear_record.service.setup,
+# Imported last on purpose: it reaches clear_record.service.setup,
 # which is not part of this package's eager import graph, so every module it
 # needs is already loaded when this line runs.
 from clear_record.service.agent_flow import (
@@ -231,6 +234,7 @@ from clear_record.service.agent_flow import (
 )
 
 __all__ = [
+    "ACTIVE_RUN_STATUSES",
     "AGENT_DIRNAME",
     "ALL_EVENTS",
     "APP",
@@ -288,6 +292,9 @@ __all__ = [
     "RUN_STATUSES",
     "RecordingSet",
     "Registry",
+    "RegistryLocked",
+    "RESUMABLE_STATUSES",
+    "RUN_IN_FLIGHT",
     "RunManager",
     "RunOptionsRow",
     "RunOut",
@@ -408,7 +415,7 @@ __all__ = [
     "reset_default_config",
     "run_task",
     "transcript_check_task",
-    # Hello-world acceptance/diagnostic check (ticket 05) — appended for the
+    # Hello-world acceptance/diagnostic check — appended for the
     # same minimal-merge-surface reason as the agent-task block above.
     "HELLO_CHECK_DIRNAME",
     "LEG_BACKEND",

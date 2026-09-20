@@ -1,7 +1,9 @@
 # clear-record — Architecture & Provenance
 
-Status: **v0.2 development trunk** (`0.2.0rc3`; `releases/v0.1.x` is the 0.1
-maintenance line — ADR-0011's 2026-09-14 Update) · Updated: 2026-09-14
+Status: **v0.3 development trunk** (`0.3.0.dev0`; `releases/v0.2.x` is the 0.2
+maintenance line and `releases/v0.1.x` the 0.1 one — ADR-0011's 2026-09-14
+Update and the 2026-09-21 scope entry in `docs/vox/voice-of-owner.md`) ·
+Updated: 2026-09-21
 
 This document distills the original concept into an architecture + provenance
 document using the project's provenance labels (**FACT / VOICE / REQ / DESIGN /
@@ -336,18 +338,19 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/tray       PySide6 system-tray supervisor / desktop entry point (extra: tray)
   src/clear_record/mcp        the MCP server — the agent boundary (extra: agents)
 docs/architecture.md          this document
-docs/adr/                     decision records 0001–0028
+docs/adr/                     decision records 0001–0029
 docs/research/                dated research notes (Intel · DGX Spark · mobile/edge · capture rig)
 docs/vox/voice-of-owner.md    owner voice
 ```
 
-**Current status: v0.2 development trunk.** The pipeline below is landed and
+**Current status: v0.3 development trunk.** The pipeline below is landed and
 runnable, and the **project console** is built on top of it:
 
 - `clear_record.service` — the headless service: an app-owned SQLite **project
   registry**, per-project **glossary** terms, **meetings** and their **tape
   sets**, background **pipeline runs** with structured progress events and
-  recorded artifacts, and the **archive** (copy + sha256 manifest). It is
+  recorded artifacts — one shared queue with **cancel/resume** and a per-run
+  **cost record** — and the **archive** (copy + sha256 manifest). It is
   importable with no web stack, which is what keeps the console optional
   (ADR-0013).
 - `clear_record.web` — the local console: FastAPI serving a server-rendered

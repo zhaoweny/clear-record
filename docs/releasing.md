@@ -107,20 +107,22 @@ the `testpypi` environment.
 
 ## Release tracks
 
-Two lines exist as of 2026-09-14 (ADR-0011's Update "the release train is cut"):
+Three lines exist as of 2026-09-21 (ADR-0011's Updates):
 
 | Line | Branch | Version | What it carries |
 |---|---|---|---|
 | 0.1 maintenance | `releases/v0.1.x`, cut from the `v0.1.1` tag | `0.1.1` | the released 0.1.x code — patches only |
-| 0.2 development | `main` | `0.2.0rc3` | the current work (console, runs, archive, MCP, tray) |
+| 0.2 maintenance | `releases/v0.2.x`, cut from the `v0.2.0` tag | `0.2.0` | the released 0.2.x code — patches only |
+| 0.3 development | `main` | `0.3.0.dev0` | the current work |
 
-A **0.1.x patch release** is made from `releases/v0.1.x`: `just set-version
-0.1.<next>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
-automatically from the branch. Both lines and the released tags are on `origin`
-today — `main`, `releases/v0.1.x`, and `v0.1.0` / `v0.1.1` / `v0.1.1rc2` / `v0.2.0rc1` —
-and `v0.1.1` is live on PyPI.
+A **patch release** is made from its line's branch: `just set-version
+<X.Y.<next>>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
+automatically from a maintenance branch. Both maintenance branches and the
+released tags are on `origin` today — `main`, `releases/v0.1.x`,
+`releases/v0.2.x`, and `v0.1.0` / `v0.1.1` / `v0.1.1rc2` / `v0.2.0rc1` /
+`v0.2.0rc4` / `v0.2.0` — and `v0.1.1` and `v0.2.0` are live on PyPI.
 
-`main` is the **0.2.x trunk**; the dev / rc / stable tiers below are unchanged.
+`main` is the **0.3.x trunk**; the dev / rc / stable tiers below are unchanged.
 
 ## Versioning: one dev snapshot on `main`
 
@@ -337,10 +339,11 @@ You should see the `clear_record/{core,engine,providers,cli}` packages,
 
 ## The release train is lazy
 
-`main` **is** the `releases/v0.1.x` train while 0.1 is the only supported line.
-There is no maintenance branch until 0.2 development starts; at that point cut
-`releases/v0.1.x` from the last 0.1 tag so 0.1 patch fixes have a home while
-`main` moves to 0.2 development (ADR-0011).
+`main` is the development trunk, not a maintenance line. A maintenance branch is
+cut from the **last tag of the line it carries** when the next line opens — as
+`releases/v0.1.x` was cut from `v0.1.1` and `releases/v0.2.x` from `v0.2.0` — so
+a released line keeps a home for patch fixes while `main` moves on
+(ADR-0011).
 
 ## First upload: clean history
 

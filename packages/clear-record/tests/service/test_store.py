@@ -486,9 +486,13 @@ def _retired_ladder_store() -> types.ModuleType:
     The property a registry this build migrated must keep — a build from *before*
     Alembic opens it — is about that build's own code, so no fixture can stand in
     for it: the code has to run. The wheel ships no old build, so the history is
-    the source, and the commit is found by **content** (the newest commit whose
-    blob still carries the ladder's version constant) rather than by a revision
+    the source, and the commit is found by **content** rather than by a revision
     id, which a rebase or a squash would invalidate.
+
+    The content searched for is the *assignment* (``SCHEMA_VERSION = 8``), not the
+    name: ``git rev-list --all`` walks newest-first, so a mere mention would win —
+    and this very file's own history is a mention, since the constant's replacement
+    is documented by name where it is declared. A mention is not the ladder.
     """
     path = "packages/clear-record/src/clear_record/service/store.py"
     listed = subprocess.run(
@@ -506,7 +510,9 @@ def _retired_ladder_store() -> types.ModuleType:
             capture_output=True,
             text=True,
         )
-        if blob.returncode == 0 and "SCHEMA_VERSION" in blob.stdout:
+        if blob.returncode == 0 and re.search(
+            r"^SCHEMA_VERSION\s*=\s*\d+", blob.stdout, re.MULTILINE
+        ):
             module = types.ModuleType("retired_ladder_store")
             exec(compile(blob.stdout, f"<{commit}:{path}>", "exec"), module.__dict__)
             return module
@@ -514,7 +520,7 @@ def _retired_ladder_store() -> types.ModuleType:
 
 
 def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
-    """A build from before Alembic READ the registry this build migrated.
+    """A build from before Alembic READS AND WRITES the registry this build migrated.
 
     The ladder's row in ``schema_version`` is the only version state such a build
     reads, and it compares that row with its **own** last version: the row is
@@ -524,7 +530,9 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
     makes an upgrade one-way for no reason at all.
 
     The retired build runs here rather than being described: its own store module
-    is read out of the history and its own ``Registry`` opens the file.
+    is read out of the history and its own ``Registry`` opens the file, reads a row
+    out of it and writes one back — which is what "a down-level build reads a
+    registry this build migrated" has to mean to be worth anything.
     """
     ladder = _retired_ladder_store()
     db = tmp_path / "registry.sqlite3"
@@ -534,8 +542,13 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
 
     Registry(db)  # this build migrates it, and levels the ladder's row
 
-    reg = ladder.Registry(str(db))  # the retired build reads its own row
-    assert [project.slug for project in reg.list_projects()] == ["ops"]
+    reg = ladder.Registry(str(db))  # the retired build runs its own gate
+    assert [(project.slug, project.name) for project in reg.list_projects()] == [
+        ("ops", "Ops")
+    ]
+    assert reg.get_project("ops").notes == ""
+    meeting = reg.create_meeting("ops", "Kickoff")  # and writes with its own DDL
+    assert reg.get_meeting("ops", "kickoff").id == meeting.id
     with sqlite3.connect(str(db)) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
             ladder.SCHEMA_VERSION,

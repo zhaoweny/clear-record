@@ -53,9 +53,9 @@ without evidence. The owner's authoritative words live in
 
 ## Current status
 
-**v0.2 development trunk** (`0.2.0rc3`; `releases/v0.1.x` is the 0.1
-maintenance line — ADR-0011's 2026-09-14 Update). The repo does real work
-end-to-end:
+**v0.3 development trunk** (`0.3.0.dev0`; `releases/v0.2.x` is the 0.2
+maintenance line and `releases/v0.1.x` the 0.1 one — ADR-0011's 2026-09-14
+Update). The repo does real work end-to-end:
 
 - uv workspace publishing a single **`clear-record`** dist whose internal layers
   are `clear_record.core` (domain) · `clear_record.engine` (audio/align/reconcile) ·

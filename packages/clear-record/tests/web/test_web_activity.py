@@ -356,6 +356,48 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
     assert ">idle</a>" in stopped
 
 
+def test_every_in_flight_status_has_a_chip_label() -> None:
+    """The chip's labels cover the service's in-flight declaration exactly.
+
+    The chip reads ``ACTIVE_RUN_STATUSES`` for *which* runs are in flight and
+    ``ACTIVE_RUN_LABELS`` for how to say it, so the two are one pair of
+    declarations: a third in-flight status must bring a label with it instead of
+    being counted under another state's name — or raising a ``KeyError`` on the
+    next page render. Compared as sets, in both directions.
+    """
+    from clear_record.service import ACTIVE_RUN_STATUSES
+    from clear_record.web.app import ACTIVE_RUN_LABELS
+
+    assert set(ACTIVE_RUN_LABELS) == set(ACTIVE_RUN_STATUSES)
+
+
+def test_the_chip_reports_the_heaviest_in_flight_state(tmp_path) -> None:
+    """A node executing work says so, even with work waiting behind it.
+
+    The chip's label table orders the states it reports (``running`` before
+    ``queued``), and the row order must not decide: the older row here is the
+    *waiting* one, so a chip that ranked by insertion would say "queued". It
+    reports the first label whose status has rows, and counts the rows in that
+    state.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    client = _console(registry)
+    registry.create_project("Ops")
+    waiting = registry.create_meeting("ops", "Kickoff")
+    executing = registry.create_meeting("ops", "Retro")
+    registry.create_run(waiting.id, backend="apple", model="small", language="en")
+    claimed = registry.create_run(
+        executing.id, backend="apple", model="small", language="en"
+    )
+    registry.claim_run(claimed.id, owner=OWNER)
+
+    chip = _chip(client.get("/").text)
+
+    assert "status-running" in chip
+    assert ">running 1</a>" in chip
+    assert "queued" not in chip
+
+
 def test_the_chip_and_the_page_are_translated(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)

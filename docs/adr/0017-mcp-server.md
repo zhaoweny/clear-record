@@ -146,11 +146,15 @@ Date: 2026-09-14
 - [FACT] The Decision clause above says tools return structured values "annotated
   `dict`/`list[dict]`". That is what the surface did when this ADR was written;
   ADR-0030's boundary decision replaced it. Every tool now annotates its return
-  with a model — one derived from the domain value it publishes
-  (`clear_record.service.schemas`), or an envelope this module declares for a
-  value it wraps (`RunStartedOut`, `RunStatusOut`, `RunEventsOut`) — so the SDK
-  publishes the fields themselves as the output schema rather than
-  `additionalProperties`, and a result is validated on the way out.
+  with a declared model — one derived from the domain value it publishes
+  (`clear_record.service.schemas`), a shape a service view computes (`DraftView`,
+  `AgentTasksOut`), or an envelope the MCP module declares for a value it wraps
+  (`RunStartedOut`, `RunStatusOut`, `RunEventPageOut`) — so the SDK publishes the
+  fields themselves as the output schema rather than `additionalProperties`, and
+  it **validates** the returned value against that model before sending it, which
+  was measured rather than assumed: with `mcp` 2.2.0 a tool that returns a value
+  its own annotation does not describe answers as an error instead of sending it,
+  carrying the SDK's generic `Error executing tool <name>` message.
 - [FACT] The `ToolError` clause is unchanged and now covers one more case: a
   stored row this build cannot read (ADR-0030's run-options seam) answers as a
   `ToolError` carrying the reader's message, which names the run and the field,

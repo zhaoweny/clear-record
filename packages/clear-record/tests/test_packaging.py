@@ -19,6 +19,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 # This file lives at packages/clear-record/tests/, so parents[3] is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MEMBER_PYPROJECTS = sorted(REPO_ROOT.glob("packages/*/pyproject.toml"))
@@ -167,10 +169,15 @@ def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
 
 # Every template the console ships today. The rglob scan below covers a newly
 # added template (and flags a truncated one), but a *deleted* one simply drops
-# out of the scan — this frozen set is what makes a deletion fail instead.
+# out of the scan — this frozen set is what makes a deletion fail instead, which
+# only holds while the set names every template on disk:
+# `test_the_frozen_template_set_names_every_template_on_disk` asserts that parity
+# in both directions, so a new template has to be frozen here to be guarded (and
+# `activity.html` with `_activity_run.html` were the pair that had been missed).
 EXPECTED_WEB_TEMPLATES = frozenset(
     {
         "_add_project.html",
+        "_activity_run.html",
         "_agent_setup.html",
         "_archive_status.html",
         "_archives.html",
@@ -202,6 +209,7 @@ EXPECTED_WEB_TEMPLATES = frozenset(
         "_webhooks.html",
         "404.html",
         "409.html",
+        "activity.html",
         "agent.html",
         "base.html",
         "index.html",
@@ -258,19 +266,54 @@ def test_web_console_assets_ship_with_the_package() -> None:
     assert not missing, f"missing web console assets: {missing}"
 
 
-def test_web_template_guard_catches_a_deleted_template(tmp_path: Path) -> None:
-    """Removing a non-anchor template must fail the guard, not pass silently.
+@pytest.mark.parametrize(
+    "victim",
+    [
+        # A partial: not one of the page anchors below, so only the frozen set
+        # can notice it is gone.
+        "_detail.html",
+        # The Activity page (RUN-03) and its row partial: the page is not in the
+        # anchor list either, and its partial is not a page at all — both were
+        # absent from the frozen set, so deleting either left the guard silent.
+        "activity.html",
+        "_activity_run.html",
+    ],
+)
+def test_web_template_guard_catches_a_deleted_template(
+    tmp_path: Path, victim: str
+) -> None:
+    """Removing a template only the frozen set covers must fail the guard.
 
-    _detail.html is a partial — not one of the page anchors — so only the
-    expected-set check can notice it is gone.
+    Each of these is invisible to the other two checks in
+    :func:`test_web_console_assets_ship_with_the_package`: the rglob scan is
+    derived from disk, and the page anchors name a fixed seven. The frozen set is
+    what makes their deletion fail instead, which is the sentence it carries.
     """
     source = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
     copied = tmp_path / "templates"
     shutil.copytree(source, copied)
-    victim = "_detail.html"
     assert victim in EXPECTED_WEB_TEMPLATES
     (copied / victim).unlink()
     assert _missing_web_templates(copied) == [victim]
+
+
+def test_the_frozen_template_set_names_every_template_on_disk() -> None:
+    """The frozen set is exactly what ships — neither short nor stale.
+
+    ``_missing_web_templates`` catches a *deletion* the rglob scan cannot see; this
+    is the other direction, and without it the set can quietly stop guarding: a
+    template added to the tree but left out of the set makes a later deletion of
+    *that* template invisible (`activity.html` and `_activity_run.html` were in
+    exactly that state). Compared against disk rather than against a second list,
+    so the only way to keep the guard's sentence true is to freeze every template
+    the console ships.
+    """
+    templates = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
+    on_disk = {path.name for path in templates.rglob("*.html")}
+    assert on_disk == set(EXPECTED_WEB_TEMPLATES), (
+        f"on disk but not frozen: {sorted(on_disk - EXPECTED_WEB_TEMPLATES)}; "
+        f"frozen but not on disk: {sorted(EXPECTED_WEB_TEMPLATES - on_disk)}"
+    )
 
 
 # The registry's schema history is read at run time, never imported: the store

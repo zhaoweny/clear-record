@@ -15,11 +15,20 @@ Design notes:
   exception is reported only as ``Error executing tool <name>``. So every
   unknown-project / unknown-meeting / missing-tape-set path raises a
   ``ToolError`` naming what was wrong and what is available.
-- **Results are structured.** Each tool annotates its return with a model from
-  the boundary vocabulary (``clear_record.service.schemas``, or this module's own
-  envelope for one that wraps a value), so the SDK publishes a real output schema
-  — the fields, not ``additionalProperties`` — and an agent gets machine-readable
-  values, not prose.
+- **Results are structured, and the published schema is checked.** Each tool
+  annotates its return with a declared model from the boundary vocabulary — one
+  derived from the domain value it publishes (``clear_record.service.schemas``), a
+  shape a service view computes (``DraftView``, ``AgentTasksOut``), or this
+  module's own envelope for one that wraps a value (``RunStartedOut``,
+  ``RunStatusOut``, ``RunEventPageOut``) — so the SDK publishes a real output
+  schema — the fields, not ``additionalProperties`` — and an agent gets
+  machine-readable values, not prose. The annotation is *checked*, not merely
+  published: the SDK validates the returned value against it (``mcp`` 2.2.0,
+  ``convert_result``), so a result that does not match its own declaration is
+  refused rather than sent. That refusal reaches the model as
+  ``Error executing tool <name>`` — the generic form any unexpected exception
+  takes — because a shape that disagrees with its declaration is a bug in this
+  tree, not something the agent can act on.
 - **BYOK.** No model or provider key is read, required or bundled; the agent
   brings its own (ADR-0017).
 
@@ -115,12 +124,19 @@ def _a_refused_row_is_a_tool_error(method: Callable[..., Any]) -> Callable[..., 
 #: learned around it. Derived from the value like the rest of the boundary
 #: vocabulary (`clear_record.service.schemas`), so a field the domain type grows
 #: is published here without a second declaration.
-RunStartedOut = out_model(PipelineRun, explanations=list[str])
-RunStatusOut = out_model(PipelineRun, progress=RunSummary | None)
+RunStartedOut = out_model(PipelineRun, name="RunStartedOut", explanations=list[str])
+RunStatusOut = out_model(PipelineRun, name="RunStatusOut", progress=RunSummary | None)
 
 
-class RunEventsOut(Shape):
-    """A page of a run's persisted event stream, with the cursor to continue from."""
+class RunEventPageOut(Shape):
+    """A page of a run's persisted event stream, with the cursor to continue from.
+
+    Named for *this* edge: the web API publishes a page of the same stream
+    (``web.app.RunEventsOut``) carrying the events and the cursor for a run whose
+    id and status the caller already has from ``/api/runs/{id}`` — the tool needs
+    them because a tool call carries its own arguments and no path, so it reports
+    the run's status and error beside the page. Two shapes, two names.
+    """
 
     run_id: int
     status: str
@@ -459,19 +475,20 @@ class ServiceTools:
         )
 
     @_a_refused_row_is_a_tool_error
-    def run_events(self, run_id: int, after: int = 0) -> RunEventsOut:
+    def run_events(self, run_id: int, after: int = 0) -> RunEventPageOut:
         """Read a run's progress events after a cursor.
 
         Pass the previous response's ``next`` as ``after`` to page forward without
         re-reading. Events are the run's *persisted* stream, so a run an earlier
-        server process started replays here too (the live state is only a cache
-        of it).
+        server process started replays here too (the live run is a queue claim,
+        not a copy of the stream: ``RunManager.state`` reads the registry's rows
+        and events on every call).
         """
         state: RunState | None = self.manager.state(run_id)
         if state is None:
             raise ToolError(f"unknown run id {run_id}")
         events = state.events_since(after)
-        return RunEventsOut(
+        return RunEventPageOut(
             run_id=run_id,
             status=state.status,
             events=[EventOut.model_validate(event) for event in events],
@@ -646,7 +663,7 @@ __all__ = [
     "INSTRUCTIONS",
     "SERVER_NAME",
     "TOOL_NAMES",
-    "RunEventsOut",
+    "RunEventPageOut",
     "RunStartedOut",
     "RunStatusOut",
     "ServiceTools",

@@ -12,8 +12,10 @@ wraps every message in guillemets, so the tests can show:
 
 from __future__ import annotations
 
+import dataclasses
 import gettext
 import json
+import re
 
 import click
 import pytest
@@ -22,8 +24,14 @@ from fastapi.testclient import TestClient
 from clear_record.cli import stages
 from clear_record.cli.cli import _build_group, _split_value
 from clear_record.cli.workspace import Workspace
-from clear_record.core import RecordDocument, i18n, log_event, log_path
-from clear_record.service import Registry, managed, setup
+from clear_record.core import (
+    PipelineOptions,
+    RecordDocument,
+    i18n,
+    log_event,
+    log_path,
+)
+from clear_record.service import Registry, RunManager, managed, setup
 from clear_record.service.diagnostics import BundleFacts, build_bundle
 from clear_record.web.app import create_app
 
@@ -126,6 +134,144 @@ def test_the_json_api_refusal_stays_english(pseudo, tmp_path, monkeypatch):
         "the upload is 10 B, over the 4 B limit; raise CR_MAX_UPLOAD_BYTES to allow it"
     )
     assert "«" not in detail
+
+
+# --- the refused row: a translated frame over a machine-facing detail ------- #
+
+#: The two frames a refused stored-options row is announced with, and a row each
+#: one is reached by. The frame is the half that has a catalog entry; what follows
+#: it is the fields pydantic refused, which does not (``docs/i18n.md``).
+_REFUSED_ROWS = (
+    ('{"backend": "apple", "jobs": "many"}', "run {run_id} carries malformed options"),
+    ("not json at all", "run {run_id} carries options that are not JSON"),
+)
+
+
+def _store_run_options(registry: Registry, run_id: int, text: str) -> None:
+    """Put ``text`` in the run's stored-options column, as another build might have."""
+    import sqlite3
+
+    with sqlite3.connect(str(registry.db_path)) as conn:
+        conn.execute(
+            "UPDATE pipeline_run SET run_options = ? WHERE id = ?", (text, run_id)
+        )
+
+
+def _console_over_a_refused_row(tmp_path, stored: str):
+    """A console whose registry holds one queued run whose options are ``stored``.
+
+    The queue is stopped: a live one would claim the row on its next rescan and
+    quarantine it (that is the row's own test, below), and this is about the read.
+    """
+    registry = Registry.open(db_path=tmp_path / "r.sqlite3")
+    registry.create_project("Ops")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="cli",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    _store_run_options(registry, run.id, stored)
+    manager = RunManager(registry)
+    manager.shutdown(timeout=5.0)
+    client = TestClient(
+        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    )
+    return client, registry, run.id
+
+
+@pytest.mark.parametrize(("stored", "frame"), _REFUSED_ROWS)
+def test_the_refused_row_page_translates_the_frame_not_the_detail(
+    pseudo, tmp_path, stored, frame
+) -> None:
+    """The 409 page composes one translated frame and one untranslated detail.
+
+    Both halves of ``MalformedRunOptions`` are user-visible here, and they are
+    deliberately different: a zh_CN console reads *which run* and *that its options
+    cannot be read* in Chinese, while the field list pydantic produced follows it
+    exactly as it stands — a field name has no translation, and a half-translated
+    sentence would read worse than an English one
+    (``docs/i18n.md``: never translated).
+    """
+    client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
+
+    page = client.get("/")
+
+    assert page.status_code == 409, page.text
+    rendered = re.search(r'<p class="muted">(.*?)</p>', page.text, re.S)
+    assert rendered is not None, page.text
+    translated, _, detail = rendered.group(1).partition(": ")
+    assert translated == f"«{frame.format(run_id=run_id)}»"
+    assert detail and "«" not in detail
+
+
+@pytest.mark.parametrize(("stored", "frame"), _REFUSED_ROWS)
+def test_the_refused_row_stays_english_on_the_machine_surfaces(
+    pseudo, tmp_path, stored, frame
+) -> None:
+    """The API's ``detail`` is one English sentence: the frame is not translated.
+
+    A script reads the whole refusal through the JSON API, so the frame it gets is
+    the English message ID — the same text ``str(exc)`` carries and the quarantine
+    writes into the run's ``error`` column below it.
+    """
+    client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
+
+    res = client.get(f"/api/runs/{run_id}")
+
+    assert res.status_code == 409, res.text
+    detail = res.json()["detail"]
+    assert detail.startswith(frame.format(run_id=run_id) + ": ")
+    assert "«" not in detail
+
+
+def test_the_quarantine_keeps_the_detail_english(pseudo, tmp_path) -> None:
+    """The run's ``error`` column: the reader's sentence and the row, untranslated.
+
+    ``Registry.fail_unreadable_run`` takes the text out of the column no reader can
+    read and puts it in the run's record. The *lead-in* above it is a message ID
+    (translated where the row is written), and everything it introduces — the
+    reader's own sentence and the row exactly as it stood — stays English, which is
+    what ``docs/i18n.md`` declares and what a bug report has to be able to quote.
+    """
+    stored = '{"backend": "apple", "jobs": "many"}'
+    _client, registry, refused_id = _console_over_a_refused_row(tmp_path, stored)
+    # A second run, so the drain has work after it quarantines the head of the
+    # FIFO — the queue's wait needs a run that can actually finish.
+    tape = tmp_path / "later.wav"
+    tape.write_bytes(b"RIFFfake")
+    later_workspace = tmp_path / "later"
+    later_workspace.mkdir()
+    later_meeting = registry.create_meeting(
+        "ops", "Retro", workspace_path=str(later_workspace)
+    )
+    registry.set_recording_set(later_meeting.id, [str(tape)])
+    later = registry.create_run(
+        later_meeting.id,
+        backend="apple",
+        origin="cli",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    assert manager.wait(later.id, timeout=10).status == "done"
+
+    quarantined = registry.get_run(refused_id)
+    assert quarantined is not None and quarantined.error is not None
+    error = quarantined.error
+    # The lead-in is a message ID, so it is the translated half — under this
+    # pseudo-catalog it arrives wrapped (its own leading newline is inside the
+    # message, which is why the quote opens before the line break).
+    lead = "the stored options this build cannot read are kept below"
+    opened = error.index(f"«\n{lead}")
+    # Everything before that quote is machine-facing and untranslated: the
+    # reader's sentence, which names the run, and the field detail it carries.
+    assert error.startswith(f"run {refused_id} carries malformed options: ")
+    assert "«" not in error[:opened]
+    # And the row itself is kept exactly as it stood — the reason the column is
+    # cleared into the record rather than dropped.
+    assert stored in error
 
 
 def test_the_console_translates_the_cli_auto_explanation(pseudo) -> None:

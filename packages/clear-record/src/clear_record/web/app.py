@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import threading
 import webbrowser
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -213,6 +214,24 @@ SETTINGS_SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("storage", deferred("Storage"), "_settings_storage.html"),
     ("status", deferred("Status"), "_settings_status.html"),
 )
+
+
+#: The header chip's labels for the **in-flight** statuses, keyed by the status
+#: itself and ordered by the precedence the chip reports them in: a node executing
+#: work outranks one waiting for it, so ``running`` comes first. The chip reads
+#: :data:`ACTIVE_RUN_STATUSES` for *which* statuses are in flight — the one
+#: declaration of that pair — and this table only names and orders them; the
+#: declaration's own order is the lifecycle's (``queued`` before ``running``), not
+#: a display order, so it is not what the chip ranks by.
+#: ``tests/web/test_web_activity.py`` asserts the table covers the declaration
+#: exactly, so a third in-flight status cannot arrive without a label and a place.
+#: The labels are ``deferred`` because Babel extracts message IDs from
+#: ``tr``/``deferred`` call sites only, and the lookup here is a
+#: ``tr(ACTIVE_RUN_LABELS[status], …)``.
+ACTIVE_RUN_LABELS: dict[str, str] = {
+    "running": deferred("running {count}"),
+    "queued": deferred("queued {count}"),
+}
 
 
 def settings_section(slug: str) -> tuple[str, str, str] | None:
@@ -431,14 +450,22 @@ class ArchiveCreate(BaseModel):
 #
 # A request body was already a declared model (`ProjectCreate`, `RunCreate`,
 # ...); these are the responses. A shape that *is* one of the registry's values
-# is derived from that value in `clear_record.service.schemas`, and a shape a
-# service view computes is declared where it is built (`DraftView`,
-# `AgentTasksOut`, `MeetingStorage`, `ArchiveVerification`), so the API publishes
-# the value it read rather than a copy of it. The ones below are the API's own: a
-# computed answer, or an envelope around a value. Declaring them is what gets an
-# answer *checked* on the way out — FastAPI validates the response against the
-# annotation — so a handler that grew or lost a key fails here instead of in a
-# client.
+# is derived from that value in `clear_record.service.schemas`; a shape a service
+# view computes is declared where it is built (`DraftView`, `AgentTasksOut`,
+# `MeetingStorage`, `ArchiveVerification`, `SetupStatusOut`, `RunSummary`); and a
+# shape an edge declares for its own envelope is declared beside that edge — the
+# ones below are this API's own: a computed answer, or an envelope around a value.
+#
+# Declaring them is what gets an answer *checked* on the way out, and the checking
+# is real rather than decorative: FastAPI takes the return annotation as the
+# route's `response_model` and validates the returned value against it, which was
+# measured by breaking a handler in a copy of the tree — a payload missing a
+# declared field and one carrying a field the model does not declare are both
+# refused (`ResponseValidationError`), because `Shape` states `extra="forbid"`.
+# The caller of a broken handler gets a bare 500 (`Internal Server Error`, no
+# detail): loud for a developer, opaque for a client, and left as it is on
+# purpose — a handler whose shape does not match its own declaration is a bug in
+# this tree, not a request a client can fix.
 #
 # The HTML routes are deliberately not in this list: a template render is not a
 # data boundary, and what a template needs is a context, not a shape. Where a
@@ -846,10 +873,10 @@ def webhook_status_view(status: WebhookStatus) -> WebhookStatusOut:
     endpoint view names only what a reader needs, so no field that could ever
     carry secret material can leak into a template or the JSON API by accident.
     The signing secret is read from the environment at delivery time and never
-    stored (ADR-0020); the config problems are the emitter's own strings —
-    ``tr``nslated for display, never re-derived — and even those name the
-    *environment variable*, never its value. The endpoint carries only *whether*
-    it is signed.
+    stored (ADR-0020); the config problems are the emitter's own strings, passed
+    through verbatim — a runtime string with a path in it, so ``tr`` was a no-op —
+    and never re-derived, and even those name the *environment variable*, never
+    its value. The endpoint carries only *whether* it is signed.
 
     ``state`` comes from :attr:`WebhookStatus.state`, so "not configured",
     "config broken" and "delivery failing" stay distinct.
@@ -1277,7 +1304,7 @@ def create_app(
 
         Everything factual is the service's: the resolved workspace path, the
         workspace and tape sizes, the managed root, free space on it and the
-        tapes. Free space is ``meeting_storage['free_bytes']`` — the **same**
+        tapes. Free space is ``usage.free_bytes`` — the **same**
         ``root_free_bytes`` the upload guard checks, so the panel and the guard
         can never disagree about the disk. Formatting it for a human is the only
         thing this view does with it.
@@ -1550,9 +1577,11 @@ def create_app(
         event = registry.latest_run_event(run.id) if live else None
         eta_s = event.eta_s if event else None
         if run.status == "running":
-            # The history-based estimate replaces the stage-local one when this
-            # machine has a matching history (RUN-01), the same precedence the
-            # run fragment applies.
+            # Not `ACTIVE_RUN_STATUSES`: a queued run has not started, and the
+            # history-based estimate is about a rate this node is currently
+            # sustaining. It replaces the stage-local one when this machine has a
+            # matching history (RUN-01), the same precedence the run fragment
+            # applies.
             history_eta_s = estimate_eta_s(registry, run)
             if history_eta_s is not None:
                 eta_s = history_eta_s
@@ -1595,7 +1624,7 @@ def create_app(
         return {
             "live": [
                 run_row(run, projects)
-                for run in registry.runs_with_status("running", "queued")
+                for run in registry.runs_with_status(*ACTIVE_RUN_STATUSES)
             ],
             # Newest **finish** first, the same ranking the chip uses: the page
             # leads with the latest outcome, and it is the row the chip is
@@ -1617,16 +1646,20 @@ def create_app(
         last — decides between "needs attention" (it failed or was
         interrupted) and idle. A ``stopped`` run was cancelled on purpose, so it
         is not attention. The label is translated at render time.
+
+        Which statuses are in flight is :data:`ACTIVE_RUN_STATUSES` and not a
+        second list here; the label table's order is the one the chip reports in,
+        because the declaration's order is the lifecycle's (``queued`` is written
+        before ``running``) and this chip speaks about now.
         """
-        running = registry.runs_with_status("running")
-        if running:
+        active = registry.runs_with_status(*ACTIVE_RUN_STATUSES)
+        if active:
+            counts = Counter(run.status for run in active)
+            status = next(name for name in ACTIVE_RUN_LABELS if counts.get(name))
             return {
-                "label": tr("running {count}", count=len(running)),
-                "state": "running",
+                "label": tr(ACTIVE_RUN_LABELS[status], count=counts[status]),
+                "state": status,
             }
-        queued = registry.runs_with_status("queued")
-        if queued:
-            return {"label": tr("queued {count}", count=len(queued)), "state": "queued"}
         newest = registry.finished_runs(*TERMINAL_STATUSES, limit=1)
         if newest and newest[0].status in ("failed", "interrupted"):
             return {"label": tr("needs attention"), "state": "failed"}
@@ -3104,10 +3137,17 @@ def create_app(
         The refusal is nobody's request: the registry holds a row this build
         cannot read, which used to answer 500 — a traceback for the user and no
         message for a client. It is a 409 (the registry's state conflicts with
-        this build), with the reader's own text, which names the run and the
-        fields that failed. The JSON API carries it as ``detail``.
+        this build), and its text names the run and the fields that failed.
 
-        A page route gets the same message on a page of its own rather than the
+        The two halves of that text go to the two callers it has. The JSON API
+        carries ``str(exc)`` as ``detail`` — the English sentence, machine-facing,
+        unchanged. A page renders the refusal for a person through
+        ``MalformedRunOptions.render``: the sentence's *frame* through ``tr`` and
+        the field detail exactly as it stands, because the detail is a field list
+        in pydantic's own words and has no catalog entry by design
+        (``docs/i18n.md`` names it among the never-translated text).
+
+        A page route gets its message on a page of its own rather than in the
         console's chrome: the header chip reads the same registry (RUN-03), so a
         chrome render would raise the same refusal — which is also why this
         answers every page route, not only the ones that read a run directly.
@@ -3117,7 +3157,7 @@ def create_app(
         return TEMPLATES.TemplateResponse(
             request,
             "409.html",
-            {"message": str(exc)},
+            {"message": exc.render(tr)},
             status_code=409,
         )
 

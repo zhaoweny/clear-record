@@ -71,9 +71,11 @@ def _store(registry: Registry, run_id: int, text: str) -> None:
 def test_the_console_starts_against_a_registry_a_release_wrote(tmp_path) -> None:
     """An upgrade opens the registry the release left, runs and all.
 
-    Before the read tolerated a released key, every page that reads a run — the
-    Projects landing, a meeting page, the run API — raised, so the console was
-    unusable with a registry an earlier release had written.
+    The released row was *reduced* before this: the key the release wrote was
+    dropped and the fields this build declares but the row did not carry silently
+    took built-in defaults. The strict read is what refuses that row, which is why
+    the settle step runs first — without it, every page that reads a run would
+    raise on a registry an earlier release had written.
     """
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, _released_row())
@@ -106,8 +108,12 @@ def test_a_row_this_build_cannot_read_is_a_409_not_a_500(tmp_path) -> None:
 def test_a_page_route_that_refuses_says_so_in_the_console(tmp_path) -> None:
     """A page answers the same refusal as a page, not as JSON.
 
-    The console's pages render the message in its own chrome — the same wording —
-    so a user reading the Projects landing learns which row is unreadable.
+    A page route answers the same refusal on a page of its own, not in the
+    console's chrome — the header chip reads the same registry, so a chrome render
+    would meet the same refusal — so a user reading the Projects landing gets the
+    message, without the console around it. The page renders the refusal's *frame*
+    through ``tr`` and appends the reader's field detail untranslated; that split
+    is pinned in ``tests/test_i18n_boundaries.py``.
     """
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, "not json at all")

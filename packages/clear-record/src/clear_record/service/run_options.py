@@ -67,6 +67,16 @@ from clear_record.core.options import (
 )
 
 
+#: The two frames a refused row is announced with: which run, and that its stored
+#: options cannot be read. These are the **translated half** of the refusal —
+#: :func:`deferred` marks them for the catalog, and a console renders one with
+#: :meth:`MalformedRunOptions.render` — while the fields that failed are appended
+#: to the frame untranslated, because they are pydantic's own words and the option
+#: names, which is machine-facing text (``docs/i18n.md``).
+MALFORMED_OPTIONS = deferred("run {run_id} carries malformed options")
+NOT_JSON_OPTIONS = deferred("run {run_id} carries options that are not JSON")
+
+
 class MalformedRunOptions(ValueError):
     """A stored run-options row that no longer fits the options of a run.
 
@@ -76,6 +86,19 @@ class MalformedRunOptions(ValueError):
     a reduced set of options. A :class:`ValueError`, like
     the other refusals a bad value earns in this layer.
 
+    The refusal has **two halves**, and they are read by different callers. The
+    *frame* — which run, and that its stored options cannot be read — is a stable
+    ID plus parameters (:data:`MALFORMED_OPTIONS`, :data:`NOT_JSON_OPTIONS`), so a
+    presentation boundary renders it in the user's locale with :meth:`render`. The
+    *detail* is the fields that failed in pydantic's own words: machine-facing,
+    never translated (``docs/i18n.md``), so a boundary that renders the frame
+    appends the detail exactly as it stands. ``str(exc)`` is the English frame
+    plus that detail — the form the machine surfaces keep (the JSON API's
+    ``detail``, the MCP tool error, and the ``error`` column the quarantine writes
+    it into). ``msgid``/``params`` mirror
+    :class:`~clear_record.service.managed.UploadRejected`, whose reason the console
+    renders through the same ``tr``.
+
     ``run_id`` and ``meeting_id`` identify the row the refusal is about, so a
     reader that holds only the exception can act on that one run without reading
     the row again — which is the one thing it cannot do (the queue does exactly
@@ -84,14 +107,34 @@ class MalformedRunOptions(ValueError):
 
     def __init__(
         self,
-        message: str,
+        msgid: str,
         *,
+        detail: str,
         run_id: int | None = None,
         meeting_id: int | None = None,
     ) -> None:
-        super().__init__(message)
+        self.msgid = msgid
+        self.detail = detail
         self.run_id = run_id
         self.meeting_id = meeting_id
+        self.params: dict[str, object] = {"run_id": run_id}
+        super().__init__(self._compose(msgid.format(**self.params)))
+
+    def _compose(self, frame: str) -> str:
+        """One refusal out of its frame and its detail, in that order."""
+        return f"{frame}: {self.detail}"
+
+    def render(self, translate) -> str:
+        """The refusal for a person: the frame in their locale, then the detail.
+
+        ``translate`` is the boundary's ``tr`` (the shape
+        :meth:`clear_record.core.message.Message.render` takes): the frame is
+        looked up in the catalog with its parameters filled in, and the detail is
+        appended untouched — it is machine-facing and has no catalog entry by
+        design (``docs/i18n.md``), so no caller has to cut the detail back out of
+        the English sentence.
+        """
+        return self._compose(translate(self.msgid, **self.params))
 
 
 #: What the registry writes before a refused row's own text, when it takes that
@@ -238,7 +281,8 @@ def read_run_options(
         raw = json.loads(stored)
     except json.JSONDecodeError as exc:
         raise MalformedRunOptions(
-            f"run {run_id} carries options that are not JSON: {exc}",
+            NOT_JSON_OPTIONS,
+            detail=str(exc),
             run_id=run_id,
             meeting_id=meeting_id,
         ) from exc
@@ -251,7 +295,8 @@ def read_run_options(
         row = _RUN_OPTIONS_ROW.validate_json(json.dumps(raw), strict=True)
     except ValidationError as exc:
         raise MalformedRunOptions(
-            f"run {run_id} carries malformed options: {_detail(exc)}",
+            MALFORMED_OPTIONS,
+            detail=_detail(exc),
             run_id=run_id,
             meeting_id=meeting_id,
         ) from exc
@@ -276,7 +321,9 @@ def read_run_options(
 
 __all__ = [
     "KEPT_OPTIONS_LEAD",
+    "MALFORMED_OPTIONS",
     "MalformedRunOptions",
+    "NOT_JSON_OPTIONS",
     "RunOptionsRow",
     "SupersededRunOptions",
     "read_run_options",

@@ -8,7 +8,7 @@
    navigation; the content pane is #detail, the same in-page swap target the
    project fragments use. Only Agent, MCP and the Models download write; every
    other section shows the value plus the config path a user would edit. The slug -> template
-   mapping lives once, in SETTINGS_SECTIONS (web/app.py); this page includes the
+   mapping lives once, in SETTINGS_SECTIONS (web/views.py); this page includes the
    active section's partial rather than switching on the slug again. #}
 <aside class="sidebar">
   <h2 class="sidebar-title">{{ tr("Settings") }}</h2>

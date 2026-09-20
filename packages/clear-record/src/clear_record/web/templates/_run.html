@@ -19,7 +19,7 @@
   {% for explanation in run.explanations %}
   <div class="muted run-message">{{ explanation }}</div>
   {% endfor %}
-  {# The four axes (BENCH-01), computed once in the service and rendered from
+  {# The four axes, computed once in the service and rendered from
      that value: accuracy, speed, memory, fit -- and no fifth. #}
   {% if run.axes %}
   <dl class="run-axes">
@@ -67,7 +67,7 @@
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
   {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}
-  {# Cancel and resume (RUN-04). Both act on the run this fragment shows and
+  {# Cancel and resume. Both act on the run this fragment shows and
      swap the fragment back in; the controls are derived from the run's row, so
      a run another writer started (the agent's MCP server) offers them too. #}
   {% if run.cancellable or run.resumable or run.resumes_run_id %}

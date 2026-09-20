@@ -3,10 +3,10 @@
 {% block title %}{{ tr("Activity") }} · clear-record{% endblock %}
 
 {% block body %}
-{# The pipeline status page (RUN-03): one node's answer to "what is
+{# The pipeline status page: one node's answer to "what is
    clear-record doing right now". The shared queue's live runs across every
    project first — a run an agent's MCP server started is here with
-   the same fields as one this console started (RUN-02) — then the newest
+   the same fields as one this console started — then the newest
    finished runs, each with the outcome it recorded. The header chip is fed
    from the same registry reads, so the header and this page cannot disagree. #}
 <section class="content activity">

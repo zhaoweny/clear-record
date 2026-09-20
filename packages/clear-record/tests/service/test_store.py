@@ -11,6 +11,7 @@ adapter.
 
 from __future__ import annotations
 
+import configparser
 import dataclasses
 import re
 import shutil
@@ -404,16 +405,27 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     assert resumed.resumes_run_id == run.id
 
 
-def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
+@pytest.mark.parametrize(("revision", "version"), [("0003", 3), ("0006", 6)])
+def test_a_registry_from_the_retired_ladder_migrates_on_open(
+    tmp_path, revision, version
+) -> None:
     """A registry the ladder left behind opens, keeps its rows, and is current.
 
     This is the registry an upgrading user has: the ladder's tables with its
     ``schema_version`` row and no revision recorded. Opening it must place it at
     that version — not re-run the revisions it already has — and run the rest.
+
+    Two versions are covered, and the second is why: **6** is where the
+    *released* line (`v0.2.x`) stopped, over the schema that line built (this
+    chain's ``0006``), so this is the shape a user of that release upgrades from
+    — and it exercises the guarded ``ALTER`` path for everything after it
+    (``0007``'s ownership columns, ``0008``'s cancel and resume, ``0009``'s
+    index). ``3`` is the older shape this test carried alone, whose ladder row
+    still has to place the registry without re-running what it holds.
     """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0003")
-    _ladder_left_it(db, 3)
+    _registry_at(db, revision)
+    _ladder_left_it(db, version)
     _seed_project(db)
 
     reg = Registry(db)
@@ -446,20 +458,32 @@ def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
         )
 
 
-def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path) -> None:
-    """The guard the retired ladder enforced survives: a newer version is refused."""
+@pytest.mark.parametrize("version", [99, 9])
+def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path, version) -> None:
+    """The guard the retired ladder enforced survives: a newer version is refused.
+
+    Both numbers are pinned, and **9** is the one that earns its place: 9 is the
+    head revision's id, so a ladder number of 9 used to be read as revision
+    ``0009`` and the registry was silently stamped at it — the coincidence of
+    numbering the ladder path had. 99 names no revision in this chain and refused
+    even before the bound existed, which is exactly why it alone could not keep
+    the bound honest.
+    """
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
-    _ladder_left_it(db, 99)
+    _ladder_left_it(db, version)
 
     with pytest.raises(
-        RuntimeError, match="99 is newer than this build carries.*upgrade clear-record"
+        RuntimeError,
+        match=f"{version} is newer than this build carries.*upgrade clear-record",
     ):
         Registry(db)
 
     # Nothing was applied and nothing was stamped: the refusal comes first.
     with closing(sqlite3.connect(str(db))) as conn, conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone() == (99,)
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (
+            version,
+        )
         assert (
             conn.execute(
                 "SELECT name FROM sqlite_master WHERE name = 'alembic_version'"
@@ -1066,38 +1090,87 @@ def test_a_migration_another_surface_holds_is_refused_with_a_message(
     assert "retry" in str(raised.value)
 
 
+#: Look-alike objects an index of *this* name may carry. None is revision 0009's
+#: own, and each must refuse the registry: the first because the shape is not the
+#: rule at all, the second because it is the rule **narrowed** to one state, the
+#: third because the predicate is right and the column is not.
+_LOOK_ALIKES = (
+    "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)",
+    "CREATE UNIQUE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
+    " WHERE status = 'running'",
+    "CREATE UNIQUE INDEX pipeline_run_active_meeting ON pipeline_run (id)"
+    " WHERE status IN ('queued', 'running')",
+)
+
+
+@pytest.mark.parametrize("planted", _LOOK_ALIKES)
 def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
-    tmp_path,
+    tmp_path, planted
 ) -> None:
     """A look-alike object must not make the one-active-run rule optional.
 
     ``CREATE UNIQUE INDEX IF NOT EXISTS`` accepted whatever already carried the
     name — so a plain index someone had created by hand left the rule unenforced
     while the mapping and the parity test still declared it, and the revision's
-    whole point was lost in silence. Revision 0009 now compares what it finds: its
-    own DDL is left alone (a re-run converges on it), anything else refuses the
-    registry with the object's own DDL in the message, and the reconciliation the
-    revision had already run is rolled back with it.
+    whole point was lost in silence. Revision 0009 compares what it finds instead:
+    its own index is left alone (a re-run converges on it, and a successor's
+    *widening* of the state list is still its own — see the test below), and
+    anything else refuses the registry with the object's own DDL in the message,
+    the reconciliation the revision had already run rolled back with it.
+
+    The shapes here are the ones a loose comparison would wave through: sharing
+    the name and the column is not enough, and neither is sharing the shape — the
+    rule is the predicate, so a predicate that is not this rule with at least
+    these states is a different rule.
     """
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
     _seed_project(db)
     with closing(sqlite3.connect(str(db))) as conn, conn:
-        conn.execute(
-            "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
-        )
+        conn.execute(planted)
 
     with pytest.raises(RuntimeError) as raised:
         Registry(db)
 
     assert "pipeline_run_active_meeting" in str(raised.value)
-    assert _index_sql(db, "pipeline_run_active_meeting") == _normalized(
-        "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
-    )
+    assert _index_sql(db, "pipeline_run_active_meeting") == _normalized(planted)
     with closing(sqlite3.connect(str(db))) as conn, conn:
         # Nothing was half-applied: the refused open left the registry at 0008.
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
             ("0008",)
+        ]
+
+
+def test_a_successors_widened_index_is_left_as_this_revisions_own(tmp_path) -> None:
+    """A *wider* state list is still revision 0009's index, and the repair opens.
+
+    Adding an active state is one edit to ``ACTIVE_RUN_STATUSES`` plus a revision
+    that restates this index with the new state in it (the rule the sprint's
+    trapdoor finding settled), and a successor therefore leaves an index whose
+    state list is longer than this revision's DDL. The replay-from-base repair
+    runs 0009 again over that schema, so the comparison has to recognise it: the
+    shape is this revision's own and the predicate is this rule with more states,
+    which is stricter about the states it names and never narrower. Comparing DDL
+    text refused exactly this registry — the repair could not recover one whose
+    first pass was killed.
+    """
+    db = tmp_path / "registry.sqlite3"
+    Registry(db)
+    widened = _normalized(
+        "CREATE UNIQUE INDEX pipeline_run_active_meeting ON pipeline_run"
+        " (meeting_id) WHERE status IN ('queued', 'running', 'paused')"
+    )
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        conn.execute("DROP INDEX pipeline_run_active_meeting")
+        conn.execute(widened)
+        conn.execute("DELETE FROM alembic_version")
+
+    Registry(db)  # the replay from the base must not refuse it
+
+    assert _index_sql(db, "pipeline_run_active_meeting") == widened
+    with closing(sqlite3.connect(str(db))) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            ("0009",)
         ]
 
 
@@ -1184,6 +1257,51 @@ def test_the_alembic_ini_names_the_history_this_build_opens() -> None:
 
     assert f"script_location = {store_module._SCRIPT_LOCATION}" in ini
     assert "revision_environment = true" in ini
+
+
+def test_the_alembic_ini_parses_and_the_documented_command_loads(tmp_path) -> None:
+    """The developer CLI's own file is *readable*, and the documented use of it runs.
+
+    The test above reads this file as text and greps two substrings, which is
+    exactly what let a broken line through: a comment's continuation lost its
+    ``#``, so ``configparser`` refused the file before Alembic could reach
+    ``env.py``. Every documented CLI use died there — ``alembic -x db=… upgrade
+    head`` and the ``alembic revision`` flow — and the suite stayed green, because
+    the application never reads this file (``store._alembic_config`` builds its
+    ``Config`` in code, ADR-0030) and the tests that drive ``env.py`` write an ini
+    of their own.
+
+    So the two things a text assertion cannot see are pinned here: the file
+    **parses**, and the documented command's **environment loads** over it — the
+    chain builds a temp registry from nothing, which is the door a broken line
+    closes.
+    """
+    config = configparser.ConfigParser()
+    config.read(_REPO / "alembic.ini")  # ParsingError is what a broken line raises
+    assert config["alembic"]["script_location"] == store_module._SCRIPT_LOCATION
+
+    db = tmp_path / "registry.sqlite3"
+    upgraded = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(_REPO / "alembic.ini"),
+            "-x",
+            f"db={db}",
+            "upgrade",
+            "head",
+        ],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+
+    assert upgraded.returncode == 0, upgraded.stderr
+    # The schema the CLI just built is one this application opens, with no
+    # migration of its own to run.
+    assert Registry(db).list_projects() == []
 
 
 def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> None:

@@ -163,7 +163,8 @@ def _adapters():
     archive's verification (``verify_archive``), each backend's availability
     (``backend_status``), and the guided agent setup's own reads (``setup_view``,
     ``find_harness``). The console's tests replace them **there** — all six, each
-    pinned on this module: ``available_backend_ids`` in ``tests/web/conftest.py``
+    pinned on the module that declares them: ``available_backend_ids`` in
+    ``tests/web/conftest.py``
     (the probe
     that would otherwise compile and run the ASR helper) and
     ``tests/web/test_web_api.py``, ``verify_archive`` in

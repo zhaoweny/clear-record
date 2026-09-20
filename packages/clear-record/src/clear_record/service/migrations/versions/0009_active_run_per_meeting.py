@@ -31,11 +31,11 @@ Two things about the index's shape are deliberate:
   the copies cannot drift apart.
 
   The pair is read by the guard the run manager asks
-  (``store.active_run_for_meeting``), the claim's node-wide clause, the console's
-  run views and the mapping's ``sqlite_where``; the *claim* itself
-  (``store.claim_run``) reads the state ``lifecycle.CLAIM`` declares and the
-  reconciliation's compare-and-set (``store.interrupt_run``) the state
-  ``lifecycle.INTERRUPT`` declares, which are narrower than the pair.
+  (``store.active_run_for_meeting``), the console's run views and the mapping's
+  ``sqlite_where``; the claim's node-wide clause spells ``running`` for itself,
+  and the *claim* itself (``store.claim_run``) reads the state ``lifecycle.CLAIM``
+  declares, while the reconciliation's compare-and-set (``store.interrupt_run``)
+  reads the state ``lifecycle.INTERRUPT`` declares — both narrower than the pair.
 - **It is named.** ``pipeline_run_active_meeting`` is the name the mapping in
   :mod:`clear_record.service.entities` declares it under, so the parity test can
   compare the two declarations — the mapping and this revision — column for
@@ -82,6 +82,7 @@ matches nothing there, and no other column is touched at all.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 
 from alembic import context, op
 from sqlalchemy import text
@@ -106,7 +107,7 @@ INDEX_NAME = "pipeline_run_active_meeting"
 #: it as it writes (SQL's ``replace``). Stored unfilled it would reach the console
 #: as a literal ``{run_id}``, so the sentence is looked up here instead, and a run
 #: this revision ends carries the migrating process's locale. ``docs/i18n.md``
-#: names that as the column's one locale-dependent case.
+#: names those as the column's only two locale-dependent cases.
 #:
 #: ``deferred`` is the message-ID marker (the lookup happens here, at migration
 #: time, not at import): :func:`upgrade` resolves it with ``tr`` and the
@@ -126,11 +127,12 @@ RECONCILED_REASON = deferred(
 #: would be accepted, leaving the one-active-run rule unenforced while the
 #: mapping and the parity test still declared it. :func:`upgrade` therefore takes
 #: the two cases apart: absent, and it creates this; present and *this revision's
-#: own* — the same name, column, uniqueness and partiality (see
-#: :data:`_INDEX_SHAPE`), which is a re-run of a chain whose first pass was killed
-#: (``store._pending_stamp``) or a successor revision's widening of the predicate
-#: — and it leaves it; present and anything else, and it refuses the registry with
-#: the object's own DDL in the message.
+#: own* — the same name, column, uniqueness and partiality, and a predicate that
+#: is this rule with an equal or **wider** state list (see :data:`_INDEX_SHAPE`
+#: and :func:`_masked_states`) — and it leaves it; present and anything else,
+#: including a predicate narrowed to one state or one that is a different rule
+#: altogether, and it refuses the registry with the object's own DDL in the
+#: message.
 _DDL: tuple[str, ...] = (
     """CREATE UNIQUE INDEX pipeline_run_active_meeting
     ON pipeline_run (meeting_id) WHERE status IN ('queued', 'running');""",
@@ -182,19 +184,53 @@ WHERE status IN ('queued', 'running')
 
 
 #: This revision's own index, as SQLite describes it: unique, partial, and the
-#: columns it covers in order. :func:`_create_the_index` compares what it finds
-#: with this *identity* rather than with :data:`_DDL`'s text.
+#: columns it covers in order. :func:`_create_the_index` reads what it finds with
+#: :func:`_index_shape` and compares it with this.
 #:
-#: The difference matters on the one path that meets an index this revision did
-#: not just create: the replay-from-base repair (:func:`_pending_stamp` in
-#: ``store``), which runs every revision again over a schema that is already
-#: built. Text is the wrong thing to compare there, because a successor revision
-#: may legitimately have **widened** this index — adding an active state to
-#: ``ACTIVE_RUN_STATUSES`` requires a revision, and that revision restates the
-#: predicate with the new state in it — and the widened index is still this
-#: revision's own: same name, same column, still unique, still partial. Comparing
-#: DDL text would refuse the very registry the repair exists for.
+#: Identity is only **half** of the check, and deliberately so: an index sharing
+#: name, column, uniqueness and partiality with a *different* predicate — one
+#: narrowed to a single state, say — enforces a different rule and must not pass
+#: as this revision's own. The other half is the predicate itself, compared by
+#: :func:`_masked_states`.
+#:
+#: Why not by DDL text alone, which is what this revision did first: the one path
+#: that meets an index it did not just create is the replay-from-base repair
+#: (:func:`_pending_stamp` in ``store``), which runs every revision again over a
+#: schema that is already built — and a successor revision may legitimately have
+#: **widened** this index, because adding an active state to
+#: ``ACTIVE_RUN_STATUSES`` requires a revision, which restates the predicate with
+#: the new state in it. That widened index is this revision's own, and comparing
+#: text refused the very registry the repair exists for.
 _INDEX_SHAPE = (True, True, ("meeting_id",))
+
+#: The ``status IN (...)`` list a statement states, and its contents.
+_STATES = re.compile(r"status\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+
+
+def _declared_states(sql: str) -> frozenset[str] | None:
+    """The states a statement's ``status IN (...)`` accepts, or ``None`` if it has none."""
+    match = _STATES.search(sql)
+    if match is None:
+        return None
+    return frozenset(part.strip().strip("'\"") for part in match.group(1).split(","))
+
+
+def _masked_states(sql: str) -> str:
+    """One DDL statement with its state list masked, whitespace levelled.
+
+    SQLite stores the text it was given, minus ``IF NOT EXISTS`` (it drops that
+    clause itself), so whitespace and the clause are the only things to level —
+    and the state list is *masked* rather than compared, because that is the one
+    part a successor revision may legitimately widen. What is left is compared for
+    equality: a predicate that reads any other way is a different rule.
+    """
+    masked = _STATES.sub("status IN (…)", sql.replace("IF NOT EXISTS", ""))
+    return " ".join(masked.split()).rstrip(";")
+
+
+#: The states this revision's own DDL accepts (``ACTIVE_RUN_STATUSES`` at the time
+#: it was written, spelled out because a revision states its own DDL).
+_INDEX_STATES: frozenset[str] = _declared_states(_DDL[0]) or frozenset()
 
 
 def _index_shape() -> tuple[bool, bool, tuple[str, ...]] | None:
@@ -251,12 +287,22 @@ def _create_the_index() -> None:
             op.execute(statement)
         return
     if found == _INDEX_SHAPE:
-        # This revision's own index, already stated. Two ways it arrives here:
-        # the chain was re-run (an open killed part-way through it replays from
-        # the base), or a successor revision widened the predicate and the replay
-        # is looking at the wider index — recognised because the comparison is by
-        # identity, not by text.
-        return
+        existing = _index_ddl()
+        states = _declared_states(existing)
+        # This revision's own index, already stated. Two ways it arrives here: the
+        # chain was re-run (an open killed part-way through it replays from the
+        # base), or a successor revision widened the predicate and the replay is
+        # looking at the wider index. Both pass because the state list is read as
+        # a **superset** — every state this revision's DDL names is in it — while
+        # every other part of the statement must still be this revision's own, so
+        # a predicate narrowed to one state, or one that is a different rule, falls
+        # through to the refusal below.
+        if (
+            states is not None
+            and _INDEX_STATES <= states
+            and _masked_states(existing) == _masked_states(_DDL[0])
+        ):
+            return
     raise RuntimeError(
         tr(
             "the registry carries an index named {index} that revision 0009 did not "

@@ -5,10 +5,12 @@ Date: 2026-09-19
 
 Provenance of the decisions below: each bullet is labelled with **who decided** —
 the owner's own statement of 2026-09-19, a recommendation the owner accepted, or
-the sprint spec's own scheduling decision. The tracker's `restructure-1` lane
-carries the spec they were taken from; per ADR-0029 nothing here cites it by
-address, and the environment-local material behind an accepted recommendation is
-not a committed document.
+the sprint spec's own scheduling decision. The **Update** at the end carries its
+own labels for what changed after that date: what landed, the one deviation
+recorded without the owner's word, and the question that leaves open. The
+tracker's `restructure-1` lane carries the spec they were taken from; per
+ADR-0029 nothing here cites it by address, and the environment-local material
+behind an accepted recommendation is not a committed document.
 
 ## Context
 
@@ -206,26 +208,40 @@ not a committed document.
   the row records the ladder history a registry *migrated from the ladder*
   carries, and a fresh registry has none.
 
-## Update (2026-09-20) — the revision order as adopted
+## Update (2026-09-20) — the revision order, as landed
 
-- [DECISION: owner, 2026-09-20] **The retired ladder's steps are the chain's
-  revisions, one apiece (`0001`–`0008`), and this amends the decision of
-  2026-09-19 above without rewriting it.** The bullet above still reads "Alembic
-  is adopted as revision one … Revision one is the schema the registry already
-  has", which is the owner's text of that date; what landed instead is the
-  ladder's own DDL as the first eight revisions, in the ladder's order
+- [FACT] **The retired ladder's steps are the chain's revisions, one apiece
+  (`0001`–`0008`), and this records what landed rather than a decision of the
+  owner's.** The bullet above still reads "Alembic is adopted as revision one …
+  Revision one is the schema the registry already has"; that text stands as the
+  owner wrote it on 2026-09-19, and this Update is the deviation recorded beside
+  it instead of a rewrite of it (`AGENTS.md`: provenance is preserved, and
+  nothing is promoted without the owner's own word). What landed is the ladder's
+  own DDL as the first eight revisions, in the ladder's order
   (`packages/clear-record/src/clear_record/service/migrations/versions/`, each
   body moved across as written). The reason is the **stamp**: a registry that
   predates Alembic stands at a *ladder* number, and a registry whose first pass
   was killed replays from the base — both need the chain's revisions to be the
   ladder's own steps, because a registry has to be placed at the version it
-  actually reached and a single baseline carries no number to place it at.
-  Everything the 2026-09-19 bullet was taken for is unchanged: adopting the tool
+  actually reached, and a single baseline carries no number to place it at.
+  Everything the 2026-09-19 bullet was taken for holds: adopting the tool
   changed no table and moved no data, every later schema change is a revision on
   top of these eight, and the process still applies the revisions when it opens
   the registry, so an ordinary start yields a current schema with no separate
-  migration step for the user. A registry written by the released line opens,
-  migrates and keeps every row (proved in `tests/service/test_store.py`).
+  migration step for the user.
+- [FACT] **The released line's registry is the one this is proved on.** A
+  registry an older build left behind — the ladder row at **6**, the number the
+  released line (`v0.2.x`) stopped at, over the schema that line built — opens,
+  migrates and keeps every row, and so does one at 3:
+  `test_a_registry_from_the_retired_ladder_migrates_on_open` in
+  `tests/service/test_store.py` covers both, and the 6 case is what exercises the
+  guarded `ALTER` path for every revision after it (`0007`, `0008`, `0009`).
+- [OPEN] **Whether the owner adopts this order as their own decision.** It is
+  recorded here without their word because the shape had already shipped when the
+  deviation was noticed. If they adopt it, this bullet becomes the dated decision
+  and the two [FACT]s above stand as its record; if they prefer the single
+  baseline the 2026-09-19 bullet names, that is a revision of its own, and the
+  eight ladder steps are what it would replace.
 - [FACT] The criterion the ticket behind this carried — *"the revision history
   begins from the current schema"* — is honoured **in effect, not literally**:
   nine revisions (`0001`–`0009`) replay the ladder's eight DDL steps rather than
@@ -235,6 +251,8 @@ not a committed document.
   sprint's hand-over. Landing the single baseline instead is a follow-up, not a
   correction: it would have to place an existing registry at its own ladder
   number, which is the same problem in the other direction.
-- Revisit if the owner wants the single baseline the 2026-09-19 bullet names; it
-  is a revision of its own, and the eight ladder steps are what it would replace.
+- Revisit if the revision ids ever stop being the ladder's own numbers (a chain
+  that starts fresh, ids rewritten by hand): the placement of an existing registry
+  and the levelling of the ladder's row both rest on that identity, and nothing
+  else in the design does.
 

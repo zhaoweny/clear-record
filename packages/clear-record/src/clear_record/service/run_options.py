@@ -289,11 +289,12 @@ def read_run_options(
         ) from exc
     try:
         # A row *is* a JSON object, and settling keys out of anything else is a
-        # membership test on a non-container: a scalar or an array would raise
-        # `TypeError` from here — a 500 and a stopped drain rather than the
-        # refusal every other unreadable row gets. So the settle step reads only
-        # an object, and a JSON scalar reaches the validation below as it stands,
-        # where it is refused like `[]` and `{}` already are.
+        # membership test on a non-container: a scalar would raise `TypeError`
+        # from here — a 500 and a stopped drain rather than the refusal `[]` and
+        # `{}` already get (membership on a list is legal, which is why an array
+        # was never the failing shape). So the settle step reads only an object,
+        # and a JSON scalar reaches the validation below as it stands, where it is
+        # refused like those two.
         dropped = _settle_superseded(raw) if isinstance(raw, dict) else []
         # The settled row is validated as *JSON text* rather than as the parsed
         # dict: strict mode reads a JSON array as the tuple the options declare,

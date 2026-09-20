@@ -942,7 +942,7 @@ msgid ""
 "the registry carries an index named {index} that revision 0009 did not "
 "create and does not declare: {ddl}. The one-active-run rule cannot be "
 "stated over it — drop that object and open the registry again."
-msgstr "注册表带有一个名为 {index} 的索引，它并非修订版本 0009 创建或声明的：{ddl}。无法在该索引之上声明每个会议仅一个活动运行的规则——请删除该对象并重新打开注册表。"
+msgstr "注册表带有一个名为 {index} 的索引，它并非修订版本 0009 创建或声明的：{ddl}。无法在该索引之上声明每个会议仅一个进行中的运行的规则——请删除该对象并重新打开注册表。"
 
 #: packages/clear-record/src/clear_record/tray/app.py:35
 #, python-brace-format

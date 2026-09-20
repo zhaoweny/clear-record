@@ -495,12 +495,16 @@ def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
     fourth = manager.start(meeting, origin="console")
     assert fourth.id != third.id
 
-    assert [(run.id, run.status) for run in registry.list_runs(meeting.id)] == [
-        (fourth.id, "queued"),
-        (third.id, "failed"),
-        (second.id, "done"),
-        (first.id, "done"),
-    ]
+    # The fourth start was **admitted** — which is the point of the test: the
+    # index constrains the *active* run, not the history. What the fourth row's
+    # own status is at this instant belongs to the drain thread (``queued`` until
+    # the loop claims it, ``running`` once it has, then the outcome), so the
+    # snapshot here asserts the ordering and the three finished rows, and what the
+    # fourth run *does* is asserted by the wait below — the run this test is about
+    # is the one that would have been refused.
+    rows = registry.list_runs(meeting.id)
+    assert [run.id for run in rows] == [fourth.id, third.id, second.id, first.id]
+    assert [run.status for run in rows[1:]] == ["failed", "done", "done"]
     assert manager.wait(fourth.id, timeout=10).status == "failed"
 
 

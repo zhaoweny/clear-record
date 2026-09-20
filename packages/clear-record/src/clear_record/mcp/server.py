@@ -33,11 +33,13 @@ Design notes:
   returns one — is taken at its word. What holds those is the **construction**:
   :meth:`~clear_record.service.schemas.Shape.of` builds each boundary model with
   ``model_validate``, and that is where a missing or mistyped field fails. The
-  edge's check is the net under a payload assembled as a plain dict. Either way a
-  shape that disagrees with its own declaration is a bug in this tree, not
-  something the agent can act on, so it reaches the model as
-  ``Error executing tool <name>`` — the generic form any unexpected exception
-  takes.
+  edge's check is the net under a payload assembled as a plain dict. So the two
+  kinds of disagreement part company at the edge: a **dict** the declaration does
+  not describe reaches the model as ``Error executing tool <name>`` — the generic
+  form any unexpected exception takes — while an **instance** is not re-checked
+  there at all, so a shape that disagrees with its own declaration is caught at
+  construction or not at all. Either way it is a bug in this tree, not something
+  the agent can act on.
 - **BYOK.** No model or provider key is read, required or bundled; the agent
   brings its own (ADR-0017).
 

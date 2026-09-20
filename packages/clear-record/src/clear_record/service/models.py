@@ -150,7 +150,7 @@ class PipelineRun:
     #: description) — never a derived ratio. ``None`` means no record: a live
     #: run, or one recorded before the record existed, both read as unknown.
     progress: dict | None = None
-    #: The surface that started the run (RUN-02): one of
+    #: The surface that started the run: one of
     #: :data:`~clear_record.service.lifecycle.RUN_ORIGINS`.
     #: ``None`` is a run enqueued before the column existed — read as unknown,
     #: never guessed.

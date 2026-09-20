@@ -1646,7 +1646,7 @@ class RunManager:
     ) -> dict:
         """The recorded progress summary for a terminal transition, with its cost.
 
-        The cost sub-record (RUN-01) is written for **every** terminal outcome —
+        The cost sub-record is written for **every** terminal outcome —
         done, failed, stopped, interrupted — so a run that stopped early still
         says which stages it completed. Ratios are never stored here: a display
         derives them (see :func:`estimate_eta_s`).

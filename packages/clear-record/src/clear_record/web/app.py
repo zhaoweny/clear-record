@@ -388,10 +388,12 @@ class ArchiveCreate(BaseModel):
 # the point the shape is built, which is where a missing or mistyped field fails —
 # and the edge's check is the net under the payloads an edge assembles as plain
 # dicts.
-# The caller of a broken handler gets a bare 500 (`Internal Server Error`, no
-# detail): loud for a developer, opaque for a client, and left as it is on
-# purpose — a handler whose shape does not match its own declaration is a bug in
-# this tree, not a request a client can fix.
+# The caller of a handler whose **dict** payload fails the check gets a bare 500
+# (`Internal Server Error`, no detail): loud for a developer, opaque for a client,
+# and left as it is on purpose. A handler that returns an instance of its declared
+# model is not caught at the edge at all (see above), which is why that shape is
+# the one construction has to hold — a handler whose shape does not match its own
+# declaration is a bug in this tree either way, not a request a client can fix.
 #
 # The HTML routes are deliberately not in this list: a template render is not a
 # data boundary, and what a template needs is a context, not a shape.

@@ -222,6 +222,38 @@ def _local_owner_state(owner: str | None) -> bool | None:
     return True
 
 
+#: The driver's own report for revision 0009's index refusing a row. SQLite names
+#: the **columns** a unique constraint covers and never the index, so the rule's
+#: identity in an error is the table and column the mapping declares for it
+#: (``entities.PipelineRun``: ``pipeline_run``, ``meeting_id``).
+_ACTIVE_RUN_REFUSAL = "UNIQUE constraint failed: pipeline_run.meeting_id"
+
+#: The driver's **name** for a unique-constraint violation — SQLite's extended
+#: result code (``SQLITE_CONSTRAINT_UNIQUE``), which the ``sqlite3`` module
+#: attaches to the error it raises. Read from the exception rather than from the
+#: message, so the kind of violation is not decided by matching prose.
+_UNIQUE_CONSTRAINT = "SQLITE_CONSTRAINT_UNIQUE"
+
+
+def _refused_by_the_active_run_index(exc: IntegrityError) -> bool:
+    """Whether the driver refused this insert by the one-active-run index.
+
+    The submission path reads before it writes, and a read cannot stop another
+    writer, so the one insert failure it **expects** is revision 0009's partial
+    unique index over the meeting's active run. A unique-constraint violation is
+    what the driver reports for that, and the columns the message names are what
+    says *which* unique rule refused the row: every other integrity failure —
+    ``create_run`` checks the meeting in a separate operation from its insert, so
+    a meeting deleted in between fails the insert's foreign key — is re-raised as
+    itself instead of being read as a lost race for the meeting, which is what a
+    shared registry makes possible and no reader of the message could tell apart
+    from one.
+    """
+    orig = exc.orig
+    kind = getattr(orig, "sqlite_errorname", None)
+    return kind == _UNIQUE_CONSTRAINT and _ACTIVE_RUN_REFUSAL in str(orig)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -856,6 +888,16 @@ class RunManager:
             # refusal is the guard's message, raised here rather than left as an
             # integrity error — this is the layer that owns that message — with
             # the index's error as its cause.
+            #
+            # Only that violation is a refusal: ``create_run`` checks the meeting
+            # in one operation and inserts in another, so a meeting that vanished
+            # in between fails the insert's own foreign key, and a submission
+            # refused for *that* is not a second run in flight. The driver says
+            # which constraint refused the row
+            # (:func:`_refused_by_the_active_run_index`); anything else is
+            # re-raised as itself, with the driver's own message and its type.
+            if not _refused_by_the_active_run_index(exc):
+                raise
             self._active_run_refusal(meeting, cause=exc)
         with self._lock:
             self._pending[run.id] = (meeting, options)
@@ -1116,7 +1158,10 @@ class RunManager:
         It **raises** rather than returning the error, so no call site can drop
         the refusal, and ``cause`` carries the index's own ``IntegrityError`` when
         that is what refused — chained, so a traceback says which of the two it
-        was.
+        was. Only *that* failure arrives with a cause: :meth:`start` asks the
+        driver which constraint refused the insert
+        (:func:`_refused_by_the_active_run_index`) and re-raises every other
+        integrity error as itself.
         """
         self._refuse(meeting, RUN_IN_FLIGHT)
         raise ValueError(RUN_IN_FLIGHT) from cause
@@ -1561,9 +1606,19 @@ class RunManager:
         destroys nothing. Its meeting goes to ``failed`` like any other run that
         cannot execute, and the queue carries on with the next run.
 
+        The write is conditional (:data:`~clear_record.service.lifecycle.FAIL` —
+        only a ``queued`` or ``running`` row moves) and it reports whether it
+        moved a row; **every effect below follows that answer**, because another
+        writer can end the run between the read that refused it and this write
+        and nothing here may contradict the row it left. A quarantine that moved
+        no row announces no failure at all — no meeting status, no notification —
+        and reports the refusal's own loss instead (:meth:`_report_stale_refusal`).
+
         Returns whether a row moved, which is what the read helpers that call it
-        need: a ``False`` means the row is still there and they must not retry,
-        or they would spin.
+        need: ``True`` means the offending row left the queue, so re-reading
+        finds the rest, and ``False`` means this pass took the row nowhere — it
+        is still there, another writer moved it first, or the write itself failed
+        — so a retry could spin and the caller returns what it has.
         """
         run_id, meeting_id = exc.run_id, exc.meeting_id
         if run_id is None:  # pragma: no cover - the reader always names its run
@@ -1571,6 +1626,12 @@ class RunManager:
         error = str(exc)
         try:
             moved = self._registry.fail_unreadable_run(run_id, error=error)
+            if not moved:
+                # The row is not this build's to fail any more, so there is no
+                # failure to record on it, on its meeting or in a notification:
+                # the run is wherever the other writer put it.
+                self._report_stale_refusal(run_id, meeting_id)
+                return False
             meeting = (
                 self._registry.meeting_by_id(meeting_id)
                 if meeting_id is not None
@@ -1606,6 +1667,36 @@ class RunManager:
                 error=f"{type(failure).__name__}: {failure}",
             )
             return False
+
+    def _report_stale_refusal(self, run_id: int, meeting_id: int | None) -> None:
+        """Report a quarantine whose compare-and-set lost, and why.
+
+        The refusal was made on a read that could not decode the row, and the row
+        moved before the write in the store's
+        :meth:`~clear_record.service.store.Registry.fail_unreadable_run` landed:
+        it is no longer one this build may fail, so there is no failure to
+        announce — only a refusal that did not happen. The row is re-read to say
+        *which* state it moved to, because the two are worth telling apart on the
+        log and neither is this call's doing: a cancel or a peer's end
+        (``stopped``, ``done``, ``interrupted``), or a peer's own quarantine of
+        the same row (``failed``). The exception is a row that is **still**
+        unreadable: the read that would name its state is the read this build
+        refuses, and that is exactly what a peer's quarantine leaves behind.
+        """
+        try:
+            current = self._registry.get_run(run_id)
+        except MalformedRunOptions:
+            status = "unreadable"
+        else:
+            status = "gone" if current is None else current.status
+        log_event(
+            "info",
+            "runs",
+            "run.refuse_stale",
+            run_id=run_id,
+            meeting_id=meeting_id,
+            status=status,
+        )
 
     def _fail_unrunnable(
         self, run: PipelineRun, meeting: Meeting | None, error: str

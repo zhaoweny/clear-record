@@ -9,12 +9,15 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
+from alembic import command
 
 from clear_record.service import Registry, archive_meeting, verify_archive
 from clear_record.service.archive import MANIFEST_FILENAME
+from clear_record.service.store import _alembic_config
 
 
 def _registry(tmp_path) -> Registry:
@@ -150,7 +153,7 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
     # ...and this archive landed beside it, under a free name.
     assert Path(archive.root_path) != winner
     assert Path(archive.root_path).parent == winner.parent
-    assert verify_archive(Path(archive.root_path))["ok"] is True
+    assert verify_archive(Path(archive.root_path)).ok is True
 
 
 def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
@@ -158,7 +161,7 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     archive = archive_meeting(registry, meeting)
     archive_dir = Path(archive.root_path)
 
-    assert verify_archive(archive_dir)["ok"] is True
+    assert verify_archive(archive_dir).ok is True
 
     # A same-length tamper is caught by the digest alone.
     tape_copy = archive_dir / "tapes" / "a.wav"
@@ -166,9 +169,9 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     (archive_dir / "record" / "record.json").unlink()
 
     result = verify_archive(archive_dir)
-    assert result["ok"] is False
-    assert result["mismatched"] == ["tapes/a.wav"]
-    assert result["missing"] == ["record/record.json"]
+    assert result.ok is False
+    assert result.mismatched == ["tapes/a.wav"]
+    assert result.missing == ["record/record.json"]
 
     with pytest.raises(FileNotFoundError):
         verify_archive(tmp_path / "nothing-here")
@@ -186,21 +189,15 @@ def test_archive_root_must_be_chosen(tmp_path) -> None:
     assert Path(archive.root_path).parent == explicit.resolve() / "ops"
 
 
-def test_v2_registry_upgrades_forward(tmp_path) -> None:
-    """An existing v2 database gains the v3 archive table on open (forward-only)."""
-    from clear_record.service.store import _SCHEMA_V1, _SCHEMA_V2
-
+def test_a_registry_at_revision_two_gains_the_archive_table(tmp_path) -> None:
+    """An existing registry at revision two gains the archive table on open."""
     db = tmp_path / "registry.sqlite3"
-    conn = sqlite3.connect(str(db))
-    conn.executescript(_SCHEMA_V1)
-    conn.executescript(_SCHEMA_V2)
-    conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    conn.execute(
-        "INSERT INTO project (slug, name, notes, created_at)"
-        " VALUES ('ops', 'Ops', '', 'now')"
-    )
-    conn.commit()
-    conn.close()
+    command.upgrade(_alembic_config(db), "0002")
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        conn.execute(
+            "INSERT INTO project (slug, name, notes, created_at)"
+            " VALUES ('ops', 'Ops', '', 'now')"
+        )
 
     registry = Registry(db)
     assert [p.slug for p in registry.list_projects()] == ["ops"]

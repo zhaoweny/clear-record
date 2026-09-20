@@ -50,7 +50,7 @@ def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
 
 @pytest.mark.own_setup_marker
 def test_the_setup_link_follows_the_marker_not_the_agent_config(tmp_path) -> None:
-    """A configured runner does not hide Setup (ticket 04); the marker does."""
+    """A configured runner does not hide Setup; the marker does."""
     client = _client(
         tmp_path, agent_config=AgentConfig(endpoint="http://local.test/v1")
     )
@@ -136,7 +136,7 @@ def test_project_rows_label_their_counts(tmp_path) -> None:
     assert "0 terms" in home.text
 
 
-# --- the project page's sub-tabs (ticket 02) -------------------------------- #
+# --- the project page's sub-tabs ------------------------------------------- #
 def test_every_project_sub_tab_is_its_own_url(tmp_path) -> None:
     """Each tab is a real page with the active tab marked, not colour alone."""
     _registry, client = _seeded(tmp_path)

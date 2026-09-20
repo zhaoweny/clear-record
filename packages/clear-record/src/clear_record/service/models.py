@@ -4,6 +4,13 @@ Plain frozen dataclasses (no third-party imports) so the service layer stays as
 light as the core. ``clear_record.core`` owns the *audio* domain (sources,
 segments, records); this module owns the *project* domain (projects and glossary
 terms), which only exists for the web/service surface.
+
+A pipeline run's **states** are not here: they are read by the persistence layer
+and by every surface, and the rule that queries them is the same rule that
+classifies them, so they live in
+:mod:`clear_record.service.lifecycle` — with the moves between them, the
+one-active-run rule and what each move announces. What stays here is a run's
+*shape* (:class:`PipelineRun`).
 """
 
 from __future__ import annotations
@@ -54,22 +61,10 @@ class GlossaryTerm:
 #: A meeting's lifecycle. ``new`` has no tapes yet; ``ready`` has a tape set;
 #: ``running`` has a live pipeline run; ``recorded`` has a reconciled record.
 #: ``interrupted`` is a run the node died in the middle of (startup
-#: reconciliation), which is honest about the node, not the work: see
-#: :data:`RUN_STATUSES`.
+#: reconciliation), which is honest about the node, not the work: see the
+#: pipeline run's own states,
+#: :data:`~clear_record.service.lifecycle.RUN_STATUSES`.
 MEETING_STATUSES = ("new", "ready", "running", "recorded", "failed", "interrupted")
-
-#: A pipeline run's lifecycle. ``interrupted`` is distinct from ``failed``: the
-#: node (the console process) died while the run was live, so the work did not
-#: necessarily fail. A run left ``running`` by a dead process is moved here at
-#: startup, and its event stream stays readable.
-RUN_STATUSES = ("queued", "running", "done", "failed", "stopped", "interrupted")
-
-#: Which surface **started** a run (RUN-02). ``console`` is the local console UI,
-#: ``api`` the HTTP JSON API (a script or an integration), ``mcp`` the stdio MCP
-#: server an agent harness drives, ``cli`` the command line. It is recorded when
-#: the run is enqueued, so a run's provenance survives the restart that ends its
-#: process.
-RUN_ORIGINS = ("console", "api", "mcp", "cli")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,7 +116,10 @@ class Tape:
 class PipelineRun:
     """One execution of the pipeline against a meeting's tape set.
 
-    ``status`` moves ``queued → running → done|failed|interrupted``: a run is
+    ``status`` takes ``queued`` first, then ``running``, then one of the four
+    terminal states — ``failed`` and ``stopped`` are also reachable straight from
+    ``queued`` (:data:`~clear_record.service.lifecycle.FAIL`,
+    :data:`~clear_record.service.lifecycle.STOP_QUEUED`): a run is
     **enqueued** first (the FIFO the node drains one at a time), and only one run
     per node is ``running`` at once. The move to ``running`` is a **conditional
     claim** (:meth:`~clear_record.service.store.Registry.claim_run`), so several
@@ -155,7 +153,8 @@ class PipelineRun:
     #: description) — never a derived ratio. ``None`` means no record: a live
     #: run, or one recorded before the record existed, both read as unknown.
     progress: dict | None = None
-    #: The surface that started the run (RUN-02): one of :data:`RUN_ORIGINS`.
+    #: The surface that started the run: one of
+    #: :data:`~clear_record.service.lifecycle.RUN_ORIGINS`.
     #: ``None`` is a run enqueued before the column existed — read as unknown,
     #: never guessed.
     origin: str | None = None
@@ -223,8 +222,6 @@ __all__ = [
     "PipelineRun",
     "Project",
     "RecordingSet",
-    "RUN_ORIGINS",
-    "RUN_STATUSES",
     "TERM_AUTHORS",
     "TERM_STATUSES",
     "Tape",

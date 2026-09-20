@@ -139,7 +139,7 @@ def test_nothing_running_is_a_result_with_what_to_install() -> None:
     assert detection.best is None
     assert "could not reach" in str(probe.detail)
     assert "connection refused" in str(probe.detail)
-    # The hint is the plain "what to install or run" the ticket asks for.
+    # The hint is the plain "what to install or run" the setup surface asks for.
     assert "ollama.com" in probe.candidate.install_hint
 
 
@@ -372,7 +372,7 @@ def test_the_setup_record_has_no_field_for_a_credential(tmp_path) -> None:
         setup.update_setup_state(path=tmp_path / "state.json", api_key="value")
 
 
-# --- the version marker (ticket 04) ------------------------------------------ #
+# --- the version marker (first run vs after an update) ---------------------- #
 
 
 def test_the_version_marker_is_an_allowed_non_secret_fact(tmp_path) -> None:
@@ -429,7 +429,7 @@ def test_the_view_says_plainly_when_nothing_is_configured(tmp_path) -> None:
     assert view.detection is None
     # The machine view carries the variable NAME (here, unset) and no value.
     assert view.api_key_env is None
-    assert view.as_dict()["api_key_env"] is None
+    assert view.as_dict().api_key_env is None
 
 
 def test_the_view_is_ready_once_an_endpoint_is_recorded(tmp_path) -> None:

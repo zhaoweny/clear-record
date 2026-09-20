@@ -355,7 +355,12 @@ runnable, and the **project console** is built on top of it:
   localhost, with no account (extra: `web`) (ADR-0013, ADR-0016). Its CSS/JS are
   built from `packages/clear-record/frontend/` (Vite + Tailwind v4) and the
   **compiled output is committed**, so the console works offline with no Node on
-  the user's machine (ADR-0023).
+  the user's machine (ADR-0023). Inside the package, a page's **context** is
+  built by a named function in `web/views.py`, the rule that finds a named thing
+  — a project, meeting, tape, run, term, archive, draft, agent-task kind or
+  settings section — or answers that it is not there, has one implementation in
+  `web/lookup.py`, and `web/app.py` is wiring: the middleware, the route table
+  and the injected adapters (ADR-0030).
 - `clear_record.tray` — a **PySide6** system-tray supervisor / desktop entry
   point (open / status / quit) over a Qt-free `ServiceController` (extra:
   `tray`) (ADR-0016).

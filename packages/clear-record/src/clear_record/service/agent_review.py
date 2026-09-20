@@ -50,6 +50,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from clear_record.core.i18n import deferred
 from clear_record.service.agent import (
@@ -70,6 +71,7 @@ from clear_record.service.agent_tasks import (
 )
 from clear_record.service.glossary import project_snapshot
 from clear_record.service.models import Meeting
+from clear_record.service.schemas import ArtifactOut, ProvenanceOut, Shape
 from clear_record.service.store import Registry
 from clear_record.service.transcript import read_transcript
 
@@ -296,24 +298,53 @@ class MeetingAgent:
         return reject_draft(draft)
 
 
-def describe_draft(draft: Draft) -> dict:
-    """A draft as plain JSON data (the console's and MCP's shared view).
+class DraftView(Shape):
+    """A draft as the console and the MCP tools both report it (ADR-0030).
 
     Provenance and value are included whole: a reviewer needs the runner, model
     and hashes that justify a draft as much as its content, and a machine caller
-    needs the structured value, not a rendering of it.
+    needs the structured value, not a rendering of it. ``value`` and ``promotion``
+    stay JSON-shaped — their schema belongs to the task kind, not to this view.
     """
-    return {
-        "run_id": draft.provenance.run_id,
-        "kind": draft.kind,
-        "review_state": draft.review_state,
-        "accepted": draft.accepted,
-        "rejected": draft.rejected,
-        "promotion": draft.promotion,
-        "provenance": dataclasses.asdict(draft.provenance),
-        "value": draft.value,
-        "run_dir": str(draft.run_dir),
-    }
+
+    run_id: str
+    kind: str
+    review_state: str
+    accepted: bool
+    rejected: bool
+    promotion: dict[str, Any] | None
+    provenance: ProvenanceOut
+    value: Any
+    run_dir: str
+
+
+class AgentTasksOut(Shape):
+    """A meeting's agent-task surface: the kinds, the drafts, the minutes.
+
+    Shared by the JSON API and the MCP tool, so the browser and an agent read one
+    shape. ``configured`` says whether a runner is available at all, and
+    ``minutes`` is the accepted minutes artifact, or ``None`` until one exists.
+    """
+
+    tasks: list[str]
+    configured: bool
+    drafts: list[DraftView]
+    minutes: ArtifactOut | None
+
+
+def describe_draft(draft: Draft) -> DraftView:
+    """A draft as declared data (the console's and MCP's shared view)."""
+    return DraftView(
+        run_id=draft.provenance.run_id,
+        kind=draft.kind,
+        review_state=draft.review_state,
+        accepted=draft.accepted,
+        rejected=draft.rejected,
+        promotion=draft.promotion,
+        provenance=ProvenanceOut(**dataclasses.asdict(draft.provenance)),
+        value=draft.value,
+        run_dir=str(draft.run_dir),
+    )
 
 
 # --- promotion: what an acceptance produces --------------------------------- #
@@ -476,6 +507,8 @@ def promote_draft(
 
 __all__ = [
     "AGENT_DIRNAME",
+    "AgentTasksOut",
+    "DraftView",
     "MeetingAgent",
     "MeetingAgentError",
     "PROMOTERS",

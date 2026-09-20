@@ -18,14 +18,17 @@ import sys
 import textwrap
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from clear_record.cli.workspace import Workspace
 from clear_record.core import JobEvent, Progress, resolve_options
 from clear_record.service import (
     PipelineOptions,
+    PipelineRun,
     Registry,
     RunManager,
     estimate_eta_s,
@@ -394,6 +397,117 @@ def test_a_second_run_is_refused_while_one_is_in_flight(tmp_path) -> None:
     assert manager.wait(run.id, timeout=10).status == "done"
 
 
+def test_two_concurrent_submissions_leave_one_run_and_the_same_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """A race past the guard is decided by the database, and reads the same.
+
+    Both clients submit the same meeting at the same moment: each reads the
+    registry's guard — and a read cannot stop the other's write, so both read
+    "no active run" and both reach their INSERT. Revision 0009's partial unique
+    index is what makes one of them lose, and the loser is refused with the
+    message a second click already gets, not with the integrity error the index
+    raised.
+
+    The interleaving is *forced*, not hoped for: the guard is wrapped so both
+    threads finish reading it before either returns from it — the state a race
+    produces and a loaded machine merely makes likelier. Both verdicts are kept,
+    so the test proves the checks raced rather than that they merely ran close
+    together; everything after the guard is the ordinary submission path, on two
+    real threads, with the winner's run left in flight until the end.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    release = threading.Event()
+    manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
+
+    guard = registry.active_run_for_meeting
+    both_read = threading.Barrier(2, timeout=10)
+    verdicts: list[object] = []
+
+    def read_guard(meeting_id: int):
+        verdict = guard(meeting_id)  # the check, as each submission runs it
+        verdicts.append(verdict)
+        both_read.wait()  # ... and both clients are past it before either writes
+        return verdict
+
+    monkeypatch.setattr(registry, "active_run_for_meeting", read_guard)
+
+    results: list[object] = []
+
+    def submit() -> None:
+        try:
+            results.append(manager.start(meeting, origin="console"))
+        except ValueError as exc:  # the refusal, not a crash
+            results.append(exc)
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert verdicts == [None, None]  # neither check saw the other's run
+    runs = registry.list_runs(meeting.id)
+    winners = [result for result in results if isinstance(result, PipelineRun)]
+    refusals = [str(result) for result in results if isinstance(result, ValueError)]
+    assert len(winners) == 1 and len(refusals) == 1, results
+    # One run, the winner's — and the loser's refusal is the existing message.
+    assert [run.id for run in runs] == [winners[0].id]
+    assert refusals == ["a run is already in flight for this meeting"]
+
+    release.set()
+    assert manager.wait(runs[0].id, timeout=10).status == "done"
+
+
+def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
+    """The index is partial — it constrains the active run, not the history.
+
+    A run that ended holds nothing, so the meeting is runnable again and again.
+    That is the case a total ``UNIQUE (meeting_id)`` would have refused, and the
+    one the product is built around: a second recording, a re-run after a
+    failure. ``done`` and ``failed`` are both checked, because "ended" is not one
+    status.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    fail_next = threading.Event()
+
+    def pipeline(directory, options, on_event) -> None:
+        if fail_next.is_set():
+            raise RuntimeError("backend unavailable")
+
+    manager = RunManager(registry, pipeline=pipeline)
+    first = manager.start(meeting, origin="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+    second = manager.start(meeting, origin="console")
+    assert manager.wait(second.id, timeout=10).status == "done"
+
+    fail_next.set()
+    third = manager.start(meeting, origin="console")
+    assert manager.wait(third.id, timeout=10).status == "failed"
+    fourth = manager.start(meeting, origin="console")
+    assert fourth.id != third.id
+
+    # The fourth start was **admitted** — which is the point of the test: the
+    # index constrains the *active* run, not the history. What the fourth row's
+    # own status is at this instant belongs to the drain thread (``queued`` until
+    # the loop claims it, ``running`` once it has, then the outcome), so the
+    # snapshot here asserts the ordering and the three finished rows, and what the
+    # fourth run *does* is asserted by the wait below — the run this test is about
+    # is the one that would have been refused.
+    rows = registry.list_runs(meeting.id)
+    assert [run.id for run in rows] == [fourth.id, third.id, second.id, first.id]
+    assert [run.status for run in rows[1:]] == ["failed", "done", "done"]
+    assert manager.wait(fourth.id, timeout=10).status == "failed"
+
+
 def test_event_cursor_supports_streaming(tmp_path) -> None:
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -411,8 +525,8 @@ def test_event_cursor_supports_streaming(tmp_path) -> None:
 
     assert len(state.events_since(0)) == 4
     assert state.events_since(4) == []
-    assert state.summary()["total"] == 3
-    assert state.summary()["status"] == "done"
+    assert state.summary().total == 3
+    assert state.summary().status == "done"
 
 
 # --- durability across a restart ------------------------------------------- #
@@ -504,6 +618,56 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
 
     assert state.status == "done"
     assert seen["options"].audio_files == (str(tape),)
+
+
+def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
+    """One unreadable row must not stop the node's queue.
+
+    The reads walk rows and stop at the row they refuse, so a single row this
+    build cannot read hid every run queued behind it — and killed the queue
+    thread, so every respawn died the same way, leaving queued work stopped
+    silently. The row is failed instead, and the run behind it still moves.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    refused_meeting = _meeting(registry, tmp_path, [tape])
+    later_workspace = tmp_path / "later"
+    later_workspace.mkdir()
+    later_meeting = registry.create_meeting(
+        "ops", "Retro", workspace_path=str(later_workspace)
+    )
+    registry.set_recording_set(later_meeting.id, [str(tape)])
+
+    options = dataclasses.asdict(PipelineOptions(backend="apple"))
+    refused = registry.create_run(
+        refused_meeting.id, backend="apple", origin="console", run_options=options
+    )
+    later = registry.create_run(
+        later_meeting.id, backend="apple", origin="console", run_options=options
+    )
+    assert refused.id < later.id  # the unreadable row is the head of the FIFO
+
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
+        conn.execute(
+            "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
+            ('{"backend": "apple", "jobs": "many"}', refused.id),
+        )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    assert manager.wait(later.id, timeout=10).status == "done"
+
+    quarantined = registry.get_run(refused.id)
+    assert quarantined is not None and quarantined.status == "failed"
+    assert quarantined.error is not None
+    assert f"run {refused.id}" in quarantined.error
+    assert "jobs" in quarantined.error
+    # The reader's message names the fields that failed, never their values, so
+    # the column it came from is the only copy of what the row held: clearing it
+    # puts the text in the run's own record instead of dropping it.
+    assert '{"backend": "apple", "jobs": "many"}' in quarantined.error
+    assert quarantined.run_options is None
 
 
 # --- the node queue: one run at a time ------------------------------------- #
@@ -620,7 +784,8 @@ class _UnreadableBeats:
     Everything else is the wrapped registry — the manager claims, drains and reads
     through it unchanged. ``heartbeat_run`` reports that the beat did not land, so
     the heartbeat thread goes on to read the row (``get_run``), which is where this
-    fake raises while ``raise_on_read`` is set.
+    fake raises while ``raise_on_read`` is set: it raises the error the registry's
+    reads now arrive as, since SQLAlchemy wraps the driver's own (ADR-0030).
     """
 
     def __init__(self, registry: Registry) -> None:
@@ -634,7 +799,9 @@ class _UnreadableBeats:
 
     def get_run(self, run_id: int):
         if self.raise_on_read:
-            raise sqlite3.OperationalError("database is locked")
+            raise OperationalError(
+                "SELECT 1", {}, sqlite3.OperationalError("database is locked")
+            )
         return self._registry.get_run(run_id)
 
     def __getattr__(self, name):
@@ -826,7 +993,10 @@ def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
         holder = sqlite3.connect(str(registry.db_path))
         try:
             holder.execute("BEGIN IMMEDIATE")
-            holder.execute("UPDATE schema_version SET version = version")
+            # A write that changes nothing, to hold the write lock. The
+            # schema's version row is the safe target because it holds exactly
+            # one row.
+            holder.execute("UPDATE alembic_version SET version_num = version_num")
             holding.set()
             time.sleep(0.3)
         finally:
@@ -1759,7 +1929,7 @@ def _completed_run(
         meeting.id,
         backend=backend,
         model=model,
-        run_options={"chunk_seconds": chunk_seconds},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=chunk_seconds)),
     )
     registry.update_run(
         run.id,
@@ -1814,7 +1984,7 @@ def test_the_eta_projects_matching_history_onto_the_same_tape(tmp_path) -> None:
         meeting.id,
         backend="apple",
         model="small",
-        run_options={"chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
     )
 
     # 600 audio seconds at 2 audio-seconds per wall second = 300s projected.
@@ -1832,15 +2002,21 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
         meeting.id,
         backend="apple",
         model="small",
-        run_options={"chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
     )
     # Nothing has completed yet: there is nothing to project.
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
 
+    # The completed runs that make the point live in a second meeting: history is
+    # matched by configuration, not by meeting, and this meeting's own run is
+    # still active — one meeting has one active run (revision 0009's index).
+    earlier = registry.create_meeting("ops", "Earlier", workspace_path=str(tmp_path))
+    registry.set_recording_set(earlier.id, [str(tape)])
+
     # A completed run with another model is not history for this run.
     _completed_run(
         registry,
-        meeting,
+        earlier,
         backend="apple",
         model="large",
         chunk_seconds=30.0,
@@ -1852,7 +2028,7 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
     # Nor is a matching run at another chunk size.
     _completed_run(
         registry,
-        meeting,
+        earlier,
         backend="apple",
         model="small",
         chunk_seconds=10.0,
@@ -1860,3 +2036,79 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
         wall_seconds=300.0,
     )
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
+
+
+def test_a_running_row_the_build_cannot_read_does_not_stop_the_node(tmp_path) -> None:
+    """The same refusal, one status over, must not stop the process starting.
+
+    Reconciliation reads the ``running`` rows from the constructor, and that is
+    the object every surface builds before it can serve anything: ``create_app``
+    registers its exception handler *after* the manager exists, and the MCP server
+    and the tray build the same one. So one unreadable ``running`` row used to take
+    the whole surface down with a traceback, where the same row in status
+    ``queued`` was failed and the queue carried on.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
+        conn.execute(
+            "UPDATE pipeline_run SET status = 'running', started_at = 'now',"
+            " owner = 'somewhere:1', heartbeat_at = 'now', run_options = ?"
+            " WHERE id = ?",
+            ('{"backend": "apple", "jobs": "many"}', run.id),
+        )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)  # must not raise
+
+    quarantined = registry.get_run(run.id)
+    assert quarantined is not None and quarantined.status == "failed"
+    assert f"run {run.id}" in (quarantined.error or "")
+    assert "jobs" in (quarantined.error or "")
+    assert registry.active_run_for_meeting(meeting.id) is None
+    manager.shutdown()
+
+
+def test_a_claim_that_fails_does_not_stop_the_queue(tmp_path, monkeypatch) -> None:
+    """The claim is one statement, and its failure must not end the drain.
+
+    ``cr-run-queue`` calls the claim outside its own guard, so any error from it —
+    a locked registry, a disk error, a row that stopped being readable between the
+    drain's read and the claim — ended the thread. The queue then stopped quietly:
+    the queued run stayed ``queued`` until the next submission or a restart, and
+    nothing in the run's own record said why. The failure is reported now and the
+    next pass tries the run again.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    real_claim = Registry.claim_run
+    attempts = {"n": 0}
+
+    def flaky_claim(self, run_id, *, owner):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OperationalError("SELECT 1", {}, Exception("database is locked"))
+        return real_claim(self, run_id, owner=owner)
+
+    monkeypatch.setattr(Registry, "claim_run", flaky_claim)
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    assert manager.wait(run.id, timeout=10).status == "done"
+    assert attempts["n"] >= 2
+    assert manager._scheduler is not None and manager._scheduler.is_alive()
+    manager.shutdown()

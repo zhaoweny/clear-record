@@ -50,20 +50,24 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 from clear_record.core.paths import config_path
+from clear_record.service.lifecycle import ANNOUNCEMENTS
 
 # --- the event vocabulary -------------------------------------------------- #
+#
+# The **run** events this build emits are the run lifecycle's own: which move
+# notifies and under what name is declared where the move is
+# (`service/lifecycle.py` — `ANNOUNCEMENTS`, each `RunTransition.event` derived
+# from the move's name), so a notifying move reaches a receiver's vocabulary by
+# being declared and there is no second place to name it. Read one by name off
+# the move itself (`lifecycle.FINISH.event`); a receiver filters on
+# `EMITTED_EVENTS` or `ALL_EVENTS`.
 
-#: Events this build emits.
-RUN_STARTED = "run.started"
-RUN_FINISHED = "run.finished"
-RUN_FAILED = "run.failed"
+# The events about everything else this build emits.
 TRANSCRIPT_READY = "transcript.ready"
 ARCHIVE_CREATED = "archive.created"
 
 EMITTED_EVENTS: tuple[str, ...] = (
-    RUN_STARTED,
-    RUN_FINISHED,
-    RUN_FAILED,
+    *ANNOUNCEMENTS,
     TRANSCRIPT_READY,
     ARCHIVE_CREATED,
 )
@@ -80,7 +84,7 @@ FUTURE_EVENTS: tuple[str, ...] = (
 #: Every event name a config may filter on.
 ALL_EVENTS: tuple[str, ...] = EMITTED_EVENTS + FUTURE_EVENTS
 
-#: The environment variable naming the signing secret for an endpoint.
+#: The header carrying the endpoint's HMAC-SHA256 signature (``sha256=<digest>``).
 SIGNATURE_HEADER = "X-Clear-Record-Signature"
 EVENT_HEADER = "X-Clear-Record-Event"
 DELIVERY_HEADER = "X-Clear-Record-Delivery"
@@ -808,9 +812,6 @@ __all__ = [
     "ENV_ENDPOINTS",
     "EVENT_HEADER",
     "FUTURE_EVENTS",
-    "RUN_FAILED",
-    "RUN_FINISHED",
-    "RUN_STARTED",
     "SIGNATURE_HEADER",
     "TRANSCRIPT_READY",
     "WebhookConfig",

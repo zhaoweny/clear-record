@@ -314,7 +314,7 @@ def test_read_draft_round_trips_the_promotion_record(tmp_path: Path) -> None:
 
     assert reloaded.review_state == "accepted"
     assert reloaded.promotion == promoted.promotion
-    assert describe_draft(reloaded)["promotion"]["kind"] == "minutes"
+    assert describe_draft(reloaded).promotion["kind"] == "minutes"
 
 
 def test_promote_draft_needs_a_workspace(tmp_path: Path) -> None:

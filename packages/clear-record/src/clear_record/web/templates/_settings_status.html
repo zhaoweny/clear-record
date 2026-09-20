@@ -1,6 +1,7 @@
 {# Status: version, the resolved directories, the run queue, backend
-   availability, the diagnostics download and the permanent hello-world check
-   (ticket 05). Read-only; the only action is the download link. #}
+   availability, the diagnostics download and the permanent hello-world check.
+   Its actions are the download link, the walk-setup-again POST and the check's
+   own re-run. #}
 <div class="settings-group">
   <table class="table-settings">
     <tbody>
@@ -25,7 +26,7 @@
   {% endfor %}
 </ul>
 {% else %}
-<div class="empty">{{ tr("No runs queued or running.") }}</div>
+<div class="empty">{{ tr("No runs in flight.") }}</div>
 {% endif %}
 
 <h3>{{ tr("Setup") }}</h3>
@@ -44,7 +45,7 @@
 <p><a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
 
 <h3>{{ tr("Hello-world check") }}</h3>
-{# The permanent diagnostic (ticket 05): the SAME check the agent flow's Try it
+{# The permanent diagnostic: the SAME check the agent flow's Try it
    stage runs, rendered and re-run from here. #}
 <div id="hello-check" class="hello-check">
   {% include "_hello_check.html" %}

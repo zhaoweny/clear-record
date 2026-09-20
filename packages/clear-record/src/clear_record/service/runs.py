@@ -14,14 +14,18 @@ Two properties make the node trustworthy across restarts:
 
 * **The registry is the truth, not process memory.** A run's status and its
   event stream live in SQLite, so after the console restarts the run view still
-  replays and the "one run per meeting" guard still holds. A run whose owner
-  died is reconciled to ``interrupted`` (distinct from ``failed`` — the node
-  died, the work did not necessarily fail).
+  replays and the "one run per meeting" guard still holds. The per-meeting half
+  of that is enforced by the registry itself — revision 0009's partial unique
+  index over the meeting's active run — so the second of two submissions that
+  race past the guard is refused by the database, not by the check that read
+  before the other write. A run whose owner died is reconciled to
+  ``interrupted`` (distinct from ``failed`` — the node died, the work did not
+  necessarily fail).
 * **One run per node, one claim.** :meth:`RunManager.start` **enqueues** a run
   (``queued``); a scheduler drains the FIFO, and the move to ``running`` is a
   single conditional update in the registry, so the console, an agent's MCP
-  server and a CLI all share one queue and exactly one of them executes a run.
-  The queue is the registry's, so a restart does not lose queued work.
+  server share one queue and exactly one of them executes a run. The queue is
+  the registry's, so a restart does not lose queued work.
 """
 
 from __future__ import annotations
@@ -31,11 +35,13 @@ import datetime as _dt
 import hashlib
 import os
 import platform as _platform
-import sqlite3
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
+
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
@@ -49,12 +55,27 @@ from clear_record.service.glossary import (
     snapshot_from_text,
     write_snapshot,
 )
-from clear_record.service.models import RUN_ORIGINS, Meeting, PipelineRun
+from clear_record.service.lifecycle import (
+    ACTIVE_RUN_STATUSES,
+    CLAIM,
+    FAIL,
+    FINISH,
+    INTERRUPT,
+    INTERRUPTED,
+    QUEUED,
+    RESTART_REASON,
+    RUN_IN_FLIGHT,
+    RUN_ORIGINS,
+    RUNNING,
+    STOP_QUEUED,
+    STOP_RUNNING,
+    TERMINAL_STATUSES,
+)
+from clear_record.service.models import Meeting, PipelineRun
+from clear_record.service.run_options import MalformedRunOptions
+from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
-    RUN_FAILED,
-    RUN_FINISHED,
-    RUN_STARTED,
     TRANSCRIPT_READY,
     WebhookEmitter,
     default_emitter,
@@ -109,14 +130,6 @@ class RunChannel:
             self._registry.add_run_event(self._run_id, event)
 
 
-#: A status that no later transition follows.
-TERMINAL_STATUSES = ("done", "failed", "stopped", "interrupted")
-
-#: The reason startup reconciliation records on a run left ``running`` by a dead
-#: process. It is stored in the run's ``error`` column so the console (and a
-#: diagnostics bundle) can show *why* the run is interrupted, not just that it is.
-RESTART_REASON = "the console restarted while this run was in flight"
-
 #: The pipeline stages, in declared order: a run's cost record times each one
 #: (the spec's "render" is the pipeline's final ``export`` stage).
 _STAGES: tuple[str, ...] = tuple(step.value for step in pipeline_spec().steps)
@@ -147,7 +160,7 @@ def _process_identity() -> str:
 
     It is an identity, not a fingerprint: enough to say *which* process owns a
     run in the status data, to probe whether that process still exists on this
-    host, and to grow a node column from later (Q15).
+    host, and to grow a node column from later.
     """
     return f"{_HOST}:{os.getpid()}"
 
@@ -356,12 +369,12 @@ def estimate_eta_s(
     or a run that is already terminal. The caller keeps its live stage-local
     estimate in that case; this function never invents one.
     """
-    if run.status not in ("queued", "running"):
+    if run.status not in ACTIVE_RUN_STATUSES:
         return None
     chunk_seconds = _run_chunk_seconds(run)
     history_audio = 0.0
     history_wall = 0.0
-    for candidate in registry.runs_with_status("done", limit=_ETA_HISTORY_LIMIT):
+    for candidate in registry.runs_with_status(FINISH.target, limit=_ETA_HISTORY_LIMIT):
         if candidate.id == run.id:
             continue
         if candidate.backend != run.backend or candidate.model != run.model:
@@ -396,13 +409,33 @@ def _default_pipeline(
     stages.run(directory, options, on_event=on_event)
 
 
+class RunSummary(Shape):
+    """One run's live state as a reader sees it (ADR-0030).
+
+    The console's run fragment, the JSON API and the MCP tools all report a run's
+    progress through this, so a browser and an agent cannot be told different
+    things about the same run. ``stage``/``index``/``total``/``eta_s`` come from
+    the newest event and are ``None``/``0`` while the run has reported nothing.
+    """
+
+    run_id: int
+    status: str
+    events: int
+    stage: str | None
+    index: int
+    total: int
+    eta_s: float | None
+    error: str | None
+    position: int
+
+
 @dataclasses.dataclass
 class RunState:
     """The state of one run: its status, its event stream and its queue place."""
 
     run_id: int
     meeting_id: int
-    status: str = "queued"
+    status: str = QUEUED
     events: list[JobEvent] = dataclasses.field(default_factory=list)
     error: str | None = None
     #: 1-based FIFO position while ``queued`` (``1`` is next); ``0`` otherwise.
@@ -416,34 +449,43 @@ class RunState:
     def last(self) -> JobEvent | None:
         return self.events[-1] if self.events else None
 
-    def summary(self) -> dict:
+    def summary(self) -> RunSummary:
         last = self.last
-        return {
-            "run_id": self.run_id,
-            "status": self.status,
-            "events": len(self.events),
-            "stage": last.stage if last else None,
-            "index": last.index if last else 0,
-            "total": last.total if last else 0,
-            "eta_s": last.eta_s if last else None,
-            "error": self.error,
-            "position": self.position,
-        }
+        return RunSummary(
+            run_id=self.run_id,
+            status=self.status,
+            events=len(self.events),
+            stage=last.stage if last else None,
+            index=last.index if last else 0,
+            total=last.total if last else 0,
+            eta_s=last.eta_s if last else None,
+            error=self.error,
+            position=self.position,
+        )
 
 
 class RunManager:
     """Owns the background runs of one registry and the node's FIFO.
 
     One run **executing** per node (the queue), and no more than one
-    **enqueued or running** run per meeting (the dedupe). Both are read from the
-    registry, so a restart cannot break either invariant.
+    **enqueued or running** run per meeting (the dedupe). The queue's rule is
+    the registry's: a queued run is claimed by one conditional update, so a
+    restart loses no queued work and no two processes execute one run. The
+    per-meeting rule is the **table's** — revision 0009's partial unique index
+    over the meeting's active run — and the read in
+    :meth:`~clear_record.service.store.Registry.active_run_for_meeting` is the
+    guard that refuses the common case without writing a row; when two
+    submissions race past that read, the database refuses the second.
 
     The queue is **cross-process** (RUN-02): a queued run is claimed by one
     conditional update (:meth:`~clear_record.service.store.Registry.claim_run`),
-    so the console, an agent's MCP server and a CLI can all write to the same
-    registry and exactly one of them executes a run. The in-process pieces are a
-    fast path, not the guarantee: :attr:`_pending` saves re-reading what this
-    process just wrote, and :attr:`_live` says what this process is executing.
+    so the console and an agent's MCP server can both write to the same registry
+    and exactly one of them executes a run — the CLI is not a third writer: it
+    runs the pipeline in-process (``cli.cli._cmd_run``) and writes no run row, so
+    the ``cli`` origin is recorded only for a run a CLI-shaped surface enqueues
+    through this service. The in-process pieces are a fast path, not the
+    guarantee: :attr:`_pending` saves re-reading what this process just wrote,
+    and :attr:`_live` says what this process is executing.
 
     An executing manager **beats** (:attr:`_heartbeat`), refreshing its run's
     liveness heartbeat, and reconciliation reads that beat together with the
@@ -524,7 +566,7 @@ class RunManager:
         that beats while the decision is being made keeps its run: a stale
         observation is reported and the row is left alone.
         """
-        interrupted = self._reap_dead_runs(self._registry.runs_with_status("running"))
+        interrupted = self._reap_dead_runs(self._running_runs())
         if interrupted:
             log_event(
                 "warning",
@@ -535,6 +577,43 @@ class RunManager:
             )
         self._ensure_scheduler()
         return interrupted
+
+    def _running_runs(self) -> list[PipelineRun]:
+        """Every ``running`` run, with a row this build refuses **quarantined**.
+
+        The read walks rows and stops at the one it cannot read
+        (:func:`~clear_record.service.store.Registry._run` validates the stored
+        options as it maps them), so one unreadable row would otherwise hide every
+        run behind it — and, at startup, stop the node: this is the read
+        :meth:`reconcile` makes from the constructor, before any caller can catch
+        anything. The row that cannot be read is the row that can never execute
+        (see :meth:`_refuse_run`), so it is failed and the read is retried;
+        :meth:`_drain` reads the same rows every second and needs the same rule,
+        which is why it lives here rather than in either caller.
+        """
+        while True:
+            try:
+                return self._registry.runs_with_status(RUNNING)
+            except MalformedRunOptions as exc:
+                if not self._refuse_run(exc):
+                    # The quarantine itself could not be written (a locked
+                    # database, say): the row is still there and retrying would
+                    # spin, so this read reports no live runs and the caller
+                    # carries on. The next pass tries again.
+                    return []
+
+    def _next_queued_run(self) -> PipelineRun | None:
+        """The head of the FIFO, with a row this build refuses quarantined.
+
+        The queued half of :meth:`_running_runs`, for the same reason: the drain's
+        read must not stop the queue on one row nobody can read.
+        """
+        while True:
+            try:
+                return self._registry.oldest_queued_run()
+            except MalformedRunOptions as exc:
+                if not self._refuse_run(exc):
+                    return None
 
     def _reap_dead_runs(self, running: list[PipelineRun]) -> list[int]:
         """Mark every run in ``running`` with no live owner ``interrupted``.
@@ -562,9 +641,16 @@ class RunManager:
                 run.id,
                 observed=run,
                 ended_at=ended_at,
+                # The row's ``error`` carries the message **ID**, not a rendered
+                # sentence: the column is machine-read (the JSON API and the MCP
+                # tool answer with it, `docs/i18n.md`), so what it must not hold
+                # is text looked up in whatever locale this process happens to
+                # run in. The console renders the ID where it shows the column
+                # (`_run.html`, `_activity_run.html`) — the same place the
+                # progress message above it is rendered.
                 error=RESTART_REASON,
                 progress=self._progress(
-                    run.id, "interrupted", RESTART_REASON, ended_at=ended_at
+                    run.id, INTERRUPT.target, RESTART_REASON, ended_at=ended_at
                 ),
             )
             if reaped is None:
@@ -681,7 +767,7 @@ class RunManager:
             events=self._registry.list_run_events(run_id),
             error=row.error,
             position=(
-                self._registry.queue_position(run_id) if row.status == "queued" else 0
+                self._registry.queue_position(run_id) if row.status == QUEUED else 0
             ),
         )
 
@@ -710,9 +796,11 @@ class RunManager:
 
         The run is durable immediately (``queued``): if it cannot execute yet it
         keeps its place, and a restart still has it. The per-meeting dedupe is
-        read from the registry, so the same tape set is never enqueued twice
-        concurrently — but a *different* meeting now waits honestly instead of
-        fighting for the one GPU.
+        read from the registry — and, for the race two readers cannot see,
+        enforced by the database's partial unique index (revision 0009): a
+        submission that loses it is refused with the same message this method
+        raises for a known active run — but a *different* meeting now waits
+        honestly instead of fighting for the one GPU.
 
         ``origin`` says which surface started it, one of :data:`RUN_ORIGINS`
         (RUN-02). It is required — a start path that does not name itself would
@@ -744,23 +832,31 @@ class RunManager:
                 deferred("meeting has no tape set; select tapes before running")
             )
         if self._registry.active_run_for_meeting(meeting.id) is not None:
-            self._refuse(meeting, "a run is already in flight")
-            raise ValueError(deferred("a run is already in flight for this meeting"))
+            self._active_run_refusal(meeting)
 
         options = dataclasses.replace(
             options or PipelineOptions(), audio_files=tuple(tape_set.paths)
         )
         options, run_meta = self._resolve_glossary(meeting, options)
-        run = self._registry.create_run(
-            meeting.id,
-            backend=options.backend,
-            model=options.model,
-            language=options.language,
-            options=self._run_meta(options, run_meta, auto),
-            run_options=dataclasses.asdict(options),
-            origin=origin,
-            resumes_run_id=resumes,
-        )
+        try:
+            run = self._registry.create_run(
+                meeting.id,
+                backend=options.backend,
+                model=options.model,
+                language=options.language,
+                options=self._run_meta(options, run_meta, auto),
+                run_options=dataclasses.asdict(options),
+                origin=origin,
+                resumes_run_id=resumes,
+            )
+        except IntegrityError as exc:
+            # The guard above reads, and a read cannot stop the other writer: two
+            # submissions that both read "no active run" both come here, and the
+            # database's own index (revision 0009) refuses the second row. The
+            # refusal is the guard's message, raised here rather than left as an
+            # integrity error — this is the layer that owns that message — with
+            # the index's error as its cause.
+            self._active_run_refusal(meeting, cause=exc)
         with self._lock:
             self._pending[run.id] = (meeting, options)
         log_event(
@@ -784,18 +880,20 @@ class RunManager:
         Two different acts, chosen by where the run actually is:
 
         * **Queued** — nothing is executing it, so the cancel *is* the terminal
-          transition: the row becomes ``stopped`` here and now (conditional on
+          move, and it is decisive: the row becomes ``stopped`` here and now
+          (:data:`~clear_record.service.lifecycle.STOP_QUEUED`, conditional on
           ``queued``, so a claim racing this cannot both win). The drain never
           picks it up and a restart has nothing to resurrect.
         * **Running** — its owner is executing it in a workspace, so this records
           a **request** (``cancel_requested_at``); when this manager is the
           owner, the run's in-process signal is set straight away, and otherwise
           the owner reads the request on its next heartbeat and stops at its next
-          safe boundary. The owner writes ``stopped`` — never the requester,
-          because a run that keeps executing must not read as stopped. A stalled
-          owner therefore keeps its run ``running``: the fail-closed rule holds,
-          and the honest answer to "why is it not stopping?" is that the process
-          holding it is not answering.
+          safe boundary. The owner performs the stop
+          (:data:`~clear_record.service.lifecycle.STOP_RUNNING`) — never the
+          requester, because a run that keeps executing must not read as
+          stopped. A stalled owner therefore keeps its run ``running``: the
+          fail-closed rule holds, and the honest answer to "why is it not
+          stopping?" is that the process holding it is not answering.
 
         Cancelling a run that is already terminal is a no-op (a second click, a
         stale page): the row is returned unchanged. ``KeyError`` for an unknown
@@ -804,15 +902,15 @@ class RunManager:
         run = self._registry.get_run(run_id)
         if run is None:
             raise KeyError(run_id)
-        if run.status not in ("queued", "running"):
+        if run.status not in ACTIVE_RUN_STATUSES:
             return run
 
-        if run.status == "queued":
+        if run.status == QUEUED:
             ended_at = _now()
             stopped = self._registry.stop_run(
                 run_id,
                 ended_at=ended_at,
-                progress=self._progress(run_id, "stopped", ended_at=ended_at),
+                progress=self._progress(run_id, STOP_QUEUED.target, ended_at=ended_at),
             )
             if stopped is not None:
                 with self._lock:
@@ -831,7 +929,7 @@ class RunManager:
                     "run.cancelled",
                     run_id=run_id,
                     meeting_id=run.meeting_id,
-                    status="stopped",
+                    status=STOP_QUEUED.target,
                 )
                 return stopped
             # A claim won the race: the run is starting, so ask it to stop
@@ -839,7 +937,7 @@ class RunManager:
             current = self._registry.get_run(run_id)
             if current is None:
                 raise KeyError(run_id)
-            if current.status != "running":
+            if current.status != RUNNING:
                 return current
 
         requested = self._registry.request_cancel(run_id)
@@ -877,7 +975,7 @@ class RunManager:
         previous = self._registry.get_run(run_id)
         if previous is None:
             raise KeyError(run_id)
-        if previous.status in ("queued", "running"):
+        if previous.status in ACTIVE_RUN_STATUSES:
             # Placeholder-free, like the service's other refusals: the console
             # renders the message it is given, and the user is looking at the run.
             raise ValueError(deferred("this run is still in flight; cancel it first"))
@@ -1000,6 +1098,29 @@ class RunManager:
             reason=reason,
         )
 
+    def _active_run_refusal(
+        self, meeting: Meeting, *, cause: BaseException | None = None
+    ) -> NoReturn:
+        """Refuse a submission because the meeting already has an active run.
+
+        Two paths reach it and they must read identically: the registry guard
+        (the run the meeting already has is read, and the submission never
+        reaches the queue) and the database's partial unique index (two
+        submissions read "no active run" at the same moment and one insert
+        loses). The sentence is :data:`RUN_IN_FLIGHT`, the one the JSON API's
+        own pre-check answers with as well — the console does not print it: its
+        start form re-renders the live run's fragment instead (a refusal it can
+        show the user by showing them the run that holds the meeting), and only
+        an API client or an agent's tool reads the sentence.
+
+        It **raises** rather than returning the error, so no call site can drop
+        the refusal, and ``cause`` carries the index's own ``IntegrityError`` when
+        that is what refused — chained, so a traceback says which of the two it
+        was.
+        """
+        self._refuse(meeting, RUN_IN_FLIGHT)
+        raise ValueError(RUN_IN_FLIGHT) from cause
+
     # --- the scheduler ------------------------------------------------------ #
     def _ensure_scheduler(self) -> None:
         """Start (or wake) the one thread that drains the queue."""
@@ -1032,24 +1153,43 @@ class RunManager:
                 while True:
                     if self._stopping:
                         return
-                    running = self._registry.runs_with_status("running")
+                    running = self._running_runs()
                     if running and self._reap_dead_runs(running):
-                        running = self._registry.runs_with_status("running")
+                        running = self._running_runs()
                     if not running:
-                        run = self._registry.oldest_queued_run()
+                        run = self._next_queued_run()
                         if run is not None:
                             break
                         # Nothing is waiting and nothing is executing, so the
-                        # enqueue-time options this manager kept cannot be needed:
-                        # their runs were claimed elsewhere, cancelled by another
-                        # writer, or finished. The registry is the truth; this is
-                        # a cache, and an empty queue is when to drop it.
+                        # enqueue-time options this manager kept cannot be
+                        # needed: their runs were claimed elsewhere, cancelled
+                        # by another writer, or finished. The registry is the
+                        # truth; this is a cache, and an empty queue is when to
+                        # drop it.
                         self._prune_pending()
                     self._wake.wait(timeout=1.0)
             self._execute_run(run)
 
     def _execute_run(self, run: PipelineRun) -> None:
-        claimed = self._registry.claim_run(run.id, owner=self._owner)
+        try:
+            claimed = self._registry.claim_run(run.id, owner=self._owner)
+        except (SQLAlchemyError, MalformedRunOptions) as exc:
+            # The claim is one statement, and either way it failed this pass:
+            # the database would not take it (a locked registry, a disk error) or
+            # the row stopped being readable between the drain's read and here.
+            # The queue must outlive that — an escaping exception ends
+            # ``cr-run-queue``, and the queued work then waits for the next
+            # submission or restart — so it is reported and the run is tried
+            # again on the next pass. Nothing was written.
+            log_event(
+                "warning",
+                "runs",
+                "run.claim_failed",
+                run_id=run.id,
+                meeting_id=run.meeting_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return
         with self._lock:
             pending = self._pending.pop(run.id, None)
             lost = claimed is None
@@ -1098,10 +1238,12 @@ class RunManager:
                 ended_at = _now()
                 self._registry.update_run(
                     run.id,
-                    status="failed",
+                    status=FAIL.target,
                     ended_at=ended_at,
                     error=error,
-                    progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+                    progress=self._progress(
+                        run.id, FAIL.target, error, ended_at=ended_at
+                    ),
                 )
                 # The pipeline's own failure path sets this; a failure raised
                 # around that path must not leave the meeting "running".
@@ -1160,12 +1302,19 @@ class RunManager:
                     # pid probe cannot decide, this beat *is* the only evidence a
                     # run is alive, so a dead thread means a still-executing run
                     # looks dead 30 s later and its meeting and the node are freed.
+                    # The registry raises SQLAlchemy's errors (ADR-0030), which
+                    # wrap the driver's own.
                     landed = self._registry.heartbeat_run(run_id)
                     asked_to_stop = landed and self._registry.cancel_requested(run_id)
                     reaped = not landed and self._was_reaped(run_id)
-                except sqlite3.Error as exc:
+                except (SQLAlchemyError, MalformedRunOptions) as exc:
                     # Report it once per run and keep beating — the error says the
                     # node cannot *prove* the run is alive, not that it is not.
+                    # Both families belong here: the registry raises SQLAlchemy's
+                    # errors, and a row this build cannot read raises the options
+                    # seam's ``MalformedRunOptions`` from the same guarded calls
+                    # (``get_run``), which is a ``ValueError`` and not an
+                    # ``SQLAlchemyError``.
                     self._report_beat_failure(run_id, f"{type(exc).__name__}: {exc}")
                     continue
                 if asked_to_stop:
@@ -1204,7 +1353,7 @@ class RunManager:
         peer's verdict, and that is the one worth reporting.
         """
         row = self._registry.get_run(run_id)
-        return row is not None and row.status == "interrupted"
+        return row is not None and row.status == INTERRUPTED
 
     def _report_beat_failure(self, run_id: int, reason: str) -> None:
         """Log a beat that did not land, once per run (RUN-02).
@@ -1250,15 +1399,19 @@ class RunManager:
             self._pending.clear()
 
     def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
-        """Rebuild the queued run's options from the registry (after a restart)."""
+        """Rebuild the queued run's options from the registry (after a restart).
+
+        The row has already been validated where the registry read it
+        (:func:`clear_record.service.run_options.read_run_options`), so this is a
+        rebuild and not a repair: every field is present, of the declared type,
+        and ``audio_files`` is already the tuple the options declare. Nothing is
+        filtered and nothing falls back to a default — the keys that used to be
+        dropped here and the fields that used to be silently defaulted are what
+        the seam above now refuses.
+        """
         if not run.run_options:
             return None
-        known = {field.name for field in dataclasses.fields(PipelineOptions)}
-        values = {key: value for key, value in run.run_options.items() if key in known}
-        for name in ("audio_files",):
-            if values.get(name) is not None:
-                values[name] = tuple(values[name])
-        return PipelineOptions(**values)
+        return PipelineOptions(**run.run_options)
 
     def _run_pipeline(
         self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
@@ -1279,7 +1432,7 @@ class RunManager:
             language=options.language,
         )
         self._webhooks.emit(
-            RUN_STARTED,
+            CLAIM.event,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
             run_id=run.id,
@@ -1311,10 +1464,10 @@ class RunManager:
             ended_at = _now()
             self._registry.update_run(
                 run.id,
-                status="failed",
+                status=FAIL.target,
                 ended_at=ended_at,
                 error=error,
-                progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+                progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
             log_event(
@@ -1326,7 +1479,7 @@ class RunManager:
                 error=error,
             )
             self._webhooks.emit(
-                RUN_FAILED,
+                FAIL.event,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
                 run_id=run.id,
@@ -1337,9 +1490,9 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="done",
+            status=FINISH.target,
             ended_at=ended_at,
-            progress=self._progress(run.id, "done", ended_at=ended_at),
+            progress=self._progress(run.id, FINISH.target, ended_at=ended_at),
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
         log_event(
@@ -1351,7 +1504,7 @@ class RunManager:
             artifacts=len(artifacts),
         )
         self._webhooks.emit(
-            RUN_FINISHED,
+            FINISH.event,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
             run_id=run.id,
@@ -1380,10 +1533,12 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="stopped",
+            status=STOP_RUNNING.target,
             ended_at=ended_at,
             error=error,
-            progress=self._progress(run.id, "stopped", error, ended_at=ended_at),
+            progress=self._progress(
+                run.id, STOP_RUNNING.target, error, ended_at=ended_at
+            ),
         )
         self._registry.set_meeting_status(meeting.id, "ready")
         log_event(
@@ -1395,6 +1550,63 @@ class RunManager:
             error=error,
         )
 
+    def _refuse_run(self, exc: MalformedRunOptions) -> bool:
+        """Take the run whose stored options this build refuses out of the queue.
+
+        The row cannot be read through the registry at all — that is what the
+        refusal is — so the ordinary fail path (which reads the row back) cannot
+        be used: the run is failed by id, and the run says why in its own
+        ``error``, which is the reader's message plus **the row's own text**
+        (``Registry.fail_unreadable_run``), so clearing the unreadable column
+        destroys nothing. Its meeting goes to ``failed`` like any other run that
+        cannot execute, and the queue carries on with the next run.
+
+        Returns whether a row moved, which is what the read helpers that call it
+        need: a ``False`` means the row is still there and they must not retry,
+        or they would spin.
+        """
+        run_id, meeting_id = exc.run_id, exc.meeting_id
+        if run_id is None:  # pragma: no cover - the reader always names its run
+            return False
+        error = str(exc)
+        try:
+            moved = self._registry.fail_unreadable_run(run_id, error=error)
+            meeting = (
+                self._registry.meeting_by_id(meeting_id)
+                if meeting_id is not None
+                else None
+            )
+            if meeting is not None:
+                self._registry.set_meeting_status(meeting.id, "failed")
+                self._webhooks.emit(
+                    FAIL.event,
+                    project_id=meeting.project_id,
+                    meeting_id=meeting.id,
+                    run_id=run_id,
+                )
+            log_event(
+                "error",
+                "runs",
+                "run.failed",
+                run_id=run_id,
+                meeting_id=meeting_id,
+                error=error,
+            )
+            return moved
+        except Exception as failure:  # noqa: BLE001 - the queue must survive this
+            # The one thing this must not do is raise: it runs *inside* the
+            # drain's own handler, where raising is what killed the queue before.
+            # A registry that cannot take the write is retried on the next pass,
+            # which is what the ``False`` tells the caller.
+            log_event(
+                "error",
+                "runs",
+                "run.refuse_failed",
+                run_id=run_id,
+                error=f"{type(failure).__name__}: {failure}",
+            )
+            return False
+
     def _fail_unrunnable(
         self, run: PipelineRun, meeting: Meeting | None, error: str
     ) -> None:
@@ -1402,15 +1614,15 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="failed",
+            status=FAIL.target,
             ended_at=ended_at,
             error=error,
-            progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+            progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
         )
         if meeting is not None:
             self._registry.set_meeting_status(meeting.id, "failed")
             self._webhooks.emit(
-                RUN_FAILED,
+                FAIL.event,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
                 run_id=run.id,
@@ -1434,9 +1646,9 @@ class RunManager:
     ) -> dict:
         """The recorded progress summary for a terminal transition, with its cost.
 
-        The cost sub-record (RUN-01) is written for **every** terminal outcome
-        — done, failed, interrupted — so a run that stopped early still says
-        which stages it completed. Ratios are never stored here: a display
+        The cost sub-record is written for **every** terminal outcome —
+        done, failed, stopped, interrupted — so a run that stopped early still
+        says which stages it completed. Ratios are never stored here: a display
         derives them (see :func:`estimate_eta_s`).
         """
         events = self._registry.list_run_events(run_id)
@@ -1610,10 +1822,9 @@ __all__ = [
     "HEARTBEAT_STALE_S",
     "PipelineCallable",
     "PipelineOptions",
-    "RESTART_REASON",
     "RunManager",
     "RunState",
-    "TERMINAL_STATUSES",
+    "RunSummary",
     "collect_artifacts",
     "cost_of",
     "estimate_eta_s",

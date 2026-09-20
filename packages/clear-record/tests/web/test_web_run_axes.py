@@ -1,4 +1,4 @@
-"""BENCH-01 in the console: the run fragment renders the service's four axes."""
+"""The run fragment renders the service's four axes."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _console(registry: Registry) -> TestClient:
     they write run rows straight into the registry and read them back. The
     app's own :class:`RunManager` would otherwise claim a hand-seeded ``queued``
     row on its next 1 s rescan and fail it — the row has no tape set — turning
-    the row terminal underneath an assertion that expects a live run (issue 19).
+    the row terminal underneath an assertion that expects a live run.
     Stopping the drain through the manager's own API first leaves every seeded
     row exactly as written.
     """

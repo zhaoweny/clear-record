@@ -140,5 +140,31 @@ Date: 2026-09-14
   reject it**) **landed**: the service's runner and the three tasks (ADR-0018)
   are built and exposed above. This closes the earlier `[OPEN]` that had them
   "join this surface when they land".
+
+## Update (2026-09-20) — the tools' results are declared models (ADR-0030)
+
+- [FACT] The Decision clause above says tools return structured values "annotated
+  `dict`/`list[dict]`". That is what the surface did when this ADR was written;
+  ADR-0030's boundary decision replaced it. Every tool now annotates its return
+  with a declared model — one derived from the domain value it publishes
+  (`clear_record.service.schemas`), a shape a service view computes (`DraftView`,
+  `AgentTasksOut`), or an envelope the MCP module declares for a value it wraps
+  (`RunStartedOut`, `RunStatusOut`, `RunEventPageOut`) — so the SDK publishes the
+  fields themselves as the output schema rather than `additionalProperties`, and
+  it **validates** the returned value against that model before sending it. What
+  that validation covers was measured rather than assumed, and the first
+  measurement was taken on the wrong shape: with `mcp` 2.2.0 a returned **dict**
+  the annotation does not describe answers as an error instead of being sent,
+  carrying the SDK's generic `Error executing tool <name>` message — but a
+  constructed **instance** of the declared model passes unrevalidated
+  (`revalidate_instances='never'` is pydantic's default), and that is what every
+  tool here returns. What holds a tool's result to its declaration is therefore
+  the **construction** (`Shape.of` builds each boundary model with
+  `model_validate`); the edge's check is the net under dict-shaped payloads. The
+  web edge behaves the same way, and its own comment says so.
+- [FACT] The `ToolError` clause is unchanged and now covers one more case: a
+  stored row this build cannot read (ADR-0030's run-options seam) answers as a
+  `ToolError` carrying the reader's message, which names the run and the field,
+  instead of reaching the agent as `Error executing tool <name>`.
 - Revisit if a client needs a network transport, or if the extra proves to be
   friction.

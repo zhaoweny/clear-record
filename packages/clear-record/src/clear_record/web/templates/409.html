@@ -1,0 +1,21 @@
+<!doctype html>
+{# A page the registry refused to be read for: it holds a run row this build
+   cannot read. Deliberately **outside** the console chrome — the header chip
+   reads the same registry, so it would hit the same refusal — and it carries the
+   registry's own message, which names the run and the field that failed. #}
+<html lang="{{ request.state.locale | replace('_', '-') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ tr("Unreadable run data") }} · clear-record</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="content">
+  <h1>clear-record</h1>
+  <h2>{{ tr("Unreadable run data") }}</h2>
+  <p class="muted">{{ message }}</p>
+  <p><a href="/">{{ tr("Projects") }}</a></p>
+</main>
+</body>
+</html>

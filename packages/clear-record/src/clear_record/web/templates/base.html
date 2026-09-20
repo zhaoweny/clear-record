@@ -33,7 +33,7 @@
       <a href="/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>{{ tr("Settings") }}</a>
       {% if setup_incomplete %}<a href="/setup"{% if nav == 'setup' %} aria-current="page"{% endif %}>{{ tr("Setup") }}</a>{% endif %}
     </nav>
-    {# The status chip: what this node is doing right now (RUN-03), fed by
+    {# The status chip: what this node is doing right now, fed by
        `page()` from the same registry the Activity page renders — never a
        literal. It links to that page, so the header's short answer is one click
        from the detail; a page may still override the chip's own text through
@@ -60,7 +60,7 @@
             onclick="this.disabled=true;this.textContent='{{ tr("stopping…") }}'">{{ tr("Quit") }}</button>
   </header>
   {# The upgrade path is a notice, never a hijack: only a marker naming a
-     different version shows it, and Dismiss records the marker (ticket 04).
+     different version shows it, and Dismiss records the marker.
      The Setup page carries its own update copy, so the notice is suppressed
      there. #}
   {% if setup_update and nav != 'setup' %}

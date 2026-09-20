@@ -24,7 +24,8 @@
    Status vocabulary. Each state has a hue *and* its own glyph, so status never
    depends on colour alone:
      glossary  candidate / confirmed / retired
-     runs      queued / running / done / failed (and the template's error)
+     runs      queued / running / done / failed / stopped / interrupted (and
+               the template's error)
      archives  checking / ok / failed / missing
      webhooks  ok / config_problem / delivery_failed / not_configured and the
                per-endpoint delivered / delivery_failed / no_delivery_yet

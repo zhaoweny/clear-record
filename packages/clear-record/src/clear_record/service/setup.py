@@ -1,6 +1,6 @@
 """Guided agent setup: detect a local endpoint, verify it, record the choice.
 
-ADR-0018's onboarding half (ticket 20): get a user from "installed" to "a task
+ADR-0018's onboarding half: get a user from "installed" to "a task
 ran" **without hand-editing TOML**. This module owns the steps that reach a
 working runner, and nothing that *runs* a task — the runner seam
 (:mod:`clear_record.service.agent`) stays the only executor.
@@ -69,6 +69,7 @@ from clear_record.service.agent import (
     load_agent_config,
     reset_default_config,
 )
+from clear_record.service.schemas import Shape
 
 # --- errors ----------------------------------------------------------------- #
 
@@ -176,6 +177,47 @@ def _custom_candidate(endpoint: str) -> EndpointCandidate:
 # --- probing ---------------------------------------------------------------- #
 
 
+class SetupProbeOut(Shape):
+    """One probed candidate as the setup surfaces publish it (ADR-0030)."""
+
+    slug: str
+    label: str
+    base_url: str
+    reachable: bool
+    models: list[str]
+    pull_supported: bool
+    verified: bool
+    verified_model: str | None
+    detail: str | None
+    verify_detail: str | None
+    install_hint: str
+
+
+class SetupDetectionOut(Shape):
+    """Every candidate probed, in order (the ``detection`` field of the response)."""
+
+    probes: list[SetupProbeOut]
+
+
+class SetupStatusOut(Shape):
+    """The machine-readable setup state: what the runners will use, and nothing secret.
+
+    ``api_key_env`` is a variable **name** — there is no field a value could sit
+    in — and ``detection`` is ``None`` until a probe has run.
+    """
+
+    state: str
+    configured: bool
+    endpoint: str | None
+    model: str | None
+    api_key_env: str | None
+    commands: list[str]
+    problems: list[str]
+    harness: str | None
+    mcp_config: str | None
+    detection: SetupDetectionOut | None
+
+
 @dataclasses.dataclass(frozen=True)
 class Probe:
     """What one candidate's address turned out to be.
@@ -203,22 +245,23 @@ class Probe:
         """Reachable *and* declaring at least one model to run it with."""
         return self.reachable and bool(self.models)
 
-    def as_dict(self) -> dict:
-        return {
-            "slug": self.slug,
-            "label": self.candidate.label,
-            "base_url": self.candidate.base_url,
-            "reachable": self.reachable,
-            "models": list(self.models),
-            "pull_supported": self.pull_supported,
-            "verified": self.verified,
-            "verified_model": self.verified_model,
-            "detail": str(self.detail) if self.detail is not None else None,
-            "verify_detail": (
+    def as_dict(self) -> SetupProbeOut:
+        """This probe as the declared shape the setup surfaces publish."""
+        return SetupProbeOut(
+            slug=self.slug,
+            label=self.candidate.label,
+            base_url=self.candidate.base_url,
+            reachable=self.reachable,
+            models=list(self.models),
+            pull_supported=self.pull_supported,
+            verified=self.verified,
+            verified_model=self.verified_model,
+            detail=str(self.detail) if self.detail is not None else None,
+            verify_detail=(
                 str(self.verify_detail) if self.verify_detail is not None else None
             ),
-            "install_hint": self.candidate.install_hint,
-        }
+            install_hint=self.candidate.install_hint,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -251,8 +294,8 @@ class Detection:
                 return group[0]
         return None
 
-    def as_dict(self) -> dict:
-        return {"probes": [probe.as_dict() for probe in self.probes]}
+    def as_dict(self) -> SetupDetectionOut:
+        return SetupDetectionOut(probes=[probe.as_dict() for probe in self.probes])
 
 
 def _models_url(base_url: str) -> str:
@@ -945,7 +988,7 @@ def remember_harness(harness: Harness) -> dict:
     return update_setup_state(harness=harness.path)
 
 
-# --- the version marker (first run vs after an update, ticket 04) ----------- #
+# --- the version marker (first run vs after an update) ---------------------- #
 
 
 def current_version() -> str:
@@ -1046,22 +1089,22 @@ class SetupView:
     def has_runner(self) -> bool:
         return bool(self.endpoint or self.commands)
 
-    def as_dict(self) -> dict:
-        """The JSON-safe view (machine-read, so the English strings stay English)."""
-        return {
-            "state": self.state,
-            "configured": self.configured,
-            "endpoint": self.endpoint,
-            "model": self.model,
-            "api_key_env": self.api_key_env,
-            "commands": list(self.commands),
-            "problems": list(self.problems),
-            "harness": self.harness,
-            "mcp_config": self.mcp_config,
-            "detection": (
+    def as_dict(self) -> SetupStatusOut:
+        """The declared view (machine-read, so the English strings stay English)."""
+        return SetupStatusOut(
+            state=self.state,
+            configured=self.configured,
+            endpoint=self.endpoint,
+            model=self.model,
+            api_key_env=self.api_key_env,
+            commands=list(self.commands),
+            problems=list(self.problems),
+            harness=self.harness,
+            mcp_config=self.mcp_config,
+            detection=(
                 self.detection.as_dict() if self.detection is not None else None
             ),
-        }
+        )
 
 
 def setup_view(
@@ -1124,7 +1167,10 @@ __all__ = [
     "STATE_NOT_CONFIGURED",
     "STATE_PROBLEM",
     "STATE_READY",
+    "SetupDetectionOut",
     "SetupError",
+    "SetupProbeOut",
+    "SetupStatusOut",
     "SetupView",
     "TEST_CALL_PROMPT",
     "VERIFY_TIMEOUT",

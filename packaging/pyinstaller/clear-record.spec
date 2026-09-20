@@ -62,11 +62,32 @@ hiddenimports = [
     "_soundfile",
 ]
 
+# The registry's schema history is *read at run time*, never imported: the store
+# names it as the string `clear_record.service:migrations`, so modulegraph sees
+# none of it, and `collect_data_files` carries no `.py` files. Without this
+# entry a frozen app cannot migrate a registry — and it fails at the first open,
+# long after the bundle has launched cleanly.
+migrations = (
+    ROOT / "packages" / "clear-record" / "src" / "clear_record" / "service" / "migrations"
+)
+migration_datas = [
+    (
+        str(path),
+        "clear_record/service/migrations"
+        if path.parent == migrations
+        else "clear_record/service/migrations/versions",
+    )
+    for path in sorted(migrations.rglob("*"))
+    if path.is_file() and path.suffix in {".py", ".mako"}
+]
+
 datas = [
     *collect_data_files("soundfile"),
     # The console's frontend (Jinja templates + the built app.css/app.js) is
     # package data; without this the frozen app serves a blank page.
     *collect_data_files("clear_record"),
+    # The schema history above: env.py, the revision template and every revision.
+    *migration_datas,
     # Dist metadata so `importlib.metadata.entry_points(group="clear_record.commands")`
     # still finds the bundled `web`/`tray` providers after freezing.
     *copy_metadata("clear-record"),

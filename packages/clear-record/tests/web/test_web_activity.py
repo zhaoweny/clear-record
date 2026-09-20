@@ -1,20 +1,22 @@
-"""RUN-03 in the console: the pipeline status page and the header chip.
+"""The pipeline status page and the header chip in the console.
 
 The page answers "what is clear-record doing right now" from the shared registry
 — running and queued runs across every project, then the newest finished ones —
 and the header chip is fed from the same reads, so the two cannot disagree.
 
 These tests write run rows straight into the registry, so the queue is stopped
-before seeding (issue 19 / b8f975e): the app's own manager would otherwise claim
+before seeding: the app's own manager would otherwise claim
 a hand-seeded ``queued`` row on its next 1 s rescan and fail it, turning the row
 terminal underneath an assertion that expects a live run.
 """
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi.testclient import TestClient
 
-from clear_record.core import JobEvent
+from clear_record.core import JobEvent, PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
 
@@ -22,7 +24,7 @@ from clear_record.web.app import create_app
 #: "the row names its owner's host" cannot pass by accident.
 OWNER = "run-owner.example:4242"
 
-#: A finished run's raw cost primitives (RUN-01): 3600 s of audio in 1200 s of
+#: A finished run's raw cost primitives: 3600 s of audio in 1200 s of
 #: wall clock is 3.00x realtime, derived at display time and never stored.
 COST = {
     "audio_seconds": 3600.0,
@@ -72,7 +74,9 @@ def _seeded(registry: Registry):
         model="small",
         language="en",
         origin="console",
-        run_options={"backend": "apple", "model": "small", "chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(
+            PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
+        ),
     )
     registry.claim_run(running.id, owner=OWNER)
     registry.add_run_event(
@@ -203,7 +207,9 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
         model="small",
         language="en",
         origin="console",
-        run_options={"backend": "apple", "model": "small", "chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(
+            PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
+        ),
     )
     registry.claim_run(run.id, owner=OWNER)
     registry.add_run_event(
@@ -220,7 +226,7 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
 
 
 def test_a_resumed_run_rates_only_the_chunks_it_decoded(tmp_path) -> None:
-    """A cached chunk is not work the decoder's clock paid for (RUN-03).
+    """A cached chunk is not work the decoder's clock paid for.
 
     8 chunks finished, 4 of them served from the cache: the rate divides the
     **decoded** 4 x 30 s by the stage's own elapsed seconds. Counting all 8 would
@@ -261,7 +267,7 @@ def test_a_finished_run_shows_its_recorded_speed_and_duration(tmp_path) -> None:
 
     text = client.get("/activity").text
 
-    # The speed is the record's own ratio, derived here (RUN-01), and the
+    # The speed is the record's own ratio, derived here, and the
     # duration is the wall clock the same record measured.
     assert "3.00x" in text and "realtime" in text
     assert "1200.0s" in text
@@ -311,7 +317,7 @@ def test_an_idle_node_says_so(tmp_path) -> None:
 
     text = client.get("/activity").text
 
-    assert "No runs queued or running." in text
+    assert "No runs in flight." in text
     assert "No finished runs yet." in text
 
 
@@ -348,6 +354,48 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
     registry.update_run(run.id, status="stopped")
     stopped = client.get("/").text
     assert ">idle</a>" in stopped
+
+
+def test_every_in_flight_status_has_a_chip_label() -> None:
+    """The chip's labels cover the service's in-flight declaration exactly.
+
+    The chip reads ``ACTIVE_RUN_STATUSES`` for *which* runs are in flight and
+    ``ACTIVE_RUN_LABELS`` for how to say it, so the two are one pair of
+    declarations: a third in-flight status must bring a label with it instead of
+    being counted under another state's name — or raising a ``KeyError`` on the
+    next page render. Compared as sets, in both directions.
+    """
+    from clear_record.service import ACTIVE_RUN_STATUSES
+    from clear_record.web.app import ACTIVE_RUN_LABELS
+
+    assert set(ACTIVE_RUN_LABELS) == set(ACTIVE_RUN_STATUSES)
+
+
+def test_the_chip_reports_the_heaviest_in_flight_state(tmp_path) -> None:
+    """A node executing work says so, even with work waiting behind it.
+
+    The chip's label table orders the states it reports (``running`` before
+    ``queued``), and the row order must not decide: the older row here is the
+    *waiting* one, so a chip that ranked by insertion would say "queued". It
+    reports the first label whose status has rows, and counts the rows in that
+    state.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    client = _console(registry)
+    registry.create_project("Ops")
+    waiting = registry.create_meeting("ops", "Kickoff")
+    executing = registry.create_meeting("ops", "Retro")
+    registry.create_run(waiting.id, backend="apple", model="small", language="en")
+    claimed = registry.create_run(
+        executing.id, backend="apple", model="small", language="en"
+    )
+    registry.claim_run(claimed.id, owner=OWNER)
+
+    chip = _chip(client.get("/").text)
+
+    assert "status-running" in chip
+    assert ">running 1</a>" in chip
+    assert "queued" not in chip
 
 
 def test_the_chip_and_the_page_are_translated(tmp_path) -> None:

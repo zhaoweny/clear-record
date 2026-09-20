@@ -19,6 +19,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 # This file lives at packages/clear-record/tests/, so parents[3] is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MEMBER_PYPROJECTS = sorted(REPO_ROOT.glob("packages/*/pyproject.toml"))
@@ -53,7 +55,23 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # set with the CLI port (ADR-0022): it is pure Python, zero transitive deps.
 # `platformdirs` joined with ADR-0025: the one platform-native path resolver,
 # MIT, zero dependencies (imported at the package root, never in `core`).
-RUNTIME_DEPS = {"click", "json-repair", "numpy", "platformdirs", "soundfile"}
+# `alembic`/`sqlalchemy` joined with ADR-0030: Alembic owns the registry's schema
+# and it migrates when the process opens it, and the `bench`/`diagnose` entry
+# points ship in the base distribution and reach the registry — so unlike the
+# web/tray/MCP stacks these cannot be an extra with an actionable hint.
+# `pydantic` joined with the same ADR: the service layer validates the run
+# options at the seam that reads them, so every base install (not just one with
+# the `web` extra, whose FastAPI used to pull it in transitively) needs it.
+RUNTIME_DEPS = {
+    "alembic",
+    "click",
+    "json-repair",
+    "numpy",
+    "platformdirs",
+    "pydantic",
+    "soundfile",
+    "sqlalchemy",
+}
 
 # The optional tool surfaces' dependency sets (ADR-0013, ADR-0016, ADR-0017).
 # They must not leak into the base dependencies: a CLI-only install stays
@@ -151,10 +169,15 @@ def test_optional_surfaces_are_extras_not_base_dependencies() -> None:
 
 # Every template the console ships today. The rglob scan below covers a newly
 # added template (and flags a truncated one), but a *deleted* one simply drops
-# out of the scan — this frozen set is what makes a deletion fail instead.
+# out of the scan — this frozen set is what makes a deletion fail instead, which
+# only holds while the set names every template on disk:
+# `test_the_frozen_template_set_names_every_template_on_disk` asserts that parity
+# in both directions, so a new template has to be frozen here to be guarded (and
+# `activity.html` with `_activity_run.html` were the pair that had been missed).
 EXPECTED_WEB_TEMPLATES = frozenset(
     {
         "_add_project.html",
+        "_activity_run.html",
         "_agent_setup.html",
         "_archive_status.html",
         "_archives.html",
@@ -185,6 +208,8 @@ EXPECTED_WEB_TEMPLATES = frozenset(
         "_upload.html",
         "_webhooks.html",
         "404.html",
+        "409.html",
+        "activity.html",
         "agent.html",
         "base.html",
         "index.html",
@@ -241,19 +266,114 @@ def test_web_console_assets_ship_with_the_package() -> None:
     assert not missing, f"missing web console assets: {missing}"
 
 
-def test_web_template_guard_catches_a_deleted_template(tmp_path: Path) -> None:
-    """Removing a non-anchor template must fail the guard, not pass silently.
+@pytest.mark.parametrize(
+    "victim",
+    [
+        # A partial: not one of the page anchors below, so only the frozen set
+        # can notice it is gone.
+        "_detail.html",
+        # The Activity page and its row partial: the page is not in the
+        # anchor list either, and its partial is not a page at all — both were
+        # absent from the frozen set, so deleting either left the guard silent.
+        "activity.html",
+        "_activity_run.html",
+    ],
+)
+def test_web_template_guard_catches_a_deleted_template(
+    tmp_path: Path, victim: str
+) -> None:
+    """Removing a template only the frozen set covers must fail the guard.
 
-    _detail.html is a partial — not one of the page anchors — so only the
-    expected-set check can notice it is gone.
+    Each of these is invisible to the other two checks in
+    :func:`test_web_console_assets_ship_with_the_package`: the rglob scan is
+    derived from disk, and the page anchors name a fixed seven. The frozen set is
+    what makes their deletion fail instead, which is the sentence it carries.
     """
     source = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
     copied = tmp_path / "templates"
     shutil.copytree(source, copied)
-    victim = "_detail.html"
     assert victim in EXPECTED_WEB_TEMPLATES
     (copied / victim).unlink()
     assert _missing_web_templates(copied) == [victim]
+
+
+def test_the_frozen_template_set_names_every_template_on_disk() -> None:
+    """The frozen set is exactly what ships — neither short nor stale.
+
+    ``_missing_web_templates`` catches a *deletion* the rglob scan cannot see; this
+    is the other direction, and without it the set can quietly stop guarding: a
+    template added to the tree but left out of the set makes a later deletion of
+    *that* template invisible (`activity.html` and `_activity_run.html` were in
+    exactly that state). Compared against disk rather than against a second list,
+    so the only way to keep the guard's sentence true is to freeze every template
+    the console ships.
+    """
+    templates = PACKAGE_DIRS[0] / "src" / "clear_record" / "web" / "templates"
+    on_disk = {path.name for path in templates.rglob("*.html")}
+    assert on_disk == set(EXPECTED_WEB_TEMPLATES), (
+        f"on disk but not frozen: {sorted(on_disk - EXPECTED_WEB_TEMPLATES)}; "
+        f"frozen but not on disk: {sorted(EXPECTED_WEB_TEMPLATES - on_disk)}"
+    )
+
+
+# The registry's schema history is read at run time, never imported: the store
+# names it as the string `clear_record.service:migrations`, so a revision or the
+# environment falling out of the install breaks no import — it breaks the first
+# open of a registry, in a distribution that has already launched. Frozen for
+# the same reason the web assets are.
+EXPECTED_MIGRATIONS = frozenset(
+    {
+        "env.py",
+        "script.py.mako",
+        "versions/0001_project_and_glossary.py",
+        "versions/0002_meeting_run_and_artifact.py",
+        "versions/0003_archive.py",
+        "versions/0004_meeting_notes.py",
+        "versions/0005_tape.py",
+        "versions/0006_run_state_and_events.py",
+        "versions/0007_run_ownership.py",
+        "versions/0008_run_cancel_and_resume.py",
+        "versions/0009_active_run_per_meeting.py",
+    }
+)
+
+
+def _missing_migrations(migrations: Path) -> list[str]:
+    """Expected schema-history files absent from a migrations directory.
+
+    Split out so a test can prove a deletion is caught, not just assumed.
+    """
+    present = {
+        path.relative_to(migrations).as_posix()
+        for path in migrations.rglob("*")
+        if path.is_file()
+    }
+    return sorted(EXPECTED_MIGRATIONS - present)
+
+
+def test_the_schema_history_ships_with_the_package() -> None:
+    """Alembic's script location resolves inside the installed package.
+
+    The store names it as a package resource, so the registry of an installed
+    distribution migrates at open with no configuration beside it (ADR-0030).
+    """
+    migrations = PACKAGE_DIRS[0] / "src" / "clear_record" / "service" / "migrations"
+    missing = _missing_migrations(migrations)
+    assert not missing, f"missing schema history: {missing}"
+
+
+def test_schema_history_guard_catches_a_deleted_revision(tmp_path: Path) -> None:
+    """Removing a revision must fail the guard, not pass silently.
+
+    Nothing imports a revision, so only the expected-set check can notice it.
+    """
+    source = PACKAGE_DIRS[0] / "src" / "clear_record" / "service" / "migrations"
+    copied = tmp_path / "migrations"
+    shutil.copytree(source, copied)
+    victim = "versions/0005_tape.py"
+    assert victim in EXPECTED_MIGRATIONS
+    (copied / victim).unlink()
+    assert _missing_migrations(copied) == [victim]
 
 
 def _just_recipe(name: str) -> str:
@@ -341,8 +461,8 @@ def test_e2e_provisioning_guard_reports_each_missing_piece(tmp_path: Path) -> No
     Run in a synthetic tree — the guard resolves the repo root from its own
     path — because whether the real tree has `node_modules` depends on who is
     running the suite, and both branches have to be pinned either way. A
-    regression here is this ticket's whole failure mode: a fresh worktree's gate
-    reporting one `browserType.launch` error per spec instead of one line.
+    regression here is the failure mode this guard exists for: a fresh worktree's
+    gate reporting one `browserType.launch` error per spec instead of one line.
     """
     guard = tmp_path / "scripts" / "check_e2e_provisioning.py"
     guard.parent.mkdir(parents=True)

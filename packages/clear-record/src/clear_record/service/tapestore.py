@@ -18,17 +18,20 @@ It owns the *rules*, not the callers. The upload path keeps its guard order
 (the upload id, the declared size, free space, then the filename and extension)
 and its own atomicity — a scratch file it fsyncs and renames — and the archive
 copier keeps its copy-then-manifest discipline; neither re-derives anything
-here. The connection, and so the transaction, stays the caller's: these
-functions only write through it.
+here. The session, and so the transaction, stays the caller's: these functions
+only write through it.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from clear_record.service import entities
 from clear_record.service.models import Tape
 
 #: The tapes directory inside a managed workspace or an archive. In a workspace
@@ -79,80 +82,89 @@ def _on_disk(directory: Path) -> Callable[[str], bool]:
     return taken
 
 
-def latest_set(conn: sqlite3.Connection, meeting_id: int) -> sqlite3.Row | None:
+def latest_set(session: Session, meeting_id: int) -> entities.RecordingSet | None:
     """The meeting's latest tape set row, or ``None`` when it has no tapes.
 
     A tape set is appended, never rewritten: the newest row is the tape set the
     pipeline reads, and the caller maps it to whatever type it owns.
     """
-    return conn.execute(
-        "SELECT * FROM recording_set WHERE meeting_id = ? ORDER BY id DESC LIMIT 1",
-        (meeting_id,),
-    ).fetchone()
+    return session.scalar(
+        select(entities.RecordingSet)
+        .where(entities.RecordingSet.meeting_id == meeting_id)
+        .order_by(entities.RecordingSet.id.desc())
+        .limit(1)
+    )
 
 
 def write_set(
-    conn: sqlite3.Connection, meeting_id: int, paths: list[str], created_at: str
-) -> int:
-    """Append a tape set row holding ``paths``; returns the new row's id."""
-    cur = conn.execute(
-        "INSERT INTO recording_set (meeting_id, paths, created_at) VALUES (?, ?, ?)",
-        (meeting_id, json.dumps(paths), created_at),
+    session: Session, meeting_id: int, paths: list[str], created_at: str
+) -> entities.RecordingSet:
+    """Append a tape set row holding ``paths``; returns the row it wrote."""
+    row = entities.RecordingSet(
+        meeting_id=meeting_id, paths=json.dumps(paths), created_at=created_at
     )
-    return int(cur.lastrowid)
+    session.add(row)
+    session.flush()
+    return row
 
 
 def record_tape(
-    conn: sqlite3.Connection,
+    session: Session,
     meeting_id: int,
     *,
     path: str,
     sha256: str,
     size: int,
     created_at: str,
-) -> int:
+) -> entities.Tape:
     """Insert a tape row and add ``path`` to the meeting's tape set.
 
     One transaction — the caller's — so the integrity facts (``sha256``, ``size``)
     and the tape set the pipeline reads can never disagree: the path joins the
     latest set (a first one is created) and the row is written after it. Returns
-    the new tape row's id.
+    the row it wrote.
     """
-    paths = _paths(latest_set(conn, meeting_id))
+    paths = _paths(latest_set(session, meeting_id))
     if path not in paths:
         paths.append(path)
-    write_set(conn, meeting_id, paths, created_at)
-    cur = conn.execute(
-        "INSERT INTO tape (meeting_id, path, sha256, bytes, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (meeting_id, path, sha256, size, created_at),
+    write_set(session, meeting_id, paths, created_at)
+    row = entities.Tape(
+        meeting_id=meeting_id,
+        path=path,
+        sha256=sha256,
+        bytes=size,
+        created_at=created_at,
     )
-    return int(cur.lastrowid)
+    session.add(row)
+    session.flush()
+    return row
 
 
-def forget_tape(conn: sqlite3.Connection, tape: Tape, *, created_at: str) -> None:
+def forget_tape(session: Session, tape: Tape, *, created_at: str) -> None:
     """Delete ``tape``'s row and take its path out of the meeting's tape set.
 
     The file is the caller's to unlink (nothing here owns a filesystem). Dropping
     the meeting's last tape clears its tape set rather than leaving one pointing
     at a file that no longer exists.
     """
-    conn.execute("DELETE FROM tape WHERE id = ?", (tape.id,))
-    latest = latest_set(conn, tape.meeting_id)
+    session.execute(delete(entities.Tape).where(entities.Tape.id == tape.id))
+    latest = latest_set(session, tape.meeting_id)
     if latest is None:
         return
     remaining = [p for p in _paths(latest) if p != tape.path]
     if remaining:
-        write_set(conn, tape.meeting_id, remaining, created_at)
+        write_set(session, tape.meeting_id, remaining, created_at)
     else:
-        conn.execute(
-            "DELETE FROM recording_set WHERE meeting_id = ?", (tape.meeting_id,)
+        session.execute(
+            delete(entities.RecordingSet).where(
+                entities.RecordingSet.meeting_id == tape.meeting_id
+            )
         )
 
 
-def _paths(row: sqlite3.Row | None) -> list[str]:
+def _paths(row: entities.RecordingSet | None) -> list[str]:
     """The paths a tape-set row holds (nothing, when there is no set)."""
-    return list(json.loads(row["paths"])) if row is not None else []
+    return list(json.loads(row.paths)) if row is not None else []
 
 
 __all__ = [

@@ -1,7 +1,8 @@
 """The run-options value and the built-in transcription profiles.
 
-``core`` is dependency-free and every layer may import it (``cli → core``,
-``service → core``, ``web → core``, ``mcp → core``), so this is the one home for
+``core`` is dependency-free and every layer may import it (``engine → core``,
+``providers → core``, ``cli → core``, ``service → core``, ``web → core``,
+``tray → core``, ``mcp → core``), so this is the one home for
 the run configuration. The CLI, the service, the web console and the MCP server
 all read the same :class:`PipelineOptions` and the same :data:`PROFILES` table,
 so a profile cannot mean different things on different surfaces.
@@ -188,6 +189,45 @@ RUN_KNOBS: tuple[RunKnob, ...] = (
 
 #: The decoder rows of :data:`RUN_KNOBS`.
 DECODER_KNOBS: tuple[RunKnob, ...] = tuple(knob for knob in RUN_KNOBS if knob.decoder)
+
+
+@dataclasses.dataclass(frozen=True)
+class SupersededKey:
+    """One stored run-option key a **released build of this application** wrote.
+
+    A stored run's options are JSON text, and the release that enqueued the run
+    wrote them from *its* :class:`PipelineOptions`. When that value loses a field,
+    the rows that release left behind carry a key this build has no field for, and
+    the reader has to know what the key meant rather than guess:
+
+    ``successor`` names the current option field the stored value belongs to — a
+    *rename*, where dropping the value would throw away something that still
+    means exactly what it did. ``None`` means the capability was removed with no
+    successor: the key is dropped, and the read says so (see
+    :mod:`clear_record.service.run_options`).
+
+    This is the declaration the reader derives its tolerance from, the same way
+    :data:`RUN_KNOBS` is the declaration the resolver and the CLI derive from: a
+    released key is one row here and no second list of names anywhere.
+    """
+
+    stored: str
+    successor: str | None
+
+
+#: The stored option keys an earlier release wrote and this build does not have.
+#:
+#: ``formats`` is the one row so far. The released line
+#: (``public/releases/v0.2.x``, ``public/main``) carried
+#: ``formats: tuple[str, ...] | None`` and threaded it to ``stages.export``,
+#: which wrote the set it named or — with no ``formats`` — the same four
+#: artifacts this build always writes (``md``, ``srt``, ``vtt``, ``json``); the
+#: field's removal left the export set declared rather than configurable, so there
+#: is no successor to hand the value to. It is dropped, and a run read from such a
+#: row still runs — with the export set this build has.
+SUPERSEDED_KEYS: tuple[SupersededKey, ...] = (
+    SupersededKey(stored="formats", successor=None),
+)
 
 #: Their field names, for the places that carry names only (a backend's
 #: ``decoder_knobs`` and the stage's support check). A backend advertises the
@@ -395,9 +435,11 @@ __all__ = [
     "PROFILES",
     "RESOLVABLE_FIELDS",
     "RUN_KNOBS",
+    "SUPERSEDED_KEYS",
     "DecoderKnobs",
     "PipelineOptions",
     "RunKnob",
+    "SupersededKey",
     "profile_values",
     "resolve_options",
 ]

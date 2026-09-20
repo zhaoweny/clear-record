@@ -8,7 +8,7 @@ uses (the guard docs in :mod:`clear_record.web.guard`). The loopback default is
 exercised directly, with an explicit ``trusted_hosts=()``, in
 ``test_web_guard.py``.
 
-A fresh install now redirects ``/`` to ``/setup`` (ticket 04), so the ordinary
+A fresh install now redirects ``/`` to ``/setup``, so the ordinary
 page tests record the version marker and play a returning user. Tests that
 exercise the first run or the update notice opt out with the
 ``own_setup_marker`` marker and arrange their own.

@@ -70,8 +70,15 @@ def test_an_unknown_section_is_a_page_not_json(tmp_path) -> None:
     assert "Not found" in missing.text
 
 
-def test_the_read_sections_never_carry_a_write_route(tmp_path) -> None:
-    """Read-mostly: only agent and MCP mount a writing surface."""
+def test_the_agent_setup_writes_stay_out_of_the_read_sections(tmp_path) -> None:
+    """Read-mostly: the agent-setup writes are mounted only where the agent panel is.
+
+    The other sections do write — Models downloads a checkpoint, Status walks the
+    setup again and re-runs the hello-world check (the module docstring above lists
+    them) — so what this pins is narrower and checkable: the four agent-setup POSTs
+    are reachable from the agent panel's own section, not from a page that only
+    shows a value.
+    """
     client = _client(tmp_path)
 
     for slug in ("models", "backends", "storage", "status"):
@@ -306,7 +313,7 @@ def test_the_status_section_carries_diagnostics_and_the_hello_check(tmp_path) ->
 
 
 def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> None:
-    """RUN-02: the console lists the registry's queue, not one manager's memory.
+    """The console lists the registry's queue, not one manager's memory.
 
     The MCP server is another writer with its own manager over the same registry;
     the row it enqueues is what the console's Status section shows, and the row
@@ -417,7 +424,7 @@ def test_the_mcp_write_re_renders_only_the_mcp_rung(tmp_path) -> None:
 def test_an_unavailable_backend_reason_is_translated_in_a_chinese_console(
     tmp_path, monkeypatch
 ) -> None:
-    """Ticket 08: the reason is a message node, so the console can translate it.
+    """The reason is a message node, so the console can translate it.
 
     The service hands backend_status a JSON message node (an ID plus
     parameters); the shared backend list renders it with the boundary's

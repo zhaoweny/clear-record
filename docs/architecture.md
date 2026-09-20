@@ -340,7 +340,8 @@ packages/clear-record → clear-record  single published dist; import clear_reco
 docs/architecture.md          this document
 docs/adr/                     decision records, one file per decision
 docs/research/                dated research notes (Intel · DGX Spark · mobile/edge · capture rig)
-docs/vox/voice-of-owner.md    owner voice
+docs/vox/voice-of-owner.md    owner voice: the standing positions and the in-force index
+docs/vox/records/             dated owner-voice records, one file per topic
 ```
 
 **Current status: v0.3 development trunk.** The pipeline below is landed and

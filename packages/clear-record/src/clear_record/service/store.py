@@ -92,11 +92,21 @@ from clear_record.core.events import JobEvent
 from clear_record.core.i18n import tr
 from clear_record.core.paths import registry_path
 from clear_record.service import entities, tapestore
-from clear_record.service.models import (
+from clear_record.service.lifecycle import (
     ACTIVE_RUN_STATUSES,
-    MEETING_STATUSES,
+    CLAIM,
+    DONE,
+    ENQUEUE,
+    FAIL,
+    INTERRUPT,
+    QUEUED,
+    RUNNING,
     RUN_ORIGINS,
     RUN_STATUSES,
+    STOP_QUEUED,
+)
+from clear_record.service.models import (
+    MEETING_STATUSES,
     TERM_AUTHORS,
     TERM_STATUSES,
     Archive,
@@ -996,8 +1006,10 @@ class Registry:
         meeting a second ``queued`` or ``running`` run raises
         :class:`~sqlalchemy.exc.IntegrityError` here rather than landing, and the
         caller that owns the user-facing refusal — the run manager, whose guard
-        read the same pair of states — translates it. A meeting's *history* is
-        unaffected: as many ended runs as it has had.
+        read the same rule
+        (:func:`~clear_record.service.lifecycle.active_run_predicate`) —
+        translates it. A meeting's *history* is unaffected: as many ended runs as
+        it has had.
         """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
@@ -1015,7 +1027,7 @@ class Registry:
         with self._session() as session:
             row = entities.PipelineRun(
                 meeting_id=meeting_id,
-                status="queued",
+                status=ENQUEUE.target,
                 backend=backend,
                 model=model,
                 language=language,
@@ -1052,11 +1064,21 @@ class Registry:
         ``cost`` is the run's raw cost record (RUN-01), which the console and
         the history-based ETA read back through :class:`PipelineRun`.
 
-        ``status='done'`` also **clears** ``error`` (RUN-02): a run that reached
-        its own successful end reports no error, whatever a reaper wrote on it
-        while wrongly believing the owner dead — the reason would otherwise sit on a
-        finished run and be shown as a failure by the console and the API. There
-        is no caller that wants both, so the clear wins over a passed ``error``.
+        ``status='done'`` — the state
+        :data:`~clear_record.service.lifecycle.FINISH` lands in — also **clears**
+        ``error``: a run that reached its own successful end reports no error,
+        whatever a reaper wrote on it while wrongly believing the owner dead —
+        the reason would otherwise sit on a finished run and be shown as a failure
+        by the console and the API. There is no caller that wants both, so the
+        clear wins over a passed ``error``.
+
+        This is the **unconditional** terminal write: the run's own owner ends the
+        row it holds, so the target is validated against the vocabulary
+        (:data:`~clear_record.service.lifecycle.RUN_STATUSES`) and the state the
+        row leaves is not constrained. The transitions whose legality the database
+        enforces are the conditional statements — :meth:`claim_run`,
+        :meth:`stop_run`, :meth:`interrupt_run`, :meth:`fail_unreadable_run` — and
+        they read their move's own sources.
         """
         fields: dict[str, object] = {}
         if status is not None:
@@ -1073,7 +1095,7 @@ class Registry:
             fields["error"] = error
         if progress is not None:
             fields["progress"] = json.dumps(progress)
-        if status == "done":
+        if status == DONE:
             fields["error"] = None
         with self._session() as session:
             row = session.get(entities.PipelineRun, run_id)
@@ -1106,10 +1128,13 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status.in_(ACTIVE_RUN_STATUSES),
+                    # The states the fail move is legal from
+                    # (``lifecycle.FAIL``): a run that finished is never rewritten
+                    # by a caller that read a stale list.
+                    entities.PipelineRun.status.in_(FAIL.sources),
                 )
                 .values(
-                    status="failed",
+                    status=FAIL.target,
                     ended_at=_now(),
                     error=error
                     + case(
@@ -1189,7 +1214,7 @@ class Registry:
 
     def oldest_queued_run(self) -> PipelineRun | None:
         """The head of the node's FIFO: the oldest run still ``queued``."""
-        runs = self.runs_with_status("queued")
+        runs = self.runs_with_status(QUEUED)
         return runs[0] if runs else None
 
     def finished_runs(
@@ -1253,13 +1278,16 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status == "queued",
+                    # The state the claim move is legal from (``lifecycle.CLAIM``).
+                    entities.PipelineRun.status.in_(CLAIM.sources),
                     ~select(entities.PipelineRun.id)
-                    .where(entities.PipelineRun.status == "running")
+                    .where(entities.PipelineRun.status == RUNNING)
                     .correlate(None)
                     .exists(),
                 )
-                .values(status="running", started_at=at, owner=owner, heartbeat_at=at),
+                .values(
+                    status=CLAIM.target, started_at=at, owner=owner, heartbeat_at=at
+                ),
                 execution_options=_NO_SYNC,
             )
             if claimed.rowcount == 0:
@@ -1287,7 +1315,7 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status == "running",
+                    entities.PipelineRun.status == RUNNING,
                 )
                 .values(heartbeat_at=at),
                 execution_options=_NO_SYNC,
@@ -1333,12 +1361,14 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status == "running",
+                    # The states the interrupt move is legal from
+                    # (``lifecycle.INTERRUPT``).
+                    entities.PipelineRun.status.in_(INTERRUPT.sources),
                     entities.PipelineRun.owner.is_(observed.owner),
                     entities.PipelineRun.heartbeat_at.is_(observed.heartbeat_at),
                 )
                 .values(
-                    status="interrupted",
+                    status=INTERRUPT.target,
                     ended_at=ended_at,
                     error=error,
                     progress=json.dumps(progress),
@@ -1355,11 +1385,13 @@ class Registry:
         """Move a **queued** run to ``stopped``, before anyone claimed it (RUN-04).
 
         The counterpart of :meth:`claim_run` for a run that has not started:
-        both are conditional on ``status = 'queued'``, so a cancel and a claim
-        cannot both win — whoever loses sees no row and acts on what it finds
-        instead. Moving the row out of ``queued`` is what makes a cancellation
-        stick: the drain never picks it up, the meeting's active-run guard lets go
-        of it, and a restart has nothing to resurrect.
+        both are conditional on the state the move is legal from —
+        :data:`~clear_record.service.lifecycle.STOP_QUEUED` and
+        :data:`~clear_record.service.lifecycle.CLAIM` both start at ``queued`` —
+        so a cancel and a claim cannot both win: whoever loses sees no row and
+        acts on what it finds instead. Moving the row out of ``queued`` is what
+        makes a cancellation stick: the drain never picks it up, the meeting's
+        active-run guard lets go of it, and a restart has nothing to resurrect.
 
         ``None`` means the run was not ``queued`` any more (claimed or already
         terminal): the caller re-reads it rather than insisting.
@@ -1369,10 +1401,12 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status == "queued",
+                    # The state the queued stop move is legal from
+                    # (``lifecycle.STOP_QUEUED``).
+                    entities.PipelineRun.status.in_(STOP_QUEUED.sources),
                 )
                 .values(
-                    status="stopped",
+                    status=STOP_QUEUED.target,
                     ended_at=ended_at,
                     progress=json.dumps(progress),
                 ),
@@ -1403,7 +1437,7 @@ class Registry:
                 update(entities.PipelineRun)
                 .where(
                     entities.PipelineRun.id == run_id,
-                    entities.PipelineRun.status == "running",
+                    entities.PipelineRun.status == RUNNING,
                 )
                 .values(
                     cancel_requested_at=func.coalesce(
@@ -1438,14 +1472,14 @@ class Registry:
         registry's, so it is stable across a restart.
         """
         run = self.get_run(run_id)
-        if run is None or run.status != "queued":
+        if run is None or run.status != QUEUED:
             return 0
         with self._session() as session:
             ahead = session.scalar(
                 select(func.count())
                 .select_from(entities.PipelineRun)
                 .where(
-                    entities.PipelineRun.status == "queued",
+                    entities.PipelineRun.status == QUEUED,
                     entities.PipelineRun.id < run_id,
                 )
             )

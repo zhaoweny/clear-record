@@ -154,6 +154,15 @@ not a committed document.
   `sqlite3.IntegrityError`, or `sqlite3.Error` around a registry call, now catches
   nothing and must catch the SQLAlchemy class — or `sqlalchemy.exc.SQLAlchemyError`
   where it means the whole family.
+- **Three public names moved.** ``service/webhooks`` no longer *declares*
+  ``RUN_STARTED``/``RUN_FINISHED``/``RUN_FAILED``: the run half of the webhook
+  vocabulary is derived from the run lifecycle's own moves
+  (``service/lifecycle.py``, each move's derived ``event``) and the three names
+  are declared there. ``clear_record.service`` still exports them, so every
+  in-tree caller is unaffected; an **out-of-tree** caller that imported one of
+  the three from ``clear_record.service.webhooks`` now gets an ``ImportError``
+  and must take it from ``clear_record.service`` (or read the move), the same
+  one-way cutover this batch's other deletions made.
 - **The per-meeting uniqueness index makes one revision alter data — the first
   one that does.** `CREATE UNIQUE INDEX` cannot be created over rows the index
   forbids, and the rows it forbids are exactly the ones *this application wrote*:

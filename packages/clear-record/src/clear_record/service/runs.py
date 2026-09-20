@@ -55,20 +55,27 @@ from clear_record.service.glossary import (
     snapshot_from_text,
     write_snapshot,
 )
-from clear_record.service.models import (
+from clear_record.service.lifecycle import (
     ACTIVE_RUN_STATUSES,
+    CLAIM,
+    FAIL,
+    FINISH,
+    INTERRUPT,
+    INTERRUPTED,
+    QUEUED,
+    RESTART_REASON,
+    RUN_IN_FLIGHT,
     RUN_ORIGINS,
+    RUNNING,
+    STOP_QUEUED,
+    STOP_RUNNING,
     TERMINAL_STATUSES,
-    Meeting,
-    PipelineRun,
 )
+from clear_record.service.models import Meeting, PipelineRun
 from clear_record.service.run_options import MalformedRunOptions
 from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
-    RUN_FAILED,
-    RUN_FINISHED,
-    RUN_STARTED,
     TRANSCRIPT_READY,
     WebhookEmitter,
     default_emitter,
@@ -122,27 +129,6 @@ class RunChannel:
         with self._events_lock:
             self._registry.add_run_event(self._run_id, event)
 
-
-#: The reason startup reconciliation records on a run left ``running`` by a dead
-#: process. It is stored in the run's ``error`` column so the console (and a
-#: diagnostics bundle) can show *why* the run is interrupted, not just that it is.
-#:
-#: The console renders that column verbatim (``web/templates/_run.html``,
-#: ``_activity_run.html``), which ``docs/i18n.md`` puts on the translated side of
-#: the boundary, so the value written **to the row** is looked up with ``tr`` at
-#: that moment (see :meth:`_reap_dead_runs`). The same message ID stays English
-#: where it is machine-facing: the JSONL log record and the run's ``progress``
-#: summary both carry it unrendered. ``deferred`` is the extraction marker.
-RESTART_REASON = deferred("the console restarted while this run was in flight")
-
-#: The sentence a second submission for one meeting is refused with — the one
-#: message the guard and the database's index both end at, raised by
-#: :meth:`RunManager._active_run_refusal` and answered verbatim by the JSON API's
-#: own pre-check (``web.app.start_run``), so the same condition cannot come to
-#: read two ways. A message ID, looked up where it is shown: the console renders
-#: it with ``tr``, the JSON API and the MCP tool carry the ID (both are
-#: machine-facing surfaces, ``docs/i18n.md``).
-RUN_IN_FLIGHT = deferred("a run is already in flight for this meeting")
 
 #: The pipeline stages, in declared order: a run's cost record times each one
 #: (the spec's "render" is the pipeline's final ``export`` stage).
@@ -388,7 +374,7 @@ def estimate_eta_s(
     chunk_seconds = _run_chunk_seconds(run)
     history_audio = 0.0
     history_wall = 0.0
-    for candidate in registry.runs_with_status("done", limit=_ETA_HISTORY_LIMIT):
+    for candidate in registry.runs_with_status(FINISH.target, limit=_ETA_HISTORY_LIMIT):
         if candidate.id == run.id:
             continue
         if candidate.backend != run.backend or candidate.model != run.model:
@@ -449,7 +435,7 @@ class RunState:
 
     run_id: int
     meeting_id: int
-    status: str = "queued"
+    status: str = QUEUED
     events: list[JobEvent] = dataclasses.field(default_factory=list)
     error: str | None = None
     #: 1-based FIFO position while ``queued`` (``1`` is next); ``0`` otherwise.
@@ -607,7 +593,7 @@ class RunManager:
         """
         while True:
             try:
-                return self._registry.runs_with_status("running")
+                return self._registry.runs_with_status(RUNNING)
             except MalformedRunOptions as exc:
                 if not self._refuse_run(exc):
                     # The quarantine itself could not be written (a locked
@@ -659,7 +645,7 @@ class RunManager:
                 # (the progress summary and the log record keep the message ID).
                 error=tr(RESTART_REASON),
                 progress=self._progress(
-                    run.id, "interrupted", RESTART_REASON, ended_at=ended_at
+                    run.id, INTERRUPT.target, RESTART_REASON, ended_at=ended_at
                 ),
             )
             if reaped is None:
@@ -776,7 +762,7 @@ class RunManager:
             events=self._registry.list_run_events(run_id),
             error=row.error,
             position=(
-                self._registry.queue_position(run_id) if row.status == "queued" else 0
+                self._registry.queue_position(run_id) if row.status == QUEUED else 0
             ),
         )
 
@@ -889,18 +875,20 @@ class RunManager:
         Two different acts, chosen by where the run actually is:
 
         * **Queued** — nothing is executing it, so the cancel *is* the terminal
-          transition: the row becomes ``stopped`` here and now (conditional on
+          move, and it is decisive: the row becomes ``stopped`` here and now
+          (:data:`~clear_record.service.lifecycle.STOP_QUEUED`, conditional on
           ``queued``, so a claim racing this cannot both win). The drain never
           picks it up and a restart has nothing to resurrect.
         * **Running** — its owner is executing it in a workspace, so this records
           a **request** (``cancel_requested_at``); when this manager is the
           owner, the run's in-process signal is set straight away, and otherwise
           the owner reads the request on its next heartbeat and stops at its next
-          safe boundary. The owner writes ``stopped`` — never the requester,
-          because a run that keeps executing must not read as stopped. A stalled
-          owner therefore keeps its run ``running``: the fail-closed rule holds,
-          and the honest answer to "why is it not stopping?" is that the process
-          holding it is not answering.
+          safe boundary. The owner performs the stop
+          (:data:`~clear_record.service.lifecycle.STOP_RUNNING`) — never the
+          requester, because a run that keeps executing must not read as
+          stopped. A stalled owner therefore keeps its run ``running``: the
+          fail-closed rule holds, and the honest answer to "why is it not
+          stopping?" is that the process holding it is not answering.
 
         Cancelling a run that is already terminal is a no-op (a second click, a
         stale page): the row is returned unchanged. ``KeyError`` for an unknown
@@ -912,12 +900,12 @@ class RunManager:
         if run.status not in ACTIVE_RUN_STATUSES:
             return run
 
-        if run.status == "queued":
+        if run.status == QUEUED:
             ended_at = _now()
             stopped = self._registry.stop_run(
                 run_id,
                 ended_at=ended_at,
-                progress=self._progress(run_id, "stopped", ended_at=ended_at),
+                progress=self._progress(run_id, STOP_QUEUED.target, ended_at=ended_at),
             )
             if stopped is not None:
                 with self._lock:
@@ -936,7 +924,7 @@ class RunManager:
                     "run.cancelled",
                     run_id=run_id,
                     meeting_id=run.meeting_id,
-                    status="stopped",
+                    status=STOP_QUEUED.target,
                 )
                 return stopped
             # A claim won the race: the run is starting, so ask it to stop
@@ -944,7 +932,7 @@ class RunManager:
             current = self._registry.get_run(run_id)
             if current is None:
                 raise KeyError(run_id)
-            if current.status != "running":
+            if current.status != RUNNING:
                 return current
 
         requested = self._registry.request_cancel(run_id)
@@ -1125,7 +1113,7 @@ class RunManager:
         that is what refused — chained, so a traceback says which of the two it
         was.
         """
-        self._refuse(meeting, "a run is already in flight")
+        self._refuse(meeting, RUN_IN_FLIGHT)
         raise ValueError(RUN_IN_FLIGHT) from cause
 
     # --- the scheduler ------------------------------------------------------ #
@@ -1245,10 +1233,12 @@ class RunManager:
                 ended_at = _now()
                 self._registry.update_run(
                     run.id,
-                    status="failed",
+                    status=FAIL.target,
                     ended_at=ended_at,
                     error=error,
-                    progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+                    progress=self._progress(
+                        run.id, FAIL.target, error, ended_at=ended_at
+                    ),
                 )
                 # The pipeline's own failure path sets this; a failure raised
                 # around that path must not leave the meeting "running".
@@ -1358,7 +1348,7 @@ class RunManager:
         peer's verdict, and that is the one worth reporting.
         """
         row = self._registry.get_run(run_id)
-        return row is not None and row.status == "interrupted"
+        return row is not None and row.status == INTERRUPTED
 
     def _report_beat_failure(self, run_id: int, reason: str) -> None:
         """Log a beat that did not land, once per run (RUN-02).
@@ -1437,7 +1427,7 @@ class RunManager:
             language=options.language,
         )
         self._webhooks.emit(
-            RUN_STARTED,
+            CLAIM.event,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
             run_id=run.id,
@@ -1469,10 +1459,10 @@ class RunManager:
             ended_at = _now()
             self._registry.update_run(
                 run.id,
-                status="failed",
+                status=FAIL.target,
                 ended_at=ended_at,
                 error=error,
-                progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+                progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
             )
             self._registry.set_meeting_status(meeting.id, "failed")
             log_event(
@@ -1484,7 +1474,7 @@ class RunManager:
                 error=error,
             )
             self._webhooks.emit(
-                RUN_FAILED,
+                FAIL.event,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
                 run_id=run.id,
@@ -1495,9 +1485,9 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="done",
+            status=FINISH.target,
             ended_at=ended_at,
-            progress=self._progress(run.id, "done", ended_at=ended_at),
+            progress=self._progress(run.id, FINISH.target, ended_at=ended_at),
         )
         self._registry.set_meeting_status(meeting.id, "recorded")
         log_event(
@@ -1509,7 +1499,7 @@ class RunManager:
             artifacts=len(artifacts),
         )
         self._webhooks.emit(
-            RUN_FINISHED,
+            FINISH.event,
             project_id=meeting.project_id,
             meeting_id=meeting.id,
             run_id=run.id,
@@ -1538,10 +1528,12 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="stopped",
+            status=STOP_RUNNING.target,
             ended_at=ended_at,
             error=error,
-            progress=self._progress(run.id, "stopped", error, ended_at=ended_at),
+            progress=self._progress(
+                run.id, STOP_RUNNING.target, error, ended_at=ended_at
+            ),
         )
         self._registry.set_meeting_status(meeting.id, "ready")
         log_event(
@@ -1582,7 +1574,7 @@ class RunManager:
             if meeting is not None:
                 self._registry.set_meeting_status(meeting.id, "failed")
                 self._webhooks.emit(
-                    RUN_FAILED,
+                    FAIL.event,
                     project_id=meeting.project_id,
                     meeting_id=meeting.id,
                     run_id=run_id,
@@ -1617,15 +1609,15 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
-            status="failed",
+            status=FAIL.target,
             ended_at=ended_at,
             error=error,
-            progress=self._progress(run.id, "failed", error, ended_at=ended_at),
+            progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
         )
         if meeting is not None:
             self._registry.set_meeting_status(meeting.id, "failed")
             self._webhooks.emit(
-                RUN_FAILED,
+                FAIL.event,
                 project_id=meeting.project_id,
                 meeting_id=meeting.id,
                 run_id=run.id,
@@ -1825,12 +1817,9 @@ __all__ = [
     "HEARTBEAT_STALE_S",
     "PipelineCallable",
     "PipelineOptions",
-    "RESTART_REASON",
-    "RUN_IN_FLIGHT",
     "RunManager",
     "RunState",
     "RunSummary",
-    "TERMINAL_STATUSES",
     "collect_artifacts",
     "cost_of",
     "estimate_eta_s",

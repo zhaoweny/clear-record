@@ -42,23 +42,14 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from clear_record.service.models import ACTIVE_RUN_STATUSES
+from clear_record.service.lifecycle import active_run_predicate
 
-
-def _active_predicate() -> str:
-    """The index's partial predicate, from the one active-status declaration.
-
-    ``status IN ('queued', 'running')`` — the *text* has to be built here because
-    SQLAlchemy wants a literal for ``sqlite_where``, and it is built from
-    :data:`~clear_record.service.models.ACTIVE_RUN_STATUSES` so the mapping cannot
-    disagree with the guard that reads the same set.
-    """
-    rendered = ", ".join(f"'{status}'" for status in ACTIVE_RUN_STATUSES)
-    return f"status IN ({rendered})"
-
-
-#: The predicate the mapping declares and revision 0009 creates.
-_ACTIVE_PREDICATE = _active_predicate()
+#: The predicate the mapping declares and revision 0009 creates, rendered by the
+#: lifecycle's own rule: ``sqlite_where`` wants literal text, and this is
+#: :func:`~clear_record.service.lifecycle.active_run_predicate`'s rendering of
+#: the states that rule accepts, so the mapping cannot disagree with the guard
+#: that reads the same declaration.
+_ACTIVE_PREDICATE = active_run_predicate()
 
 
 class Base(DeclarativeBase):
@@ -153,10 +144,11 @@ class PipelineRun(Base):
     #: Partial, so it constrains the *active* run and not the meeting's history: a
     #: ``done``/``failed``/``stopped``/``interrupted`` run holds nothing, and the
     #: meeting starts again. This is the index revision 0009 creates, and its
-    #: predicate is built from the one declaration of what "active" means
-    #: (:data:`~clear_record.service.models.ACTIVE_RUN_STATUSES`) rather than
-    #: spelling the pair again — the revision has to spell it (a revision states
-    #: its own DDL), and ``tests/service/test_store.py`` compares the two.
+    #: predicate is the one-active-run rule as
+    #: :func:`~clear_record.service.lifecycle.active_run_predicate` renders it,
+    #: rather than the pair spelled again — the revision has to spell it (a
+    #: revision states its own DDL), and ``tests/service/test_store.py`` compares
+    #: the predicate the database built with the declaration.
     __table_args__ = (
         Index(
             "pipeline_run_active_meeting",

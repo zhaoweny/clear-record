@@ -119,6 +119,12 @@ from clear_record.service.auto import (
     render_message as render_service_message,
 )
 from clear_record.service.diagnostics import backend_status, machine_description
+from clear_record.service.lifecycle import (
+    ATTENTION_STATUSES,
+    FAILED,
+    QUEUED,
+    RUNNING,
+)
 
 #: The service's own number reader, so a record's or a queued run's options field
 #: is parsed the one way (bools are not numbers, a string is not a figure).
@@ -218,19 +224,19 @@ SETTINGS_SECTIONS: tuple[tuple[str, str, str], ...] = (
 
 #: The header chip's labels for the **in-flight** statuses, keyed by the status
 #: itself and ordered by the precedence the chip reports them in: a node executing
-#: work outranks one waiting for it, so ``running`` comes first. The chip reads
+#: work outranks one waiting for it, so :data:`RUNNING` comes first. The chip reads
 #: :data:`ACTIVE_RUN_STATUSES` for *which* statuses are in flight — the one
 #: declaration of that pair — and this table only names and orders them; the
-#: declaration's own order is the lifecycle's (``queued`` before ``running``), not
-#: a display order, so it is not what the chip ranks by.
+#: declaration's own order is the lifecycle's (:data:`QUEUED` before
+#: :data:`RUNNING`), not a display order, so it is not what the chip ranks by.
 #: ``tests/web/test_web_activity.py`` asserts the table covers the declaration
 #: exactly, so a third in-flight status cannot arrive without a label and a place.
 #: The labels are ``deferred`` because Babel extracts message IDs from
 #: ``tr``/``deferred`` call sites only, and the lookup here is a
 #: ``tr(ACTIVE_RUN_LABELS[status], …)``.
 ACTIVE_RUN_LABELS: dict[str, str] = {
-    "running": deferred("running {count}"),
-    "queued": deferred("queued {count}"),
+    RUNNING: deferred("running {count}"),
+    QUEUED: deferred("queued {count}"),
 }
 
 
@@ -724,7 +730,7 @@ def _run_speed_so_far(run: PipelineRun, event: JobEvent | None) -> float | None:
     were all re-used (nothing was decoded to rate), or arithmetic that would
     divide by zero — and the page says unknown.
     """
-    if run.status != "running" or event is None or event.stage != _CHUNK_STAGE:
+    if run.status != RUNNING or event is None or event.stage != _CHUNK_STAGE:
         return None
     options = run.run_options if isinstance(run.run_options, dict) else {}
     chunk_seconds = number_or_none(options.get("chunk_seconds"))
@@ -1576,7 +1582,7 @@ def create_app(
         live = run.status in ACTIVE_RUN_STATUSES
         event = registry.latest_run_event(run.id) if live else None
         eta_s = event.eta_s if event else None
-        if run.status == "running":
+        if run.status == RUNNING:
             # Not `ACTIVE_RUN_STATUSES`: a queued run has not started, and the
             # history-based estimate is about a rate this node is currently
             # sustaining. It replaces the stage-local one when this machine has a
@@ -1643,9 +1649,10 @@ def create_app(
         a run in flight makes it say so (with the queue's depth when the node
         has not picked the work up yet), and with nothing in flight the **newest
         finished** run — the one that ended most recently, not the row written
-        last — decides between "needs attention" (it failed or was
-        interrupted) and idle. A ``stopped`` run was cancelled on purpose, so it
-        is not attention. The label is translated at render time.
+        last — decides between "needs attention" (its status is one of
+        :data:`~clear_record.service.lifecycle.ATTENTION_STATUSES`) and idle. A
+        ``stopped`` run was cancelled on purpose, so it is not attention. The
+        label is translated at render time.
 
         Which statuses are in flight is :data:`ACTIVE_RUN_STATUSES` and not a
         second list here; the label table's order is the one the chip reports in,
@@ -1661,8 +1668,8 @@ def create_app(
                 "state": status,
             }
         newest = registry.finished_runs(*TERMINAL_STATUSES, limit=1)
-        if newest and newest[0].status in ("failed", "interrupted"):
-            return {"label": tr("needs attention"), "state": "failed"}
+        if newest and newest[0].status in ATTENTION_STATUSES:
+            return {"label": tr("needs attention"), "state": FAILED}
         return {"label": tr("idle"), "state": "neutral"}
 
     def settings_context(section: str) -> dict:
@@ -3001,8 +3008,9 @@ def create_app(
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
         if runs.active_state(meeting_id) is not None:
-            # The service's own sentence (see `runs.RUN_IN_FLIGHT`), not a copy:
-            # the guard and the index must read the same to this client.
+            # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
+            # not a copy: the guard and the index must read the same to this
+            # client.
             raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
         options = PipelineOptions(
             backend=body.backend,

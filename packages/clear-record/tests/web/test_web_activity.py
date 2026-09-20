@@ -317,7 +317,7 @@ def test_an_idle_node_says_so(tmp_path) -> None:
 
     text = client.get("/activity").text
 
-    assert "No runs queued or running." in text
+    assert "No runs in flight." in text
     assert "No finished runs yet." in text
 
 

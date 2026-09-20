@@ -21,7 +21,7 @@
   {% for row in live %}
   {% include "_activity_run.html" %}
   {% else %}
-  <div class="empty">{{ tr("No runs queued or running.") }}</div>
+  <div class="empty">{{ tr("No runs in flight.") }}</div>
   {% endfor %}
 
   <h3>{{ tr("Recently finished") }}</h3>

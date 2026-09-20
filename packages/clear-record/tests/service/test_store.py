@@ -28,12 +28,15 @@ from sqlalchemy.pool import NullPool
 
 from clear_record.core import PipelineOptions
 from clear_record.service import (
-    ACTIVE_RUN_STATUSES,
+    RUN_ORIGINS,
+    RUN_STATUSES,
     Registry,
     RegistryLocked,
     entities,
 )
+from clear_record.service import models as models_module
 from clear_record.service import store as store_module
+from clear_record.service.lifecycle import active_run_predicate
 from clear_record.service.store import _LADDER_VERSION, _alembic_config
 
 #: The repository root: the tree this test's git history lives in.
@@ -493,6 +496,16 @@ def _retired_ladder_store() -> types.ModuleType:
     name: ``git rev-list --all`` walks newest-first, so a mere mention would win —
     and this very file's own history is a mention, since the constant's replacement
     is documented by name where it is declared. A mention is not the ladder.
+
+    What a blob read out of the history cannot bring with it is its **import
+    list**: it is exec'd against today's tree, and it asks
+    ``clear_record.service.models`` for the run vocabulary — which that build
+    declared there, and which today belongs to
+    :mod:`clear_record.service.lifecycle` (the states and the moves that use
+    them are one declaration). Those two names are lent to ``models`` for the
+    length of the exec and taken back afterwards, so the retired build still
+    runs as itself. What is under test is the ladder's schema gate; a status's
+    declaring module is not what it is about.
     """
     path = "packages/clear-record/src/clear_record/service/store.py"
     listed = subprocess.run(
@@ -514,7 +527,24 @@ def _retired_ladder_store() -> types.ModuleType:
             r"^SCHEMA_VERSION\s*=\s*\d+", blob.stdout, re.MULTILINE
         ):
             module = types.ModuleType("retired_ladder_store")
-            exec(compile(blob.stdout, f"<{commit}:{path}>", "exec"), module.__dict__)
+            lent = {
+                name: value
+                for name, value in (
+                    ("RUN_ORIGINS", RUN_ORIGINS),
+                    ("RUN_STATUSES", RUN_STATUSES),
+                )
+                if not hasattr(models_module, name)
+            }
+            for name, value in lent.items():
+                setattr(models_module, name, value)
+            try:
+                exec(
+                    compile(blob.stdout, f"<{commit}:{path}>", "exec"),
+                    module.__dict__,
+                )
+            finally:
+                for name in lent:
+                    delattr(models_module, name)
             return module
     pytest.skip("no commit in this history carries the retired ladder")
 
@@ -1075,21 +1105,23 @@ def test_the_database_rule_names_the_active_statuses_the_service_declares(
 ) -> None:
     """One declaration of what "active" means, and the database's copy of it.
 
-    The guard the run manager reads, the claim, the reconciliation's compare, the
-    console's run views and the mapping all read ``ACTIVE_RUN_STATUSES``; revision
-    0009 states its own ``WHERE``, because a revision states its own DDL and
-    cannot import today's application. This reads the *built* index's predicate
-    back and compares it with the declaration. The reconciliation's copy of the
-    same pair is exercised by the survivor rule above, which cannot pass if it
-    drifts.
+    The guard the run manager asks, the console's run views and the mapping read
+    the lifecycle's :data:`~clear_record.service.lifecycle.ACTIVE_RUN_STATUSES` —
+    the mapping through
+    :func:`~clear_record.service.lifecycle.active_run_predicate` — while revision
+    0009 states its own ``WHERE``, because a revision states its own DDL and cannot
+    import today's application. This reads the *built* index's predicate back and
+    compares it with the declaration's own rendering. The narrower readers — the
+    claim (``CLAIM.sources``) and the reconciliation's compare-and-set
+    (``INTERRUPT.sources``) — are exercised by the tests above, which cannot pass
+    if either drifts.
     """
     db = tmp_path / "registry.sqlite3"
     Registry(db)
 
-    rendered = ", ".join(f"'{status}'" for status in ACTIVE_RUN_STATUSES)
     assert (
         _index_predicate(_index_sql(db, "pipeline_run_active_meeting"))
-        == f"status IN ({rendered})"
+        == active_run_predicate()
     )
 
 

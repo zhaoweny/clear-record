@@ -3,9 +3,10 @@
 This module is the **adapter** half of ADR-0017: it turns ``clear_record.service``
 operations into MCP tools and answers over stdio. Every tool method is a thin
 translation of a service call — a lookup, a registry read/write or a run
-start — and returns a plain, JSON-serializable ``dict``. All domain behaviour
-(validation, status transitions, event recording) stays in the service; none of
-it is reimplemented here.
+start — and returns a **declared model** (ADR-0030), so the published output
+schema is the shape the tool actually answers with and a result is validated on
+the way out. All domain behaviour (validation, status transitions, event
+recording) stays in the service; none of it is reimplemented here.
 
 Design notes:
 
@@ -14,8 +15,10 @@ Design notes:
   exception is reported only as ``Error executing tool <name>``. So every
   unknown-project / unknown-meeting / missing-tape-set path raises a
   ``ToolError`` naming what was wrong and what is available.
-- **Results are structured.** Each tool annotates a ``dict``/``list[dict]``
-  return, so the SDK publishes an output schema and an agent gets machine-readable
+- **Results are structured.** Each tool annotates its return with a model from
+  the boundary vocabulary (``clear_record.service.schemas``, or this module's own
+  envelope for one that wraps a value), so the SDK publishes a real output schema
+  — the fields, not ``additionalProperties`` — and an agent gets machine-readable
   values, not prose.
 - **BYOK.** No model or provider key is read, required or bundled; the agent
   brings its own (ADR-0017).
@@ -26,7 +29,8 @@ subprocess); a network transport is deliberately out of scope for v1.
 
 from __future__ import annotations
 
-import dataclasses
+import functools
+from collections.abc import Callable
 from typing import Any
 
 from mcp.server import MCPServer
@@ -37,17 +41,34 @@ from clear_record.service import (
     TASK_KINDS,
     AgentConfig,
     AgentTaskError,
+    AgentTasksOut,
+    ArtifactOut,
+    DraftView,
+    EventOut,
     GlossaryTerm,
+    MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingOut,
+    MeetingTapesOut,
     ModelNotOnDisk,
     NoBackendAvailable,
     Project,
+    PipelineRun,
+    ProjectCountOut,
+    ProjectOut,
     Registry,
     Runner,
     RunManager,
+    RunOut,
     RunState,
+    RunSummary,
+    Shape,
+    TapeSetOut,
+    TermOut,
+    TranscriptOut,
     describe_draft,
+    out_model,
     read_transcript as _read_transcript,
     resolve_run,
 )
@@ -71,9 +92,41 @@ INSTRUCTIONS = (
 )
 
 
-def _as_dict(obj: Any) -> dict[str, Any]:
-    """A dataclass instance as a plain, JSON-serializable dict."""
-    return dataclasses.asdict(obj)
+def _a_refused_row_is_a_tool_error(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Answer a stored row this build refuses with the reader's own message.
+
+    The registry refuses such a row at every read, and an uncaught exception
+    reaches an agent only as ``Error executing tool <name>`` — which hides the one
+    thing that helps: which run, and which field. The refusal already names both,
+    so it becomes the tool error, and the agent can act on it or tell its user.
+    """
+
+    @functools.wraps(method)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(*args, **kwargs)
+        except MalformedRunOptions as exc:
+            raise ToolError(str(exc)) from exc
+
+    return wrapper
+
+
+#: The tools' own envelopes: a value the registry produced, plus what the tool
+#: learned around it. Derived from the value like the rest of the boundary
+#: vocabulary (`clear_record.service.schemas`), so a field the domain type grows
+#: is published here without a second declaration.
+RunStartedOut = out_model(PipelineRun, explanations=list[str])
+RunStatusOut = out_model(PipelineRun, progress=RunSummary | None)
+
+
+class RunEventsOut(Shape):
+    """A page of a run's persisted event stream, with the cursor to continue from."""
+
+    run_id: int
+    status: str
+    events: list[EventOut]
+    next: int
+    error: str | None
 
 
 class ServiceTools:
@@ -122,28 +175,27 @@ class ServiceTools:
         return found
 
     # --- projects ---------------------------------------------------------- #
-    def list_projects(self) -> list[dict[str, Any]]:
+    def list_projects(self) -> list[ProjectCountOut]:
         """List every project with its glossary term count."""
         counts = self.registry.term_counts()
         return [
-            {**_as_dict(project), "term_count": counts.get(project.slug, 0)}
+            ProjectCountOut.of(project, term_count=counts.get(project.slug, 0))
             for project in self.registry.list_projects()
         ]
 
-    def get_project(self, slug: str) -> dict[str, Any]:
+    def get_project(self, slug: str) -> ProjectCountOut:
         """Read one project by slug, with its glossary term count."""
         project = self._project(slug)
-        return {
-            **_as_dict(project),
-            "term_count": len(self.registry.list_terms(slug)),
-        }
+        return ProjectCountOut.of(
+            project, term_count=len(self.registry.list_terms(slug))
+        )
 
     def update_project(
         self,
         slug: str,
         name: str | None = None,
         notes: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ProjectOut:
         """Update a project's name and/or notes.
 
         ``notes`` is the agent-writable home for the story the user tells about
@@ -154,12 +206,12 @@ class ServiceTools:
             updated = self.registry.update_project(slug, name=name, notes=notes)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(updated)
+        return ProjectOut.model_validate(updated)
 
     # --- glossary ---------------------------------------------------------- #
     def list_glossary_terms(
         self, project: str | None = None, status: str | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[TermOut]:
         """List glossary terms, optionally filtered by project slug and status.
 
         ``status`` is one of ``candidate``, ``confirmed`` or ``retired``; omit it
@@ -171,7 +223,7 @@ class ServiceTools:
             terms = self.registry.list_terms(project, status=status)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return [_as_dict(term) for term in terms]
+        return [TermOut.model_validate(term) for term in terms]
 
     def add_glossary_term(
         self,
@@ -183,7 +235,7 @@ class ServiceTools:
         status: str = "candidate",
         added_by: str = "human",
         notes: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TermOut:
         """Add a term to a project's glossary.
 
         An agent's suggestions should use ``added_by='agent'`` and the default
@@ -203,7 +255,7 @@ class ServiceTools:
             )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(created)
+        return TermOut.model_validate(created)
 
     def update_glossary_term(
         self,
@@ -214,7 +266,7 @@ class ServiceTools:
         definition: str | None = None,
         status: str | None = None,
         notes: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TermOut:
         """Update one glossary term by its numeric id (from ``list_glossary_terms``)."""
         try:
             updated: GlossaryTerm = self.registry.update_term(
@@ -230,20 +282,23 @@ class ServiceTools:
             raise ToolError(f"unknown glossary term id {term_id}") from exc
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(updated)
+        return TermOut.model_validate(updated)
 
     # --- meetings ---------------------------------------------------------- #
-    def list_meetings(self, project: str | None = None) -> list[dict[str, Any]]:
+    def list_meetings(self, project: str | None = None) -> list[MeetingOut]:
         """List meetings, newest first, optionally scoped to one project."""
         if project is not None:
             self._project(project)
-        return [_as_dict(m) for m in self.registry.list_meetings(project)]
+        return [
+            MeetingOut.model_validate(meeting)
+            for meeting in self.registry.list_meetings(project)
+        ]
 
-    def get_meeting(self, project: str, meeting: str) -> dict[str, Any]:
+    def get_meeting(self, project: str, meeting: str) -> MeetingTapesOut:
         """Read one meeting by project and meeting slug, with its latest tape set."""
         found = self._meeting(project, meeting)
         tape_set = self.registry.latest_recording_set(found.id)
-        return {**_as_dict(found), "tapes": list(tape_set.paths) if tape_set else []}
+        return MeetingTapesOut.of(found, tapes=list(tape_set.paths) if tape_set else [])
 
     def create_meeting(
         self,
@@ -252,7 +307,7 @@ class ServiceTools:
         recorded_at: str | None = None,
         workspace_path: str | None = None,
         slug: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MeetingOut:
         """Create a meeting inside a project.
 
         ``workspace_path`` is the directory the pipeline runs in; set it here (or
@@ -269,7 +324,7 @@ class ServiceTools:
             )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(created)
+        return MeetingOut.model_validate(created)
 
     def update_meeting(
         self,
@@ -277,7 +332,7 @@ class ServiceTools:
         meeting: str,
         title: str | None = None,
         notes: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MeetingOut:
         """Update a meeting's title and/or notes (the meeting-level story).
 
         ``notes`` is where the user's narrative about this meeting lives; omit a
@@ -288,24 +343,21 @@ class ServiceTools:
             updated = self.registry.update_meeting(found.id, title=title, notes=notes)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(updated)
+        return MeetingOut.model_validate(updated)
 
     def set_meeting_tapes(
         self, project: str, meeting: str, paths: list[str]
-    ) -> dict[str, Any]:
+    ) -> TapeSetOut:
         """Set a meeting's tape set to these local audio file paths (latest wins)."""
         found = self._meeting(project, meeting)
         try:
             tape_set = self.registry.set_recording_set(found.id, paths)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return {
-            "meeting_id": found.id,
-            "paths": list(tape_set.paths),
-            "created_at": tape_set.created_at,
-        }
+        return TapeSetOut.model_validate(tape_set)
 
     # --- pipeline runs ----------------------------------------------------- #
+    @_a_refused_row_is_a_tool_error
     def start_run(
         self,
         project: str,
@@ -316,7 +368,7 @@ class ServiceTools:
         language: str | None = None,
         glossary: str | None = None,
         auto: bool = False,
-    ) -> dict[str, Any]:
+    ) -> RunStartedOut:
         """Start the pipeline for a meeting's latest tape set, with intent.
 
         The run executes in the background; read it with ``run_status`` and
@@ -334,7 +386,7 @@ class ServiceTools:
           per-speaker attribution **only where left unset**, never downloading a
           model.
 
-        The returned dict carries the resolved run plus an ``explanations`` list
+        The returned run carries the resolved fields plus an ``explanations`` list
         — the resolvers' own words (also recorded in the run meta under
         ``options.auto`` / ``options.backend_auto``) — so the caller sees what
         ``auto`` decided instead of guessing.
@@ -382,50 +434,58 @@ class ServiceTools:
             raise ToolError(
                 f"cannot start a run for {project}/{meeting}: {exc}"
             ) from exc
-        result = _as_dict(run)
-        result["explanations"] = list(resolved.explanations)
-        return result
+        return RunStartedOut.of(run, explanations=list(resolved.explanations))
 
-    def list_runs(self, project: str, meeting: str) -> list[dict[str, Any]]:
+    @_a_refused_row_is_a_tool_error
+    def list_runs(self, project: str, meeting: str) -> list[RunOut]:
         """List a meeting's pipeline runs, newest first."""
         found = self._meeting(project, meeting)
-        return [_as_dict(run) for run in self.registry.list_runs(found.id)]
+        return [RunOut.model_validate(run) for run in self.registry.list_runs(found.id)]
 
-    def run_status(self, run_id: int) -> dict[str, Any]:
-        """Read a run's status and progress summary (stage, counts, ETA, error)."""
+    @_a_refused_row_is_a_tool_error
+    def run_status(self, run_id: int) -> RunStatusOut:
+        """Read a run's status and progress summary (stage, counts, ETA, error).
+
+        ``progress`` is the run's summary read from the registry, so a run another
+        node started, or one already finished, reports the same way as one this
+        process is executing.
+        """
         run = self.registry.get_run(run_id)
-        state = self.manager.state(run_id)
-        if run is None and state is None:
+        if run is None:
             raise ToolError(f"unknown run id {run_id}")
-        row = _as_dict(run) if run is not None else {"id": run_id}
-        row["progress"] = state.summary() if state is not None else None
-        return row
+        state = self.manager.state(run_id)
+        return RunStatusOut.of(
+            run, progress=state.summary() if state is not None else None
+        )
 
-    def run_events(self, run_id: int, after: int = 0) -> dict[str, Any]:
+    @_a_refused_row_is_a_tool_error
+    def run_events(self, run_id: int, after: int = 0) -> RunEventsOut:
         """Read a run's progress events after a cursor.
 
         Pass the previous response's ``next`` as ``after`` to page forward without
-        re-reading. Events are the run's persisted stream, so a run started by an
-        earlier server process replays here too.
+        re-reading. Events are the run's *persisted* stream, so a run an earlier
+        server process started replays here too (the live state is only a cache
+        of it).
         """
         state: RunState | None = self.manager.state(run_id)
         if state is None:
             raise ToolError(f"unknown run id {run_id}")
         events = state.events_since(after)
-        return {
-            "run_id": run_id,
-            "status": state.status,
-            "events": [_as_dict(event) for event in events],
-            "next": after + len(events),
-            "error": state.error,
-        }
+        return RunEventsOut(
+            run_id=run_id,
+            status=state.status,
+            events=[EventOut.model_validate(event) for event in events],
+            next=after + len(events),
+            error=state.error,
+        )
 
     # --- artifacts --------------------------------------------------------- #
-    def list_artifacts(self, project: str, meeting: str) -> list[dict[str, Any]]:
+    def list_artifacts(self, project: str, meeting: str) -> list[ArtifactOut]:
         """List a meeting's artifacts (transcript, record, exports) with checksums."""
         found = self._meeting(project, meeting)
         return [
-            _as_dict(artifact) for artifact in self.registry.list_artifacts(found.id)
+            ArtifactOut.model_validate(artifact)
+            for artifact in self.registry.list_artifacts(found.id)
         ]
 
     def read_transcript(
@@ -434,7 +494,7 @@ class ServiceTools:
         meeting: str,
         offset: int = 0,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> TranscriptOut:
         """Read a meeting's transcript as text, optionally sliced for long tapes.
 
         Returns one ``HH:MM:SS.mmm [speaker] text`` line per segment, the total
@@ -447,7 +507,7 @@ class ServiceTools:
             page = _read_transcript(found, offset=offset, limit=limit)
         except (FileNotFoundError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
-        return _as_dict(page)
+        return TranscriptOut.model_validate(page)
 
     # --- agent tasks (ADR-0018) -------------------------------------------- #
     def _agent(self, project: str, meeting: str) -> MeetingAgent:
@@ -465,7 +525,7 @@ class ServiceTools:
             )
         return draft
 
-    def list_agent_drafts(self, project: str, meeting: str) -> dict[str, Any]:
+    def list_agent_drafts(self, project: str, meeting: str) -> AgentTasksOut:
         """List a meeting's agent-task drafts with their review state.
 
         The three task kinds (``glossary_collection``, ``transcript_check``,
@@ -476,21 +536,19 @@ class ServiceTools:
         """
         agent = self._agent(project, meeting)
         minutes = agent.minutes_artifact()
-        return {
-            "tasks": list(TASK_KINDS),
-            "configured": agent.configured(),
-            "drafts": [describe_draft(draft) for draft in agent.drafts()],
-            "minutes": None if minutes is None else _as_dict(minutes),
-        }
+        return AgentTasksOut(
+            tasks=list(TASK_KINDS),
+            configured=agent.configured(),
+            drafts=[describe_draft(draft) for draft in agent.drafts()],
+            minutes=None if minutes is None else ArtifactOut.model_validate(minutes),
+        )
 
-    def read_agent_draft(
-        self, project: str, meeting: str, run_id: str
-    ) -> dict[str, Any]:
+    def read_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
         """Read one draft: its validated value, its provenance and its review state."""
         agent = self._agent(project, meeting)
         return describe_draft(self._draft(agent, run_id))
 
-    def run_agent_task(self, project: str, meeting: str, kind: str) -> dict[str, Any]:
+    def run_agent_task(self, project: str, meeting: str, kind: str) -> DraftView:
         """Launch one agent task for a meeting and return its draft.
 
         ``kind`` is one of ``glossary_collection``, ``transcript_check`` or
@@ -508,9 +566,7 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         return describe_draft(draft)
 
-    def accept_agent_draft(
-        self, project: str, meeting: str, run_id: str
-    ) -> dict[str, Any]:
+    def accept_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
         """Accept a draft, promoting it into what its kind produces.
 
         Promotion is type-specific and idempotent: ``glossary_collection`` adds the
@@ -528,9 +584,7 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         return describe_draft(promoted)
 
-    def reject_agent_draft(
-        self, project: str, meeting: str, run_id: str
-    ) -> dict[str, Any]:
+    def reject_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
         """Reject a draft, keeping it and its provenance on disk as history."""
         agent = self._agent(project, meeting)
         draft = self._draft(agent, run_id)
@@ -592,6 +646,9 @@ __all__ = [
     "INSTRUCTIONS",
     "SERVER_NAME",
     "TOOL_NAMES",
+    "RunEventsOut",
+    "RunStartedOut",
+    "RunStatusOut",
     "ServiceTools",
     "build_server",
     "main",

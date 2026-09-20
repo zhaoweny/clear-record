@@ -66,6 +66,7 @@ from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service import tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.models import Meeting, Tape
+from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 
 #: Upload cap when ``CR_MAX_UPLOAD_BYTES`` is unset (8 GiB).
@@ -381,11 +382,36 @@ def workspace_usage(meeting: Meeting) -> int:
     return total
 
 
+class StorageTape(Shape):
+    """One of a meeting's uploaded tapes as the storage panel publishes it."""
+
+    id: int
+    path: str
+    name: str
+    sha256: str
+    bytes: int
+
+
+class MeetingStorage(Shape):
+    """A meeting's workspace size, its uploaded tapes and the root's free space.
+
+    Declared where it is computed (ADR-0030), because both surfaces read it: the
+    console's panel and `/api/meetings/{id}/storage`.
+    """
+
+    workspace_path: str | None
+    managed: bool
+    managed_root: str
+    bytes: int
+    free_bytes: int | None
+    tapes: list[StorageTape]
+
+
 def meeting_storage(
     registry: Registry,
     meeting: Meeting,
     root: str | os.PathLike | None = None,
-) -> dict:
+) -> MeetingStorage:
     """The meeting's workspace size, its uploaded tapes and the root's free space.
 
     ``free_bytes`` is the same accounting the upload guard checks (one function,
@@ -405,23 +431,23 @@ def meeting_storage(
             free_bytes = root_free_bytes(resolved_root)
         except OSError:  # pragma: no cover - a root that cannot be measured
             free_bytes = None
-    return {
-        "workspace_path": meeting.workspace_path,
-        "managed": managed_here,
-        "managed_root": str(resolved_root),
-        "bytes": workspace_usage(meeting),
-        "free_bytes": free_bytes,
-        "tapes": [
-            {
-                "id": tape.id,
-                "path": tape.path,
-                "name": Path(tape.path).name,
-                "sha256": tape.sha256,
-                "bytes": tape.bytes,
-            }
+    return MeetingStorage(
+        workspace_path=meeting.workspace_path,
+        managed=managed_here,
+        managed_root=str(resolved_root),
+        bytes=workspace_usage(meeting),
+        free_bytes=free_bytes,
+        tapes=[
+            StorageTape(
+                id=tape.id,
+                path=tape.path,
+                name=Path(tape.path).name,
+                sha256=tape.sha256,
+                bytes=tape.bytes,
+            )
             for tape in registry.list_tapes(meeting.id)
         ],
-    }
+    )
 
 
 def machine_storage(
@@ -988,8 +1014,10 @@ __all__ = [
     "InsufficientSpace",
     "InvalidUploadId",
     "MAX_UPLOAD_ID_LENGTH",
+    "MeetingStorage",
     "ResumeNotSupported",
     "STORAGE_BUCKETS",
+    "StorageTape",
     "UnsafeFilename",
     "UploadRejected",
     "UploadTooLarge",

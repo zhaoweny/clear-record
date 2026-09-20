@@ -31,6 +31,7 @@ from pathlib import Path
 
 from clear_record.service import tapestore
 from clear_record.service.models import Archive, Meeting
+from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
     ARCHIVE_CREATED,
@@ -241,13 +242,26 @@ def archive_meeting(
     return archive
 
 
-def verify_archive(archive_dir: str | Path) -> dict:
+class ArchiveVerification(Shape):
+    """The result of re-checking an archive against its manifest (ADR-0030).
+
+    Declared where it is computed: the console's archive row and
+    `/api/archives/{id}/verify` publish the same shape.
+    """
+
+    ok: bool
+    missing: list[str]
+    mismatched: list[str]
+    checked: int
+    archive: str
+
+
+def verify_archive(archive_dir: str | Path) -> ArchiveVerification:
     """Re-read an archive's manifest and re-check every file against it.
 
-    Returns ``{"ok", "missing", "mismatched", "checked", "archive"}``: ``ok`` is
-    true only when every listed file is present with its recorded size and
-    ``sha256``. A missing manifest raises :class:`FileNotFoundError` — there is
-    nothing to verify.
+    ``ok`` is true only when every listed file is present with its recorded size
+    and ``sha256``. A missing manifest raises :class:`FileNotFoundError` — there
+    is nothing to verify.
     """
     archive_dir = Path(archive_dir)
     manifest_path = archive_dir / MANIFEST_FILENAME
@@ -270,17 +284,18 @@ def verify_archive(archive_dir: str | Path) -> dict:
         ):
             mismatched.append(relative)
 
-    return {
-        "ok": not missing and not mismatched,
-        "missing": missing,
-        "mismatched": mismatched,
-        "checked": checked,
-        "archive": str(archive_dir),
-    }
+    return ArchiveVerification(
+        ok=not missing and not mismatched,
+        missing=missing,
+        mismatched=mismatched,
+        checked=checked,
+        archive=str(archive_dir),
+    )
 
 
 __all__ = [
     "MANIFEST_FILENAME",
+    "ArchiveVerification",
     "RECORD_DIRNAME",
     "archive_meeting",
     "tool_version",

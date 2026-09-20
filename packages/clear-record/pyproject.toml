@@ -48,12 +48,19 @@ requires-python = ">=3.12"
 # `bench`/`diagnose` entry points ship in the base distribution and reach the
 # registry — so the extra-plus-actionable-hint pattern the `web`/`tray`/`agents`
 # surfaces use cannot apply here.
+#
+# `pydantic` is a base dependency for the same reason (ADR-0030): the service
+# layer validates the run options where they cross into a run, and every base
+# install reaches the registry — `web`'s FastAPI pulled it in, but the base
+# distribution declared nothing, so nothing promised it was installed. `web`
+# keeps its own `fastapi`, which depends on it anyway.
 dependencies = [
     "alembic>=1.13",
     "click>=8.1",
     "json-repair>=0.63",
     "numpy>=2.0",
     "platformdirs>=4.0",
+    "pydantic>=2.0",
     "soundfile>=0.12",
     "sqlalchemy>=2.0",
 ]

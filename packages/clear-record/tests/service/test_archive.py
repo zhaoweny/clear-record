@@ -152,7 +152,7 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
     # ...and this archive landed beside it, under a free name.
     assert Path(archive.root_path) != winner
     assert Path(archive.root_path).parent == winner.parent
-    assert verify_archive(Path(archive.root_path))["ok"] is True
+    assert verify_archive(Path(archive.root_path)).ok is True
 
 
 def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
@@ -160,7 +160,7 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     archive = archive_meeting(registry, meeting)
     archive_dir = Path(archive.root_path)
 
-    assert verify_archive(archive_dir)["ok"] is True
+    assert verify_archive(archive_dir).ok is True
 
     # A same-length tamper is caught by the digest alone.
     tape_copy = archive_dir / "tapes" / "a.wav"
@@ -168,9 +168,9 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     (archive_dir / "record" / "record.json").unlink()
 
     result = verify_archive(archive_dir)
-    assert result["ok"] is False
-    assert result["mismatched"] == ["tapes/a.wav"]
-    assert result["missing"] == ["record/record.json"]
+    assert result.ok is False
+    assert result.mismatched == ["tapes/a.wav"]
+    assert result.missing == ["record/record.json"]
 
     with pytest.raises(FileNotFoundError):
         verify_archive(tmp_path / "nothing-here")

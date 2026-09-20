@@ -6,6 +6,7 @@ app, no network), so the store is trusted independently of any adapter.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import sqlite3
 from pathlib import Path
@@ -15,6 +16,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import UniqueConstraint, event
 
+from clear_record.core import PipelineOptions
 from clear_record.service import Registry, entities
 from clear_record.service.store import _alembic_config
 
@@ -342,8 +344,12 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
     # Revision 0006: a run carries its durable options and its persisted event stream.
-    run = reg.create_run(meeting.id, run_options={"backend": "apple"})
-    assert reg.get_run(run.id).run_options == {"backend": "apple"}
+    run = reg.create_run(
+        meeting.id, run_options=dataclasses.asdict(PipelineOptions(backend="apple"))
+    )
+    assert reg.get_run(run.id).run_options == dataclasses.asdict(
+        PipelineOptions(backend="apple")
+    )
     assert reg.count_run_events(run.id) == 0
     # Revision 0007: a run records where it came from, and the claim records its
     # owner. The claim runs on a *second* meeting's run: one meeting has one

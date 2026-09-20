@@ -27,6 +27,7 @@ so it cannot drift from the app's own schema.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import shutil
@@ -35,7 +36,7 @@ import sys
 import time
 from pathlib import Path
 
-from clear_record.core import RecordDocument, Segment, write_json
+from clear_record.core import PipelineOptions, RecordDocument, Segment, write_json
 from clear_record.service import Meeting, setup
 from clear_record.service.diagnostics import machine_description
 from clear_record.service.managed import workspace_path_for
@@ -444,12 +445,14 @@ def main() -> int:
         model="whisper-large-v3",
         language="en",
         options={"profile": "balanced"},
-        run_options={
-            "backend": "apple-speech",
-            "model": "whisper-large-v3",
-            "language": "en",
-            "resume": True,
-        },
+        run_options=dataclasses.asdict(
+            PipelineOptions(
+                backend="apple-speech",
+                model="whisper-large-v3",
+                language="en",
+                resume=True,
+            )
+        ),
         origin="console",
     )
     # It stopped mid-transcribe (RUN-04), so its record covers the stages it
@@ -501,12 +504,14 @@ def main() -> int:
         model="whisper-large-v3",
         language="en",
         options={"profile": "balanced"},
-        run_options={
-            "backend": "apple-speech",
-            "model": "whisper-large-v3",
-            "language": "en",
-            "resume": True,
-        },
+        run_options=dataclasses.asdict(
+            PipelineOptions(
+                backend="apple-speech",
+                model="whisper-large-v3",
+                language="en",
+                resume=True,
+            )
+        ),
         origin="mcp",
     )
 

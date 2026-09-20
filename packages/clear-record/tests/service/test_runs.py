@@ -520,8 +520,8 @@ def test_event_cursor_supports_streaming(tmp_path) -> None:
 
     assert len(state.events_since(0)) == 4
     assert state.events_since(4) == []
-    assert state.summary()["total"] == 3
-    assert state.summary()["status"] == "done"
+    assert state.summary().total == 3
+    assert state.summary().status == "done"
 
 
 # --- durability across a restart ------------------------------------------- #
@@ -613,6 +613,52 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
 
     assert state.status == "done"
     assert seen["options"].audio_files == (str(tape),)
+
+
+def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
+    """One unreadable row must not stop the node's queue (R3).
+
+    Both reads the drain makes walk rows and stop at the row they refuse, so a
+    single row this build cannot read hid every run queued behind it — and killed
+    the queue thread, so every respawn died the same way, leaving queued work
+    stopped silently. The row is failed instead, with the reader's own message in
+    its record, and the run behind it still moves.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    refused_meeting = _meeting(registry, tmp_path, [tape])
+    later_workspace = tmp_path / "later"
+    later_workspace.mkdir()
+    later_meeting = registry.create_meeting(
+        "ops", "Retro", workspace_path=str(later_workspace)
+    )
+    registry.set_recording_set(later_meeting.id, [str(tape)])
+
+    options = dataclasses.asdict(PipelineOptions(backend="apple"))
+    refused = registry.create_run(
+        refused_meeting.id, backend="apple", origin="console", run_options=options
+    )
+    later = registry.create_run(
+        later_meeting.id, backend="apple", origin="console", run_options=options
+    )
+    assert refused.id < later.id  # the unreadable row is the head of the FIFO
+
+    with sqlite3.connect(str(registry.db_path)) as conn:
+        conn.execute(
+            "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
+            ('{"backend": "apple", "jobs": "many"}', refused.id),
+        )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+
+    assert manager.wait(later.id, timeout=10).status == "done"
+
+    quarantined = registry.get_run(refused.id)
+    assert quarantined is not None and quarantined.status == "failed"
+    assert quarantined.error is not None
+    assert f"run {refused.id}" in quarantined.error
+    assert "jobs" in quarantined.error
 
 
 # --- the node queue: one run at a time ------------------------------------- #
@@ -1874,7 +1920,7 @@ def _completed_run(
         meeting.id,
         backend=backend,
         model=model,
-        run_options={"chunk_seconds": chunk_seconds},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=chunk_seconds)),
     )
     registry.update_run(
         run.id,
@@ -1929,7 +1975,7 @@ def test_the_eta_projects_matching_history_onto_the_same_tape(tmp_path) -> None:
         meeting.id,
         backend="apple",
         model="small",
-        run_options={"chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
     )
 
     # 600 audio seconds at 2 audio-seconds per wall second = 300s projected.
@@ -1947,7 +1993,7 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
         meeting.id,
         backend="apple",
         model="small",
-        run_options={"chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
     )
     # Nothing has completed yet: there is nothing to project.
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None

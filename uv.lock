@@ -188,6 +188,7 @@ dependencies = [
     { name = "json-repair" },
     { name = "numpy" },
     { name = "platformdirs" },
+    { name = "pydantic" },
     { name = "soundfile" },
     { name = "sqlalchemy" },
 ]
@@ -216,6 +217,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'agents'", specifier = ">=2" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "platformdirs", specifier = ">=4.0" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pyside6", marker = "extra == 'tray'", specifier = ">=6.7" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.9" },
     { name = "soundfile", specifier = ">=0.12" },

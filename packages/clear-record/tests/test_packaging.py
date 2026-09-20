@@ -57,12 +57,16 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # and it migrates when the process opens it, and the `bench`/`diagnose` entry
 # points ship in the base distribution and reach the registry — so unlike the
 # web/tray/MCP stacks these cannot be an extra with an actionable hint.
+# `pydantic` joined with the same ADR: the service layer validates the run
+# options at the seam that reads them, so every base install (not just one with
+# the `web` extra, whose FastAPI used to pull it in transitively) needs it.
 RUNTIME_DEPS = {
     "alembic",
     "click",
     "json-repair",
     "numpy",
     "platformdirs",
+    "pydantic",
     "soundfile",
     "sqlalchemy",
 }
@@ -197,6 +201,7 @@ EXPECTED_WEB_TEMPLATES = frozenset(
         "_upload.html",
         "_webhooks.html",
         "404.html",
+        "409.html",
         "agent.html",
         "base.html",
         "index.html",

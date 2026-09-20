@@ -22,7 +22,6 @@ while remote access stays the operator's reverse proxy.
 
 from __future__ import annotations
 
-import dataclasses
 import threading
 import webbrowser
 from collections.abc import Mapping, Sequence
@@ -60,17 +59,32 @@ from clear_record.service import (
     TERMINAL_STATUSES,
     AgentConfig,
     AgentTaskError,
+    AgentTasksOut,
+    ArchiveOut,
+    ArtifactOut,
+    DraftView,
+    EventOut,
+    MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingOut,
     ModelNotOnDisk,
     NoBackendAvailable,
     PipelineOptions,
     PipelineRun,
+    ProjectCountOut,
+    ProjectOut,
     Registry,
-    Runner,
     RunManager,
+    RunOut,
+    Runner,
     RunState,
+    RunSummary,
+    Shape,
     Tape,
+    TapeOut,
+    TapeSetOut,
+    TermOut,
     archive_meeting,
     collect_bundle,
     cost_of,
@@ -92,7 +106,7 @@ from clear_record.service.agent_flow import (
     download_transcription_model,
     transcription_status,
 )
-from clear_record.service.archive import tool_version
+from clear_record.service.archive import ArchiveVerification, tool_version
 from clear_record.service.auto import (
     DEFAULT_MODEL,
     MODEL_LADDER,
@@ -110,6 +124,7 @@ from clear_record.service.setup import (
     Detection,
     PI_AGENT,
     SetupError,
+    SetupStatusOut,
     clear_seen_version,
     current_version,
     detect,
@@ -409,8 +424,98 @@ class ArchiveCreate(BaseModel):
     root: str | None = None
 
 
-def _out(obj) -> dict:
-    return dataclasses.asdict(obj)
+# --- the JSON API's response shapes (ADR-0030) ------------------------------ #
+#
+# A request body was already a declared model (`ProjectCreate`, `RunCreate`,
+# ...); these are the responses. A shape that *is* one of the registry's values
+# is derived from that value in `clear_record.service.schemas`, and a shape a
+# service view computes is declared where it is built (`DraftView`,
+# `AgentTasksOut`, `MeetingStorage`, `ArchiveVerification`), so the API publishes
+# the value it read rather than a copy of it. The ones below are the API's own: a
+# computed answer, or an envelope around a value. Declaring them is what gets an
+# answer *checked* on the way out — FastAPI validates the response against the
+# annotation — so a handler that grew or lost a key fails here instead of in a
+# client.
+#
+# The HTML routes are deliberately not in this list: a template render is not a
+# data boundary, and what a template needs is a context, not a shape. Where a
+# service view feeds both (the webhook panel and `/api/webhooks`), the view
+# itself now *is* a declared model, so the two cannot disagree.
+
+
+class HealthOut(Shape):
+    """`/api/health`: the process is up, and which registry it opened."""
+
+    status: str
+    registry: str
+
+
+class ShutdownOut(Shape):
+    """`/api/shutdown`: the managed server has been asked to stop."""
+
+    status: str
+
+
+class WebhookDeliveryOut(Shape):
+    """One endpoint's newest delivery attempt (ADR-0020)."""
+
+    outcome: str
+    outcome_label: str
+    at: str
+    attempts: int
+    http_status: int | None
+    error: str | None
+    event_type: str
+    event_id: str
+
+
+class WebhookEndpointOut(Shape):
+    """One configured endpoint: its config facts, and its last delivery."""
+
+    name: str | None
+    url: str
+    events: list[str]
+    include_content: bool
+    signed: bool
+    health: str
+    health_label: str
+    problems: list[str]
+    last_delivery: WebhookDeliveryOut | None
+
+
+class WebhookStatusOut(Shape):
+    """`/api/webhooks`: the overall state, the config problems, one row per endpoint.
+
+    The signing secret is nowhere in this shape — only whether an endpoint is
+    signed — and a problem names the environment variable, never its value.
+    """
+
+    state: str
+    state_label: str
+    configured: bool
+    problems: list[str]
+    endpoints: list[WebhookEndpointOut]
+
+
+class TapeDeletedOut(Shape):
+    """`DELETE /api/meetings/{id}/tapes/{tape_id}`: the row that went, and the caveat."""
+
+    deleted: TapeOut
+    note: str
+
+
+class RunSnapshotOut(Shape):
+    """One run as the API reports it: the registry row, plus its live state."""
+
+    run: RunOut
+    state: RunSummary
+
+
+class RunEventsOut(Shape):
+    """A page of one run's event stream, with the cursor to continue from."""
+
+    events: list[EventOut]
+    next: int
 
 
 def _content_length(request: Request) -> int | None:
@@ -647,7 +752,7 @@ def _run_context(
     terminal run; the template renders it verbatim.
     """
     if state is not None:
-        context = state.summary()
+        context = state.summary().model_dump()
         last = state.last
         context["meeting_id"] = state.meeting_id
         context["message"] = last.message if last else ""
@@ -701,15 +806,14 @@ def draft_view(draft) -> dict:
 
     Everything factual comes from :func:`~clear_record.service.describe_draft`
     (the same shape the MCP adapter returns), so the browser and an agent cannot
-    disagree about a draft; only the short checksum and the label are added here.
+    disagree about a draft; only the two short checksums are added here.
     """
     view = describe_draft(draft)
-    provenance = view["provenance"]
-    digest = provenance.get("context_hash") or ""
-    view["context_hash_short"] = digest[:12]
-    prompt = provenance.get("prompt_hash") or ""
-    view["prompt_hash_short"] = prompt[:12]
-    return view
+    return {
+        **view.model_dump(),
+        "context_hash_short": view.provenance.context_hash[:12],
+        "prompt_hash_short": view.provenance.prompt_hash[:12],
+    }
 
 
 # --- webhooks: delivery health (ADR-0020) ---------------------------------- #
@@ -738,7 +842,7 @@ def _webhook_health_label(health: str) -> str:
     return tr("No delivery yet")
 
 
-def webhook_status_view(status: WebhookStatus) -> dict:
+def webhook_status_view(status: WebhookStatus) -> WebhookStatusOut:
     """The console's webhook view: overall state, config problems, per-endpoint last delivery.
 
     Built field by field rather than by ``dataclasses.asdict`` on purpose: the
@@ -757,38 +861,38 @@ def webhook_status_view(status: WebhookStatus) -> dict:
     for report in status.endpoints:
         last = report.last_delivery
         endpoints.append(
-            {
-                "name": report.name,
-                "url": report.url,
-                "events": list(report.events),
-                "include_content": report.include_content,
-                "signed": report.signed,
-                "health": report.health,
-                "health_label": _webhook_health_label(report.health),
-                "problems": list(report.problems),
-                "last_delivery": None
+            WebhookEndpointOut(
+                name=report.name,
+                url=report.url,
+                events=list(report.events),
+                include_content=report.include_content,
+                signed=report.signed,
+                health=report.health,
+                health_label=_webhook_health_label(report.health),
+                problems=list(report.problems),
+                last_delivery=None
                 if last is None
-                else {
-                    "outcome": "delivered" if last.status == "delivered" else "failed",
-                    "outcome_label": tr("Delivered")
+                else WebhookDeliveryOut(
+                    outcome="delivered" if last.status == "delivered" else "failed",
+                    outcome_label=tr("Delivered")
                     if last.status == "delivered"
                     else tr("Failed"),
-                    "at": last.at,
-                    "attempts": last.attempts,
-                    "http_status": last.http_status,
-                    "error": last.error,
-                    "event_type": last.type,
-                    "event_id": last.event_id,
-                },
-            }
+                    at=last.at,
+                    attempts=last.attempts,
+                    http_status=last.http_status,
+                    error=last.error,
+                    event_type=last.type,
+                    event_id=last.event_id,
+                ),
+            )
         )
-    return {
-        "state": status.state,
-        "state_label": _webhook_state_label(status.state),
-        "configured": bool(status.endpoints),
-        "problems": list(status.problems),
-        "endpoints": endpoints,
-    }
+    return WebhookStatusOut(
+        state=status.state,
+        state_label=_webhook_state_label(status.state),
+        configured=bool(status.endpoints),
+        problems=list(status.problems),
+        endpoints=endpoints,
+    )
 
 
 def create_app(
@@ -960,7 +1064,7 @@ def create_app(
             )
         return rows
 
-    def archive_status(archive) -> dict | None:
+    def archive_status(archive) -> ArchiveVerification | None:
         """The verification summary, or None when the manifest is gone."""
         try:
             return verify_archive(archive.root_path)
@@ -1075,19 +1179,19 @@ def create_app(
             rows.append(
                 {
                     "meeting": meeting,
-                    "workspace_path": usage["workspace_path"],
-                    "managed": usage["managed"],
+                    "workspace_path": usage.workspace_path,
+                    "managed": usage.managed,
                     "tapes": [
                         {
-                            "id": tape["id"],
-                            "name": tape["name"],
-                            "path": tape["path"],
-                            "sha256": tape["sha256"],
-                            "sha256_short": tape["sha256"][:12],
-                            "bytes": tape["bytes"],
-                            "size": human_bytes(tape["bytes"]),
+                            "id": tape.id,
+                            "name": tape.name,
+                            "path": tape.path,
+                            "sha256": tape.sha256,
+                            "sha256_short": tape.sha256[:12],
+                            "bytes": tape.bytes,
+                            "size": human_bytes(tape.bytes),
                         }
-                        for tape in usage["tapes"]
+                        for tape in usage.tapes
                     ],
                     "transcript": None
                     if transcript is None
@@ -1182,30 +1286,30 @@ def create_app(
         thing this view does with it.
         """
         usage = managed.meeting_storage(registry, meeting)
-        free_bytes = usage["free_bytes"]
+        free_bytes = usage.free_bytes
         tapes = [
             {
-                "id": tape["id"],
-                "name": tape["name"],
-                "path": tape["path"],
-                "sha256": tape["sha256"],
-                "sha256_short": tape["sha256"][:12],
-                "bytes": tape["bytes"],
-                "size": human_bytes(tape["bytes"]),
+                "id": tape.id,
+                "name": tape.name,
+                "path": tape.path,
+                "sha256": tape.sha256,
+                "sha256_short": tape.sha256[:12],
+                "bytes": tape.bytes,
+                "size": human_bytes(tape.bytes),
             }
-            for tape in usage["tapes"]
+            for tape in usage.tapes
         ]
         tapes_bytes = sum(tape["bytes"] for tape in tapes)
         return {
             "meeting_id": meeting.id,
-            "workspace_path": usage["workspace_path"],
-            "managed": usage["managed"],
+            "workspace_path": usage.workspace_path,
+            "managed": usage.managed,
             # A managed meeting uploads; so does one with no workspace yet (the
             # first upload provisions a managed one). A user-chosen one cannot.
-            "can_upload": usage["managed"] or not usage["workspace_path"],
-            "managed_root": usage["managed_root"],
-            "meeting_bytes": usage["bytes"],
-            "meeting_size": human_bytes(usage["bytes"]),
+            "can_upload": usage.managed or not usage.workspace_path,
+            "managed_root": usage.managed_root,
+            "meeting_bytes": usage.bytes,
+            "meeting_size": human_bytes(usage.bytes),
             "tapes_bytes": tapes_bytes,
             "tapes_size": human_bytes(tapes_bytes),
             "free_bytes": free_bytes,
@@ -2548,7 +2652,7 @@ def create_app(
         )
 
     @app.get("/api/agent/setup")
-    def agent_setup_status(detect_now: bool = False) -> dict:
+    def agent_setup_status(detect_now: bool = False) -> SetupStatusOut:
         """The machine surface for the setup state; ``?detect_now=1`` probes first.
 
         JSON, so it stays English (the i18n boundary). The key is never part of
@@ -2559,11 +2663,11 @@ def create_app(
 
     # --- JSON API (machines, scripts, later MCP) ---------------------------- #
     @app.get("/api/health")
-    def health() -> dict:
-        return {"status": "ok", "registry": str(registry.db_path)}
+    def health() -> HealthOut:
+        return HealthOut(status="ok", registry=str(registry.db_path))
 
     @app.get("/api/webhooks")
-    def webhooks_status() -> dict:
+    def webhooks_status() -> WebhookStatusOut:
         """Webhook endpoint health as JSON; see :func:`webhook_status_view`.
 
         Not configured, config-broken and delivery-failing are distinct
@@ -2574,17 +2678,15 @@ def create_app(
         return webhook_status_view(emitter.status())
 
     @app.get("/api/projects")
-    def list_projects() -> list[dict]:
+    def list_projects() -> list[ProjectCountOut]:
         counts = registry.term_counts()
-        projects = []
-        for project in registry.list_projects():
-            row = _out(project)
-            row["term_count"] = counts.get(project.slug, 0)
-            projects.append(row)
-        return projects
+        return [
+            ProjectCountOut.of(project, term_count=counts.get(project.slug, 0))
+            for project in registry.list_projects()
+        ]
 
     @app.post("/api/projects", status_code=201)
-    def create_project(body: ProjectCreate) -> dict:
+    def create_project(body: ProjectCreate) -> ProjectOut:
         try:
             project = registry.create_project(
                 body.name,
@@ -2594,17 +2696,17 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return _out(project)
+        return ProjectOut.model_validate(project)
 
     @app.get("/api/projects/{slug}")
-    def get_project(slug: str) -> dict:
+    def get_project(slug: str) -> ProjectOut:
         try:
-            return _out(registry.require_project(slug))
+            return ProjectOut.model_validate(registry.require_project(slug))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
 
     @app.patch("/api/projects/{slug}")
-    def update_project(slug: str, body: ProjectUpdate) -> dict:
+    def update_project(slug: str, body: ProjectUpdate) -> ProjectOut:
         try:
             project = registry.update_project(
                 slug,
@@ -2616,10 +2718,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _out(project)
+        return ProjectOut.model_validate(project)
 
     @app.get("/api/projects/{slug}/glossary")
-    def list_terms(slug: str, status: str | None = None) -> list[dict]:
+    def list_terms(slug: str, status: str | None = None) -> list[TermOut]:
         try:
             registry.require_project(slug)
         except KeyError as exc:
@@ -2628,10 +2730,10 @@ def create_app(
             terms = registry.list_terms(slug, status=status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return [_out(term) for term in terms]
+        return [TermOut.model_validate(term) for term in terms]
 
     @app.post("/api/projects/{slug}/glossary", status_code=201)
-    def add_term(slug: str, body: TermCreate) -> dict:
+    def add_term(slug: str, body: TermCreate) -> TermOut:
         try:
             term = registry.add_term(
                 slug,
@@ -2647,10 +2749,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return _out(term)
+        return TermOut.model_validate(term)
 
     @app.patch("/api/glossary/{term_id}")
-    def update_term(term_id: int, body: TermUpdate) -> dict:
+    def update_term(term_id: int, body: TermUpdate) -> TermOut:
         try:
             term = registry.update_term(
                 term_id,
@@ -2665,7 +2767,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no term {term_id}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _out(term)
+        return TermOut.model_validate(term)
 
     @app.delete("/api/glossary/{term_id}", status_code=204)
     def delete_term(term_id: int) -> None:
@@ -2676,7 +2778,7 @@ def create_app(
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)
-    def create_meeting(slug: str, body: MeetingCreate) -> dict:
+    def create_meeting(slug: str, body: MeetingCreate) -> MeetingOut:
         try:
             meeting = registry.create_meeting(
                 slug,
@@ -2692,22 +2794,25 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return _out(meeting)
+        return MeetingOut.model_validate(meeting)
 
     @app.get("/api/projects/{slug}/meetings")
-    def list_meetings(slug: str) -> list[dict]:
+    def list_meetings(slug: str) -> list[MeetingOut]:
         try:
             registry.require_project(slug)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no project {slug!r}") from exc
-        return [_out(meeting) for meeting in registry.list_meetings(slug)]
+        return [
+            MeetingOut.model_validate(meeting)
+            for meeting in registry.list_meetings(slug)
+        ]
 
     @app.get("/api/meetings/{meeting_id}")
-    def get_meeting(meeting_id: int) -> dict:
+    def get_meeting(meeting_id: int) -> MeetingOut:
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
-        return _out(meeting)
+        return MeetingOut.model_validate(meeting)
 
     # --- JSON API: a meeting's agent tasks --------------------------------- #
     def require_meeting_row(meeting_id: int):
@@ -2717,20 +2822,20 @@ def create_app(
         return meeting
 
     @app.get("/api/meetings/{meeting_id}/agent")
-    def meeting_agent_tasks(meeting_id: int) -> dict:
+    def meeting_agent_tasks(meeting_id: int) -> AgentTasksOut:
         """A meeting's agent-task surface: the kinds, the drafts and the minutes."""
         meeting = require_meeting_row(meeting_id)
         agent = meeting_agent(meeting)
         minutes = agent.minutes_artifact()
-        return {
-            "tasks": list(TASK_KINDS),
-            "configured": agent_ready(),
-            "drafts": [describe_draft(draft) for draft in agent.drafts()],
-            "minutes": None if minutes is None else _out(minutes),
-        }
+        return AgentTasksOut(
+            tasks=list(TASK_KINDS),
+            configured=agent_ready(),
+            drafts=[describe_draft(draft) for draft in agent.drafts()],
+            minutes=None if minutes is None else ArtifactOut.of(minutes),
+        )
 
     @app.post("/api/meetings/{meeting_id}/agent/{kind}", status_code=201)
-    def run_agent_task(meeting_id: int, kind: str) -> dict:
+    def run_agent_task(meeting_id: int, kind: str) -> DraftView:
         """Launch one agent task; the result is a draft, never auto-accepted."""
         meeting = require_meeting_row(meeting_id)
         if kind not in TASK_KINDS:
@@ -2741,7 +2846,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return describe_draft(draft)
 
-    def review_api(meeting_id: int, run_id: str, accept: bool) -> dict:
+    def review_api(meeting_id: int, run_id: str, accept: bool) -> DraftView:
         meeting = require_meeting_row(meeting_id)
         agent = meeting_agent(meeting)
         draft = agent.draft(run_id)
@@ -2757,17 +2862,17 @@ def create_app(
         return describe_draft(reviewed)
 
     @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/accept")
-    def accept_agent_draft(meeting_id: int, run_id: str) -> dict:
+    def accept_agent_draft(meeting_id: int, run_id: str) -> DraftView:
         """Accept a draft and return what its acceptance produced."""
         return review_api(meeting_id, run_id, accept=True)
 
     @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/reject")
-    def reject_agent_draft(meeting_id: int, run_id: str) -> dict:
+    def reject_agent_draft(meeting_id: int, run_id: str) -> DraftView:
         """Reject a draft, keeping it and its provenance on disk."""
         return review_api(meeting_id, run_id, accept=False)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
-    def set_tapes(meeting_id: int, body: TapesUpdate) -> dict:
+    def set_tapes(meeting_id: int, body: TapesUpdate) -> TapeSetOut:
         try:
             tape_set = registry.set_recording_set(meeting_id, body.paths)
         except KeyError as exc:
@@ -2776,12 +2881,12 @@ def create_app(
             ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _out(tape_set)
+        return TapeSetOut.model_validate(tape_set)
 
     @app.post("/api/meetings/{meeting_id}/tapes", status_code=201)
     async def upload_tape(
         request: Request, meeting_id: int, upload_id: str | None = None
-    ) -> dict:
+    ) -> TapeOut:
         """Receive one tape into the meeting's **managed** workspace (ADR-0024).
 
         Multipart, one file part named ``file``. The guards run first — and the
@@ -2817,10 +2922,10 @@ def create_app(
             raise HTTPException(
                 status_code=_upload_status(exc), detail=str(exc)
             ) from exc
-        return _out(tape)
+        return TapeOut.model_validate(tape)
 
     @app.get("/api/meetings/{meeting_id}/storage")
-    def meeting_storage(meeting_id: int) -> dict:
+    def meeting_storage(meeting_id: int) -> managed.MeetingStorage:
         """A managed meeting's workspace size, tapes and root free space (ADR-0024).
 
         ``free_bytes`` is ``None`` unless the meeting is managed; it comes from
@@ -2832,7 +2937,7 @@ def create_app(
         return managed.meeting_storage(registry, meeting)
 
     @app.delete("/api/meetings/{meeting_id}/tapes/{tape_id}")
-    def delete_tape(meeting_id: int, tape_id: int) -> dict:
+    def delete_tape(meeting_id: int, tape_id: int) -> TapeDeletedOut:
         """Delete one managed tape's file and record.
 
         The archive is the durable copy; the response says so, and a tape in a
@@ -2849,16 +2954,16 @@ def create_app(
             ) from exc
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "deleted": _out(tape),
-            "note": (
+        return TapeDeletedOut(
+            deleted=TapeOut.model_validate(tape),
+            note=(
                 "the archive is the durable copy; archive this meeting before "
                 "deleting its tapes if you need to keep it"
             ),
-        }
+        )
 
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
-    def start_run(meeting_id: int, body: RunCreate) -> dict:
+    def start_run(meeting_id: int, body: RunCreate) -> RunSnapshotOut:
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
@@ -2901,34 +3006,34 @@ def create_app(
             if runs.active_state(meeting_id) is not None:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "run": _out(run),
-            "state": runs.require_state(run.id).summary(),
-        }
+        return RunSnapshotOut(
+            run=RunOut.model_validate(run),
+            state=runs.require_state(run.id).summary(),
+        )
 
     @app.get("/api/runs/{run_id}")
-    def get_run(run_id: int) -> dict:
+    def get_run(run_id: int) -> RunSnapshotOut:
         run = registry.get_run(run_id)
         state = runs.state(run_id)
         if run is None or state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id}")
-        return {"run": _out(run), "state": state.summary()}
+        return RunSnapshotOut(run=RunOut.model_validate(run), state=state.summary())
 
     @app.get("/api/runs/{run_id}/events")
-    def run_events(run_id: int, after: int = 0) -> dict:
+    def run_events(run_id: int, after: int = 0) -> RunEventsOut:
         try:
             state = runs.require_state(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"no run {run_id}") from exc
         events = state.events_since(after)
-        return {
-            "events": [_out(event) for event in events],
-            "next": after + len(events),
-        }
+        return RunEventsOut(
+            events=[EventOut.model_validate(event) for event in events],
+            next=after + len(events),
+        )
 
     # --- JSON API: archives ------------------------------------------------- #
     @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
-    def post_archive(meeting_id: int, body: ArchiveCreate | None = None) -> dict:
+    def post_archive(meeting_id: int, body: ArchiveCreate | None = None) -> ArchiveOut:
         meeting = registry.meeting_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
@@ -2937,10 +3042,10 @@ def create_app(
             archive = archive_meeting(registry, meeting, root)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _out(archive)
+        return ArchiveOut.model_validate(archive)
 
     @app.get("/api/projects/{slug}/archives")
-    def list_project_archives(slug: str) -> list[dict]:
+    def list_project_archives(slug: str) -> list[ArchiveOut]:
         try:
             registry.require_project(slug)
         except KeyError as exc:
@@ -2951,16 +3056,19 @@ def create_app(
             for archive in registry.list_archives(meeting.id)
         ]
         archives.sort(key=lambda archive: archive.id, reverse=True)
-        return [_out(archive) for archive in archives]
+        return [ArchiveOut.model_validate(archive) for archive in archives]
 
     @app.get("/api/meetings/{meeting_id}/archives")
-    def list_meeting_archives(meeting_id: int) -> list[dict]:
+    def list_meeting_archives(meeting_id: int) -> list[ArchiveOut]:
         if registry.meeting_by_id(meeting_id) is None:
             raise HTTPException(status_code=404, detail=f"no meeting {meeting_id}")
-        return [_out(archive) for archive in registry.list_archives(meeting_id)]
+        return [
+            ArchiveOut.model_validate(archive)
+            for archive in registry.list_archives(meeting_id)
+        ]
 
     @app.post("/api/archives/{archive_id}/verify")
-    def post_verify(archive_id: int) -> dict:
+    def post_verify(archive_id: int) -> ArchiveVerification:
         archive = registry.get_archive(archive_id)
         if archive is None:
             raise HTTPException(status_code=404, detail=f"no archive {archive_id}")
@@ -2970,7 +3078,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/shutdown", status_code=202)
-    def shutdown() -> dict:
+    def shutdown() -> ShutdownOut:
         """Ask the managed server to stop (the desktop app's Quit button).
 
         The console runs as a local server; a windowed desktop build has no
@@ -2984,7 +3092,34 @@ def create_app(
                 status_code=409, detail="not running under the managed server"
             )
         server.should_exit = True
-        return {"status": "stopping"}
+        return ShutdownOut(status="stopping")
+
+    # --- the one refusal the registry can raise (ADR-0030) ------------------ #
+    @app.exception_handler(MalformedRunOptions)
+    def stored_run_options_refused(
+        request: Request, exc: MalformedRunOptions
+    ) -> Response:
+        """Answer a stored run row this build refuses with what the reader said.
+
+        The refusal is nobody's request: the registry holds a row this build
+        cannot read, which used to answer 500 — a traceback for the user and no
+        message for a client. It is a 409 (the registry's state conflicts with
+        this build), with the reader's own text, which names the run and the
+        fields that failed. The JSON API carries it as ``detail``.
+
+        A page route gets the same message on a page of its own rather than the
+        console's chrome: the header chip reads the same registry (RUN-03), so a
+        chrome render would raise the same refusal — which is also why this
+        answers every page route, not only the ones that read a run directly.
+        """
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+        return TEMPLATES.TemplateResponse(
+            request,
+            "409.html",
+            {"message": str(exc)},
+            status_code=409,
+        )
 
     return app
 

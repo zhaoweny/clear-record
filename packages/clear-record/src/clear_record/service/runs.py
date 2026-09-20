@@ -56,6 +56,8 @@ from clear_record.service.glossary import (
     write_snapshot,
 )
 from clear_record.service.models import RUN_ORIGINS, Meeting, PipelineRun
+from clear_record.service.run_options import MalformedRunOptions
+from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 from clear_record.service.webhooks import (
     RUN_FAILED,
@@ -402,6 +404,26 @@ def _default_pipeline(
     stages.run(directory, options, on_event=on_event)
 
 
+class RunSummary(Shape):
+    """One run's live state as a reader sees it (ADR-0030).
+
+    The console's run fragment, the JSON API and the MCP tools all report a run's
+    progress through this, so a browser and an agent cannot be told different
+    things about the same run. ``stage``/``index``/``total``/``eta_s`` come from
+    the newest event and are ``None``/``0`` while the run has reported nothing.
+    """
+
+    run_id: int
+    status: str
+    events: int
+    stage: str | None
+    index: int
+    total: int
+    eta_s: float | None
+    error: str | None
+    position: int
+
+
 @dataclasses.dataclass
 class RunState:
     """The state of one run: its status, its event stream and its queue place."""
@@ -422,19 +444,19 @@ class RunState:
     def last(self) -> JobEvent | None:
         return self.events[-1] if self.events else None
 
-    def summary(self) -> dict:
+    def summary(self) -> RunSummary:
         last = self.last
-        return {
-            "run_id": self.run_id,
-            "status": self.status,
-            "events": len(self.events),
-            "stage": last.stage if last else None,
-            "index": last.index if last else 0,
-            "total": last.total if last else 0,
-            "eta_s": last.eta_s if last else None,
-            "error": self.error,
-            "position": self.position,
-        }
+        return RunSummary(
+            run_id=self.run_id,
+            status=self.status,
+            events=len(self.events),
+            stage=last.stage if last else None,
+            index=last.index if last else 0,
+            total=last.total if last else 0,
+            eta_s=last.eta_s if last else None,
+            error=self.error,
+            position=self.position,
+        )
 
 
 class RunManager:
@@ -1070,19 +1092,29 @@ class RunManager:
                 while True:
                     if self._stopping:
                         return
-                    running = self._registry.runs_with_status("running")
-                    if running and self._reap_dead_runs(running):
+                    try:
                         running = self._registry.runs_with_status("running")
-                    if not running:
-                        run = self._registry.oldest_queued_run()
-                        if run is not None:
-                            break
-                        # Nothing is waiting and nothing is executing, so the
-                        # enqueue-time options this manager kept cannot be needed:
-                        # their runs were claimed elsewhere, cancelled by another
-                        # writer, or finished. The registry is the truth; this is
-                        # a cache, and an empty queue is when to drop it.
-                        self._prune_pending()
+                        if running and self._reap_dead_runs(running):
+                            running = self._registry.runs_with_status("running")
+                        if not running:
+                            run = self._registry.oldest_queued_run()
+                            if run is not None:
+                                break
+                            # Nothing is waiting and nothing is executing, so the
+                            # enqueue-time options this manager kept cannot be
+                            # needed: their runs were claimed elsewhere, cancelled
+                            # by another writer, or finished. The registry is the
+                            # truth; this is a cache, and an empty queue is when to
+                            # drop it.
+                            self._prune_pending()
+                    except MalformedRunOptions as exc:
+                        # One row this build cannot read must not stop the node.
+                        # Both reads above walk rows and stop at the row they
+                        # refuse, so a row nobody can read would otherwise hide
+                        # every run behind it — and kill the thread, and every
+                        # respawn with it. That run is failed instead (it can
+                        # never execute), and the queue tries again.
+                        self._refuse_run(exc)
                     self._wake.wait(timeout=1.0)
             self._execute_run(run)
 
@@ -1290,15 +1322,19 @@ class RunManager:
             self._pending.clear()
 
     def _options_from_row(self, run: PipelineRun) -> PipelineOptions | None:
-        """Rebuild the queued run's options from the registry (after a restart)."""
+        """Rebuild the queued run's options from the registry (after a restart).
+
+        The row has already been validated where the registry read it
+        (:func:`clear_record.service.run_options.read_run_options`), so this is a
+        rebuild and not a repair: every field is present, of the declared type,
+        and ``audio_files`` is already the tuple the options declare. Nothing is
+        filtered and nothing falls back to a default — the keys that used to be
+        dropped here and the fields that used to be silently defaulted are what
+        the seam above now refuses.
+        """
         if not run.run_options:
             return None
-        known = {field.name for field in dataclasses.fields(PipelineOptions)}
-        values = {key: value for key, value in run.run_options.items() if key in known}
-        for name in ("audio_files",):
-            if values.get(name) is not None:
-                values[name] = tuple(values[name])
-        return PipelineOptions(**values)
+        return PipelineOptions(**run.run_options)
 
     def _run_pipeline(
         self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
@@ -1434,6 +1470,56 @@ class RunManager:
             meeting_id=meeting.id,
             error=error,
         )
+
+    def _refuse_run(self, exc: MalformedRunOptions) -> None:
+        """Take the run whose stored options this build refuses out of the queue.
+
+        The row cannot be read through the registry at all — that is what the
+        refusal is — so the ordinary fail path (which reads the row back) cannot
+        be used: the run is failed by id, the column that could not be read is
+        cleared so the row is readable again, and the run says why in its own
+        ``error``, which is the reader's message and names the field. Its meeting
+        goes to ``failed`` like any other run that cannot execute, and the queue
+        carries on with the next run.
+        """
+        run_id, meeting_id = exc.run_id, exc.meeting_id
+        if run_id is None:  # pragma: no cover - the reader always names its run
+            return
+        error = str(exc)
+        try:
+            self._registry.fail_unreadable_run(run_id, error=error)
+            meeting = (
+                self._registry.meeting_by_id(meeting_id)
+                if meeting_id is not None
+                else None
+            )
+            if meeting is not None:
+                self._registry.set_meeting_status(meeting.id, "failed")
+                self._webhooks.emit(
+                    RUN_FAILED,
+                    project_id=meeting.project_id,
+                    meeting_id=meeting.id,
+                    run_id=run_id,
+                )
+            log_event(
+                "error",
+                "runs",
+                "run.failed",
+                run_id=run_id,
+                meeting_id=meeting_id,
+                error=error,
+            )
+        except Exception as failure:  # noqa: BLE001 - the queue must survive this
+            # The one thing this must not do is raise: it runs *inside* the
+            # drain's own handler, where raising is what killed the queue before.
+            # A registry that cannot take the write is retried on the next pass.
+            log_event(
+                "error",
+                "runs",
+                "run.refuse_failed",
+                run_id=run_id,
+                error=f"{type(failure).__name__}: {failure}",
+            )
 
     def _fail_unrunnable(
         self, run: PipelineRun, meeting: Meeting | None, error: str
@@ -1653,6 +1739,7 @@ __all__ = [
     "RESTART_REASON",
     "RunManager",
     "RunState",
+    "RunSummary",
     "TERMINAL_STATUSES",
     "collect_artifacts",
     "cost_of",

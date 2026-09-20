@@ -429,7 +429,7 @@ def test_the_view_says_plainly_when_nothing_is_configured(tmp_path) -> None:
     assert view.detection is None
     # The machine view carries the variable NAME (here, unset) and no value.
     assert view.api_key_env is None
-    assert view.as_dict()["api_key_env"] is None
+    assert view.as_dict().api_key_env is None
 
 
 def test_the_view_is_ready_once_an_endpoint_is_recorded(tmp_path) -> None:

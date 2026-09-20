@@ -140,5 +140,20 @@ Date: 2026-09-14
   reject it**) **landed**: the service's runner and the three tasks (ADR-0018)
   are built and exposed above. This closes the earlier `[OPEN]` that had them
   "join this surface when they land".
+
+## Update (2026-09-20) — the tools' results are declared models (ADR-0030)
+
+- [FACT] The Decision clause above says tools return structured values "annotated
+  `dict`/`list[dict]`". That is what the surface did when this ADR was written;
+  ADR-0030's boundary decision replaced it. Every tool now annotates its return
+  with a model — one derived from the domain value it publishes
+  (`clear_record.service.schemas`), or an envelope this module declares for a
+  value it wraps (`RunStartedOut`, `RunStatusOut`, `RunEventsOut`) — so the SDK
+  publishes the fields themselves as the output schema rather than
+  `additionalProperties`, and a result is validated on the way out.
+- [FACT] The `ToolError` clause is unchanged and now covers one more case: a
+  stored row this build cannot read (ADR-0030's run-options seam) answers as a
+  `ToolError` carrying the reader's message, which names the run and the field,
+  instead of reaching the agent as `Error executing tool <name>`.
 - Revisit if a client needs a network transport, or if the extra proves to be
   friction.

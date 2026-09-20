@@ -523,10 +523,10 @@ def test_storage_reports_the_workspace_size_and_the_tapes(
 
     storage = managed.meeting_storage(registry, meeting)
 
-    assert storage["managed"] is True
-    assert storage["bytes"] == 8
-    assert [tape["name"] for tape in storage["tapes"]] == ["a.wav", "b.wav"]
-    assert storage["tapes"][0]["sha256"] == hashlib.sha256(b"12345").hexdigest()
+    assert storage.managed is True
+    assert storage.bytes == 8
+    assert [tape.name for tape in storage.tapes] == ["a.wav", "b.wav"]
+    assert storage.tapes[0].sha256 == hashlib.sha256(b"12345").hexdigest()
 
 
 def test_storage_reports_free_space_from_the_guards_accounting(
@@ -540,7 +540,7 @@ def test_storage_reports_free_space_from_the_guards_accounting(
         lambda _path: type("Usage", (), {"free": 123_456_789})(),
     )
 
-    assert managed.meeting_storage(registry, meeting)["free_bytes"] == 123_456_789
+    assert managed.meeting_storage(registry, meeting).free_bytes == 123_456_789
 
 
 def test_storage_reports_no_free_space_for_a_user_chosen_workspace(
@@ -552,7 +552,7 @@ def test_storage_reports_no_free_space_for_a_user_chosen_workspace(
     chosen.mkdir()
     meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
 
-    assert managed.meeting_storage(registry, meeting)["free_bytes"] is None
+    assert managed.meeting_storage(registry, meeting).free_bytes is None
 
 
 def test_storage_reports_unknown_free_space_rather_than_failing(
@@ -567,8 +567,8 @@ def test_storage_reports_unknown_free_space_rather_than_failing(
 
     storage = managed.meeting_storage(registry, meeting)
 
-    assert storage["free_bytes"] is None
-    assert storage["managed"] is True
+    assert storage.free_bytes is None
+    assert storage.managed is True
 
 
 def test_the_guard_and_the_storage_report_share_root_free_bytes(
@@ -586,7 +586,7 @@ def test_the_guard_and_the_storage_report_share_root_free_bytes(
 
     with pytest.raises(managed.InsufficientSpace):
         managed.precheck_upload(registry, meeting, declared_bytes=1)
-    assert managed.meeting_storage(registry, meeting)["free_bytes"] == 0
+    assert managed.meeting_storage(registry, meeting).free_bytes == 0
     assert calls  # both read the seam, neither re-implements it
 
 
@@ -774,7 +774,7 @@ def test_machine_storage_counts_every_bucket_and_marks_source_or_derived(
     assert row["managed"] is True
     assert row["path"] == meeting.workspace_path
     # The existing, narrower key keeps its workspace-only meaning.
-    assert managed.meeting_storage(registry, meeting)["bytes"] == 100 + 3 + 10 + 7 + 4
+    assert managed.meeting_storage(registry, meeting).bytes == 100 + 3 + 10 + 7 + 4
 
 
 def test_machine_storage_measures_a_user_chosen_workspace_and_its_disk(

@@ -104,6 +104,7 @@ from clear_record.service.models import (
     RecordingSet,
     Tape,
 )
+from clear_record.service.run_options import read_run_options
 
 # --- the schema's history, owned by Alembic (ADR-0030) --------------------- #
 #
@@ -858,7 +859,10 @@ class Registry:
         ``options`` is run meta (e.g. the glossary snapshot identity) recorded so
         a re-run can be explained later. ``run_options`` is the resolved
         :class:`~clear_record.core.PipelineOptions` the run will execute with,
-        recorded so a queued run is picked back up after a restart. ``origin`` is
+        recorded so a queued run is picked back up after a restart; it is the
+        whole options value (``dataclasses.asdict`` of it), because the registry
+        validates what it reads back against that shape and refuses a partial
+        row (`service.run_options`). ``origin`` is
         the surface that started it, one of :data:`RUN_ORIGINS` (RUN-02); it is
         ``None`` only for a caller that is not a start path (a seeded row).
 
@@ -958,6 +962,37 @@ class Registry:
             for key, value in fields.items():
                 setattr(row, key, value)
             return self._run(row)
+
+    def fail_unreadable_run(self, run_id: int, *, error: str) -> bool:
+        """Fail a run whose stored options this build refuses to read.
+
+        The one write in this class that does **not** map its row back to a value.
+        Every other run write returns the :class:`PipelineRun` it stored, and that
+        mapping is exactly what such a row fails — so a write that read it back
+        would be rolled back with the exception (a session whose body raises
+        commits nothing), leaving the row stuck and the queue behind it blocked.
+
+        The ``run_options`` column is cleared in the same statement: its text is
+        already quoted into ``error``, and a column nobody can read is a row the
+        console cannot even show as failed. Only a ``queued`` or ``running`` row
+        is moved, so a run that finished is never rewritten by a caller that read
+        a stale list. Returns whether a row moved.
+        """
+        with self._session() as session:
+            result = session.execute(
+                update(entities.PipelineRun)
+                .where(
+                    entities.PipelineRun.id == run_id,
+                    entities.PipelineRun.status.in_(("queued", "running")),
+                )
+                .values(
+                    status="failed",
+                    ended_at=_now(),
+                    error=error,
+                    run_options=None,
+                )
+            )
+            return bool(result.rowcount)
 
     def get_run(self, run_id: int) -> PipelineRun | None:
         with self._session() as session:
@@ -1574,7 +1609,13 @@ class Registry:
             ended_at=row.ended_at,
             error=row.error,
             created_at=row.created_at,
-            run_options=json.loads(row.run_options) if row.run_options else None,
+            # The one row whose text is a declared shape rather than opaque meta:
+            # a queued run is executed from it, so it is validated here, where the
+            # registry hands a run on, and a row that no longer fits fails loudly
+            # instead of arriving reduced (ADR-0030, `service.run_options`).
+            run_options=read_run_options(
+                row.id, row.run_options, meeting_id=row.meeting_id
+            ),
             progress=json.loads(row.progress) if row.progress else None,
             origin=row.origin,
             owner=row.owner,

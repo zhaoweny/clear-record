@@ -12,9 +12,11 @@ terminal underneath an assertion that expects a live run.
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi.testclient import TestClient
 
-from clear_record.core import JobEvent
+from clear_record.core import JobEvent, PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
 
@@ -72,7 +74,9 @@ def _seeded(registry: Registry):
         model="small",
         language="en",
         origin="console",
-        run_options={"backend": "apple", "model": "small", "chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(
+            PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
+        ),
     )
     registry.claim_run(running.id, owner=OWNER)
     registry.add_run_event(
@@ -203,7 +207,9 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
         model="small",
         language="en",
         origin="console",
-        run_options={"backend": "apple", "model": "small", "chunk_seconds": 30.0},
+        run_options=dataclasses.asdict(
+            PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
+        ),
     )
     registry.claim_run(run.id, owner=OWNER)
     registry.add_run_event(

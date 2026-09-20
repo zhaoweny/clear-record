@@ -6,6 +6,7 @@ app, no network), so the store is trusted independently of any adapter.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -55,6 +56,33 @@ def _version_tables(db_path: Path) -> list[str]:
                 " AND name IN ('schema_version', 'alembic_version')"
             )
         )
+
+
+def _normalized(sql: str | None) -> str | None:
+    """One SQL fragment with its whitespace collapsed, for comparing two spellings."""
+    return " ".join(sql.split()) if sql is not None else None
+
+
+def _index_predicate(ddl: str | None) -> str | None:
+    """The built index's own ``WHERE`` clause, normalized (``None`` if it has none).
+
+    What SQLite stores is the ``CREATE INDEX`` statement the revision ran, so the
+    predicate is read back out of the DDL itself rather than described a second
+    time here.
+    """
+    if ddl is None:
+        return None
+    match = re.search(r"\bWHERE\b(.*)$", ddl, re.IGNORECASE | re.DOTALL)
+    return _normalized(match.group(1)) if match else None
+
+
+def _index_sql(db_path: Path, name: str) -> str | None:
+    """A built index's DDL: the ``CREATE INDEX`` statement, normalized."""
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", (name,)
+        ).fetchone()
+    return _normalized(row[0]) if row else None
 
 
 def _seed_project(db_path: Path) -> None:
@@ -266,6 +294,9 @@ def test_run_and_artifact_rows(tmp_path) -> None:
     assert run.origin is None
     with pytest.raises(ValueError):
         reg.create_run(meeting.id, origin="grafana")
+    # A meeting carries one active run (revision 0009's index), so the run the
+    # origin is read back from is the meeting's next one.
+    reg.update_run(run.id, status="done")
     assert reg.create_run(meeting.id, origin="cli").origin == "cli"
 
     artifact = reg.add_artifact(
@@ -314,17 +345,18 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     run = reg.create_run(meeting.id, run_options={"backend": "apple"})
     assert reg.get_run(run.id).run_options == {"backend": "apple"}
     assert reg.count_run_events(run.id) == 0
-    # Revision 0007: a run records where it came from, and the claim records its owner.
+    # Revision 0007: a run records where it came from, and the claim records its
+    # owner. The claim runs on a *second* meeting's run: one meeting has one
+    # active run, which revision 0009's index enforces.
     assert reg.get_run(run.id).origin is None  # a seeded row has no origin
-    queued = reg.create_run(meeting.id, origin="console")
+    second = reg.create_meeting("ops", "Second pass")
+    queued = reg.create_run(second.id, origin="console")
     claimed = reg.claim_run(queued.id, owner="peer:1")
     assert claimed is not None
     assert (claimed.origin, claimed.owner) == ("console", "peer:1")
     assert claimed.heartbeat_at is not None
     # Revision 0008: a run can be linked to the run it resumes, and carry a cancel request.
     assert claimed.resumes_run_id is None and claimed.cancel_requested_at is None
-    resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
-    assert resumed.resumes_run_id == run.id
     with pytest.raises(KeyError):
         reg.create_run(meeting.id, resumes_run_id=999)  # no such run
     assert reg.request_cancel(claimed.id).cancel_requested_at is not None
@@ -334,6 +366,10 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     assert stopped is not None and stopped.status == "stopped"
     # And a run that is not queued any more is left to its owner.
     assert reg.stop_run(claimed.id, ended_at="now", progress={}) is None
+    # Revision 0009: the meeting's run has ended, so the meeting runs again — and
+    # the new run continues the stopped one.
+    resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
+    assert resumed.resumes_run_id == run.id
 
 
 def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
@@ -430,7 +466,7 @@ def test_a_migrated_ladder_registry_still_reads_for_an_older_build(tmp_path) -> 
 
     Registry(db)
 
-    # The head's number, which is what the row has to say (`0005` -> `0008`).
+    # The head's number, which is what the row has to say (`0005` -> `0009`).
     head = ScriptDirectory.from_config(_alembic_config(db)).get_current_head()
     with sqlite3.connect(str(db)) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
@@ -449,7 +485,9 @@ def test_a_migrated_ladder_registry_still_reads_for_an_older_build(tmp_path) -> 
 # --- the mapping the registry reads and writes through (ADR-0030) ----------- #
 
 
-def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
+def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
+    tmp_path,
+) -> None:
     """Alembic owns the schema; the entities only describe it (ADR-0030).
 
     So the two can drift, and a drift is silent until a query fails or a value
@@ -460,7 +498,17 @@ def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
     exists". ``--autogenerate`` cannot catch any of it while ``target_metadata``
     stays ``None`` by decision (``migrations/env.py``), so this is the net: every
     table, every column with its type and nullability, and every declared
-    uniqueness, against revision 0008's own schema.
+    uniqueness, against the head revision's own schema.
+
+    The uniqueness is read on both sides, and both directions are asserted — a
+    rule declared in one place and not the other fails here whether the missing
+    half is the mapping's or the revision's. It is in two halves because the
+    schema states it in two: a table's ``UNIQUE`` constraints (which SQLite
+    reports as origin ``u``) and the separately created indexes a later revision
+    adds (origin ``c``), of which revision 0009's partial unique index over the
+    active run of a meeting is one — its predicate compared with the DDL's, so a
+    mapping and a revision that disagree about which states are *active* cannot
+    both keep this green.
     """
     db = tmp_path / "registry.sqlite3"
     Registry(db)
@@ -475,6 +523,24 @@ def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
             frozenset(column.name for column in constraint.columns)
             for constraint in table.constraints
             if isinstance(constraint, UniqueConstraint)
+        }
+        for name, table in entities.Base.metadata.tables.items()
+    }
+    # Every *unique index* the mapping declares, as (columns, partial predicate):
+    # the predicate is the index's dialect-specific ``WHERE``, or ``None`` for an
+    # index over the whole table.
+    mapped_unique_indexes = {
+        name: {
+            index.name: (
+                tuple(column.name for column in index.columns),
+                _normalized(
+                    str(index.dialect_options["sqlite"]["where"])
+                    if index.dialect_options["sqlite"].get("where") is not None
+                    else None
+                ),
+            )
+            for index in table.indexes
+            if index.unique
         }
         for name, table in entities.Base.metadata.tables.items()
     }
@@ -496,6 +562,14 @@ def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
             }
             for name in names
         }
+        # The DDL of every index the schema carries, by name: what SQLite stores
+        # is the ``CREATE INDEX`` statement the revision ran, predicate included.
+        index_ddl = {
+            name: sql
+            for name, sql in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='index'"
+            )
+        }
         # PRAGMA index_list is (seq, name, unique, origin, partial): origin ``u``
         # is a UNIQUE constraint of the table's own DDL (``pk`` is the rowid's,
         # and ``c`` an index a revision created separately).
@@ -507,6 +581,20 @@ def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
                 )
                 for index in conn.execute(f'PRAGMA index_list("{name}")')
                 if index[2] == 1 and index[3] == "u"
+            }
+            for name in names
+        }
+        actual_unique_indexes = {
+            name: {
+                index[1]: (
+                    tuple(
+                        column[2]
+                        for column in conn.execute(f'PRAGMA index_info("{index[1]}")')
+                    ),
+                    _index_predicate(index_ddl.get(index[1])),
+                )
+                for index in conn.execute(f'PRAGMA index_list("{name}")')
+                if index[2] == 1 and index[3] == "c"
             }
             for name in names
         }
@@ -523,6 +611,147 @@ def test_the_mapping_describes_every_column_the_revisions_own(tmp_path) -> None:
             f"{name} uniques: mapped={mapped_uniques[name]!r}"
             f" actual={actual_uniques[name]!r}"
         )
+        assert mapped_unique_indexes[name] == actual_unique_indexes[name], (
+            f"{name} unique indexes: mapped={mapped_unique_indexes[name]!r}"
+            f" actual={actual_unique_indexes[name]!r}"
+        )
+
+
+def test_the_active_run_index_arrives_with_revision_0009(tmp_path) -> None:
+    """The database's one-active-run rule is a revision, and it refuses a row.
+
+    A registry at 0008 — every release before this one — carries no such index,
+    and opening it, which is what migrates it, is what gives it one: the same
+    index a registry created fresh carries, because both are the DDL revision
+    0009 ran. The rule is then exercised the way a second *writer* exercises it:
+    one connection, one bare INSERT, no service call in the way.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0008")
+    assert _index_sql(db, "pipeline_run_active_meeting") is None
+
+    reg = Registry(db)  # migrates 0008 → 0009
+    fresh = tmp_path / "fresh.sqlite3"
+    Registry(fresh)
+    assert (
+        _index_sql(db, "pipeline_run_active_meeting")
+        == _index_sql(fresh, "pipeline_run_active_meeting")
+        == "CREATE UNIQUE INDEX pipeline_run_active_meeting ON pipeline_run"
+        " (meeting_id) WHERE status IN ('queued', 'running')"
+    )
+
+    # Both active states are refused for a meeting that has one, and a finished
+    # run is not refused at all: the index is partial, and the states it names
+    # are the states the guard reads.
+    reg.create_project("Ops")
+    meeting = reg.create_meeting("ops", "Kickoff")
+    active = reg.create_run(meeting.id, origin="console")
+    with sqlite3.connect(str(db)) as conn:
+        for status in ("queued", "running"):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO pipeline_run (meeting_id, status, created_at)"
+                    " VALUES (?, ?, 'now')",
+                    (meeting.id, status),
+                )
+        conn.execute(
+            "INSERT INTO pipeline_run (meeting_id, status, created_at)"
+            " VALUES (?, 'done', 'now')",
+            (meeting.id,),
+        )
+
+    assert [(run.id, run.status) for run in reg.list_runs(meeting.id)] == [
+        (active.id + 1, "done"),
+        (active.id, "queued"),
+    ]
+
+
+def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
+    """The state the rule forbids is one the old code produced, and it still opens.
+
+    Two submissions racing past the guard wrote two active runs for one meeting,
+    and a unique index cannot be created over those rows — a registry like that
+    would refuse to open, on every start, forever. So revision 0009 reconciles
+    before it creates the index: one active run per meeting survives (a
+    ``running`` row over a ``queued`` one, else the oldest), the rest end as
+    ``interrupted`` with the reason the user reads on the row, and a meeting that
+    holds a single active run — or none — is left exactly as it was. The registry
+    is current afterwards, and the rule bites from there on.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, "0008")
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "INSERT INTO project (slug, name, notes, created_at)"
+            " VALUES ('ops', 'Ops', '', 'now')"
+        )
+        for slug in ("kickoff", "standup", "retro"):
+            conn.execute(
+                "INSERT INTO meeting (project_id, slug, title, status, created_at)"
+                " VALUES (1, ?, ?, 'running', 'now')",
+                (slug, slug),
+            )
+        conn.executemany(
+            "INSERT INTO pipeline_run"
+            " (meeting_id, status, created_at, started_at, owner)"
+            " VALUES (?, ?, 'now', ?, ?)",
+            (
+                # What the race left: two queued runs for one meeting...
+                (1, "queued", None, None),
+                (1, "queued", None, None),
+                # ... and a running run with a queued one behind it.
+                (2, "queued", None, None),
+                (2, "running", "now", "host:1"),
+                # What the rule wants: one active run, and a run that had ended.
+                (3, "queued", None, None),
+                (3, "done", "now", None),
+            ),
+        )
+
+    reg = Registry(db)
+
+    # The oldest of the two queued runs is the meeting's; the later one is ended,
+    # with the reason written where the console reads an interrupted run's why.
+    keeper, loser = sorted(reg.list_runs(1), key=lambda run: run.id)
+    assert (keeper.id, keeper.status, keeper.ended_at, keeper.error) == (
+        1,
+        "queued",
+        None,
+        None,
+    )
+    assert (loser.id, loser.status) == (2, "interrupted")
+    assert loser.ended_at is not None
+    assert loser.error == (
+        "this meeting had more than one active run, and one run per meeting is "
+        "what the registry keeps"
+    )
+
+    # A running row is the meeting's one, whatever a queued row behind it says.
+    waiting, running = sorted(reg.list_runs(2), key=lambda run: run.id)
+    assert (waiting.id, waiting.status) == (3, "interrupted")
+    assert (running.id, running.status, running.ended_at) == (4, "running", None)
+
+    # And a meeting with nothing to reconcile is untouched.
+    alone, ended = sorted(reg.list_runs(3), key=lambda run: run.id)
+    assert (alone.id, alone.status, alone.ended_at, alone.error) == (
+        5,
+        "queued",
+        None,
+        None,
+    )
+    assert (ended.id, ended.status) == (6, "done")
+
+    assert _index_sql(db, "pipeline_run_active_meeting") is not None
+    with sqlite3.connect(str(db)) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0009",
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO pipeline_run (meeting_id, status, created_at)"
+                " VALUES (?, 'queued', 'now')",
+                (alone.meeting_id,),
+            )
 
 
 def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:

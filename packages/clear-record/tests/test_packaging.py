@@ -285,6 +285,7 @@ EXPECTED_MIGRATIONS = frozenset(
         "versions/0006_run_state_and_events.py",
         "versions/0007_run_ownership.py",
         "versions/0008_run_cancel_and_resume.py",
+        "versions/0009_active_run_per_meeting.py",
     }
 )
 

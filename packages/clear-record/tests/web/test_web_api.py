@@ -365,6 +365,51 @@ def test_a_run_without_tapes_or_workspace_is_400(console, tmp_path) -> None:
     assert res.status_code == 400
 
 
+def test_a_refusal_that_raced_the_pre_check_is_409(
+    console, tmp_path, monkeypatch
+) -> None:
+    """The same condition answers the same code, when the service refuses it.
+
+    The route reads the meeting's live run and answers 409 before it writes
+    anything. A submission that races another client reads nothing there — its
+    read happened first — and is refused later, by the service: the guard's own
+    read, or the database's index when both reads raced. That is the same
+    condition for the same user, so it answers 409 too, and the handler's re-read
+    of the live state is what separates it from the 400s above.
+
+    The race is played out in one thread: the pre-check's read misses the live run
+    (it is the read that came first), the handler's is the one that sees it.
+    """
+    client = console.client
+    meeting = _make_meeting(console, tmp_path)
+    client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    first = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    assert first.status_code == 202
+
+    live = console.manager.active_state
+    reads: list[int] = []
+
+    def raced(meeting_id: int):
+        reads.append(meeting_id)
+        return None if len(reads) == 1 else live(meeting_id)
+
+    def refuse(*args, **kwargs):
+        raise ValueError("a run is already in flight for this meeting")
+
+    monkeypatch.setattr(console.manager, "active_state", raced)
+    monkeypatch.setattr(console.manager, "start", refuse)
+    conflict = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "a run is already in flight for this meeting"
+
+    console.gate.set()
+    console.manager.wait(first.json()["run"]["id"], timeout=10)
+
+
 def test_unknown_run_endpoints_are_404(console) -> None:
     client = console.client
     assert client.get("/api/runs/999").status_code == 404

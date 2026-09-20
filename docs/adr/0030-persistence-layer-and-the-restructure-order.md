@@ -153,3 +153,16 @@ not a committed document.
   `sqlite3.IntegrityError`, or `sqlite3.Error` around a registry call, now catches
   nothing and must catch the SQLAlchemy class — or `sqlalchemy.exc.SQLAlchemyError`
   where it means the whole family.
+- **The per-meeting uniqueness index makes one revision alter data — the first
+  one that does.** `CREATE UNIQUE INDEX` cannot be created over rows the index
+  forbids, and the rows it forbids are exactly the ones *this application wrote*:
+  two submissions that raced past the run manager's guard both inserted an active
+  run for one meeting. Refusing to open such a registry would leave an upgrade
+  path stuck forever on a state the product itself produced — the opposite of
+  taking a user's registry as it is — so revision `0009` reconciles before it
+  creates the index: one active run per meeting survives (a `running` row over a
+  `queued` one, else the oldest), the rest end as `interrupted` with the reason in
+  the run's own `error` column, and nothing else is touched. Dropping the
+  duplicates instead would hide history the user is being asked to keep, and an
+  index that simply fails to build is the blocker this bullet exists to record.
+  The step is a no-op on every registry that never raced.

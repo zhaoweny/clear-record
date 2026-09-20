@@ -4,7 +4,7 @@ Revision ID: 0001
 Revises: nothing (an empty registry)
 
 The history opens at the ladder's first step: the app-owned project and
-glossary tables. Revisions 0002–0008 carry a registry from there to today's
+glossary tables. Revisions 0002–0009 carry a registry from there to today's
 tables, and this change adds no table, column or index. The one statement of
 the ladder's step that has no counterpart here is its own ``schema_version``
 table: the version state is ``alembic_version`` from this revision on, and

@@ -14,9 +14,13 @@ Two properties make the node trustworthy across restarts:
 
 * **The registry is the truth, not process memory.** A run's status and its
   event stream live in SQLite, so after the console restarts the run view still
-  replays and the "one run per meeting" guard still holds. A run whose owner
-  died is reconciled to ``interrupted`` (distinct from ``failed`` — the node
-  died, the work did not necessarily fail).
+  replays and the "one run per meeting" guard still holds. The per-meeting half
+  of that is enforced by the registry itself — revision 0009's partial unique
+  index over the meeting's active run — so the second of two submissions that
+  race past the guard is refused by the database, not by the check that read
+  before the other write. A run whose owner died is reconciled to
+  ``interrupted`` (distinct from ``failed`` — the node died, the work did not
+  necessarily fail).
 * **One run per node, one claim.** :meth:`RunManager.start` **enqueues** a run
   (``queued``); a scheduler drains the FIFO, and the move to ``running`` is a
   single conditional update in the registry, so the console, an agent's MCP
@@ -35,8 +39,9 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
@@ -711,9 +716,11 @@ class RunManager:
 
         The run is durable immediately (``queued``): if it cannot execute yet it
         keeps its place, and a restart still has it. The per-meeting dedupe is
-        read from the registry, so the same tape set is never enqueued twice
-        concurrently — but a *different* meeting now waits honestly instead of
-        fighting for the one GPU.
+        read from the registry — and, for the race two readers cannot see,
+        enforced by the database's partial unique index (revision 0009): a
+        submission that loses it is refused with the same message this method
+        raises for a known active run — but a *different* meeting now waits
+        honestly instead of fighting for the one GPU.
 
         ``origin`` says which surface started it, one of :data:`RUN_ORIGINS`
         (RUN-02). It is required — a start path that does not name itself would
@@ -745,23 +752,31 @@ class RunManager:
                 deferred("meeting has no tape set; select tapes before running")
             )
         if self._registry.active_run_for_meeting(meeting.id) is not None:
-            self._refuse(meeting, "a run is already in flight")
-            raise ValueError(deferred("a run is already in flight for this meeting"))
+            self._active_run_refusal(meeting)
 
         options = dataclasses.replace(
             options or PipelineOptions(), audio_files=tuple(tape_set.paths)
         )
         options, run_meta = self._resolve_glossary(meeting, options)
-        run = self._registry.create_run(
-            meeting.id,
-            backend=options.backend,
-            model=options.model,
-            language=options.language,
-            options=self._run_meta(options, run_meta, auto),
-            run_options=dataclasses.asdict(options),
-            origin=origin,
-            resumes_run_id=resumes,
-        )
+        try:
+            run = self._registry.create_run(
+                meeting.id,
+                backend=options.backend,
+                model=options.model,
+                language=options.language,
+                options=self._run_meta(options, run_meta, auto),
+                run_options=dataclasses.asdict(options),
+                origin=origin,
+                resumes_run_id=resumes,
+            )
+        except IntegrityError as exc:
+            # The guard above reads, and a read cannot stop the other writer: two
+            # submissions that both read "no active run" both come here, and the
+            # database's own index (revision 0009) refuses the second row. The
+            # refusal is the guard's message, raised here rather than left as an
+            # integrity error — this is the layer that owns that message — with
+            # the index's error as its cause.
+            self._active_run_refusal(meeting, cause=exc)
         with self._lock:
             self._pending[run.id] = (meeting, options)
         log_event(
@@ -1000,6 +1015,28 @@ class RunManager:
             meeting_id=meeting.id,
             reason=reason,
         )
+
+    def _active_run_refusal(
+        self, meeting: Meeting, *, cause: BaseException | None = None
+    ) -> NoReturn:
+        """Refuse a submission because the meeting already has an active run.
+
+        Two paths reach it and they must read identically to the user: the
+        registry guard (the run the meeting already has is read, and the
+        submission never reaches the queue) and the database's partial unique
+        index (two submissions read "no active run" at the same moment and one
+        insert loses). The message is the one the console already renders for a
+        second submission.
+
+        It **raises** rather than returning the error, so no call site can drop
+        the refusal, and ``cause`` carries the index's own ``IntegrityError`` when
+        that is what refused — chained, so a traceback says which of the two it
+        was.
+        """
+        self._refuse(meeting, "a run is already in flight")
+        raise ValueError(
+            deferred("a run is already in flight for this meeting")
+        ) from cause
 
     # --- the scheduler ------------------------------------------------------ #
     def _ensure_scheduler(self) -> None:

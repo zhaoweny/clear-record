@@ -31,12 +31,15 @@ second, unused statement of the same rule: a row written without one is refused
 by the table's ``NOT NULL`` rather than silently defaulted) and its plain indexes
 (they are the queries' performance detail, not a shape a query depends on). The
 uniqueness the registry relies on *is* declared: a violation is what the store
-reads as "already exists".
+reads as "already exists" — the table's ``UNIQUE`` constraints, and the partial
+unique index revision 0009 puts over the active run of a meeting
+(``pipeline_run_active_meeting``), which the schema states once for every writer
+rather than only in the check that races.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -128,6 +131,20 @@ class PipelineRun(Base):
     """``pipeline_run`` — one execution of the pipeline against a tape set."""
 
     __tablename__ = "pipeline_run"
+    #: One active run per meeting, stated where every writer must obey it.
+    #: Partial, so it constrains the *active* run and not the meeting's history: a
+    #: ``done``/``failed``/``stopped``/``interrupted`` run holds nothing, and the
+    #: meeting starts again. This is the index revision 0009 creates; the guard in
+    #: :meth:`Registry.active_run_for_meeting` reads the same two states, and the
+    #: index is what decides when two submissions race past it.
+    __table_args__ = (
+        Index(
+            "pipeline_run_active_meeting",
+            "meeting_id",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     meeting_id: Mapped[int] = mapped_column(

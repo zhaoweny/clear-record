@@ -866,6 +866,14 @@ class Registry:
         reference is checked here rather than left to the reader: a link to a run
         that does not exist, or to a run of another meeting, would be a lie the
         registry itself could see.
+
+        One active run per meeting is the table's own rule (revision 0009's
+        partial unique index), not this method's: an insert that would give the
+        meeting a second ``queued`` or ``running`` run raises
+        :class:`~sqlalchemy.exc.IntegrityError` here rather than landing, and the
+        caller that owns the user-facing refusal — the run manager, whose guard
+        read the same pair of states — translates it. A meeting's *history* is
+        unaffected: as many ended runs as it has had.
         """
         if self.meeting_by_id(meeting_id) is None:
             raise KeyError(meeting_id)
@@ -969,9 +977,12 @@ class Registry:
     def active_run_for_meeting(self, meeting_id: int) -> PipelineRun | None:
         """The meeting's newest run that is ``queued`` or ``running``, if any.
 
-        This is the persisted form of the "one run per meeting" dedupe: it is
-        derived from the registry, so it survives a restart where the in-memory
-        guard did not.
+        This is the guard the run manager reads before it inserts — the check
+        that refuses a second submission without writing a row — and *not* the
+        rule: one active run per meeting is the table's own invariant, held by
+        revision 0009's partial unique index, which is what stops the second
+        writer when both read "no active run". Being derived from the registry
+        rather than from process memory is what lets it survive a restart.
         """
         with self._session() as session:
             row = session.scalar(

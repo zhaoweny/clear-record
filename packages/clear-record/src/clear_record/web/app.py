@@ -2892,7 +2892,14 @@ def create_app(
                 meeting, resolved.options, auto=resolved.meta, origin="api"
             )
         except ValueError as exc:
-            # No workspace or no tape set: a bad request, not a conflict.
+            # A refusal the start path made. The pre-check above reads the live
+            # run before anything is written, so a submission that *raced* another
+            # client reads nothing there and is refused here instead — the same
+            # condition for the same user, and it answers the same 409. The
+            # re-read is what tells that apart from the bad requests (no
+            # workspace, no tape set), which stay 400.
+            if runs.active_state(meeting_id) is not None:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "run": _out(run),

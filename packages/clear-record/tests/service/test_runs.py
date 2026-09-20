@@ -27,6 +27,7 @@ from clear_record.cli.workspace import Workspace
 from clear_record.core import JobEvent, Progress, resolve_options
 from clear_record.service import (
     PipelineOptions,
+    PipelineRun,
     Registry,
     RunManager,
     estimate_eta_s,
@@ -393,6 +394,113 @@ def test_a_second_run_is_refused_while_one_is_in_flight(tmp_path) -> None:
 
     release.set()
     assert manager.wait(run.id, timeout=10).status == "done"
+
+
+def test_two_concurrent_submissions_leave_one_run_and_the_same_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """A race past the guard is decided by the database, and reads the same.
+
+    Both clients submit the same meeting at the same moment: each reads the
+    registry's guard — and a read cannot stop the other's write, so both read
+    "no active run" and both reach their INSERT. Revision 0009's partial unique
+    index is what makes one of them lose, and the loser is refused with the
+    message a second click already gets, not with the integrity error the index
+    raised.
+
+    The interleaving is *forced*, not hoped for: the guard is wrapped so both
+    threads finish reading it before either returns from it — the state a race
+    produces and a loaded machine merely makes likelier. Both verdicts are kept,
+    so the test proves the checks raced rather than that they merely ran close
+    together; everything after the guard is the ordinary submission path, on two
+    real threads, with the winner's run left in flight until the end.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    release = threading.Event()
+    manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
+
+    guard = registry.active_run_for_meeting
+    both_read = threading.Barrier(2, timeout=10)
+    verdicts: list[object] = []
+
+    def read_guard(meeting_id: int):
+        verdict = guard(meeting_id)  # the check, as each submission runs it
+        verdicts.append(verdict)
+        both_read.wait()  # ... and both clients are past it before either writes
+        return verdict
+
+    monkeypatch.setattr(registry, "active_run_for_meeting", read_guard)
+
+    results: list[object] = []
+
+    def submit() -> None:
+        try:
+            results.append(manager.start(meeting, origin="console"))
+        except ValueError as exc:  # the refusal, not a crash
+            results.append(exc)
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert verdicts == [None, None]  # neither check saw the other's run
+    runs = registry.list_runs(meeting.id)
+    winners = [result for result in results if isinstance(result, PipelineRun)]
+    refusals = [str(result) for result in results if isinstance(result, ValueError)]
+    assert len(winners) == 1 and len(refusals) == 1, results
+    # One run, the winner's — and the loser's refusal is the existing message.
+    assert [run.id for run in runs] == [winners[0].id]
+    assert refusals == ["a run is already in flight for this meeting"]
+
+    release.set()
+    assert manager.wait(runs[0].id, timeout=10).status == "done"
+
+
+def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
+    """The index is partial — it constrains the active run, not the history.
+
+    A run that ended holds nothing, so the meeting is runnable again and again.
+    That is the case a total ``UNIQUE (meeting_id)`` would have refused, and the
+    one the product is built around: a second recording, a re-run after a
+    failure. ``done`` and ``failed`` are both checked, because "ended" is not one
+    status.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    fail_next = threading.Event()
+
+    def pipeline(directory, options, on_event) -> None:
+        if fail_next.is_set():
+            raise RuntimeError("backend unavailable")
+
+    manager = RunManager(registry, pipeline=pipeline)
+    first = manager.start(meeting, origin="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+    second = manager.start(meeting, origin="console")
+    assert manager.wait(second.id, timeout=10).status == "done"
+
+    fail_next.set()
+    third = manager.start(meeting, origin="console")
+    assert manager.wait(third.id, timeout=10).status == "failed"
+    fourth = manager.start(meeting, origin="console")
+    assert fourth.id != third.id
+
+    assert [(run.id, run.status) for run in registry.list_runs(meeting.id)] == [
+        (fourth.id, "queued"),
+        (third.id, "failed"),
+        (second.id, "done"),
+        (first.id, "done"),
+    ]
+    assert manager.wait(fourth.id, timeout=10).status == "failed"
 
 
 def test_event_cursor_supports_streaming(tmp_path) -> None:
@@ -1844,10 +1952,16 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
     # Nothing has completed yet: there is nothing to project.
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
 
+    # The completed runs that make the point live in a second meeting: history is
+    # matched by configuration, not by meeting, and this meeting's own run is
+    # still active — one meeting has one active run (revision 0009's index).
+    earlier = registry.create_meeting("ops", "Earlier", workspace_path=str(tmp_path))
+    registry.set_recording_set(earlier.id, [str(tape)])
+
     # A completed run with another model is not history for this run.
     _completed_run(
         registry,
-        meeting,
+        earlier,
         backend="apple",
         model="large",
         chunk_seconds=30.0,
@@ -1859,7 +1973,7 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
     # Nor is a matching run at another chunk size.
     _completed_run(
         registry,
-        meeting,
+        earlier,
         backend="apple",
         model="small",
         chunk_seconds=10.0,

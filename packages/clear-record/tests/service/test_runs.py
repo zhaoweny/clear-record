@@ -22,11 +22,12 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from clear_record.cli.workspace import Workspace
 from clear_record.core import JobEvent, Progress, resolve_options
 from clear_record.service import (
+    MalformedRunOptions,
     PipelineOptions,
     PipelineRun,
     Registry,
@@ -48,6 +49,22 @@ def _meeting(registry: Registry, tmp_path, tapes: list[Path]):
     meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
     registry.set_recording_set(meeting.id, [str(tape) for tape in tapes])
     return meeting
+
+
+class _RecordingEmitter:
+    """A ``WebhookEmitter`` stand-in that only records what it was asked to send.
+
+    The fact under test is that the manager announces *nothing*, and a real
+    emitter cannot be asked that: an inert one (no endpoints) accepts every call
+    silently, and a configured one needs a socket before a delivery can be read
+    back. What the manager owns is the call, so that is what is recorded here.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def emit(self, event_type: str, **fields: object) -> None:
+        self.events.append(event_type)
 
 
 def test_run_defaults_to_the_project_glossary_snapshot(tmp_path) -> None:
@@ -463,6 +480,82 @@ def test_two_concurrent_submissions_leave_one_run_and_the_same_refusal(
     assert manager.wait(runs[0].id, timeout=10).status == "done"
 
 
+def test_the_index_refusing_a_second_active_run_reads_as_the_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """The index's own refusal is the guard's sentence, byte for byte.
+
+    The guard's read cannot stop the other writer, so the submission that loses
+    is the one the database refuses — revision 0009's partial unique index over
+    the meeting's active run — and the manager translates **that** violation into
+    the message a second click already gets.
+
+    The guard is forced to miss the live run (the read it makes happens before
+    the write the index refuses), and the live run is held ``running`` by this
+    process's own identity so nothing executes it and the meeting keeps its
+    active run for the length of the test.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    live = registry.create_run(meeting.id, origin="console")
+    assert (
+        registry.claim_run(live.id, owner=f"{platform.node()}:{os.getpid()}")
+        is not None
+    )
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    monkeypatch.setattr(registry, "active_run_for_meeting", lambda meeting_id: None)
+    try:
+        with pytest.raises(ValueError) as refused:
+            manager.start(meeting, origin="console")
+    finally:
+        manager.shutdown(timeout=5)
+
+    assert str(refused.value) == "a run is already in flight for this meeting"
+    # Nothing was enqueued: the live run is still the meeting's only one.
+    assert [run.id for run in registry.list_runs(meeting.id)] == [live.id]
+
+
+def test_a_foreign_key_refusal_is_not_reported_as_a_run_in_flight(
+    tmp_path, monkeypatch
+) -> None:
+    """A meeting that vanished mid-submission is not a second run in flight.
+
+    ``create_run`` checks the meeting in one operation and inserts in another, so
+    a meeting deleted between the two fails the insert's own foreign key.
+    Translating that into the one-active-run refusal sends whoever reads it
+    looking for a run that is not there — and in a registry several processes
+    share, an afternoon goes with it.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    check = registry.meeting_by_id
+
+    def the_meeting_disappears(meeting_id: int):
+        found = check(meeting_id)
+        if found is not None:
+            # Between the check that found the row and the insert that names it.
+            with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
+                conn.execute("DELETE FROM meeting WHERE id = ?", (meeting_id,))
+        return found
+
+    monkeypatch.setattr(registry, "meeting_by_id", the_meeting_disappears)
+    try:
+        with pytest.raises(IntegrityError) as refused:
+            manager.start(meeting, origin="console")
+    finally:
+        manager.shutdown(timeout=5)
+
+    assert "a run is already in flight for this meeting" not in str(refused.value)
+    assert "FOREIGN KEY constraint failed" in str(refused.value)
+
+
 def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
     """The index is partial — it constrains the active run, not the history.
 
@@ -668,6 +761,90 @@ def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     # puts the text in the run's own record instead of dropping it.
     assert '{"backend": "apple", "jobs": "many"}' in quarantined.error
     assert quarantined.run_options is None
+
+
+def test_a_quarantine_cannot_fail_a_run_that_moved_first(tmp_path) -> None:
+    """A refusal whose conditional write moved no row announces nothing.
+
+    ``_refuse_run`` takes a run out of the queue **conditionally** — only a row
+    still ``queued`` or ``running`` moves — and the store reports whether a row
+    did. Another writer can end the run between the read that refused it and
+    that write, and what the refusal does with that answer is the whole
+    question: marking the meeting ``failed`` and sending ``run.failed`` for a row
+    that reads ``stopped`` puts the meeting status and the outbound notification
+    in contradiction with the run row, which no surface can then be shown.
+
+    Staging the gap: the refusal the manager's read raised is handed in directly
+    — the same stage ``test_a_reap_cannot_overwrite_a_run_its_owner_refreshed``
+    sets up for the reaper's snapshot — and the row is moved to its terminal
+    state, through the store's own conditional stop, before the write.
+    """
+    from clear_record.core import read_recent
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
+        conn.execute(
+            "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
+            ('{"backend": "apple", "jobs": "many"}', run.id),
+        )
+
+    # The read the drain makes, and the refusal it raises naming this run.
+    with pytest.raises(MalformedRunOptions) as refused:
+        registry.oldest_queued_run()
+    exc = refused.value
+    assert (exc.run_id, exc.meeting_id) == (run.id, meeting.id)
+
+    # Another writer's transition lands first: the cancel a surface records on a
+    # queued run — ``Registry.stop_run``'s own statement — written here through
+    # the driver because *every* store write returns the row it moved by mapping
+    # it, and that mapping is the read this build refuses. (That is why the
+    # quarantine goes through ``fail_unreadable_run``, the one such write that
+    # does not.)
+    ended_at = "2026-01-01T00:00:00+00:00"
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
+        conn.execute(
+            "UPDATE pipeline_run SET status = 'stopped', ended_at = ? WHERE id = ?",
+            (ended_at, run.id),
+        )
+    meeting_before = registry.meeting_by_id(meeting.id).status
+
+    emitter = _RecordingEmitter()
+    manager = RunManager(registry, pipeline=lambda *args: None, webhooks=emitter)
+    try:
+        assert manager._refuse_run(exc) is False  # the write moved no row
+    finally:
+        manager.shutdown(timeout=5)
+
+    # The row is exactly where that other writer put it — not failed, and not
+    # rewritten with the reader's message, which a move that never happened would
+    # leave there.
+    with closing(sqlite3.connect(str(registry.db_path))) as conn:
+        assert conn.execute(
+            "SELECT status, ended_at, error FROM pipeline_run WHERE id = ?", (run.id,)
+        ).fetchone() == ("stopped", ended_at, None)
+    # And nothing else was told otherwise.
+    assert registry.meeting_by_id(meeting.id).status == meeting_before
+    assert emitter.events == []
+    records = [json.loads(line) for line in read_recent(200)]
+    assert "run.failed" not in [record["event"] for record in records]
+    # The loss is reported as itself, with the state the row is in — which this
+    # refusal cannot read back, because the row still carries the options this
+    # build refuses (the case a peer's own quarantine leaves).
+    loss = next(record for record in records if record["event"] == "run.refuse_stale")
+    assert (loss["run_id"], loss["meeting_id"], loss["status"]) == (
+        run.id,
+        meeting.id,
+        "unreadable",
+    )
 
 
 # --- the node queue: one run at a time ------------------------------------- #

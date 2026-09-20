@@ -66,7 +66,7 @@
   {% endif %}
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ run.index }}" max="{{ run.total if run.total else 1 }}"></progress>
   {% if run.message %}<div class="muted run-message">{{ run.message }}</div>{% endif %}
-  {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}
+  {% if run.error %}<div class="run-error" role="alert">{{ tr(run.error) }}</div>{% endif %}
   {# Cancel and resume. Both act on the run this fragment shows and
      swap the fragment back in; the controls are derived from the run's row, so
      a run another writer started (the agent's MCP server) offers them too. #}

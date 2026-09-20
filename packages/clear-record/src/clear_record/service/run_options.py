@@ -153,8 +153,9 @@ KEPT_OPTIONS_LEAD = deferred(
 class SupersededRunOptions(UserWarning):
     """A stored row carried a key a released build wrote and this build does not.
 
-    Warned once per read that dropped one, naming the run and the key: the run
-    still runs, but it runs without what that key asked for.
+    Warned once per row in this process, however often the row is read, naming the
+    run and every key it lost: the run still runs, but it runs without what those
+    keys asked for.
     """
 
 
@@ -286,8 +287,14 @@ def read_run_options(
             run_id=run_id,
             meeting_id=meeting_id,
         ) from exc
-    dropped = _settle_superseded(raw)
     try:
+        # A row *is* a JSON object, and settling keys out of anything else is a
+        # membership test on a non-container: a scalar or an array would raise
+        # `TypeError` from here — a 500 and a stopped drain rather than the
+        # refusal every other unreadable row gets. So the settle step reads only
+        # an object, and a JSON scalar reaches the validation below as it stands,
+        # where it is refused like `[]` and `{}` already are.
+        dropped = _settle_superseded(raw) if isinstance(raw, dict) else []
         # The settled row is validated as *JSON text* rather than as the parsed
         # dict: strict mode reads a JSON array as the tuple the options declare,
         # while a dict input would have to be a tuple already — the one place

@@ -11,10 +11,12 @@ from the frozen dataclass, and every one of them is required, since a published
 value carries them all whatever their defaults are on the way in — so the published
 shape cannot drift from the value it describes, and one value has one shape on both
 edges rather than a copy per edge. The rest have a home beside what they describe,
-one each: a shape a *function* computes (the run-state summary, a draft view, the
-agent-task surface) is declared where that function builds it, and a shape an *edge*
-declares for its own envelope (a health answer, a page of a run's event stream) is
-declared beside that edge, under its own name.
+one each: a shape a *function* computes (the run-state summary, a draft view) is
+declared where that function builds it; a shape **both edges** publish while
+neither builds it (the agent-task surface, ``AgentTasksOut``) is declared beside
+the service module that owns that surface; and a shape an *edge* declares for its
+own envelope (a health answer, a page of a run's event stream) is declared beside
+that edge, under its own name.
 
 What is deliberately still a plain ``dict``: the JSON-shaped payloads whose
 schema is owned elsewhere — a run's ``options``/``progress`` meta, a draft's

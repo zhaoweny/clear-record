@@ -24,7 +24,7 @@ difference in *answering*, never in *finding*:
 same text those routes raised by hand before this module existed. A page's
 message stays at the page route that shows it, where the section's chrome is
 known; nothing here decides how a miss is presented. A miss **no machine surface
-can ask for** carries no ``detail`` at all (§:func:`settings_section`).
+can ask for** carries no ``detail`` at all (:func:`settings_section`).
 """
 
 from __future__ import annotations

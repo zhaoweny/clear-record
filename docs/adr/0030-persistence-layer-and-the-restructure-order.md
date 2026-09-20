@@ -55,11 +55,10 @@ not a committed document.
   statement must be exactly what the database does — the run claim, the
   reconciliation compare-and-set — the SQLAlchemy **Core** expression is kept
   rather than reconstructed out of mapped objects.
-- [DECISION: owner, 2026-09-19] **Alembic is adopted, and runs at open.** The
-  revisions are the retired ladder's own steps, one apiece: revision `0001` is
-  the ladder's v1 (the project and glossary tables) and `0008` is its last step,
-  so adopting the tool changes no table and moves no data, and every later schema
-  change is a revision on top of them. The process applies the revisions when it opens the
+- [DECISION: owner, 2026-09-19] **Alembic is adopted as revision one, and runs
+  at open.** Revision one is the schema the registry already has: adopting the
+  tool changes no table and moves no data, and every later schema change is a
+  revision on top of it. The process applies the revisions when it opens the
   registry, so an ordinary start yields a current schema with no separate
   migration step for the user.
 - [DECISION: owner, 2026-09-19] **Pydantic v2 at the boundaries only.** The
@@ -97,10 +96,12 @@ not a committed document.
   drifted in `store.py` is what the reconciliation fix had to correct; mapped
   entities move that class of mistake into a schema definition, while the Core
   fallback keeps the two atomic statements exactly as written.
-- **Revision one at open makes the schema's history a file.** A registry the
+- **The schema's history is a file from its first revision on.** A registry the
   user already has is taken as it is — no rewrite, no data loss — and the next
   change is recorded as a revision rather than as a comment about the current
-  version.
+  version. That argument does not depend on where revision one *starts*: it holds
+  for a single baseline describing today's schema and, as the Update below
+  records, for the ladder's own steps adopted one apiece.
 - **Validation belongs at the boundary.** The values that enter through the CLI,
   HTTP and MCP seams are the untrusted ones; the core's own types are constructed
   inside the process, and `core` may not import a validator anyway.
@@ -116,7 +117,10 @@ not a committed document.
   contract both the pipeline and its callers already speak.
 - **A schema rewrite as Alembic's revision one.** Rejected: nothing about
   adopting the tool requires changing the schema, and a rewrite would put the
-  user's existing registry at risk for no product change.
+  user's existing registry at risk for no product change. The shape adopted
+  instead — the ladder's own steps, one apiece (see the Update) — rewrites
+  nothing either, and it is what lets an existing registry be stamped at the
+  version it actually reached.
 - **Writing the uniqueness rule once, in code.** Rejected: any second writer can
   bypass a code path; the index is the version the database enforces, and the
   one that is tested as a deliverable of the migration.
@@ -154,7 +158,8 @@ not a committed document.
   `sqlite3.IntegrityError`, or `sqlite3.Error` around a registry call, now catches
   nothing and must catch the SQLAlchemy class — or `sqlalchemy.exc.SQLAlchemyError`
   where it means the whole family.
-- **Three public names moved.** ``service/webhooks`` no longer *declares*
+- **Four published names changed home: three moved, one is gone.**
+  ``service/webhooks`` no longer *declares*
   ``RUN_STARTED``/``RUN_FINISHED``/``RUN_FAILED``: the run half of the webhook
   vocabulary is derived from the run lifecycle's own moves
   (``service/lifecycle.py``, each move's derived ``event``) and the three names
@@ -162,7 +167,15 @@ not a committed document.
   in-tree caller is unaffected; an **out-of-tree** caller that imported one of
   the three from ``clear_record.service.webhooks`` now gets an ``ImportError``
   and must take it from ``clear_record.service`` (or read the move), the same
-  one-way cutover this batch's other deletions made.
+  one-way cutover this batch's other deletions made. ``SCHEMA_VERSION`` — the
+  fourth — is not re-exported anywhere: the ladder's own version number stopped
+  being a published fact when Alembic became the schema's history, and what
+  survives of it is ``service/store.py``'s private ``_LADDER_VERSION``, the
+  number a registry predating this build is placed at. An **out-of-tree** caller
+  that imported ``SCHEMA_VERSION`` from ``clear_record.service`` now gets an
+  ``ImportError`` with no name to move to: the question it asked — how far is
+  this registry's schema? — is Alembic's to answer, from ``alembic_version``.
+  Both breaks are intended, and neither has an in-tree caller.
 - **The per-meeting uniqueness index makes one revision alter data — the first
   one that does.** `CREATE UNIQUE INDEX` cannot be created over rows the index
   forbids, and the rows it forbids are exactly the ones *this application wrote*:
@@ -170,9 +183,58 @@ not a committed document.
   run for one meeting. Refusing to open such a registry would leave an upgrade
   path stuck forever on a state the product itself produced — the opposite of
   taking a user's registry as it is — so revision `0009` reconciles before it
-  creates the index: one active run per meeting survives (a `running` row over a
-  `queued` one, else the oldest), the rest end as `interrupted` with the reason in
-  the run's own `error` column, and nothing else is touched. Dropping the
+  creates the index: one active run per meeting survives (a `running` row that
+  names an owner, else the newest), the rest end as `interrupted` with the reason
+  in the run's own `error` column, and nothing else is touched. Dropping the
   duplicates instead would hide history the user is being asked to keep, and an
   index that simply fails to build is the blocker this bullet exists to record.
   The step is a no-op on every registry that never raced.
+- **The released line cannot read a registry this build has opened.** The
+  persistence work moves a registry onto Alembic, and the first number a
+  pre-Alembic build reads is the ladder's own: this build levels that row at the
+  ladder's last version (`service/store.py`'s `_LADDER_VERSION`, 8), which is
+  what lets a **trunk** build from before Alembic treat the ladder as already
+  applied instead of re-running it. The **released** line (`v0.2.x`) stopped at
+  **6**, so it refuses a migrated registry outright — "registry schema version 8
+  is newer than this build supports (6); upgrade clear-record" is the whole
+  repair path — and, meeting a registry this build *created* (which carries no
+  `schema_version` row at all), it never reaches that sentence: it runs the
+  ladder and dies on v4's `ALTER TABLE meeting ADD COLUMN notes` with a raw
+  `sqlite3.OperationalError: duplicate column name: notes`. Seeding the ladder's
+  row in revision `0001` for registries this build creates would have turned that
+  second death into the first sentence; it was considered and not taken, because
+  the row records the ladder history a registry *migrated from the ladder*
+  carries, and a fresh registry has none.
+
+## Update (2026-09-20) — the revision order as adopted
+
+- [DECISION: owner, 2026-09-20] **The retired ladder's steps are the chain's
+  revisions, one apiece (`0001`–`0008`), and this amends the decision of
+  2026-09-19 above without rewriting it.** The bullet above still reads "Alembic
+  is adopted as revision one … Revision one is the schema the registry already
+  has", which is the owner's text of that date; what landed instead is the
+  ladder's own DDL as the first eight revisions, in the ladder's order
+  (`packages/clear-record/src/clear_record/service/migrations/versions/`, each
+  body moved across as written). The reason is the **stamp**: a registry that
+  predates Alembic stands at a *ladder* number, and a registry whose first pass
+  was killed replays from the base — both need the chain's revisions to be the
+  ladder's own steps, because a registry has to be placed at the version it
+  actually reached and a single baseline carries no number to place it at.
+  Everything the 2026-09-19 bullet was taken for is unchanged: adopting the tool
+  changed no table and moved no data, every later schema change is a revision on
+  top of these eight, and the process still applies the revisions when it opens
+  the registry, so an ordinary start yields a current schema with no separate
+  migration step for the user. A registry written by the released line opens,
+  migrates and keeps every row (proved in `tests/service/test_store.py`).
+- [FACT] The criterion the ticket behind this carried — *"the revision history
+  begins from the current schema"* — is honoured **in effect, not literally**:
+  nine revisions (`0001`–`0009`) replay the ladder's eight DDL steps rather than
+  one baseline describing today's schema. No table changed, no data moved, the
+  chain is forward-only, and a registry migrates at open, which is what the
+  criterion exists for; the literal form is not claimed as met here or in the
+  sprint's hand-over. Landing the single baseline instead is a follow-up, not a
+  correction: it would have to place an existing registry at its own ladder
+  number, which is the same problem in the other direction.
+- Revisit if the owner wants the single baseline the 2026-09-19 bullet names; it
+  is a revision of its own, and the eight ladder steps are what it would replace.
+

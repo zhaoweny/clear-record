@@ -161,6 +161,22 @@ _LADDER_VERSION = 8
 #: ("duplicate column name"), its earlier steps adding nothing but this table. A
 #: revision that changes a shape the ladder describes, rather than adding to it,
 #: is what would revisit this.
+#:
+#: **The build this levelling saves is the trunk's; the released line is not
+#: saved by it.** The trunk's ladder stops at :data:`_LADDER_VERSION`, while
+#: ``v0.2.x`` — the released line — stops at **6**, so it cannot read a registry
+#: this build migrated whatever this row says: 8 sits above its own
+#: ``SCHEMA_VERSION`` and it refuses with "registry schema version 8 is newer than
+#: this build supports (6); upgrade clear-record". Meeting a registry this build
+#: *created* — no ``schema_version`` at all — it does not even reach that
+#: sentence: it runs the ladder and dies on v4's ``ALTER TABLE meeting ADD COLUMN
+#: notes`` with a raw ``sqlite3.OperationalError: duplicate column name: notes``.
+#: One line of builds reads a registry, and migrating with this build moves a
+#: registry off the released line. Seeding this table in revision 0001, so that a
+#: registry *this* build creates would reach the released build as its own
+#: sentence rather than a traceback, was considered and not taken: the row records
+#: the ladder history a registry *migrated from the ladder* carries, and a fresh
+#: registry has none. The limitation is recorded in ADR-0030's consequences.
 _LEGACY_VERSION_TABLE = "schema_version"
 
 #: Alembic's own version table.
@@ -236,11 +252,12 @@ def _alembic_config(db_path: Path) -> Config:
 def _revision_history(config: Config) -> tuple[frozenset[str], str, tuple[str, ...]]:
     """Every revision this build carries, its newest, and the chain head-first.
 
-    ``lineage`` is the order the steps were applied in — ``walk_revisions``
-    yields heads first — and it is what lets a version table holding several rows
-    be reduced to the one that says how far the schema actually got: the chain is
-    linear, so the schema carries every step up to the *head-most* row, and the
-    lower rows are stale records of steps already applied.
+    ``lineage`` is the chain **head-first** — ``walk_revisions`` yields heads
+    first, the reverse of the order the steps were applied in — and it is what
+    lets a version table holding several rows be reduced to the one that says how
+    far the schema actually got: the chain is linear, so the schema carries every
+    step up to the *head-most* row, and the lower rows are stale records of steps
+    already applied.
     """
     script = ScriptDirectory.from_config(config)
     lineage = tuple(entry.revision for entry in script.walk_revisions())
@@ -302,8 +319,12 @@ def _pending_stamp(
         for revision in rows:
             if revision not in known:
                 raise RuntimeError(
-                    f"registry schema revision {revision} is not one this build "
-                    f"carries (its newest is {head}); upgrade clear-record"
+                    tr(
+                        "registry schema revision {revision} is not one this build "
+                        "carries (its newest is {head}); upgrade clear-record",
+                        revision=revision,
+                        head=head,
+                    )
                 )
         if len(rows) > 1:
             _reduce_version_rows(conn, rows, lineage)
@@ -316,10 +337,19 @@ def _pending_stamp(
     if version == 0:
         return None  # the ladder's own "nothing ran yet"
     revision = f"{version:04d}"
-    if revision not in known:
+    # Only the ladder's *own* numbers were adopted as this chain's revision ids,
+    # so a ladder number above :data:`_LADDER_VERSION` is not a revision however
+    # its four digits happen to read: a row a later build levelled or wrote at 9
+    # must be refused, not read as revision ``0009``. The refusal is the same
+    # sentence either way — the registry is from a build newer than this one.
+    if version > _LADDER_VERSION or revision not in known:
         raise RuntimeError(
-            f"registry schema version {version} is newer than this build "
-            f"carries (its newest revision is {head}); upgrade clear-record"
+            tr(
+                "registry schema version {version} is newer than this build "
+                "carries (its newest revision is {head}); upgrade clear-record",
+                version=version,
+                head=head,
+            )
         )
     return revision
 
@@ -390,7 +420,7 @@ class RegistryLocked(RuntimeError):
     """Another surface holds the registry's write lock while it migrates.
 
     The registry migrates when it opens (ADR-0030), and two surfaces share one
-    file (RUN-02), so one open can meet another's migration.
+    file, so one open can meet another's migration.
     :meth:`Registry._migrate` takes SQLite's write lock for the whole step, so
     this is what a lock still held after the driver's busy timeout means — the
     other surface is mid-step, and this open did not wait past its timeout. It is
@@ -400,8 +430,11 @@ class RegistryLocked(RuntimeError):
 
     def __init__(self, db_path: Path) -> None:
         super().__init__(
-            f"another surface is migrating the registry at {db_path} and still "
-            f"holds its write lock; nothing was changed — retry"
+            tr(
+                "another surface is migrating the registry at {db_path} and still "
+                "holds its write lock; nothing was changed — retry",
+                db_path=db_path,
+            )
         )
 
 
@@ -436,7 +469,7 @@ class Registry:
 
         The busy timeout is the driver's default, which is also what makes a
         second *process* (the console and an agent's MCP server share one
-        registry, RUN-02) wait for a writer instead of raising ``database is
+        registry) wait for a writer instead of raising ``database is
         locked``. The one shape SQLite refuses to wait for is a write that has
         to upgrade a read transaction; pysqlite keeps the hand-written
         connection's promise here — it begins the transaction when the first
@@ -474,7 +507,7 @@ class Registry:
         before anything reads it as its own.
 
         **One opener at a time, from the first read.** The registry is shared by
-        the console and an agent's MCP server (RUN-02) and both migrate at open,
+        the console and an agent's MCP server, and both migrate at open,
         so the whole step — the version tables' read, the stamp, the revisions
         and the ladder row — runs on **one connection holding SQLite's write
         lock from before that read** (``BEGIN IMMEDIATE``), and the revisions run

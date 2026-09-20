@@ -22,14 +22,13 @@ Two things about the index's shape are deliberate:
   ``UNIQUE (meeting_id)`` would make the meeting's *history* unique instead, and
   would refuse exactly the second run the product is built around. The pair is
   named wherever a status is classified — the guard the run manager reads
-  (``store.active_run_for_meeting``), the reconciliation's compare-and-set
-  (``store.interrupt_run``), the claim (``store.claim_run``), the run manager's
-  own transitions, the console's run views, and the mapping's
-  ``sqlite_where`` (``entities.PipelineRun``) — all of them read
-  ``ACTIVE_RUN_STATUSES``. The two places that must spell it out again are this
-  ``WHERE`` and :data:`_END_LOSERS`, because a revision states its own DDL rather
-  than importing the application; ``tests/service/test_store.py`` compares this
-  predicate with the declaration, so the copies cannot drift apart.
+  (``store.active_run_for_meeting``), the run manager's own transitions, the
+  console's run views and the mapping's ``sqlite_where``
+  (``entities.PipelineRun``) — all of them read ``ACTIVE_RUN_STATUSES``. The two
+  places that must spell it out again are this ``WHERE`` and :data:`_END_LOSERS`,
+  because a revision states its own DDL rather than importing the application;
+  ``tests/service/test_store.py`` compares this predicate with the declaration, so
+  the copies cannot drift apart.
 
   The pair is read by the guard the run manager asks
   (``store.active_run_for_meeting``), the claim's node-wide clause, the console's
@@ -97,10 +96,17 @@ depends_on = None
 #: The index this revision creates, by name.
 INDEX_NAME = "pipeline_run_active_meeting"
 
-#: The reason :data:`_END_LOSERS` records on a run it ends — **translated where it
-#: is written**, because the console renders the run's own ``error`` column
-#: verbatim (``web/templates/_run.html``, ``_activity_run.html``), which
-#: ``docs/i18n.md`` puts on the translated side of the boundary.
+#: The reason :data:`_END_LOSERS` records on a run it ends — **rendered where it
+#: is written**, which is the one exception to how that column is otherwise
+#: filled. :data:`~clear_record.service.lifecycle.RESTART_REASON` is stored as its
+#: message *ID*, which the console renders where it shows the column
+#: (``web/templates/_run.html``, ``_activity_run.html``); this frame cannot be,
+#: because of its placeholder: ``{run_id}`` names the run that survived, and the
+#: only statement that knows which one that is is this revision's own, which fills
+#: it as it writes (SQL's ``replace``). Stored unfilled it would reach the console
+#: as a literal ``{run_id}``, so the sentence is looked up here instead, and a run
+#: this revision ends carries the migrating process's locale. ``docs/i18n.md``
+#: names that as the column's one locale-dependent case.
 #:
 #: ``deferred`` is the message-ID marker (the lookup happens here, at migration
 #: time, not at import): :func:`upgrade` resolves it with ``tr`` and the
@@ -119,10 +125,12 @@ RECONCILED_REASON = deferred(
 #: whole revision optional — the reconciliation would run and the *look-alike*
 #: would be accepted, leaving the one-active-run rule unenforced while the
 #: mapping and the parity test still declared it. :func:`upgrade` therefore takes
-#: the two cases apart: absent, and it creates this; present and identical (a
-#: re-run of a chain whose first pass was killed, see ``store._pending_stamp``),
-#: and it leaves it; present and different, and it refuses the registry with the
-#: object's own DDL in the message.
+#: the two cases apart: absent, and it creates this; present and *this revision's
+#: own* — the same name, column, uniqueness and partiality (see
+#: :data:`_INDEX_SHAPE`), which is a re-run of a chain whose first pass was killed
+#: (``store._pending_stamp``) or a successor revision's widening of the predicate
+#: — and it leaves it; present and anything else, and it refuses the registry with
+#: the object's own DDL in the message.
 _DDL: tuple[str, ...] = (
     """CREATE UNIQUE INDEX pipeline_run_active_meeting
     ON pipeline_run (meeting_id) WHERE status IN ('queued', 'running');""",
@@ -173,24 +181,57 @@ WHERE status IN ('queued', 'running')
 )
 
 
-def _normalized(sql: str) -> str:
-    """One DDL statement as text that two spellings of it can be compared by.
+#: This revision's own index, as SQLite describes it: unique, partial, and the
+#: columns it covers in order. :func:`_create_the_index` compares what it finds
+#: with this *identity* rather than with :data:`_DDL`'s text.
+#:
+#: The difference matters on the one path that meets an index this revision did
+#: not just create: the replay-from-base repair (:func:`_pending_stamp` in
+#: ``store``), which runs every revision again over a schema that is already
+#: built. Text is the wrong thing to compare there, because a successor revision
+#: may legitimately have **widened** this index — adding an active state to
+#: ``ACTIVE_RUN_STATUSES`` requires a revision, and that revision restates the
+#: predicate with the new state in it — and the widened index is still this
+#: revision's own: same name, same column, still unique, still partial. Comparing
+#: DDL text would refuse the very registry the repair exists for.
+_INDEX_SHAPE = (True, True, ("meeting_id",))
 
-    SQLite stores the text it was given, minus ``IF NOT EXISTS`` (it drops that
-    clause itself), so whitespace and the clause are the only things to level.
-    """
-    return " ".join(sql.replace("IF NOT EXISTS", "").split()).rstrip(";")
 
+def _index_shape() -> tuple[bool, bool, tuple[str, ...]] | None:
+    """How the index already carrying this revision's name is built, if any.
 
-def _existing_index() -> str | None:
-    """The DDL of the index already carrying this revision's name, if any.
-
+    SQLite's own description of it — ``unique``, ``partial`` and the indexed
+    columns, in order — rather than its DDL text (see :data:`_INDEX_SHAPE`).
     ``None`` when the name is free. Offline rendering cannot look, and answers
-    ``None`` — it has no registry to inspect and the path that checks is the
+    ``None``: it has no registry to inspect, and the path that checks is the
     online one.
     """
     if context.is_offline_mode():
         return None
+    bind = op.get_bind()
+    named = [
+        row
+        for row in bind.execute(
+            text('SELECT name, "unique", partial FROM pragma_index_list(:table)'),
+            {"table": "pipeline_run"},
+        )
+        if row[0] == INDEX_NAME
+    ]
+    if not named:
+        return None
+    _, unique, partial = named[0]
+    columns = tuple(
+        row[0]
+        for row in bind.execute(
+            text("SELECT name FROM pragma_index_info(:index) ORDER BY seqno"),
+            {"index": INDEX_NAME},
+        )
+    )
+    return (bool(unique), bool(partial), columns)
+
+
+def _index_ddl() -> str:
+    """The DDL of the index carrying this revision's name, for the refusal."""
     row = (
         op.get_bind()
         .execute(
@@ -199,24 +240,31 @@ def _existing_index() -> str | None:
         )
         .first()
     )
-    return None if row is None else row[0]
+    return "" if row is None else row[0]
 
 
 def _create_the_index() -> None:
     """Create the index, or refuse a registry that carries another one by that name."""
-    existing = _existing_index()
-    if existing is None:
+    found = _index_shape()
+    if found is None:
         for statement in _DDL:
             op.execute(statement)
         return
-    if _normalized(existing) == _normalized(_DDL[0]):
-        # The chain was re-run (an open killed part-way through it replays from
-        # the base): this is this revision's own index, already stated.
+    if found == _INDEX_SHAPE:
+        # This revision's own index, already stated. Two ways it arrives here:
+        # the chain was re-run (an open killed part-way through it replays from
+        # the base), or a successor revision widened the predicate and the replay
+        # is looking at the wider index — recognised because the comparison is by
+        # identity, not by text.
         return
     raise RuntimeError(
-        f"the registry carries an index named {INDEX_NAME} that revision 0009 did "
-        f"not create and does not declare: {existing}. The one-active-run rule "
-        f"cannot be stated over it — drop that object and open the registry again."
+        tr(
+            "the registry carries an index named {index} that revision 0009 did not "
+            "create and does not declare: {ddl}. The one-active-run rule cannot be "
+            "stated over it — drop that object and open the registry again.",
+            index=INDEX_NAME,
+            ddl=_index_ddl(),
+        )
     )
 
 

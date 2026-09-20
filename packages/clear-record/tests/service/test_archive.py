@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,7 @@ def test_a_registry_at_revision_two_gains_the_archive_table(tmp_path) -> None:
     """An existing registry at revision two gains the archive table on open."""
     db = tmp_path / "registry.sqlite3"
     command.upgrade(_alembic_config(db), "0002")
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
             "INSERT INTO project (slug, name, notes, created_at)"
             " VALUES ('ops', 'Ops', '', 'now')"

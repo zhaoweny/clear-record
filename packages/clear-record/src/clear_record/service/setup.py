@@ -194,7 +194,7 @@ class SetupProbeOut(Shape):
 
 
 class SetupDetectionOut(Shape):
-    """Every candidate probed, in order (the ``detect_now`` response)."""
+    """Every candidate probed, in order (the ``detection`` field of the response)."""
 
     probes: list[SetupProbeOut]
 

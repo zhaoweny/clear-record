@@ -2,8 +2,8 @@
    queue and the history: what differs is which of its fields the run has
    recorded yet. A live run carries the stage and progress its own persisted
    event stream last reported; a run that has stopped carries the cost record's
-   derived speed and its wall-clock duration — and a live run says
-   unknown for both, because nothing has measured them yet. `row` is the dict
+   derived speed and its wall-clock duration — a queued run has neither yet, and
+   a running one shows the rate so far. `row` is the dict
    web/views.py builds once (views.run_row); the header chip is fed from the
    same reads. #}
 {% set run = row.run %}
@@ -56,5 +56,5 @@
   {% if run.resumes_run_id %}
   <div class="muted run-message">{{ tr("resumed from run {run_id}", run_id=run.resumes_run_id) }}</div>
   {% endif %}
-  {% if run.error %}<div class="run-error" role="alert">{{ run.error }}</div>{% endif %}
+  {% if run.error %}<div class="run-error" role="alert">{{ tr(run.error) }}</div>{% endif %}
 </div>

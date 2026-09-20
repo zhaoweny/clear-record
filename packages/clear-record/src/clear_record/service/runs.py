@@ -47,7 +47,7 @@ from clear_record.cli import stages
 from clear_record.cli.workspace import Workspace
 from clear_record.core import EventSink, JobEvent, PipelineOptions, RunCancelled
 from clear_record.core.diagnostics import log_event
-from clear_record.core.i18n import deferred, tr
+from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
 from clear_record.service.diagnostics import machine_description
 from clear_record.service.glossary import (
@@ -641,9 +641,14 @@ class RunManager:
                 run.id,
                 observed=run,
                 ended_at=ended_at,
-                # The row's ``error`` is console text, so it is looked up now
-                # (the progress summary and the log record keep the message ID).
-                error=tr(RESTART_REASON),
+                # The row's ``error`` carries the message **ID**, not a rendered
+                # sentence: the column is machine-read (the JSON API and the MCP
+                # tool answer with it, `docs/i18n.md`), so what it must not hold
+                # is text looked up in whatever locale this process happens to
+                # run in. The console renders the ID where it shows the column
+                # (`_run.html`, `_activity_run.html`) — the same place the
+                # progress message above it is rendered.
+                error=RESTART_REASON,
                 progress=self._progress(
                     run.id, INTERRUPT.target, RESTART_REASON, ended_at=ended_at
                 ),
@@ -1641,9 +1646,9 @@ class RunManager:
     ) -> dict:
         """The recorded progress summary for a terminal transition, with its cost.
 
-        The cost sub-record (RUN-01) is written for **every** terminal outcome
-        — done, failed, interrupted — so a run that stopped early still says
-        which stages it completed. Ratios are never stored here: a display
+        The cost sub-record (RUN-01) is written for **every** terminal outcome —
+        done, failed, stopped, interrupted — so a run that stopped early still
+        says which stages it completed. Ratios are never stored here: a display
         derives them (see :func:`estimate_eta_s`).
         """
         events = self._registry.list_run_events(run_id)

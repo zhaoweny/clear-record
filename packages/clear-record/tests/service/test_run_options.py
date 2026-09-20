@@ -15,6 +15,7 @@ import dataclasses
 import json
 import sqlite3
 import warnings
+from contextlib import closing
 from typing import get_type_hints
 
 import pytest
@@ -84,7 +85,7 @@ def _seeded_run(tmp_path) -> tuple[Registry, int]:
 
 def _store(registry: Registry, run_id: int, row: dict) -> None:
     """Write the column directly — an earlier release's row, or a hand edit."""
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
             (json.dumps(row), run_id),
@@ -135,7 +136,8 @@ def test_a_row_an_earlier_release_wrote_still_reads(tmp_path) -> None:
     with pytest.warns(SupersededRunOptions) as warned:
         read = registry.get_run(run_id).run_options
 
-    message = str(warned[0].message)
+    superseded = [w for w in warned if isinstance(w.message, SupersededRunOptions)]
+    message = str(superseded[0].message)
     assert f"run {run_id}" in message
     assert "formats" in message
     assert read is not None
@@ -252,7 +254,7 @@ def test_a_stored_row_with_a_key_no_build_ever_wrote_fails_loudly(tmp_path) -> N
 
 def test_a_row_that_is_not_json_fails_loudly(tmp_path) -> None:
     registry, run_id = _seeded_run(tmp_path)
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
             ("{backend: apple", run_id),
@@ -385,4 +387,5 @@ def test_the_superseded_warning_is_per_row_not_per_read(tmp_path) -> None:
         registry.get_run(run_id)
         registry.get_run(run_id)
 
-    assert len(warned) == 1
+    superseded = [w for w in warned if isinstance(w.message, SupersededRunOptions)]
+    assert len(superseded) == 1

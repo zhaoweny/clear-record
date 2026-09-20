@@ -15,8 +15,8 @@ This module is that classification, once:
 * the **states** (:data:`RUN_STATUSES`), and which of them are in flight
   (:data:`ACTIVE_RUN_STATUSES`), terminal (:data:`TERMINAL_STATUSES`), resumable
   (:data:`RESUMABLE_STATUSES`) or bad news nobody asked for
-  (:data:`ATTENTION_STATUSES`) — the first two sets computed from the vocabulary,
-  the other two declared pairs;
+  (:data:`ATTENTION_STATUSES`) — the middle two sets computed from the vocabulary,
+  the first and last declared pairs;
 * the **moves** between the states (:class:`RunTransition`, :data:`TRANSITIONS`):
   the state each starts from, the state it lands in, who may ask for it, and the
   notification it raises;
@@ -53,8 +53,12 @@ worth naming:
   ``oldest_queued_run``) read these declarations, so a new state is neither
   refused as unknown nor invisible to a query;
 * :func:`active_run_predicate` renders the mapping's index predicate from
-  :data:`ACTIVE_RUN_STATUSES`, so an active state moves the database's rule with
-  it;
+  :data:`ACTIVE_RUN_STATUSES`, so an active state moves the *mapping's* rule with
+  it — and the database's only with a revision beside it: the index in every
+  registry, whether this build created it or migrated it, is revision ``0009``'s
+  literal pair, and no ``create_all`` ever emits the mapping's. The state that the
+  one edit really is, is a **terminal** one — the index names no terminal state, so
+  adding one cannot disagree with it;
 * the **revision's** own ``WHERE`` does *not* follow — a revision states its own
   DDL, because the schema's history is frozen and a released revision cannot
   import today's application — so that copy is **pinned** instead:
@@ -282,7 +286,12 @@ def active_run_predicate(column: str = "status") -> str:
     SQLAlchemy wants that predicate as literal text for ``sqlite_where``, which is
     why the rule is rendered here, from :data:`ACTIVE_RUN_STATUSES`, rather than
     spelled beside the index: :class:`~clear_record.service.entities.PipelineRun`
-    reads the result, and a second active state reaches the index with it.
+    reads the result. What a second **active** state needs is therefore one edit
+    *plus a revision*: the index every registry carries is revision ``0009``'s
+    literal pair, and the mapping's DDL is never emitted
+    (``migrations/env.py`` sets ``target_metadata=None``, and nothing calls
+    ``create_all``). The one edit the rule is about is a **terminal** state: the
+    index names no terminal state, so adding one cannot leave the database behind.
     """
     rendered = ", ".join(f"'{status}'" for status in ACTIVE_RUN_STATUSES)
     return f"{column} IN ({rendered})"
@@ -294,9 +303,9 @@ def active_run_predicate(column: str = "status") -> str:
 #: The sentence a second submission for one meeting is refused with — the one
 #: message the manager's guard, the database's index-based refusal and the JSON
 #: API's own pre-check all answer with, so the same condition cannot come to read
-#: two ways. A message ID, looked up where it is shown: the console renders it with
-#: ``tr``, the JSON API and the MCP tool carry the ID (both are machine-facing
-#: surfaces, ``docs/i18n.md``).
+#: two ways. A message ID, looked up where it is shown: the console's start form
+#: re-renders the live run's fragment instead of printing it, and the JSON API and
+#: the MCP tool carry the ID (both are machine-facing surfaces, ``docs/i18n.md``).
 RUN_IN_FLIGHT = deferred("a run is already in flight for this meeting")
 
 #: The reason startup reconciliation records on a run left ``running`` by a dead
@@ -304,14 +313,15 @@ RUN_IN_FLIGHT = deferred("a run is already in flight for this meeting")
 #: console (and a diagnostics bundle) can show *why* the run is interrupted, not
 #: just that it is.
 #:
-#: The console renders that column verbatim (``web/templates/_run.html``,
-#: ``_activity_run.html``), which ``docs/i18n.md`` puts on the translated side of
-#: the boundary, so the value written **to the row** is looked up with ``tr`` at
-#: that moment (see
-#: :meth:`~clear_record.service.runs.RunManager._reap_dead_runs`). The same
-#: message ID stays English where it is machine-facing: the JSONL log record and
-#: the run's ``progress`` summary both carry it unrendered. ``deferred`` is the
-#: extraction marker.
+#: What is written **to the row** is this message ID, not a rendered sentence:
+#: that column is machine-read — the JSON API and the MCP tool answer with it, and
+#: ``docs/i18n.md`` puts a *status value* on the never-translated side — so it must
+#: not hold text looked up in whatever locale the writing process happened to run
+#: in. The console renders the ID where it shows the column
+#: (``web/templates/_run.html``, ``_activity_run.html``), exactly as it renders the
+#: progress message the run's ``progress`` summary carries unrendered; the JSONL
+#: log record carries the ID unrendered too. ``deferred`` is the extraction
+#: marker.
 RESTART_REASON = deferred("the console restarted while this run was in flight")
 
 

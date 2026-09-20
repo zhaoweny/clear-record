@@ -2,11 +2,12 @@
 
 A run's state is read by the persistence layer, the manager, the console and the
 agent surface, so the states were once spelled in five places and a new one cost
-five classifications. These tests defend the two properties that make the one
+five classifications. These tests defend the three properties that make the one
 declaration worth having: the declaration is *internally* complete (every move
-names states that exist, and no state is declared that nothing enters), and the
+names states that exist, and no state is declared that nothing enters), its
 **announcements** are the moves' own names rather than a vocabulary a receiver
-could subscribe to and never receive.
+could subscribe to and never receive, and no second list of its states exists
+anywhere in the tree.
 """
 
 from __future__ import annotations

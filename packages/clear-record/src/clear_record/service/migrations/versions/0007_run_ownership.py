@@ -1,9 +1,9 @@
-"""Revision 0007 — run ownership (RUN-02) (the ladder's v7).
+"""Revision 0007 — run ownership (the ladder's v7).
 
 Revision ID: 0007
 Revises: 0006
 
-RUN-02: who a run belongs to. ``origin`` is the surface that started it;
+Who a run belongs to: ``origin`` is the surface that started it;
 ``owner`` the process that claimed it (the conditional transition that makes
 the queue cross-process); ``heartbeat_at`` the owner's last proof of life,
 refreshed while it executes. All three are NULL for a run recorded before

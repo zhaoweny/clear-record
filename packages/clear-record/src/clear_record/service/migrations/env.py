@@ -64,11 +64,13 @@ def _writing_a_revision() -> bool:
     ``alembic.ini`` sets ``revision_environment = true`` so that
     :func:`_next_revision_id` — which is registered by the ``configure`` call
     below — also applies to ``alembic revision``. That mode wants the *hooks*,
-    not a database: it has no registry to reach and none to migrate, so the
-    connection is skipped and the run ends after the directives were offered.
+    not a registry: it has none to reach and none to migrate, so the registry
+    connection is not made — the hooks run against a scratch in-memory bind — and
+    the run ends after the directives were offered.
 
-    The CLI marks the subcommand by name in ``config.cmd_opts`` (Alembic stores
-    the command *callable* there, not its name), and a programmatic
+    The CLI marks the subcommand by *callable* in ``config.cmd_opts`` (the
+    namespace's ``cmd`` is ``(callable, positional, kwargs)``, not a name), and a
+    programmatic
     ``command.revision`` run carries no ``cmd_opts`` at all — the caller that
     does that either supplies a connection or wants the hooks.
     """

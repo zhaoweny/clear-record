@@ -1,9 +1,9 @@
-"""Revision 0008 — cancel and resume (RUN-04) (the ladder's v8).
+"""Revision 0008 — cancel and resume (the ladder's v8).
 
 Revision ID: 0008
 Revises: 0007
 
-RUN-04: cancel and resume. ``resumes_run_id`` links a run to the run it
+Cancel and resume: ``resumes_run_id`` links a run to the run it
 continues (the chunk cache is what actually makes it cheaper; this is what
 makes the link visible). ``cancel_requested_at`` is a *request* on a
 ``running`` run: only its owner may end it, so the column records who asked

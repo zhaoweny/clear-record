@@ -15,20 +15,29 @@ Design notes:
   exception is reported only as ``Error executing tool <name>``. So every
   unknown-project / unknown-meeting / missing-tape-set path raises a
   ``ToolError`` naming what was wrong and what is available.
-- **Results are structured, and the published schema is checked.** Each tool
-  annotates its return with a declared model from the boundary vocabulary — one
-  derived from the domain value it publishes (``clear_record.service.schemas``), a
-  shape a service view computes (``DraftView``, ``AgentTasksOut``), or this
-  module's own envelope for one that wraps a value (``RunStartedOut``,
-  ``RunStatusOut``, ``RunEventPageOut``) — so the SDK publishes a real output
-  schema — the fields, not ``additionalProperties`` — and an agent gets
-  machine-readable values, not prose. The annotation is *checked*, not merely
-  published: the SDK validates the returned value against it (``mcp`` 2.2.0,
-  ``convert_result``), so a result that does not match its own declaration is
-  refused rather than sent. That refusal reaches the model as
+- **Results are structured, and the published schema is the shape the tools
+  answer with.** Each tool annotates its return with a declared model from the
+  boundary vocabulary — one derived from the domain value it publishes
+  (``clear_record.service.schemas``), a shape a service view computes
+  (``DraftView``, ``AgentTasksOut``), or this module's own envelope for one that
+  wraps a value (``RunStartedOut``, ``RunStatusOut``, ``RunEventPageOut``) — so
+  the SDK publishes a real output schema — the fields, not
+  ``additionalProperties`` — and an agent gets machine-readable values, not
+  prose.
+- **What checks that shape, and where.** The SDK validates the returned value
+  against the annotation (``mcp`` 2.2.0, ``convert_result``), but pydantic does
+  not revalidate an instance of the model it is handed
+  (``revalidate_instances='never'``, its default), so the check is not what holds
+  a tool's answer to its declaration: a returned *dict* the declaration does not
+  describe is refused, while a constructed **instance** — and every tool here
+  returns one — is taken at its word. What holds those is the **construction**:
+  :meth:`~clear_record.service.schemas.Shape.of` builds each boundary model with
+  ``model_validate``, and that is where a missing or mistyped field fails. The
+  edge's check is the net under a payload assembled as a plain dict. Either way a
+  shape that disagrees with its own declaration is a bug in this tree, not
+  something the agent can act on, so it reaches the model as
   ``Error executing tool <name>`` — the generic form any unexpected exception
-  takes — because a shape that disagrees with its declaration is a bug in this
-  tree, not something the agent can act on.
+  takes.
 - **BYOK.** No model or provider key is read, required or bundled; the agent
   brings its own (ADR-0017).
 

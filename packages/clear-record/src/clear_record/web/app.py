@@ -6,7 +6,8 @@ Three pieces, in this order:
   renders, as a named function taking the registry, the run manager and the
   request's locale;
 - :mod:`clear_record.web.lookup` owns the one rule *"find this project, meeting,
-  tape or run — or answer that it is not here"* both surfaces ask;
+  tape, run, term, archive, draft, agent-task kind or settings section — or answer
+  that it is not here"* both surfaces ask;
 - **this module is the wiring**: the middleware, the route table, the declared
   request and response shapes, and the injected adapters (the registry, the run
   manager, the webhook emitter, the agent seam). A route body finds the thing,
@@ -14,8 +15,8 @@ Three pieces, in this order:
 
 Two surfaces over the same **thin** service adapter:
 
-- ``/api/*`` returns JSON — the machine surface the GUI, scripts and (later) the
-  MCP server share. Every route is a small translation of a service call.
+- ``/api/*`` returns JSON — the machine surface the GUI, scripts and
+  integrations share. Every route is a small translation of a service call.
 - ``/ui/*`` returns HTML fragments for the browser, driven by **htmx** (partial
   updates) and **Alpine.js** (local UI state). Server-rendered: the assets are
   **built** from ``frontend/`` (Tailwind v4 + Vite) and the **compiled output is
@@ -134,6 +135,17 @@ from clear_record.web import guard, lookup, views
 # ``find_harness`` (``tests/web/test_web_agent_setup.py``). Binding them here is
 # what keeps those patches effective: a seam that imported its own copy would go
 # on passing the suite while the pins had stopped meaning anything.
+#
+# Six more service calls are frozen here for the same reason, and their pins are
+# on *this* module: the **routes** call them by name, so a route rewritten to
+# reach one any other way would leave its pin silently ineffective. They are
+# ``transcription_status`` (stubbed for every console test in
+# ``tests/web/conftest.py``, overridden in ``tests/web/test_web_setup.py``),
+# ``run_hello_check`` (``tests/web/test_web_agent_flow.py``),
+# ``download_transcription_model`` (``tests/web/test_web_settings.py``,
+# ``tests/web/test_web_setup.py``), ``verify_endpoint`` and ``detect``
+# (``tests/web/test_web_agent_setup.py``), and ``serve``
+# (``tests/cli/test_serve.py``, ``tests/web/test_web_tailscale.py``).
 from clear_record.service.auto import (  # noqa: F401
     available_backend_ids,
     models_on_disk,
@@ -353,18 +365,29 @@ class ArchiveCreate(BaseModel):
 # A request body was already a declared model (`ProjectCreate`, `RunCreate`,
 # ...); these are the responses. A shape that *is* one of the registry's values
 # is derived from that value in `clear_record.service.schemas`; a shape a service
-# view computes is declared where it is built (`DraftView`, `AgentTasksOut`,
-# `MeetingStorage`, `ArchiveVerification`, `SetupStatusOut`, `RunSummary`) — and
-# the webhook view, which both surfaces render, is declared beside its builder in
+# *function* computes is declared where that function builds it (`DraftView`,
+# `MeetingStorage`, `ArchiveVerification`, `SetupStatusOut`, `RunSummary`) —
+# except `AgentTasksOut`, which both edges build out of the agent-task surface and
+# which is declared beside that surface in `service/agent_review.py` — and the
+# webhook view, which both surfaces render, is declared beside its builder in
 # `clear_record.web.views`. What is left here is this edge's own: a computed
 # answer, or an envelope around a value.
 #
-# Declaring them is what gets an answer *checked* on the way out, and the checking
-# is real rather than decorative: FastAPI takes the return annotation as the
-# route's `response_model` and validates the returned value against it, which was
-# measured by breaking a handler in a copy of the tree — a payload missing a
+# Declaring them is what gets an answer *checked* on the way out — for the
+# payloads that need the check. FastAPI takes the return annotation as the route's
+# `response_model` and validates the returned value against it, which was measured
+# by breaking a handler in a copy of the tree: a **dict** payload missing a
 # declared field and one carrying a field the model does not declare are both
 # refused (`ResponseValidationError`), because `Shape` states `extra="forbid"`.
+#
+# What that check does *not* cover is a value that is already an instance of the
+# declared model: pydantic does not revalidate an instance it is handed
+# (`revalidate_instances='never'`, its default), and every handler here returns
+# exactly that (`ProjectOut.model_validate(...)`, `Shape.of(...)`). What holds
+# those answers to their declaration is the **construction** — `model_validate` at
+# the point the shape is built, which is where a missing or mistyped field fails —
+# and the edge's check is the net under the payloads an edge assembles as plain
+# dicts.
 # The caller of a broken handler gets a bare 500 (`Internal Server Error`, no
 # detail): loud for a developer, opaque for a client, and left as it is on
 # purpose — a handler whose shape does not match its own declaration is a bug in
@@ -1717,7 +1740,7 @@ def create_app(
         found = detect() if detect_now else None
         return setup_view(detection=found).as_dict()
 
-    # --- JSON API (machines, scripts, later MCP) ---------------------------- #
+    # --- JSON API (machines, scripts and integrations) ---------------------- #
     @app.get("/api/health")
     def health() -> HealthOut:
         return HealthOut(status="ok", registry=str(registry.db_path))

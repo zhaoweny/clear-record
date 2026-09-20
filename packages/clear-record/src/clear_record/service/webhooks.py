@@ -84,7 +84,7 @@ FUTURE_EVENTS: tuple[str, ...] = (
 #: Every event name a config may filter on.
 ALL_EVENTS: tuple[str, ...] = EMITTED_EVENTS + FUTURE_EVENTS
 
-#: The environment variable naming the signing secret for an endpoint.
+#: The header carrying the endpoint's HMAC-SHA256 signature (``sha256=<digest>``).
 SIGNATURE_HEADER = "X-Clear-Record-Signature"
 EVENT_HEADER = "X-Clear-Record-Event"
 DELIVERY_HEADER = "X-Clear-Record-Delivery"

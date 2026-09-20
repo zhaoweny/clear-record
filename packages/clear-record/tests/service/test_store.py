@@ -18,6 +18,7 @@ import sqlite3
 import subprocess
 import sys
 import types
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,7 @@ def _ladder_left_it(db_path: Path, version: int) -> None:
     The ladder kept its version in ``schema_version`` and knew nothing of
     Alembic, so a registry from a release before this build looks like this.
     """
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.execute("DROP TABLE alembic_version")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
@@ -75,7 +76,7 @@ def _ladder_left_it(db_path: Path, version: int) -> None:
 
 def _version_tables(db_path: Path) -> list[str]:
     """Which version states a registry carries: the ladder's and Alembic's."""
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         return sorted(
             row[0]
             for row in conn.execute(
@@ -105,7 +106,7 @@ def _index_predicate(ddl: str | None) -> str | None:
 
 def _index_sql(db_path: Path, name: str) -> str | None:
     """A built index's DDL: the ``CREATE INDEX`` statement, normalized."""
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", (name,)
         ).fetchone()
@@ -114,7 +115,7 @@ def _index_sql(db_path: Path, name: str) -> str | None:
 
 def _seed_project(db_path: Path) -> None:
     """A project row as an existing registry would already have one."""
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.execute(
             "INSERT INTO project (slug, name, notes, created_at)"
             " VALUES ('ops', 'Ops', '', 'now')"
@@ -354,7 +355,7 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0003")
     _seed_project(db)
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
             "INSERT INTO meeting (project_id, slug, title, status, created_at)"
             " VALUES (1, 'kickoff', 'Kickoff', 'new', 'now')"
@@ -430,7 +431,7 @@ def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
     """A revision this build does not carry is refused, not half-read."""
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute("UPDATE alembic_version SET version_num = '9999'")
 
     with pytest.raises(
@@ -439,7 +440,7 @@ def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
         Registry(db)
 
     # The refusal ran nothing: the registry still records what it recorded.
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "9999",
         )
@@ -457,7 +458,7 @@ def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path) -> None:
         Registry(db)
 
     # Nothing was applied and nothing was stamped: the refusal comes first.
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (99,)
         assert (
             conn.execute(
@@ -579,7 +580,7 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
     assert reg.get_project("ops").notes == ""
     meeting = reg.create_meeting("ops", "Kickoff")  # and writes with its own DDL
     assert reg.get_meeting("ops", "kickoff").id == meeting.id
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
             ladder.SCHEMA_VERSION,
         )
@@ -601,7 +602,7 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
 # --- the mapping the registry reads and writes through (ADR-0030) ----------- #
 
 
-def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
+def test_the_mapping_describes_every_column_uniqueness_and_foreign_key_the_revisions_own(
     tmp_path,
 ) -> None:
     """Alembic owns the schema; the entities only describe it (ADR-0030).
@@ -613,8 +614,8 @@ def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
     that turns a duplicate into an ``IntegrityError`` the store reads as "already
     exists". ``--autogenerate`` cannot catch any of it while ``target_metadata``
     stays ``None`` by decision (``migrations/env.py``), so this is the net: every
-    table, every column with its type and nullability, and every declared
-    uniqueness, against the head revision's own schema.
+    table, every column with its type and nullability, every declared uniqueness
+    and every declared foreign key, against the head revision's own schema.
 
     The uniqueness is read on both sides, and both directions are asserted — a
     rule declared in one place and not the other fails here whether the missing
@@ -671,7 +672,7 @@ def test_the_mapping_describes_every_column_and_uniqueness_the_revisions_own(
         }
         for name, table in entities.Base.metadata.tables.items()
     }
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         names = [
             row[0]
             for row in conn.execute(
@@ -787,7 +788,7 @@ def test_the_active_run_index_arrives_with_revision_0009(tmp_path) -> None:
     reg.create_project("Ops")
     meeting = reg.create_meeting("ops", "Kickoff")
     active = reg.create_run(meeting.id, origin="console")
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         for status in ("queued", "running"):
             with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(
@@ -824,7 +825,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     """
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
             "INSERT INTO project (slug, name, notes, created_at)"
             " VALUES ('ops', 'Ops', '', 'now')"
@@ -898,7 +899,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     assert (submitted.id, submitted.status) == (8, "queued")
 
     assert _index_sql(db, "pipeline_run_active_meeting") is not None
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "0009",
         )
@@ -975,14 +976,14 @@ def test_a_version_table_holding_two_revisions_opens_and_is_reduced(tmp_path) ->
     db = tmp_path / "registry.sqlite3"
     Registry(db)
     _seed_project(db)
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute("INSERT INTO alembic_version (version_num) VALUES ('0008')")
 
     reg = Registry(db)
 
     assert [project.slug for project in reg.list_projects()] == ["ops"]
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
             ("0009",)
         ]
@@ -1004,7 +1005,7 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
     Registry(db)
     _seed_project(db)
     index_before = _index_sql(db, "pipeline_run_active_meeting")
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute("DELETE FROM alembic_version")
 
     reg = Registry(db)
@@ -1012,7 +1013,7 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
     assert [project.slug for project in reg.list_projects()] == ["ops"]
     assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
     assert _index_sql(db, "pipeline_run_active_meeting") == index_before
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
             ("0009",)
         ]
@@ -1081,7 +1082,7 @@ def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
     _seed_project(db)
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
             "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
         )
@@ -1093,7 +1094,7 @@ def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
     assert _index_sql(db, "pipeline_run_active_meeting") == _normalized(
         "CREATE INDEX pipeline_run_active_meeting ON pipeline_run (meeting_id)"
     )
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         # Nothing was half-applied: the refused open left the registry at 0008.
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
             ("0008",)
@@ -1244,5 +1245,5 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     )
 
     assert migrated.returncode == 0, migrated.stderr
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT foreign_keys FROM pragma_probe").fetchone() == (1,)

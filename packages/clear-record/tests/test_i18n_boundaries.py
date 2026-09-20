@@ -16,6 +16,7 @@ import dataclasses
 import gettext
 import json
 import re
+from contextlib import closing
 
 import click
 import pytest
@@ -151,7 +152,7 @@ def _store_run_options(registry: Registry, run_id: int, text: str) -> None:
     """Put ``text`` in the run's stored-options column, as another build might have."""
     import sqlite3
 
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET run_options = ? WHERE id = ?", (text, run_id)
         )

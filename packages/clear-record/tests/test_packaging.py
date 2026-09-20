@@ -272,7 +272,7 @@ def test_web_console_assets_ship_with_the_package() -> None:
         # A partial: not one of the page anchors below, so only the frozen set
         # can notice it is gone.
         "_detail.html",
-        # The Activity page (RUN-03) and its row partial: the page is not in the
+        # The Activity page and its row partial: the page is not in the
         # anchor list either, and its partial is not a page at all — both were
         # absent from the frozen set, so deleting either left the guard silent.
         "activity.html",

@@ -17,7 +17,8 @@ that follows* a function of the request's locale rather than of whatever the
 process last spoke; a caller with no request (a test building a context
 directly) gets the locale it named. A **row builder** takes the locale when it
 renders a translated string into its own context (the CLI explanation
-:func:`_auto_view` renders, an upload guard's reason, the chip's label) and not
+:func:`_auto_view` renders — the surface context has already spoken for the
+locale it is about —, an upload guard's reason, the chip's label) and not
 otherwise.
 
 One group of names is read from :mod:`clear_record.web.app` rather than imported
@@ -161,8 +162,9 @@ def _adapters():
     (``available_backend_ids``), the checkpoints on disk (``models_on_disk``), an
     archive's verification (``verify_archive``), each backend's availability
     (``backend_status``), and the guided agent setup's own reads (``setup_view``,
-    ``find_harness``). The console's tests replace them **there** — all six, one
-    pin each: ``available_backend_ids`` in ``tests/web/conftest.py`` (the probe
+    ``find_harness``). The console's tests replace them **there** — all six, each
+    pinned on this module: ``available_backend_ids`` in ``tests/web/conftest.py``
+    (the probe
     that would otherwise compile and run the ASR helper) and
     ``tests/web/test_web_api.py``, ``verify_archive`` in
     ``tests/web/test_web_api.py``, ``models_on_disk`` and ``backend_status`` in
@@ -274,7 +276,8 @@ def _run_axes(row, meeting) -> dict | None:
     The axes are workspace reads (the record and the transcript meta), so a
     live run -- which has no cost record yet -- is not measured: the axes
     appear when the run stops, and while it runs the fragment stays a progress
-    view. This is the only console call site; the template renders this dict.
+    view. This is the only place the console asks for the axes as a dict; the
+    fragment template renders it, and :func:`run_row` reads only its ``speed``.
     """
     if row is None or row.status not in TERMINAL_STATUSES:
         return None
@@ -532,8 +535,9 @@ def draft_view(draft) -> dict:
 
 # --- webhooks: delivery health (ADR-0020) ---------------------------------- #
 # The label for each overall webhook state. Each branch calls ``tr`` with a
-# literal so the catalog tooling can extract it; a state the service adds later
-# falls through to the neutral "Configured" rather than vanishing from display.
+# literal so the catalog tooling can extract it; a state the service adds *later*
+# falls through to the neutral "Configured", and so does today's ``ok`` — so
+# neither vanishes from display.
 def _webhook_state_label(state: str) -> str:
     if state == "not_configured":
         return tr("Not configured")

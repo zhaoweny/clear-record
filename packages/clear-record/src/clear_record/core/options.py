@@ -1,7 +1,8 @@
 """The run-options value and the built-in transcription profiles.
 
-``core`` is dependency-free and every layer may import it (``cli → core``,
-``service → core``, ``web → core``, ``mcp → core``), so this is the one home for
+``core`` is dependency-free and every layer may import it (``engine → core``,
+``providers → core``, ``cli → core``, ``service → core``, ``web → core``,
+``tray → core``, ``mcp → core``), so this is the one home for
 the run configuration. The CLI, the service, the web console and the MCP server
 all read the same :class:`PipelineOptions` and the same :data:`PROFILES` table,
 so a profile cannot mean different things on different surfaces.
@@ -434,9 +435,11 @@ __all__ = [
     "PROFILES",
     "RESOLVABLE_FIELDS",
     "RUN_KNOBS",
+    "SUPERSEDED_KEYS",
     "DecoderKnobs",
     "PipelineOptions",
     "RunKnob",
+    "SupersededKey",
     "profile_values",
     "resolve_options",
 ]

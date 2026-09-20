@@ -773,7 +773,7 @@ def test_machine_storage_counts_every_bucket_and_marks_source_or_derived(
     (row,) = project["workspaces"]
     assert row["managed"] is True
     assert row["path"] == meeting.workspace_path
-    # The existing, narrower key keeps its workspace-only meaning.
+    # The existing, narrower field keeps its workspace-only meaning.
     assert managed.meeting_storage(registry, meeting).bytes == 100 + 3 + 10 + 7 + 4
 
 

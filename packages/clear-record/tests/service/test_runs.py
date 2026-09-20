@@ -18,6 +18,7 @@ import sys
 import textwrap
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -643,7 +644,7 @@ def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     )
     assert refused.id < later.id  # the unreadable row is the head of the FIFO
 
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET run_options = ? WHERE id = ?",
             ('{"backend": "apple", "jobs": "many"}', refused.id),
@@ -2053,7 +2054,7 @@ def test_a_running_row_the_build_cannot_read_does_not_stop_the_node(tmp_path) ->
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET status = 'running', started_at = 'now',"
             " owner = 'somewhere:1', heartbeat_at = 'now', run_options = ?"

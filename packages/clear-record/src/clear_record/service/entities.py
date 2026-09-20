@@ -26,9 +26,8 @@ Two things this module deliberately does not have:
 The column types follow the revisions' DDL: ``TEXT`` is :class:`~sqlalchemy.Text`,
 a row id is :class:`~sqlalchemy.Integer`, and a nullable column is a nullable
 annotation. Two things of that DDL are not repeated here — its ``DEFAULT`` values
-(every insert in the store names every column it writes, so a default would be a
-second, unused statement of the same rule: a row written without one is refused
-by the table's ``NOT NULL`` rather than silently defaulted) and its plain indexes
+(so a default restated here would be an unused second statement of the same rule:
+every insert in the store names the columns it writes) and its plain indexes
 (they are the queries' performance detail, not a shape a query depends on). The
 uniqueness the registry relies on *is* declared: a violation is what the store
 reads as "already exists" — the table's ``UNIQUE`` constraints, and the partial
@@ -44,11 +43,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from clear_record.service.lifecycle import active_run_predicate
 
-#: The predicate the mapping declares and revision 0009 creates, rendered by the
-#: lifecycle's own rule: ``sqlite_where`` wants literal text, and this is
-#: :func:`~clear_record.service.lifecycle.active_run_predicate`'s rendering of
-#: the states that rule accepts, so the mapping cannot disagree with the guard
-#: that reads the same declaration.
+#: The predicate the mapping *describes* for the index revision 0009 creates,
+#: rendered by the lifecycle's own rule: ``sqlite_where`` wants literal text, and
+#: this is :func:`~clear_record.service.lifecycle.active_run_predicate`'s
+#: rendering of the states that rule accepts, so the mapping cannot disagree with
+#: the guard that reads the same declaration. No DDL is emitted from here — the
+#: index on disk is the revision's own statement, and it is pinned against this
+#: rendering by ``tests/service/test_store.py`` — so this is the mapping's account
+#: of the rule, not a second place that creates it.
 _ACTIVE_PREDICATE = active_run_predicate()
 
 
@@ -143,12 +145,14 @@ class PipelineRun(Base):
     #: One active run per meeting, stated where every writer must obey it.
     #: Partial, so it constrains the *active* run and not the meeting's history: a
     #: ``done``/``failed``/``stopped``/``interrupted`` run holds nothing, and the
-    #: meeting starts again. This is the index revision 0009 creates, and its
-    #: predicate is the one-active-run rule as
+    #: meeting starts again. This describes the index revision 0009 creates, and
+    #: its predicate is the one-active-run rule as
     #: :func:`~clear_record.service.lifecycle.active_run_predicate` renders it,
     #: rather than the pair spelled again — the revision has to spell it (a
-    #: revision states its own DDL), and ``tests/service/test_store.py`` compares
-    #: the predicate the database built with the declaration.
+    #: revision states its own DDL, and nothing emits this declaration's:
+    #: ``migrations/env.py`` sets ``target_metadata=None``), and
+    #: ``tests/service/test_store.py`` compares the predicate the database built
+    #: with the declaration.
     __table_args__ = (
         Index(
             "pipeline_run_active_meeting",

@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
+from contextlib import closing
 
 from fastapi.testclient import TestClient
 
@@ -62,7 +63,7 @@ def _released_row() -> str:
 
 
 def _store(registry: Registry, run_id: int, text: str) -> None:
-    with sqlite3.connect(str(registry.db_path)) as conn:
+    with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
             "UPDATE pipeline_run SET run_options = ? WHERE id = ?", (text, run_id)
         )

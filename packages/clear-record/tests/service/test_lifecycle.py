@@ -2,12 +2,13 @@
 
 A run's state is read by the persistence layer, the manager, the console and the
 agent surface, so the states were once spelled in five places and a new one cost
-five classifications. These tests defend the three properties that make the one
+five classifications. These tests defend the four properties that make the one
 declaration worth having: the declaration is *internally* complete (every move
 names states that exist, and no state is declared that nothing enters), its
 **announcements** are the moves' own names rather than a vocabulary a receiver
-could subscribe to and never receive, and no second list of its states exists
-anywhere in the tree.
+could subscribe to and never receive, the **actors** each move declares are the
+ones that perform it, and no second list of its states exists anywhere in the
+tree.
 """
 
 from __future__ import annotations
@@ -45,11 +46,14 @@ _TEMPLATES = _SOURCE / "web" / "templates"
 #: basename exemption would let through.
 _DECLARATION = _SOURCE / "service" / "lifecycle.py"
 
-#: A vocabulary that legitimately names run-state words and is not the run's. The
+#: A vocabulary that legitimately names run-state words and is not the run's: the
 #: meeting's own lifecycle names ``running``, ``failed`` and ``interrupted`` too —
 #: it describes the meeting, and the run's word for the same moment is a different
-#: fact — so the constant declaring it is exempt under its own name.
-_SHARED_WORDS = frozenset({"MEETING_STATUSES"})
+#: fact — so the constant declaring it is exempt where it is **declared**. The
+#: exemption is by module *and* name, as :data:`_DECLARATION`'s is by module alone:
+#: a copy a reader writes under the same name in another module is still a copy of
+#: the run's states, which an exemption by name anywhere would let through.
+_SHARED_WORDS = {_SOURCE / "service" / "models.py": frozenset({"MEETING_STATUSES"})}
 
 #: How many run-state words in one literal make it a copy of the classification
 #: rather than a phrase about a single run. Two, because one state word belongs to
@@ -60,9 +64,16 @@ _SHARED_WORDS = frozenset({"MEETING_STATUSES"})
 _COPY_THRESHOLD = 2
 
 #: The calls the templates' user-facing text arrives through, and the literal each
-#: is given. Only these are read: a template's markup and its ``{{ run.status }}``
-#: values are the row's data, not a classification.
-_TEMPLATE_TEXT = re.compile(r'\b(?:tr|trn|deferred)\(\s*"((?:[^"\\]|\\.)*)"')
+#: is given. Both quote characters, and the literal may begin on the next line:
+#: the templates use ``tr('…')`` inside HTML attributes as well as ``tr("…")``, and
+#: a call may be wrapped — a guard that read only the double-quoted one-line form
+#: would miss the other spelling of the same defect. Only these calls are read: a
+#: template's markup and its ``{{ run.status }}`` values are the row's data, not a
+#: classification.
+_TEMPLATE_TEXT = re.compile(
+    r"""\b(?:tr|trn|deferred)\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""",
+    re.DOTALL,
+)
 
 #: Files the scan must have read for its verdict to mean anything: a moved root
 #: would otherwise make it pass over an empty set, which is how a guard silently
@@ -189,7 +200,9 @@ def _python_copies(path: Path) -> list[str]:
 
     tree = ast.parse(path.read_text(encoding="utf-8"))
     # A vocabulary declared as another domain's is not a copy of the run's; the
-    # exemption is by the name it is declared under, so its words stay its own.
+    # exemption is the module that declares it *and* the name it declares it under,
+    # so its words stay its own and the same name elsewhere does not.
+    shared = _SHARED_WORDS.get(path, frozenset())
     exempt: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -200,7 +213,7 @@ def _python_copies(path: Path) -> list[str]:
             names = {node.target.id}
         else:
             continue
-        if names & _SHARED_WORDS and node.value is not None:
+        if names & shared and node.value is not None:
             exempt.add(id(node.value))
 
     found: list[str] = []
@@ -225,19 +238,24 @@ def _python_copies(path: Path) -> list[str]:
 
 
 def _template_copies(path: Path) -> list[str]:
-    """Every user-facing template string that names two or more states."""
+    """Every user-facing template string that names two or more states.
+
+    Read over the whole file rather than line by line, because the literal a call
+    is given may start on the line after it; the line number reported is the one
+    the call starts on.
+    """
+    text = path.read_text(encoding="utf-8")
     found: list[str] = []
-    for lineno, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        for literal in _TEMPLATE_TEXT.findall(line):
-            states = sorted(
-                {word for word in _WORDS.findall(literal) if word in RUN_STATUSES}
+    for match in _TEMPLATE_TEXT.finditer(text):
+        literal = match.group(1) if match.group(1) is not None else match.group(2)
+        states = sorted(
+            {word for word in _WORDS.findall(literal) if word in RUN_STATUSES}
+        )
+        if len(states) >= _COPY_THRESHOLD:
+            lineno = text.count("\n", 0, match.start()) + 1
+            found.append(
+                f"{path.relative_to(_PACKAGE)}:{lineno} {tuple(states)} {literal!r}"
             )
-            if len(states) >= _COPY_THRESHOLD:
-                found.append(
-                    f"{path.relative_to(_PACKAGE)}:{lineno} {tuple(states)} {literal!r}"
-                )
     return found
 
 
@@ -262,8 +280,8 @@ def test_no_module_but_the_lifecycle_spells_the_states_out_again() -> None:
     * **A single state word in a phrase.** Other vocabularies legitimately use the
       same words — an archive is ``tr("failed")``, an agent panel's endpoint is
       ``tr("not running")`` — so one word is a phrase and two is a copy. The
-      meeting's own lifecycle is exempt under its declared name
-      (:data:`_SHARED_WORDS`) for the same reason.
+      meeting's own lifecycle is exempt where it is declared
+      (:data:`_SHARED_WORDS`): that module, under that name.
     * **``tests/``.** A test's literal is often the *independent* side of a
       comparison rather than a repetition: ``test_store.py`` writes the frozen
       index predicate out on purpose, so that the revision's ``WHERE`` is compared

@@ -6,8 +6,9 @@
 {# Settings is the control plane (ADR-0027): one section at a time, each a real
    URL, read often and configured occasionally. The sidebar is section
    navigation; the content pane is #detail, the same in-page swap target the
-   project fragments use. Only Agent, MCP and the Models download write; every
-   other section shows the value plus the config path a user would edit. The slug -> template
+   project fragments use. Only Agent, MCP, the Models download, Status's
+   walk-setup-again and the hello-world check write; every other section shows the
+   value plus the config path a user would edit. The slug -> template
    mapping lives once, in SETTINGS_SECTIONS (web/views.py); this page includes the
    active section's partial rather than switching on the slug again. #}
 <aside class="sidebar">

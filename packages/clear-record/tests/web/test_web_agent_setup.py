@@ -1,6 +1,6 @@
-"""The console's agent-setup panel (ADR-0018's onboarding half, ticket 20).
+"""The console's agent-setup panel (ADR-0018's onboarding half).
 
-The point of these tests is the state the ticket calls out: with nothing
+The point of these tests is the state that panel is about: with nothing
 configured the console says so **plainly**, with a way to fix it, instead of
 letting an agent task fail opaquely. The detect and record routes are driven with
 the service's own functions against the in-process fake endpoint from the
@@ -134,7 +134,7 @@ def test_nothing_running_says_what_to_install(tmp_path, monkeypatch) -> None:
 
     assert "not running" in panel
     assert "could not reach" in panel
-    assert "ollama.com" in panel  # the plain instruction the ticket asks for
+    assert "ollama.com" in panel  # the plain instruction the step asks for
 
 
 # --- verify and record ------------------------------------------------------- #

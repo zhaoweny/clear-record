@@ -16,10 +16,9 @@ no-op in the request path and what makes the context *and the template render
 that follows* a function of the request's locale rather than of whatever the
 process last spoke; a caller with no request (a test building a context
 directly) gets the locale it named. A **row builder** takes the locale when it
-renders a translated string into its own context (the CLI explanation
-:func:`_auto_view` renders — the surface context has already spoken for the
-locale it is about —, an upload guard's reason, the chip's label) and not
-otherwise.
+renders a translated string into its own context — an upload guard's reason, the
+chip's label — and not otherwise; :func:`_auto_view` renders the CLI explanation
+without one, because the surface context that calls it has already spoken.
 
 One group of names is read from :mod:`clear_record.web.app` rather than imported
 (:func:`_adapters`): the process probes the console binds there, and which the
@@ -53,11 +52,8 @@ from clear_record.core.paths import (
     resolve_state_dir,
 )
 from clear_record.service import (
-    ACTIVE_RUN_STATUSES,
     BACKEND_AUTO,
-    RESUMABLE_STATUSES,
     TERM_STATUSES,
-    TERMINAL_STATUSES,
     MalformedRunOptions,
     Meeting,
     MeetingAgent,
@@ -77,7 +73,20 @@ from clear_record.service.archive import ArchiveVerification, tool_version
 from clear_record.service.auto import DEFAULT_MODEL, MODEL_LADDER
 from clear_record.service.auto import render_message as render_service_message
 from clear_record.service.diagnostics import machine_description
-from clear_record.service.lifecycle import ATTENTION_STATUSES, FAILED, QUEUED, RUNNING
+
+# The run vocabulary is read from the module that declares it, and only from
+# there: three of these seven are also re-exported by the ``clear_record.service``
+# façade, and taking some through each door leaves "where does the console read a
+# run state?" with two answers.
+from clear_record.service.lifecycle import (
+    ACTIVE_RUN_STATUSES,
+    ATTENTION_STATUSES,
+    FAILED,
+    QUEUED,
+    RESUMABLE_STATUSES,
+    RUNNING,
+    TERMINAL_STATUSES,
+)
 from clear_record.service.runs import number_or_none
 from clear_record.service.setup import (
     DEFAULT_SMALL_MODEL,
@@ -163,8 +172,8 @@ def _adapters():
     archive's verification (``verify_archive``), each backend's availability
     (``backend_status``), and the guided agent setup's own reads (``setup_view``,
     ``find_harness``). The console's tests replace them **there** — all six, each
-    pinned on the module that declares them: ``available_backend_ids`` in
-    ``tests/web/conftest.py``
+    pinned on ``clear_record.web.app`` — the module that *binds* them, not where
+    they are declared: ``available_backend_ids`` in ``tests/web/conftest.py``
     (the probe
     that would otherwise compile and run the ASR helper) and
     ``tests/web/test_web_api.py``, ``verify_archive`` in
@@ -277,8 +286,9 @@ def _run_axes(row, meeting) -> dict | None:
     The axes are workspace reads (the record and the transcript meta), so a
     live run -- which has no cost record yet -- is not measured: the axes
     appear when the run stops, and while it runs the fragment stays a progress
-    view. This is the only place the console asks for the axes as a dict; the
-    fragment template renders it, and :func:`run_row` reads only its ``speed``.
+    view. This is the only place the console keeps the axes as a dict for a
+    template to render; :func:`run_row` asks for them too and reads only
+    ``speed``.
     """
     if row is None or row.status not in TERMINAL_STATUSES:
         return None

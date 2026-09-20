@@ -38,7 +38,7 @@ def _projects(client: TestClient) -> list[dict]:
 
 # --- CSRF: Origin / Referer on state-changing requests -------------------- #
 def test_cross_origin_form_post_is_rejected(client: TestClient) -> None:
-    """The ticket's headline case: a hostile page's form POST to /ui/projects."""
+    """The headline case: a hostile page's form POST to /ui/projects."""
     res = client.post(
         "/ui/projects",
         data={"name": "Evil"},

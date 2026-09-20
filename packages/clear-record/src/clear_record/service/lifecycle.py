@@ -28,7 +28,7 @@ This module is that classification, once:
   (:data:`RESTART_REASON`). A *third* reason is written to the same column and
   deliberately stays elsewhere: ``RECONCILED_REASON`` (revision ``0009``) is what
   the migration writes on the runs it ends, and it lives with the revision
-  because the migration translates it as it writes.
+  because the migration renders it where it writes.
 
 What it deliberately is not: the **manager**. Claiming, draining, threading,
 beating and reaping stay in :mod:`~clear_record.service.runs`, and the
@@ -38,8 +38,9 @@ when to make one. Nor is it the diagnostic log: the JSONL records the manager
 writes (``run.enqueued``, ``run.stopped``, ``run.reconciled``, …) are that
 surface's vocabulary and are not derived from these names.
 
-**Adding a state is one edit here.** What follows the edit, and what does not, is
-worth naming:
+**Adding a state is one edit here** — one edit in *this* module, and the edits
+that follow it are the ones a test refuses to let you skip. What follows the
+edit, and what does not, is worth naming:
 
 * :data:`TERMINAL_STATUSES` and :data:`RESUMABLE_STATUSES` are **computed** from
   the vocabulary, so a new state is classified by landing in it;
@@ -48,23 +49,35 @@ worth naming:
   only places the edit has to mention the new state instead of letting it fall
   out of the vocabulary;
 * the registry's validation
-  (:meth:`~clear_record.service.store.Registry.update_run`) and its run queries
-  (``runs_with_status``, ``active_run_for_meeting``, ``finished_runs``,
-  ``oldest_queued_run``) read these declarations, so a new state is neither
-  refused as unknown nor invisible to a query;
+  (:meth:`~clear_record.service.store.Registry.update_run`) and the queries that
+  name a set
+  (:meth:`~clear_record.service.store.Registry.active_run_for_meeting`,
+  :meth:`~clear_record.service.store.Registry.oldest_queued_run`) read these
+  declarations, while ``runs_with_status`` and ``finished_runs`` are handed one by
+  their caller — so a new state is neither refused as unknown nor invisible to a
+  query;
+* **two dependent edits fail loudly instead of shipping**: a new state's *move*
+  needs a row in the guard's ``performed_by`` table
+  (``tests/service/test_lifecycle.py``), and a new **active** state needs a chip
+  label in the console's :data:`~clear_record.web.views.ACTIVE_RUN_LABELS`
+  (``web/views.py``). Neither is a convention to remember: the suite names the
+  state it has no row or no label for;
 * :func:`active_run_predicate` renders the mapping's index predicate from
   :data:`ACTIVE_RUN_STATUSES`, so an active state moves the *mapping's* rule with
   it — and the database's only with a revision beside it: the index in every
   registry, whether this build created it or migrated it, is revision ``0009``'s
-  literal pair, and no ``create_all`` ever emits the mapping's. The state that the
-  one edit really is, is a **terminal** one — the index names no terminal state, so
-  adding one cannot disagree with it;
+  literal pair, and no ``create_all`` ever emits the mapping's. The state the one
+  edit is really about is a **terminal** one — the index names no terminal state,
+  so adding one cannot disagree with it;
 * the **revision's** own ``WHERE`` does *not* follow — a revision states its own
   DDL, because the schema's history is frozen and a released revision cannot
   import today's application — so that copy is **pinned** instead:
   ``tests/service/test_store.py`` reads the predicate the database actually built
-  and refuses the registry's open when it disagrees with
-  :func:`active_run_predicate`.
+  and fails when it disagrees with :func:`active_run_predicate`;
+* the **stylesheet** is the one copy nothing reads: ``frontend/src/app.css``
+  carries a ``.status-<state>`` rule per state (``web/static/app.css`` is built
+  from it), so a seventh state ships an unstyled badge unless its rule is added
+  there — no guard scans ``frontend/``, which is what this bullet is for.
 """
 
 from __future__ import annotations
@@ -100,9 +113,10 @@ RUN_STATUSES = (QUEUED, RUNNING, DONE, FAILED, STOPPED, INTERRUPTED)
 #: The runs that are **in flight**: a run a meeting already has, as opposed to one
 #: it had. This pair is the one-active-run rule's own vocabulary, and the readers
 #: of the *rule* are the registry's guard
-#: (:meth:`~clear_record.service.store.Registry.active_run_for_meeting`), the
-#: claim's node-wide clause, the console's run views and the mapping's index
-#: predicate (:func:`active_run_predicate`) — so "one run in flight per meeting"
+#: (:meth:`~clear_record.service.store.Registry.active_run_for_meeting`), the run
+#: manager's own checks (``runs.py``), the console's run views and the mapping's
+#: index predicate (:func:`active_run_predicate`) — while the claim's node-wide
+#: clause spells ``running`` for itself — so "one run in flight per meeting"
 #: cannot come to mean two things. The claim and the reconciliation's
 #: compare-and-set read **narrower** sets than this pair: the state their own move
 #: is legal from (:data:`CLAIM`, :data:`INTERRUPT`), which is what binds those two
@@ -317,11 +331,9 @@ RUN_IN_FLIGHT = deferred("a run is already in flight for this meeting")
 #: that column is machine-read — the JSON API and the MCP tool answer with it, and
 #: ``docs/i18n.md`` puts a *status value* on the never-translated side — so it must
 #: not hold text looked up in whatever locale the writing process happened to run
-#: in. The console renders the ID where it shows the column
-#: (``web/templates/_run.html``, ``_activity_run.html``), exactly as it renders the
-#: progress message the run's ``progress`` summary carries unrendered; the JSONL
-#: log record carries the ID unrendered too. ``deferred`` is the extraction
-#: marker.
+#: in. The console renders the ID where it shows the column — both templates run
+#: the stored text through ``tr`` — and the JSONL log record carries the ID
+#: unrendered. ``deferred`` is the extraction marker.
 RESTART_REASON = deferred("the console restarted while this run was in flight")
 
 

@@ -116,7 +116,10 @@ class Tape:
 class PipelineRun:
     """One execution of the pipeline against a meeting's tape set.
 
-    ``status`` moves ``queued → running → done|failed|stopped|interrupted``: a run is
+    ``status`` takes ``queued`` first, then ``running``, then one of the four
+    terminal states — ``failed`` and ``stopped`` are also reachable straight from
+    ``queued`` (:data:`~clear_record.service.lifecycle.FAIL`,
+    :data:`~clear_record.service.lifecycle.STOP_QUEUED`): a run is
     **enqueued** first (the FIFO the node drains one at a time), and only one run
     per node is ``running`` at once. The move to ``running`` is a **conditional
     claim** (:meth:`~clear_record.service.store.Registry.claim_run`), so several

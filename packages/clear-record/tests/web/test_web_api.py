@@ -310,7 +310,7 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     assert started.status_code == 202
     run_id = started.json()["run"]["id"]
     assert started.json()["state"]["status"] in {"queued", "running"}
-    # RUN-02: the JSON API is not the console, and the run says so.
+    # The JSON API is not the console, and the run says so.
     assert started.json()["run"]["origin"] == "api"
 
     console.gate.set()
@@ -549,7 +549,7 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     )
     assert started.status_code == 200
     run_id = console.registry.list_runs(meeting["id"])[0].id
-    # RUN-02: the console is the surface that started it, and it is recorded.
+    # The console is the surface that started it, and it is recorded.
     assert console.registry.get_run(run_id).origin == "console"
     assert "<progress" in started.text
     assert 'hx-trigger="every 1s"' in started.text
@@ -573,7 +573,7 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
 
 
 def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
-    """RUN-04 in the console: cancel a live run, resume one that stopped.
+    """Cancel a live run, and resume one that stopped.
 
     The controls come from the run's row, so a run another writer started offers
     them too. Cancelling a running run is a *request* — the console's own manager
@@ -621,7 +621,7 @@ def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
 
 
 def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:
-    """RUN-01: a run recorded before the cost record existed renders as unknown.
+    """A run recorded before the cost record existed renders as unknown.
 
     The row has no ``progress`` at all. The fragment must still render, with no
     ETA and no exception — a missing record is not an error.

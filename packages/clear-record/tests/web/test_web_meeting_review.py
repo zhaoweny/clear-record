@@ -1,6 +1,6 @@
 """The console's meeting review surface: transcript, artifacts, agent drafts.
 
-Ticket 16's view is server-rendered over the same service seam the API and MCP
+The meeting review is server-rendered over the same service seam the API and MCP
 use, so these tests drive it with a temp registry, a temp meeting workspace and
 an **injected stub runner** — no endpoint, no model, no key. They assert the
 page's contract: the transcript and artifacts are shown, each of the three tasks

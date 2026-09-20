@@ -127,14 +127,16 @@ from clear_record.web import guard, lookup, views
 
 # --- the process adapters the view seam reads from *this* module ----------- #
 # These names are bound here on purpose and are deliberately unused *here*: the
-# seam reads them through ``views._adapters()`` (see its docstring), because the
-# console's tests replace them on this module — ``available_backend_ids`` (the
-# probe that would otherwise compile and run the ASR helper;
-# ``tests/web/conftest.py``, ``tests/web/test_web_api.py``), ``models_on_disk``
-# and ``backend_status`` (``tests/web/test_web_settings.py``) and
-# ``find_harness`` (``tests/web/test_web_agent_setup.py``). Binding them here is
-# what keeps those patches effective: a seam that imported its own copy would go
-# on passing the suite while the pins had stopped meaning anything.
+# seam reads them through ``views._adapters()`` (whose docstring lists all six),
+# because the console's tests replace them on this module —
+# ``available_backend_ids`` (the probe that would otherwise compile and run the
+# ASR helper; ``tests/web/conftest.py``, ``tests/web/test_web_api.py``),
+# ``models_on_disk`` and ``backend_status`` (``tests/web/test_web_settings.py``)
+# and ``find_harness`` (``tests/web/test_web_agent_setup.py``) — while the two the
+# routes *also* call, ``verify_archive`` and ``setup_view``, are named with the
+# route-called set below. Binding them here is what keeps those patches
+# effective: a seam that imported its own copy would go on passing the suite while
+# the pins had stopped meaning anything.
 #
 # Six more service calls are frozen here for the same reason, and their pins are
 # on *this* module: the **routes** call them by name, so a route rewritten to
@@ -145,7 +147,11 @@ from clear_record.web import guard, lookup, views
 # ``download_transcription_model`` (``tests/web/test_web_settings.py``,
 # ``tests/web/test_web_setup.py``), ``verify_endpoint`` and ``detect``
 # (``tests/web/test_web_agent_setup.py``), and ``serve``
-# (``tests/cli/test_serve.py``, ``tests/web/test_web_tailscale.py``).
+# (``tests/cli/test_serve.py``, ``tests/web/test_web_tailscale.py``). Two names
+# belong to *both* groups, and they are the case this paragraph exists for:
+# ``verify_archive`` (``tests/web/test_web_api.py``) and ``setup_view``
+# (``tests/web/test_web_agent_setup.py``) are read through the seam *and* called
+# by a route, so both hazards apply to them at once.
 from clear_record.service.auto import (  # noqa: F401
     available_backend_ids,
     models_on_disk,

@@ -1,11 +1,11 @@
-"""RUN-03 in the console: the pipeline status page and the header chip.
+"""The pipeline status page and the header chip in the console.
 
 The page answers "what is clear-record doing right now" from the shared registry
 — running and queued runs across every project, then the newest finished ones —
 and the header chip is fed from the same reads, so the two cannot disagree.
 
 These tests write run rows straight into the registry, so the queue is stopped
-before seeding (issue 19 / b8f975e): the app's own manager would otherwise claim
+before seeding: the app's own manager would otherwise claim
 a hand-seeded ``queued`` row on its next 1 s rescan and fail it, turning the row
 terminal underneath an assertion that expects a live run.
 """
@@ -24,7 +24,7 @@ from clear_record.web.app import create_app
 #: "the row names its owner's host" cannot pass by accident.
 OWNER = "run-owner.example:4242"
 
-#: A finished run's raw cost primitives (RUN-01): 3600 s of audio in 1200 s of
+#: A finished run's raw cost primitives: 3600 s of audio in 1200 s of
 #: wall clock is 3.00x realtime, derived at display time and never stored.
 COST = {
     "audio_seconds": 3600.0,
@@ -226,7 +226,7 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
 
 
 def test_a_resumed_run_rates_only_the_chunks_it_decoded(tmp_path) -> None:
-    """A cached chunk is not work the decoder's clock paid for (RUN-03).
+    """A cached chunk is not work the decoder's clock paid for.
 
     8 chunks finished, 4 of them served from the cache: the rate divides the
     **decoded** 4 x 30 s by the stage's own elapsed seconds. Counting all 8 would
@@ -267,7 +267,7 @@ def test_a_finished_run_shows_its_recorded_speed_and_duration(tmp_path) -> None:
 
     text = client.get("/activity").text
 
-    # The speed is the record's own ratio, derived here (RUN-01), and the
+    # The speed is the record's own ratio, derived here, and the
     # duration is the wall clock the same record measured.
     assert "3.00x" in text and "realtime" in text
     assert "1200.0s" in text

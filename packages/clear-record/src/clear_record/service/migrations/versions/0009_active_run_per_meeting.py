@@ -22,20 +22,17 @@ Two things about the index's shape are deliberate:
   ``UNIQUE (meeting_id)`` would make the meeting's *history* unique instead, and
   would refuse exactly the second run the product is built around. The pair is
   named wherever a status is classified — the guard the run manager reads
-  (``store.active_run_for_meeting``), the run manager's own transitions, the
-  console's run views and the mapping's ``sqlite_where``
-  (``entities.PipelineRun``) — all of them read ``ACTIVE_RUN_STATUSES``. The two
-  places that must spell it out again are this ``WHERE`` and :data:`_END_LOSERS`,
-  because a revision states its own DDL rather than importing the application;
+  (``store.active_run_for_meeting``), the run manager's own checks (``runs.py``),
+  the console's run views and the mapping's ``sqlite_where``
+  (``entities.PipelineRun``). The claim's node-wide clause spells ``running`` for
+  itself, and the *claim* itself (``store.claim_run``) reads the state
+  ``lifecycle.CLAIM`` declares, while the reconciliation's compare-and-set
+  (``store.interrupt_run``) reads the state ``lifecycle.INTERRUPT`` declares —
+  both narrower than the pair the guard reads. The two places that must spell the
+  pair out again are this ``WHERE`` and :data:`_END_LOSERS`, because a revision
+  states its own DDL rather than importing the application;
   ``tests/service/test_store.py`` compares this predicate with the declaration, so
   the copies cannot drift apart.
-
-  The pair is read by the guard the run manager asks
-  (``store.active_run_for_meeting``), the console's run views and the mapping's
-  ``sqlite_where``; the claim's node-wide clause spells ``running`` for itself,
-  and the *claim* itself (``store.claim_run``) reads the state ``lifecycle.CLAIM``
-  declares, while the reconciliation's compare-and-set (``store.interrupt_run``)
-  reads the state ``lifecycle.INTERRUPT`` declares — both narrower than the pair.
 - **It is named.** ``pipeline_run_active_meeting`` is the name the mapping in
   :mod:`clear_record.service.entities` declares it under, so the parity test can
   compare the two declarations — the mapping and this revision — column for

@@ -46,7 +46,7 @@ Rows name the owning document and never restate its decision text.
 | Managed workspace | tapes upload into an app-owned workspace; the data-not-state split holds | ADR-0024, ADR-0025 | same record |
 | i18n | `tr()` with English message IDs, the English default unchanged; logs, JSON, exports and the diagnostics bundle are never translated | `docs/i18n.md` | same record |
 | Outbound notifications | webhooks, with endpoint health and the last delivery outcome surfaced | ADR-0020 | `records/2026-09-15-webhooks.md` |
-| The stated next position | dictation to an agent, in a private setting — **deferred to 0.4**, no release date yet | no ADR yet; the tracker's 0.4 headline | `records/2026-09-21-dictation-and-private-environment.md` |
+| The stated next position | dictation as a first-class input, with near-real-time and re-transcription modes — **deferred to 0.4**, no release date yet | no ADR yet; the tracker's 0.4 headline | `records/2026-09-21-dictation-input.md` |
 
 ## Standing positions
 
@@ -107,6 +107,7 @@ Dated testimony, one file per topic, moved verbatim from this file (2026-09-21):
 - [`records/2026-09-15-webhooks.md`](records/2026-09-15-webhooks.md) — outbound notifications.
 - [`records/2026-09-15-service-paths-and-i18n.md`](records/2026-09-15-service-paths-and-i18n.md) — logging and
   feedback, the deployment investigation, i18n, the managed workspace, `platformdirs`, Tailscale, and Click.
-- [`records/2026-09-21-dictation-and-private-environment.md`](records/2026-09-21-dictation-and-private-environment.md)
-  — the dictation position, with its verbatim quotes and the 私密性质 gloss.
+- [`records/2026-09-21-dictation-input.md`](records/2026-09-21-dictation-input.md)
+  — the dictation position; its verbatim testimony is personal-context material and is kept in the private
+  tracker (`vox-private-records`).
 - [`records/2026-09-21-v03-scope.md`](records/2026-09-21-v03-scope.md) — the v0.3 scope and milestone decisions.

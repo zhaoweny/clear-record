@@ -713,13 +713,19 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
     assert seen["options"].audio_files == (str(tape),)
 
 
-def test_a_queue_built_stopped_drains_once_a_submission_starts_it(tmp_path) -> None:
+def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
+    tmp_path, monkeypatch
+) -> None:
     """``start_queue=False`` is a queue that has not started, not one that cannot.
 
-    What the knob guarantees is read directly — no drain thread exists, so
-    nothing is draining that a seeded row could be raced against — and the first
-    submission is what starts one: the run it enqueues and the run already
-    waiting at the head of the FIFO both execute.
+    What the knob guarantees is that nothing **starts** the drain, so nothing is
+    draining a seeded row that a rescan could be raced against. That is read
+    where it is decided: ``_ensure_scheduler`` is the one place the drain is
+    started, so recording its calls says whether anything started one, without
+    timing and without waiting for a first pass — a queue started and then asked
+    to stop would record the same call and leave the race the knob exists to
+    remove. The first submission is what starts the drain, and the run it
+    enqueues and the run already waiting at the head of the FIFO both execute.
     """
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -731,12 +737,22 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(tmp_path) -> N
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
 
+    starts: list[RunManager] = []
+    real_ensure_scheduler = RunManager._ensure_scheduler
+
+    def recording_ensure_scheduler(manager: RunManager) -> None:
+        starts.append(manager)
+        real_ensure_scheduler(manager)
+
+    monkeypatch.setattr(RunManager, "_ensure_scheduler", recording_ensure_scheduler)
+
     manager = RunManager(registry, pipeline=lambda *args: None, start_queue=False)
 
-    # Built stopped: there is no drain thread, so nothing can claim the row
-    # seeded above. (Its ``queued`` status alone would not say that: a manager
-    # that is draining has simply not reached it yet.)
-    assert manager._scheduler is None
+    # Built stopped: nothing started the drain, so nothing can claim the row
+    # seeded above. (A ``_scheduler`` reading ``None`` would not say that on its
+    # own — a queue started and then stopped *retires* its thread object, so the
+    # very race this knob removes would read the same.)
+    assert starts == []
 
     later_workspace = tmp_path / "later"
     later_workspace.mkdir()

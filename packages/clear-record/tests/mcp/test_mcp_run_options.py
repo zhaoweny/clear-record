@@ -44,13 +44,13 @@ def _registry(tmp_path: Path) -> tuple[Registry, int]:
 def _server(registry: Registry):
     """A server whose run queue is stopped.
 
-    A live queue would meet the unreadable row first — that is the drain's own
-    test (``tests/service/test_runs.py``) — and this is about what the *tool*
-    answers when the read refuses.
+    Built stopped (``start_queue=False``: no drain thread is started), so a
+    rescan cannot meet the unreadable row first — that is the drain's own test
+    (``tests/service/test_runs.py``) — and this is about what the *tool* answers
+    when the read refuses. Asking a running queue to stop would leave the race
+    where it is: a pass that has already reached the row cannot be called back.
     """
-    manager = RunManager(registry)
-    manager.shutdown(timeout=5.0)
-    return build_server(registry, manager)
+    return build_server(registry, RunManager(registry, start_queue=False))
 
 
 def _released_row() -> str:

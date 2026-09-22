@@ -713,6 +713,62 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
     assert seen["options"].audio_files == (str(tape),)
 
 
+def test_a_queue_built_stopped_drains_once_a_submission_starts_it(tmp_path) -> None:
+    """``start_queue=False`` is a queue that has not started, not one that cannot.
+
+    What the knob guarantees is read directly — no drain thread exists, so
+    nothing is draining that a seeded row could be raced against — and the first
+    submission is what starts one: the run it enqueues and the run already
+    waiting at the head of the FIFO both execute.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    queued = registry.create_run(
+        meeting.id,
+        backend="apple",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    manager = RunManager(registry, pipeline=lambda *args: None, start_queue=False)
+
+    # Built stopped: there is no drain thread, so nothing can claim the row
+    # seeded above. (Its ``queued`` status alone would not say that: a manager
+    # that is draining has simply not reached it yet.)
+    assert manager._scheduler is None
+
+    later_workspace = tmp_path / "later"
+    later_workspace.mkdir()
+    later_tape = tmp_path / "later.wav"
+    later_tape.write_bytes(b"RIFFfake")
+    later = registry.create_meeting("ops", "Retro", workspace_path=str(later_workspace))
+    registry.set_recording_set(later.id, [str(later_tape)])
+
+    run = manager.start(later, origin="console")
+
+    assert manager.wait(run.id, timeout=10).status == "done"
+    assert registry.get_run(queued.id).status == "done"
+
+
+def test_shutting_down_a_queue_built_stopped_is_a_no_op(tmp_path) -> None:
+    """A stopped queue has nothing to ask to stop, and asking must not crash.
+
+    ``shutdown`` reads the scheduler thread to join it and to retire it, and a
+    manager built stopped never made one: the call has to find no thread there
+    and leave the manager stopped anyway. That is the same thing a second
+    ``shutdown`` meets — the scheduler the first one retired — so the call is
+    safe however often a caller makes it.
+    """
+    registry = _registry(tmp_path)
+    manager = RunManager(registry, start_queue=False)
+
+    manager.shutdown(timeout=0.0)
+    manager.shutdown(timeout=0.0)
+
+    assert manager._scheduler is None
+
+
 def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     """One unreadable row must not stop the node's queue.
 

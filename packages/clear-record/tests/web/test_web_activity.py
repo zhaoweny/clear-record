@@ -35,8 +35,7 @@ COST = {
 
 def _console(registry: Registry) -> TestClient:
     """A console over ``registry`` whose run queue is stopped (see the module)."""
-    manager = RunManager(registry)
-    manager.shutdown(timeout=5.0)
+    manager = RunManager(registry, start_queue=False)
     return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
 
 

@@ -161,8 +161,12 @@ def _store_run_options(registry: Registry, run_id: int, text: str) -> None:
 def _console_over_a_refused_row(tmp_path, stored: str):
     """A console whose registry holds one queued run whose options are ``stored``.
 
-    The queue is stopped: a live one would claim the row on its next rescan and
-    quarantine it (that is the row's own test, below), and this is about the read.
+    The queue is stopped **by construction**: ``start_queue=False`` starts no
+    drain thread at all, so nothing can claim the row on a rescan and quarantine
+    it (a live queue does exactly that — it is the row's own test, below) and
+    no timing decides whether the read sees the row. Stopping a queue that is
+    already running would be a schedule, not a state: ``shutdown`` cannot
+    un-take a row a rescan already reached.
     """
     registry = Registry.open(db_path=tmp_path / "r.sqlite3")
     registry.create_project("Ops")
@@ -174,8 +178,7 @@ def _console_over_a_refused_row(tmp_path, stored: str):
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
     _store_run_options(registry, run.id, stored)
-    manager = RunManager(registry)
-    manager.shutdown(timeout=5.0)
+    manager = RunManager(registry, start_queue=False)
     client = TestClient(
         create_app(registry, runs=manager, trusted_hosts=("testserver",))
     )

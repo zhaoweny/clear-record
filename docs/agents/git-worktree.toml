@@ -26,3 +26,17 @@ verify = "just verify && just web-assets-check && just i18n-check"
 #   "orchestrator" — the running main agent verifies (verify gate) then lands.
 #   "human"        — agents push + report; a human reviews and lands.
 landing_authority = "human"
+
+[gates]
+# The repo's single verify gate: what CI's `verify` job runs and what `gwt
+# integrate` certifies each ticket against. The console's two freshness guards
+# (`just web-assets-check`, `just i18n-check`) are deliberately NOT part of it —
+# they need bun and Babel — so they run as their own CI jobs and as the batch
+# gate a release run names in its plan (see docs/releasing.md, ADR-0023,
+# docs/i18n.md).
+verify = "just verify"
+
+[limits]
+# Refusals, not targets: a run stops dispatching at these.
+min_free_gb   = 5
+max_worktrees = 4

@@ -38,6 +38,26 @@ only over the tailnet. `.scratch/` is a frozen archive of the pre-migration corp
 
 Create an issue in the ticket's lane, labelled `lane/<slug>` and with the type label.
 
+## Flipping an entry
+
+The tracker is not files, so `gwt log check` has no adapter to cross-check it, and a
+run flips an entry itself, with the CLI, from a checkout (the `staging` remote resolves
+the login — never write the instance's address anywhere but here, and here only as a
+remote name):
+
+```sh
+tea issues <n> -R staging                        # read the entry, comments included
+tea issues edit <n> -R staging --add-labels ready-for-agent
+tea comments add <n> -R staging --description "$(cat .local/comment.md)"
+tea issues close <n> -R staging
+```
+
+Close inside the retirement sequence that records the same ticket — tree removed,
+branch deleted, terminal lease appended, then the close — because a tracker entry
+disagreeing with a terminal lease is a finding. A park leaves the entry open
+(comment the question, do not flip the state), and an umbrella ticket (`type/spec`)
+closes when its lane's work is done, not before.
+
 ## When a skill says "fetch the relevant ticket"
 
 Read it from the instance; the user normally passes the issue number or its URL. The

@@ -1,0 +1,27 @@
+# docs/agents/shared-artifacts.toml — generated files any change can rewrite.
+#
+# Consumed at integration time by the git-worktree workflow: `merge` runs only
+# when a ticket's squash-merge conflicts on one of an artifact's `paths`, and
+# `guard` runs when that merge touched them. Both artifacts below are committed
+# *output* whose source is the truth — regenerating is always the correct
+# resolution — so each `merge` is the recipe that rebuilds it and each `guard`
+# is the freshness check that proves the committed bytes match their source.
+#
+# `owner` is the ticket the run expects to regenerate the artifact; a ticket
+# that is not the owner declares a change to one before touching it.
+
+[[artifact]]
+name   = "translations"
+paths  = ["packages/clear-record/src/clear_record/locales/**"]
+owner  = "v03-byok-removal"
+merge  = "just i18n-extract && just i18n-compile"
+backup = "just i18n-extract && just i18n-compile"
+guard  = "just i18n-check"
+
+[[artifact]]
+name   = "web-assets"
+paths  = ["packages/clear-record/src/clear_record/web/static/**"]
+owner  = "v03-byok-removal"
+merge  = "just web-assets"
+backup = "just web-assets"
+guard  = "just web-assets-check"

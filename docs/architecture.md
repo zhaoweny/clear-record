@@ -89,7 +89,7 @@ internal schemas and authentication are **out of scope** for this repository
 
 ```text
 audio ingest → normalization/VAD → ASR → diarization → alignment
-            → speaker reconstruction → transcript cleanup → LLM reasoning
+            → speaker reconstruction → transcript cleanup
             → searchable/archive output
 ```
 

@@ -89,5 +89,6 @@ __all__ = [
 # artifact names are the format's own — and the core's adoption rule consumes it
 # rather than spelling them (ADR-0025). Installing it on any import of this layer
 # is what keeps every resolver that goes through ``core.paths`` — the CLI's, the
-# service's, the console's — adopting a pre-move checkout's weights the same way.
+# pipeline's, the service's, the console's — adopting a pre-move checkout's
+# weights the same way.
 install_models_recognizer(looks_like_model_cache)

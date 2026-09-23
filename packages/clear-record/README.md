@@ -45,13 +45,14 @@ current machine can actually run.
 ## How it is packaged
 
 `clear-record` is a **single published distribution**: one import package,
-`clear_record`, with eight internal layers as subpackages —
+`clear_record`, with nine internal layers as subpackages —
 
 | Layer | Contents |
 |---|---|
 | `clear_record.core` | backend-agnostic domain model (no third-party deps) |
 | `clear_record.engine` | audio I/O, cross-correlation alignment, reconcile (numpy + soundfile) |
 | `clear_record.providers` | per-vendor ASR backend adapters (apple / nvidia / amd / apple-speech) |
+| `clear_record.pipeline` | the stage wiring and the machinery that runs it (chunking, workspace, `--auto` resolvers) |
 | `clear_record.cli` | the `clear-record` command implementation |
 | `clear_record.service` | the console's registry, meetings, runs, archive |
 | `clear_record.web` | the console's browser surface (FastAPI + htmx/Alpine) |

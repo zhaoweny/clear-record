@@ -36,8 +36,8 @@ segment was spoken even when no identified per-source channel is loud in that
 window, so attribution can keep the incoming speaker instead of guessing a
 bleed source. The mixed reference is deliberately **not** a speaker candidate (it
 has no single speaker identity); it is used as a presence gate. It is excluded
-from the candidate set even when it is also listed in ``sources`` -- the CLI
-passes the manifest sources and separately names the room. See
+from the candidate set even when it is also listed in ``sources`` -- the
+attribution stage passes the manifest sources and separately names the room. See
 ``docs/test-corpus.md``.
 
 Supported gate range: the gate compares a candidate's gain-normalized window

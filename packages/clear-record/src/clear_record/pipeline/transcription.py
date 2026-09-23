@@ -78,9 +78,9 @@ class UnsupportedDecoderKnob(ValueError):
     """A requested decoder knob the resolved backend does not advertise.
 
     A :class:`ValueError` so the in-process seam keeps its documented contract,
-    but distinct so the CLI can turn exactly this usage problem into an
-    actionable error without relabelling an unrelated ``ValueError`` from the
-    backend or the workspace.
+    but distinct so the transcribe stage can turn exactly this usage problem
+    into its ``PipelineError`` without relabelling an unrelated ``ValueError``
+    from the backend or the workspace.
     """
 
 

@@ -533,8 +533,8 @@ def transcribe(
         raise PipelineError(str(exc)) from exc
     except transcription.UnsupportedDecoderKnob as exc:
         # A decoder knob this backend cannot honour (see
-        # `transcription.transcribe`): a usage problem, so surface it as the CLI's
-        # actionable error rather than a traceback.
+        # `transcription.transcribe`): a usage problem, so carry it as an
+        # actionable error rather than letting it become a traceback.
         raise PipelineError(str(exc)) from exc
 
     meta: dict = {

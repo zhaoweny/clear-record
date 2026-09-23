@@ -18,8 +18,8 @@ Upload is a **write surface**, so every guard is here and each failure is a
 
 - the requested filename must be a bare name (no traversal, no absolute path,
   no separators);
-- its extension must be audio, by the CLI's one allow-list
-  (:func:`clear_record.cli.workspace.is_audio`);
+- its extension must be audio, by the pipeline's one allow-list
+  (:func:`clear_record.pipeline.workspace.is_audio`);
 - the declared size must be within ``CR_MAX_UPLOAD_BYTES``;
 - free space on the managed root is checked **before** the body is read;
 - no symlink is followed — the destination directory is verified to resolve
@@ -196,7 +196,7 @@ def ensure_managed_workspace(
     """Create the meeting's managed workspace and point the meeting at it.
 
     Idempotent: an already-provisioned managed meeting keeps its directory. The
-    shape is the ordinary :class:`~clear_record.cli.workspace.Workspace` shape,
+    shape is the ordinary :class:`~clear_record.pipeline.workspace.Workspace` shape,
     so nothing downstream can tell it apart.
     """
     resolved_root = managed_root(root)

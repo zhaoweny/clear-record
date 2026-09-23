@@ -784,9 +784,9 @@ class _WhisperCliBackend(BackendBase):
     def prepare(self, model: str | None, model_dir: str | None) -> str:
         """Resolve (downloading on first use) this backend's ggml model path.
 
-        The CLI calls this once, **single-threaded before the chunk pool**, so
-        parallel workers only ever read a model that is already present;
-        ``transcribe`` still resolves lazily as a defensive fallback.
+        The transcribe stage calls this once, **single-threaded before the chunk
+        pool**, so parallel workers only ever read a model that is already
+        present; ``transcribe`` still resolves lazily as a defensive fallback.
         """
         name = model or self.info.default_model
         return _resolve_ggml_model(name, model_dir)
@@ -956,7 +956,7 @@ class NvidiaBackend(_WhisperCliBackend):
 # (the CLI's default ``--backend``) stays the portable ``apple`` adapter: on a
 # non-Mac the native backend is unavailable, and a positional default must not be
 # one that cannot run. Native-first applies to ``--backend auto`` via
-# ``cli.auto.BACKEND_PREFERENCE``, which is the separate capability knob (ADR-0005
+# ``pipeline.auto.BACKEND_PREFERENCE``, which is the separate capability knob (ADR-0005
 # 2026-09-14 Update, ADR-0019).
 BACKENDS: dict[str, Backend] = {
     "apple": AppleBackend(),

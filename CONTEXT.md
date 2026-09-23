@@ -59,7 +59,8 @@ Update). The repo does real work end-to-end:
 
 - uv workspace publishing a single **`clear-record`** dist whose internal layers
   are `clear_record.core` (domain) · `clear_record.engine` (audio/align/reconcile) ·
-  `clear_record.providers` (ASR adapters) · `clear_record.cli` (the CLI and the
+  `clear_record.providers` (ASR adapters) · `clear_record.pipeline` (the stage
+  wiring and the machinery that runs it) · `clear_record.cli` (the CLI and the
   `clear-record` command), plus the console's `service` (registry, meetings,
   runs, archive), `web` (FastAPI + htmx/Alpine), `tray` (PySide6 supervisor) and
   `mcp` (the agent boundary) — one install name, layers hidden behind it

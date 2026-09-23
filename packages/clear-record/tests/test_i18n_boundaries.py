@@ -278,8 +278,8 @@ def test_the_quarantine_keeps_the_detail_english(pseudo, tmp_path) -> None:
     assert stored in error
 
 
-def test_the_console_translates_the_cli_auto_explanation(pseudo) -> None:
-    """``--auto``'s explanation is composed in the CLI but shown by the console.
+def test_the_console_translates_the_pipeline_auto_explanation(pseudo) -> None:
+    """``--auto``'s explanation is composed in the pipeline but shown by the console.
 
     The resolvers keep it English for the terminal and the run meta; the meta
     also records the stable ID + parameters, and the console renders *that* with

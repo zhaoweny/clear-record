@@ -107,8 +107,8 @@ into a stable, user-facing surface:
 
 [DESIGN] The `clear_record.core` layer owns the *shape* of these stages (the
 `PipelineSpec`); executing a stage against real audio and a real ASR backend is
-the job of a provider (`clear_record.providers`) wired in by the CLI
-(`clear_record.cli`). This keeps the domain model vendor-free (§5).
+the job of a provider (`clear_record.providers`) wired in by the pipeline layer
+(`clear_record.pipeline`). This keeps the domain model vendor-free (§5).
 
 ---
 
@@ -332,7 +332,8 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/core       domain model — NO vendor/ML code
   src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
   src/clear_record/providers  ASR adapters (apple · nvidia · amd · apple-speech) and the system-TTS provider (tts)
-  src/clear_record/cli        the CLI implementation and command; stages live in clear_record.cli.stages
+  src/clear_record/pipeline   the pipeline's execution: the stages and the machinery that runs them
+  src/clear_record/cli        the CLI implementation and command
   src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)
   frontend                    the console's front-end source (Vite + Tailwind v4); output committed into web/static

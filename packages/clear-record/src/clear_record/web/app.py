@@ -197,7 +197,7 @@ TEMPLATES.env.globals["language_choices"] = LANGUAGE_CHOICES
 #: The browser file-picker's ``accept`` filter, built from the service's own
 #: audio allow-list (``managed.AUDIO_SUFFIXES`` — the exact list the upload guard
 #: checks) rather than restated here, so the picker and the guard cannot drift.
-#: The web layer may not import ``clear_record.cli.workspace`` directly (the
+#: The web layer may not import ``clear_record.pipeline.workspace`` directly (the
 #: layering guard), but ``managed`` already owns that list for uploads.
 AUDIO_ACCEPT = ",".join(sorted(managed.AUDIO_SUFFIXES))
 TEMPLATES.env.globals["audio_accept"] = AUDIO_ACCEPT
@@ -348,7 +348,7 @@ class RunCreate(BaseModel):
     jobs: int = 0
     profile: str = PROFILE_CUSTOM
     #: Opt-in: resolve the profile/model (and per-speaker attribution) from the
-    #: machine and the tape, and record the CLI's explanation with the run.
+    #: machine and the tape, and record the resolver's explanation with the run.
     #: Never the default — a run is unchanged unless the caller asks.
     auto: bool = False
 

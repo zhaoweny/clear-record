@@ -28,7 +28,7 @@ RUNTIME_SYSTEM = "system"
 # System-native (non-``whisper-cli``) backend ids. The shipped ids are
 # ``apple``/``nvidia``/``amd`` (all ``whisper-cli``), so the native family keeps
 # distinct, self-describing names to avoid a silent collision when it registers.
-# These are the single definition of the ids; ``cli.auto.BACKEND_PREFERENCE``
+# These are the single definition of the ids; ``pipeline.auto.BACKEND_PREFERENCE``
 # consumes them. ``apple-speech`` now names the registered Apple adapter; the
 # Windows id is defined but unregistered (deferred, ADR-0019).
 APPLE_SPEECH_BACKEND_ID = "apple-speech"

@@ -108,7 +108,7 @@ def test_start_records_the_resolved_profile_knobs_and_auto_meta(tmp_path) -> Non
 
     ``profile`` and ``decoder_knobs`` are the **post-precedence** values (the
     profile's ``beam_size`` is recorded, not the requested preset alone), and the
-    ``auto`` section carries the CLI's explanation verbatim.
+    ``auto`` section carries the resolver's explanation verbatim.
     """
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"

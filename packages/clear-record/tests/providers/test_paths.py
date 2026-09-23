@@ -65,9 +65,10 @@ def test_the_recognizer_is_installed_into_the_core_resolver(
 ) -> None:
     """The service, the console and the MCP server resolve through ``core.paths``.
 
-    Only the CLI and the backend go through this module's own wrapper, so what
-    keeps those other entry points adopting a pre-move ``<cwd>/models`` is the
-    import that installs the recognizer (which importing this layer performs).
+    Only the CLI, the pipeline layer's resolver and the backend go through this
+    module's own wrapper, so what keeps those other entry points adopting a
+    pre-move ``<cwd>/models`` is the import that installs the recognizer (which
+    importing this layer performs).
     """
     monkeypatch.delenv("CR_MODELS_DIR", raising=False)
     monkeypatch.setattr(paths, "_cwd", lambda: tmp_path)

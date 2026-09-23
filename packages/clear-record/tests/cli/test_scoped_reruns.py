@@ -331,12 +331,12 @@ def test_the_transcription_module_refuses_an_unknown_source(tmp_path) -> None:
         )
 
 
-# --- the CLI-owned scope strings follow the installed catalog ---------------- #
-def test_the_cli_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> None:
-    """The strings ``cli/transcription.py`` owns go through ``tr()``.
+# --- the pipeline-owned scope strings follow the installed catalog ----------- #
+def test_the_pipeline_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> None:
+    """The strings ``pipeline/transcription.py`` owns go through ``tr()``.
 
     The zh_CN catalog carries all three; before the fix they were plain
-    f-strings, so a Chinese user read English for every CLI-owned scope error.
+    f-strings, so a Chinese user read English for every pipeline-owned scope error.
     """
     from clear_record.core import i18n
 

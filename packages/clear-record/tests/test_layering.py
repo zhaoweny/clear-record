@@ -305,10 +305,10 @@ def test_no_layer_imports_the_cli() -> None:
 
     Keeping ``core``/``engine``/``providers`` free of ``clear_record.cli`` stops
     the vendor-free/domain layers depending on the command surface (they sit
-    below it), and ``service`` joins them: it used to drive the CLI's stage
-    wiring — the stage wiring *was* ``clear_record.cli.stages`` — and may no
-    longer, because the pipeline moved out into ``clear_record.pipeline``
-    (ADR-0012's clause (c) restated, ADR-0030's ``C3``). ``ALLOWED_INTERNAL``
+    below it), and ``service`` joins them: it used to drive the stage wiring
+    while that wiring lived in the CLI package, and may no longer, because the
+    pipeline moved out into ``clear_record.pipeline`` (ADR-0012's clause (c)
+    restated, ADR-0030's ``C3``). ``ALLOWED_INTERNAL``
     now carries no edge into ``cli`` at all, so the layers above ``service``
     (``web``/``tray``/``mcp``, ADR-0013 added ``web``, ADR-0016 ``tray``,
     ADR-0017 ``mcp``) are covered by :func:`test_internal_import_edges`; the

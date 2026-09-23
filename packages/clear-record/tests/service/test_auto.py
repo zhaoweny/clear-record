@@ -1,4 +1,4 @@
-"""The console's reuse of the CLI's explainable ``--auto`` resolvers.
+"""The console's reuse of the pipeline's explainable ``--auto`` resolvers.
 
 The pure resolvers have their own tests (``tests/cli/test_cli_auto.py``); these
 cover the service seam the console calls: the layering-safe re-export, the

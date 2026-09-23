@@ -6,9 +6,9 @@ API/GUI (and for server-sent events) to read. The pipeline callable is
 **injected**, so tests exercise the whole lifecycle — status transitions, the
 event stream, artifact registration — with no ASR backend and no GPU.
 
-The service drives the same stage wiring the CLI does
-(``clear_record.cli.stages.run``), in-process: there is one pipeline
-implementation, not two.
+The service drives the pipeline's stage wiring
+(``clear_record.pipeline.stages.run``), the same one the CLI drives, in-process:
+there is one pipeline implementation, not two.
 
 Two properties make the node trustworthy across restarts:
 
@@ -81,7 +81,7 @@ from clear_record.service.webhooks import (
     default_emitter,
 )
 
-#: What the manager calls to run a pipeline: the CLI's stage wiring by default.
+#: What the manager calls to run a pipeline: the pipeline's stage wiring by default.
 #: The ``on_event`` it receives is a :class:`RunChannel` — the event sink plus the
 #: run's cancel signal (RUN-04) — so a pipeline's cancellation needs no extra
 #: parameter to thread.
@@ -1100,7 +1100,7 @@ class RunManager:
         Every value here is post-precedence: the same resolution the run
         executes with, never the requested values. ``decoder_knobs`` keeps only
         the knobs that are actually set, so an unset knob cannot masquerade as a
-        choice. ``auto`` carries the CLI's own explanation and the fields it
+        choice. ``auto`` carries the resolver's own explanation and the fields it
         supplied (see :func:`clear_record.service.auto.resolve_run`).
         """
         meta: dict = {
@@ -1811,7 +1811,7 @@ class RunManager:
                 finished.discard(event.stage)
         # ``segments.json`` is written at the **end** of the transcribe stage,
         # and transcribe's own terminal event is emitted by the chunk pool
-        # *before* that write (``cli/stages.py``). Only a stage that runs
+        # *before* that write (``pipeline/stages.py``). Only a stage that runs
         # strictly after the write proves the transcript on disk is this run's:
         # reconcile and export both do. A run that finished transcribe and then
         # died before the write would otherwise report the previous run's

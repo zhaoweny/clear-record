@@ -188,7 +188,7 @@ def _tail(text: str | None, limit: int = 800) -> str:
 def _glossary_terms(initial_prompt: str | None) -> tuple[str, ...]:
     """Split the pipeline's glossary prompt into Apple custom-vocabulary phrases.
 
-    The pipeline joins terms with ``", "`` (``cli.stages._load_glossary``), so
+    The pipeline joins terms with ``", "`` (``pipeline.stages._load_glossary``), so
     terms are recovered by splitting on commas and newlines. ``#`` comments and
     blanks are ignored.
     """

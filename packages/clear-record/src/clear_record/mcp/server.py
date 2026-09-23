@@ -19,7 +19,7 @@ Design notes:
   answer with.** Each tool annotates its return with a declared model from the
   boundary vocabulary — one derived from the domain value it publishes
   (``clear_record.service.schemas``), a shape a service view computes
-  (``DraftView``, ``AgentTasksOut``), or this module's own envelope for one that
+  (``DraftView``, ``AgentDraftsOut``), or this module's own envelope for one that
   wraps a value (``RunStartedOut``, ``RunStatusOut``, ``RunEventPageOut``) — so
   the SDK publishes a real output schema — the fields, not
   ``additionalProperties`` — and an agent gets machine-readable values, not
@@ -40,8 +40,9 @@ Design notes:
   there at all, so a shape that disagrees with its own declaration is caught at
   construction or not at all. Either way it is a bug in this tree, not something
   the agent can act on.
-- **BYOK.** No model or provider key is read, required or bundled; the agent
-  brings its own (ADR-0017).
+- **No model, no credential.** No model or provider key is read, required or
+  bundled: the harness brings its own, and this server never speaks to one
+  (ADR-0031).
 
 The server speaks **stdio** only (the client launches ``clear-record mcp`` as a
 subprocess); a network transport is deliberately out of scope for v1.
@@ -59,9 +60,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from clear_record.core import PipelineOptions
 from clear_record.service import (
     TASK_KINDS,
-    AgentConfig,
-    AgentTaskError,
-    AgentTasksOut,
+    AgentDraftsOut,
     ArtifactOut,
     DraftView,
     EventOut,
@@ -69,6 +68,7 @@ from clear_record.service import (
     MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingAgentError,
     MeetingOut,
     MeetingTapesOut,
     ModelNotOnDisk,
@@ -77,8 +77,8 @@ from clear_record.service import (
     PipelineRun,
     ProjectCountOut,
     ProjectOut,
+    PromotionError,
     Registry,
-    Runner,
     RunManager,
     RunOut,
     RunState,
@@ -101,14 +101,17 @@ INSTRUCTIONS = (
     "story in project and meeting notes, start and watch pipeline runs (with "
     "explicit profile/backend/model/language, or the opt-in auto / backend auto "
     "resolvers), read the transcript text and list the artifacts a run produced. "
-    "Run the three agent tasks (glossary collection, transcript check, minutes) "
-    "with run_agent_task, review the drafts with list_agent_drafts / "
-    "read_agent_draft, and apply one with accept_agent_draft (or discard it with "
-    "reject_agent_draft): an agent task's output is a draft until it is accepted. "
-    "Recordings and model weights are local files; "
-    "this server is a thin adapter over the same service the web console uses. "
-    "For the glossary ↔ transcript tuning loop the agent orchestrates: read the "
-    "transcript, refine the terms, then re-run with intent."
+    "The three LLM-shaped jobs are yours to do: read the transcript with "
+    "read_transcript, then write your result for glossary collection, transcript "
+    "check or minutes with write_agent_draft — it is stored as a draft with the "
+    "author identity you declare. Review drafts with list_agent_drafts / "
+    "read_agent_draft; a human applies one with accept_agent_draft (or discards "
+    "it with reject_agent_draft), and writing a new version of a draft puts it "
+    "back in review. clear-record never calls a model and holds no model "
+    "credential. Recordings and model weights are local files; this server is a "
+    "thin adapter over the same service the web console uses. For the glossary "
+    "↔ transcript tuning loop you orchestrate: read the transcript, write "
+    "candidate terms as a draft, then re-run with intent."
 )
 
 
@@ -168,16 +171,9 @@ class ServiceTools:
         self,
         registry: Registry,
         manager: RunManager | None = None,
-        *,
-        runner: Runner | None = None,
-        config: AgentConfig | None = None,
     ) -> None:
         self.registry = registry
         self.manager = manager if manager is not None else RunManager(registry)
-        # The agent-task seam's injection points (tests, embedders); with neither
-        # a launch resolves the process config the same way the console does.
-        self.runner = runner
-        self.config = config
 
     # --- lookup helpers ---------------------------------------------------- #
     def _project(self, slug: str) -> Project:
@@ -537,86 +533,138 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         return TranscriptOut.model_validate(page)
 
-    # --- agent tasks (ADR-0018) -------------------------------------------- #
+    # --- drafts (ADR-0031: the harness writes, a human decides) ------------ #
     def _agent(self, project: str, meeting: str) -> MeetingAgent:
         found = self._meeting(project, meeting)
-        return MeetingAgent(
-            self.registry, found, runner=self.runner, config=self.config
-        )
+        return MeetingAgent(self.registry, found)
 
-    def _draft(self, agent: MeetingAgent, run_id: str):
-        draft = agent.draft(run_id)
+    def _draft(self, agent: MeetingAgent, draft_id: str):
+        draft = agent.draft(draft_id)
         if draft is None:
             raise ToolError(
-                f"unknown agent draft {run_id!r} for {agent.meeting.slug!r}; "
+                f"unknown agent draft {draft_id!r} for {agent.meeting.slug!r}; "
                 "list them with list_agent_drafts"
             )
         return draft
 
-    def list_agent_drafts(self, project: str, meeting: str) -> AgentTasksOut:
-        """List a meeting's agent-task drafts with their review state.
+    def list_agent_drafts(self, project: str, meeting: str) -> AgentDraftsOut:
+        """List a meeting's draft chains, each with its versions and review state.
 
-        The three task kinds (``glossary_collection``, ``transcript_check``,
-        ``minutes``) each produce a **draft**; nothing is applied until an
-        explicit ``accept_agent_draft``. ``configured`` says whether a runner is
-        available at all (an endpoint, a command template, or one injected by the
-        embedder), so a launch that would fail is visible before it is attempted.
+        A draft is a **version chain with author provenance**: every version
+        records the ``author`` its writer declared and when it was written, and
+        the human's accept/reject is recorded on the version it decided. The
+        three kinds (``glossary_collection``, ``transcript_check``, ``minutes``)
+        are what a harness writes with ``write_agent_draft``; nothing is applied
+        until a human accepts it with ``accept_agent_draft``. ``minutes`` is the
+        meeting's accepted minutes artifact, or ``null`` until one exists.
         """
         agent = self._agent(project, meeting)
         minutes = agent.minutes_artifact()
-        return AgentTasksOut(
-            tasks=list(TASK_KINDS),
-            configured=agent.configured(),
+        return AgentDraftsOut(
+            kinds=list(TASK_KINDS),
             drafts=[describe_draft(draft) for draft in agent.drafts()],
             minutes=None if minutes is None else ArtifactOut.model_validate(minutes),
         )
 
-    def read_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
-        """Read one draft: its validated value, its provenance and its review state."""
+    def read_agent_draft(self, project: str, meeting: str, draft_id: str) -> DraftView:
+        """Read one draft chain: its newest value, its versions and its review state."""
         agent = self._agent(project, meeting)
-        return describe_draft(self._draft(agent, run_id))
+        return describe_draft(self._draft(agent, draft_id))
 
-    def run_agent_task(self, project: str, meeting: str, kind: str) -> DraftView:
-        """Launch one agent task for a meeting and return its draft.
+    def write_agent_draft(
+        self,
+        project: str,
+        meeting: str,
+        kind: str,
+        value: dict[str, Any],
+        author: str = "agent",
+        draft_id: str | None = None,
+    ) -> DraftView:
+        """Write what you produced for a meeting as a draft version, and record who wrote it.
 
         ``kind`` is one of ``glossary_collection``, ``transcript_check`` or
-        ``minutes``. The task is packaged from the meeting's transcript, the
-        project's confirmed-term glossary snapshot and the meeting/project notes,
-        then run with the configured runner (or the endpoint/command the config
-        names). It needs a transcript in the meeting workspace: run the pipeline
-        first. The result is a **draft**; review it with ``read_agent_draft`` and
-        apply it with ``accept_agent_draft``.
+        ``minutes``, and ``value`` is the JSON object the harness produced:
+
+        - ``glossary_collection`` — ``{"terms": [{"term", "reading", "aliases",
+          "definition", "evidence"}]}``: candidate terms read from the meeting's
+          transcript (``read_transcript``). Accepting adds them as **candidate**
+          glossary terms — confirm them individually to bias the decoder.
+        - ``transcript_check`` — ``{"revision": "<the corrected transcript>",
+          "changes": [{"before", "after", "reason"}]}``. Accepting writes the
+          revision as a new ``transcript_revision`` artifact and never overwrites
+          the reconciled record.
+        - ``minutes`` — ``{"body": "<markdown>", "attendees", "decisions",
+          "actions", "meeting", "project"}``. Accepting writes and registers the
+          meeting's ``minutes`` artifact.
+
+        ``author`` is the identity you declare — it is the draft's only
+        provenance, because clear-record did not produce the value and never saw
+        your model. Pass ``draft_id`` to append a version to an existing chain
+        (a re-run, a refinement) instead of opening a new one; a new version puts
+        the draft back in review, so it is never accepted on the strength of an
+        earlier version. The result is a **draft** until a human accepts it.
         """
         agent = self._agent(project, meeting)
         try:
-            draft = agent.launch(kind)
-        except AgentTaskError as exc:
+            draft = agent.write(kind, value, author=author, draft_id=draft_id)
+        except MeetingAgentError as exc:
             raise ToolError(str(exc)) from exc
         return describe_draft(draft)
 
-    def accept_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
-        """Accept a draft, promoting it into what its kind produces.
+    def accept_agent_draft(
+        self,
+        project: str,
+        meeting: str,
+        draft_id: str,
+        version: int,
+        author: str = "human",
+    ) -> DraftView:
+        """Accept one version of a draft, promoting it into what its kind produces.
+
+        ``version`` is **required**: it is the version number you read
+        (``read_agent_draft`` reports it, and the chain's versions are numbered
+        from 1). A decision is never applied to a version you did not name: one
+        that is no longer the newest when the decision arrives is refused, because
+        a harness may append a version between your read and your decision, and a
+        decision must apply to text that was actually reviewed.
 
         Promotion is type-specific and idempotent: ``glossary_collection`` adds the
-        proposed terms as **candidate** registry terms (confirm them individually
-        to bias the decoder), ``transcript_check`` writes the corrected revision
-        and its change list as a new artifact (never an in-place overwrite of the
-        record), and ``minutes`` writes and registers the meeting's minutes
-        document. Re-accepting an already-promoted draft changes nothing.
+        proposed terms as **candidate** registry terms, ``transcript_check`` writes
+        the corrected revision and its change list as a new artifact (never an
+        in-place overwrite of the record), and ``minutes`` writes and registers the
+        meeting's minutes document. The acceptance records ``author`` as the human
+        who decided it, and a version that already carries a decision is returned
+        unchanged — deciding twice runs no second side effect.
         """
         agent = self._agent(project, meeting)
-        draft = self._draft(agent, run_id)
+        draft = self._draft(agent, draft_id)
         try:
-            promoted = agent.promote(draft)
-        except AgentTaskError as exc:
+            promoted = agent.promote(draft, author=author, version=version)
+        except (MeetingAgentError, PromotionError) as exc:
             raise ToolError(str(exc)) from exc
         return describe_draft(promoted)
 
-    def reject_agent_draft(self, project: str, meeting: str, run_id: str) -> DraftView:
-        """Reject a draft, keeping it and its provenance on disk as history."""
+    def reject_agent_draft(
+        self,
+        project: str,
+        meeting: str,
+        draft_id: str,
+        version: int,
+        author: str = "human",
+    ) -> DraftView:
+        """Reject one version of a draft, keeping the whole chain on disk as history.
+
+        ``version`` is **required**, as in ``accept_agent_draft``: it is the
+        version you read, and one that is no longer the newest is refused rather
+        than recording a decision on a version you did not see.
+        """
         agent = self._agent(project, meeting)
-        draft = self._draft(agent, run_id)
-        return describe_draft(agent.reject(draft))
+        draft = self._draft(agent, draft_id)
+        try:
+            rejected = agent.reject(draft, author=author, version=version)
+        except MeetingAgentError as exc:
+            raise ToolError(str(exc)) from exc
+        return describe_draft(rejected)
 
 
 #: The tool methods, in the order they are registered. Kept explicit so the
@@ -641,7 +689,7 @@ TOOL_NAMES: tuple[str, ...] = (
     "read_transcript",
     "list_agent_drafts",
     "read_agent_draft",
-    "run_agent_task",
+    "write_agent_draft",
     "accept_agent_draft",
     "reject_agent_draft",
 )
@@ -652,11 +700,9 @@ def build_server(
     manager: RunManager | None = None,
     *,
     name: str = SERVER_NAME,
-    runner: Runner | None = None,
-    config: AgentConfig | None = None,
 ) -> MCPServer:
     """Build the MCP server over an opened registry (inject a temp one in tests)."""
-    tools = ServiceTools(registry, manager, runner=runner, config=config)
+    tools = ServiceTools(registry, manager)
     server: MCPServer = MCPServer(name=name, instructions=INSTRUCTIONS)
     for tool_name in TOOL_NAMES:
         server.add_tool(getattr(tools, tool_name))

@@ -1448,29 +1448,10 @@ tbody tr:last-child td { border-bottom: none; }
 
 .agent-setup p { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
 
-.agent-setup-probes {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-probe {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.agent-probe .row { gap: var(--space-2); }
-
 .agent-setup-secret { color: var(--muted-foreground); }
 
-/* The one agent flow: four numbered stages (Endpoint -> Harness -> MCP config ->
-   Try it), the same numbering shape as the setup wizard's steps. */
+/* The one agent flow: three numbered stages (Harness -> MCP config -> Try it),
+   the same numbering shape as the setup wizard's steps. */
 .agent-flow {
   display: grid;
   gap: var(--space-3);
@@ -1561,7 +1542,10 @@ tbody tr:last-child td { border-bottom: none; }
    controls sit under the value they act on. */
 .draft .meeting-head strong { font-family: var(--font-mono); font-size: var(--text-sm); }
 
-.agent-launchers form { margin: 0; }
+/* The version chain a draft reviewer reads: author, when, and the decision. */
+.agent-versions { display: grid; gap: var(--space-1); }
+
+.agent-version { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 .agent-note { margin-top: var(--space-2); font-size: var(--text-xs); line-height: 1.55; }
 

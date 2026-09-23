@@ -1,6 +1,6 @@
 # Agent task execution — owner-voice record (2026-09-14)
 
-Status: **In force except the in-process rungs.** The owner decided on 2026-09-21 that the in-process BYOK path (endpoint and command runners) is dropped in v0.3, leaving MCP as the only agent integration; the superseding ADR is owed by that slice, so ADR-0018 stands until it lands. The 2026-09-21 correction below the 2026-09-14 text is part of the record.
+Status: **Superseded by [ADR-0031](../../adr/0031-harness-is-the-only-agent.md) (2026-09-23).** The owner decided on 2026-09-21 that the in-process BYOK path (endpoint and command runners) is dropped in v0.3, leaving MCP as the only agent integration; that slice's ADR is ADR-0031, which deletes the runners, the prompt renderer and the task plumbing and keeps the draft store as a version chain with author provenance. ADR-0018 is superseded by it. The 2026-09-21 correction below the 2026-09-14 text is part of the record.
 Moved here verbatim from `docs/vox/voice-of-owner.md` on 2026-09-21: no wording changed — the entry
 keeps the standing positions and the index, and each section below keeps its own date.
 

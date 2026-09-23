@@ -1,18 +1,19 @@
-"""The terminal wizard (``scripts/agent_setup.py``) and its two hard rules.
+"""The terminal wizard (``scripts/agent_setup.py``) and its rules.
 
 The wizard drives the same :mod:`clear_record.service.setup` functions the console
-does, so what is worth testing here is not the probing — the service suite covers
-that against a fake endpoint — but the rules that live **only** at this surface:
+does, so what is worth testing here is not the plumbing — the service suite covers
+that — but the rules that live **only** at this surface:
 
-- a scripted session that names an environment variable writes the *name*, and a
-  value sitting in the environment never reaches the config or the output;
+- a scripted session that points at a harness found on ``PATH`` and names a client
+  config writes exactly the one ``mcpServers`` entry, records both paths, and
+  writes **no [`agent`] table at all** (there is no model to configure);
 - when no harness is on ``PATH`` the wizard says plainly that getting one is the
-  human's step, and writes no client config.
+  human's step, and writes no client config;
+- a 0.2 ``[agent]`` table sitting in the user's config is **reported as ignored**,
+  never touched.
 
 The session is scripted by replacing ``builtins.input``: the wizard is a plain
 interactive program with no prompt library, so feeding it lines is the whole seam.
-Every service call that would touch the network is replaced with a fake, and the
-conftest fixture keeps the app directories inside ``tmp_path``.
 """
 
 from __future__ import annotations
@@ -60,40 +61,15 @@ def _scripted(monkeypatch: pytest.MonkeyPatch, answers: list[str]) -> None:
     monkeypatch.setattr("builtins.input", fake_input)
 
 
-def _no_detection() -> setup.Detection:
-    return setup.Detection(probes=())
-
-
-def _verification_ok(*, ok: bool = True):
-    def verify(endpoint, *, model=None, api_key_env=None, **_kwargs):
-        return setup.Verification(
-            ok=ok,
-            endpoint=endpoint,
-            model=model or "qwen2.5:1.5b",
-            detail=None if ok else setup.Message("endpoint refused the test call"),
-        )
-
-    return verify
-
-
-def test_a_scripted_session_names_the_variable_and_never_writes_a_value(
+def test_a_scripted_session_writes_the_one_mcp_entry_and_no_agent_table(
     wizard, tmp_path, monkeypatch, capsys
 ) -> None:
-    """The BYOK rule at the wizard surface: a name is configuration, a value is not."""
-    sentinel = "s3cret-value-the-wizard-must-not-write"
-    monkeypatch.setenv("CR_WIZARD_KEY", sentinel)
-    monkeypatch.setattr(wizard, "detect", _no_detection)
-    monkeypatch.setattr(wizard, "verify_endpoint", _verification_ok())
     harness = setup.Harness(name="pi-agent", path="/opt/bin/pi-agent")
     monkeypatch.setattr(wizard, "find_harness", lambda: (harness,))
     mcp_path = tmp_path / "client" / "mcp.json"
     _scripted(
         monkeypatch,
         [
-            "https://hosted.test/v1",  # the endpoint to record
-            "m",  # the model
-            "CR_WIZARD_KEY",  # the variable's NAME, never its value
-            "",  # confirm the config write
             "",  # point at the harness found on PATH
             str(mcp_path),  # the client config path, chosen by the user
             "",  # confirm the MCP entry write
@@ -104,10 +80,9 @@ def test_a_scripted_session_names_the_variable_and_never_writes_a_value(
     printed = capsys.readouterr().out
 
     assert code == 0
-    config = paths.config_path().read_text(encoding="utf-8")
-    assert 'api_key_env = "CR_WIZARD_KEY"' in config  # the NAME is recorded
-    assert sentinel not in config
-    assert sentinel not in printed
+    # No model is configured and no key is asked for: there is no [agent] table.
+    assert not paths.config_path().exists()
+    assert "credential" in printed  # and the wizard says so
     document = json.loads(mcp_path.read_text(encoding="utf-8"))
     assert document["mcpServers"][setup.MCP_SERVER_NAME] == {
         "command": "clear-record",
@@ -119,23 +94,13 @@ def test_a_scripted_session_names_the_variable_and_never_writes_a_value(
 
 
 def test_without_a_harness_it_says_the_download_is_the_users_step(
-    wizard, tmp_path, monkeypatch, capsys
+    wizard, monkeypatch, capsys
 ) -> None:
     """No harness on PATH: name the human action, write no client config."""
-    monkeypatch.setattr(wizard, "detect", _no_detection)
-    monkeypatch.setattr(wizard, "verify_endpoint", _verification_ok())
     monkeypatch.setattr(
         wizard, "find_harness", lambda: (setup.Harness(name="pi-agent", path=None),)
     )
-    _scripted(
-        monkeypatch,
-        [
-            "http://127.0.0.1:11434/v1",  # a local endpoint needs no key name
-            "",  # accept the server's model
-            "",  # confirm the config write
-            "skip",  # skip the MCP rung rather than install anything
-        ],
-    )
+    _scripted(monkeypatch, ["skip"])  # skip the MCP rung rather than install anything
 
     code = wizard.main()
     printed = capsys.readouterr().out
@@ -143,55 +108,46 @@ def test_without_a_harness_it_says_the_download_is_the_users_step(
     assert code == 0
     assert "pi-agent is not bundled" in printed
     assert "will not download one for you" in printed
-    assert paths.config_path().is_file()
     assert "mcp_config" not in setup.read_setup_state()
+    assert not paths.config_path().exists()
 
 
-def test_a_failed_test_call_records_nothing(wizard, monkeypatch, capsys) -> None:
-    """Fail closed: an endpoint that cannot answer is never written as working."""
-    monkeypatch.setattr(wizard, "detect", _no_detection)
-    monkeypatch.setattr(wizard, "verify_endpoint", _verification_ok(ok=False))
-    _scripted(
-        monkeypatch,
-        [
-            "http://127.0.0.1:11434/v1",
-            "",  # accept the server's model
-            "n",  # do not try another endpoint
-        ],
-    )
-
-    code = wizard.main()
-
-    assert code == 130
-    assert "endpoint refused the test call" in capsys.readouterr().out
-    assert not paths.config_path().is_file()
-    assert setup.read_setup_state() == {}
-
-
-def test_a_refused_config_write_is_reported_not_raised(
+def test_a_refused_harness_path_is_reported_not_raised(
     wizard, tmp_path, monkeypatch, capsys
 ) -> None:
-    """A hand-written [agent] table is the user's: setup reports it, never clobbers."""
-    hand_written = '[agent]\nendpoint = "http://hand.written/v1"\n'
-    paths.config_path().parent.mkdir(parents=True, exist_ok=True)
-    paths.config_path().write_text(hand_written, encoding="utf-8")
-    monkeypatch.setattr(wizard, "detect", _no_detection)
-    monkeypatch.setattr(wizard, "verify_endpoint", _verification_ok())
+    """A path that is not runnable is the service's refusal, shown and skipped."""
     monkeypatch.setattr(
         wizard, "find_harness", lambda: (setup.Harness(name="pi-agent", path=None),)
     )
-    _scripted(
-        monkeypatch,
-        [
-            "http://127.0.0.1:11434/v1",
-            "",  # accept the server's model
-            "",  # confirm the config write, which the service then refuses
-            "skip",  # skip the MCP rung
-        ],
-    )
+    bogus = tmp_path / "not-a-harness"
+    bogus.write_text("plain file\n", encoding="utf-8")
+    _scripted(monkeypatch, [str(bogus), "skip"])
 
     code = wizard.main()
+    printed = capsys.readouterr().out
 
     assert code == 0
-    assert "Could not write the config" in capsys.readouterr().out
+    assert "is not executable" in printed
+    assert "mcp_config" not in setup.read_setup_state()
+
+
+def test_a_hand_written_agent_table_is_reported_as_ignored_and_left_alone(
+    wizard, monkeypatch, capsys
+) -> None:
+    """The release's config decision: report the 0.2 plumbing, never move it."""
+    hand_written = '[agent]\nendpoint = "http://hand.written/v1"\n'
+    paths.config_path().parent.mkdir(parents=True, exist_ok=True)
+    paths.config_path().write_text(hand_written, encoding="utf-8")
+    monkeypatch.setattr(
+        wizard, "find_harness", lambda: (setup.Harness(name="pi-agent", path=None),)
+    )
+    _scripted(monkeypatch, ["skip"])
+
+    code = wizard.main()
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    assert "Ignored" in printed
+    assert "[agent]" in printed
+    # Byte-for-byte untouched: not migrated, not clobbered.
     assert paths.config_path().read_text(encoding="utf-8") == hand_written

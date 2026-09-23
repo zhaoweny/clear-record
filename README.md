@@ -336,12 +336,14 @@ separate from it: five surfaces, five jobs
 - **Activity** — what this node is doing right now: the shared queue's running
   and queued runs across every project (stage, progress, derived speed, model
   and backend, origin, machine) and the newest finished ones.
-- **Settings** — the control plane: models, backends, agent, MCP, storage and
+- **Settings** — the control plane: models, backends, MCP, storage and
   status — configured occasionally, read often.
 - **Setup** — system readiness: the first-run and upgrade path (welcome,
   transcription, agent, try it), skippable at every step.
 - **Agent setup** — integration readiness: one reusable flow, reached from the
-  Setup path and from Settings → Agent.
+  Setup path and from Settings → Agent. It points at an MCP harness and
+  registers clear-record's server; clear-record holds no model and asks for no
+  key.
 
 The console ships in this wheel, but its web stack is an optional extra so a
 CLI-only install stays audio-only:
@@ -401,13 +403,15 @@ multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 > Projects, a project's Overview/Meetings/Glossary/Media, Activity, Settings,
 > Setup and the one agent flow. It covers the multi-project glossary table,
 > meetings and tape sets, running tapes with progress and a live run view, tape
-> upload into a managed workspace, and the archive view. The **agent tasks**
-> (glossary collection, transcript check, minutes) run on the runner seam and
-> land as reviewable drafts (ADR-0018), and the setup path's hello-world
-> acceptance test proves tape → transcription → transcript, localizing a
-> failure to a leg (`tts`, `backend`, `model`, `transcribe`). The real agent
-> round-trip over MCP is proven by the optional `just agent-drive` — see
-> [docs/architecture.md](docs/architecture.md).
+> upload into a managed workspace, and the archive view. The three jobs
+> (glossary collection, transcript check, minutes) are the **harness's** work:
+> it reads the transcript over MCP and writes what it produced as a draft with
+> the author identity it declares, and a human accepts or rejects it
+> (ADR-0031). clear-record itself calls no model and holds no model credential.
+> The setup path's hello-world acceptance test proves tape → transcription →
+> transcript, localizing a failure to a leg (`tts`, `backend`, `model`,
+> `transcribe`), and the optional `just agent-drive` stands in for a harness over
+> the MCP tools — see [docs/architecture.md](docs/architecture.md).
 
 ### Desktop app (macOS · Windows)
 

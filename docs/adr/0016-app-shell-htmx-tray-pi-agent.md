@@ -9,6 +9,12 @@ Date: 2026-09-14
   reasoning survives in a different form — offline, with no runtime toolchain —
   and its **htmx/Alpine over server-rendered Jinja** choice, the tray, and the
   pi-agent boundary all stand.
+- Superseded **in part** by [ADR-0031](0031-harness-is-the-only-agent.md)
+  (2026-09-23): **MCP is the only agent integration** — the harness owns the
+  model and pi-agent is a replaceable client. What does not stand is
+  this ADR's claim that clear-record owns the **task context/contract**: with no
+  in-process runner there is no packaged context and no prompt renderer, so a
+  harness reads the transcript and writes its result as a draft (ADR-0031).
 
 ## Context
 
@@ -64,10 +70,12 @@ Date: 2026-09-14
   audio-only. The supervision logic is a **Qt-free `ServiceController`**, which
   is what the tests exercise; the Qt shell is thin and untested in CI.
 - [DECISION] **The local agent is pi-agent**, reached over the Python **MCP
-  server** (per maa-whirlwind ADR-0005). clear-record owns the MCP tool surface
-  and the task context/contract; pi-agent is a replaceable client, so any
-  MCP-capable harness works. Credentials are **BYOK** — never bundled, and an
-  agent runtime never enters `clear_record.core`.
+  server** (per maa-whirlwind ADR-0005). MCP is the only agent integration;
+  pi-agent is the default, replaceable client we point at it, so any
+  MCP-capable harness works.
+  Credentials are **BYOK** — never bundled, and an agent runtime never enters
+  `clear_record.core`. (ADR-0031: clear-record owns no task context or prompt
+  contract and calls no model of its own.)
 - [DECISION] Layer DAG grows by `tray` (may import `core`, `service`, `web`).
   The base dist's runtime dependencies are unchanged (`numpy`, `soundfile`).
 
@@ -104,7 +112,7 @@ Date: 2026-09-14
 - The tray's Qt shell is deliberately outside the verify gate (no display in
   CI); its supervision logic is on the gate. Revisit if a headless Qt platform
   proves reliable enough to test the shell.
-- The base install stays audio-only; `web` and `tray` are extras, and MCP will
-  get its own `agents` extra when the server lands.
+- The base install stays audio-only; `web`, `tray` and `agents` are extras (the
+  MCP SDK landed behind its own extra, ADR-0017).
 - Layers may import the CLI's stage wiring but never the other way around; the
   layering guard grows with the DAG (ADR-0012).

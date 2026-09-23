@@ -64,7 +64,7 @@ def test_adr_0017_documents_the_agent_task_tools() -> None:
     for tool in (
         "list_agent_drafts",
         "read_agent_draft",
-        "run_agent_task",
+        "write_agent_draft",
         "accept_agent_draft",
         "reject_agent_draft",
     ):
@@ -77,10 +77,9 @@ def test_adr_0017_documents_the_agent_task_tools() -> None:
     assert "landed" in adr
 
 
-def test_adr_0018_tool_count_is_current() -> None:
-    """'14 tools' described 2026-09-14; the surface is 22 today."""
-    adr = _text("docs/adr/0018-agent-task-execution.md")
-    assert "then 14 tools" in adr
+def test_the_mcp_tool_count_in_the_current_adr_is_current() -> None:
+    """The surface is 22 tools, and the ADR that owns it today says so."""
+    adr = _text("docs/adr/0031-harness-is-the-only-agent.md")
     assert "22 tools" in adr
     assert len(_tool_names()) == 22
 
@@ -130,7 +129,7 @@ def test_readme_documents_the_bind_and_the_layers() -> None:
 def test_adr_0013_records_the_later_base_dependencies() -> None:
     adr = _text("docs/adr/0013-bundled-web-and-service-surface.md")
     assert "Superseded in part by [ADR-0022](0022-adopt-click.md)" in adr
-    for dep in ("click", "platformdirs", "json-repair"):
+    for dep in ("click", "platformdirs"):
         assert dep in adr
 
 

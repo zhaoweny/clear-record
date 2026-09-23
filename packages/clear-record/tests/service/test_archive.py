@@ -189,10 +189,17 @@ def test_archive_root_must_be_chosen(tmp_path) -> None:
     assert Path(archive.root_path).parent == explicit.resolve() / "ops"
 
 
-def test_a_registry_at_revision_two_gains_the_archive_table(tmp_path) -> None:
-    """An existing registry at revision two gains the archive table on open."""
+def test_an_existing_registry_at_the_released_baseline_opens_and_archives(
+    tmp_path,
+) -> None:
+    """An existing registry at the released baseline opens, and its archives work.
+
+    The archive table is part of the baseline, so a registry the released line
+    left behind already carries it — and it holds the user's rows, which the
+    migration on top of it must keep.
+    """
     db = tmp_path / "registry.sqlite3"
-    command.upgrade(_alembic_config(db), "0002")
+    command.upgrade(_alembic_config(db), "0006")
     with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
             "INSERT INTO project (slug, name, notes, created_at)"

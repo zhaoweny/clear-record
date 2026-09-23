@@ -1,6 +1,6 @@
 # The console, the desktop app, and the app shell — owner-voice record (2026-09-14)
 
-Status: In force, except the *no build step* property, superseded by ADR-0023 (annotated in place). Live owners: ADR-0016, ADR-0023, ADR-0027, ADR-0014.
+Status: In force, except the *no build step* property, superseded by ADR-0023 (annotated in place), and the *command-template runner* half of the agent seam, superseded by ADR-0031 (annotated in place). Live owners: ADR-0016, ADR-0023, ADR-0027, ADR-0014.
 Moved here verbatim from `docs/vox/voice-of-owner.md` on 2026-09-21: no wording changed — the entry
 keeps the standing positions and the index, and each section below keeps its own date.
 
@@ -61,7 +61,10 @@ keeps the standing positions and the index, and each section below keeps its own
   semantic tools over shared services, a reference external MCP consumer, **BYOK**
   (no bundled provider key), and the harness never entering the core. The
   clear-record agent seam follows that shape (MCP server + a command-template
-  runner), also recorded in ADR-0013.
+  runner), also recorded in ADR-0013. *(Superseded 2026-09-23 by
+  [ADR-0031](../../adr/0031-harness-is-the-only-agent.md): the command-template
+  runner is deleted and MCP is the only agent integration — the MCP-server half
+  of the shape stands.)*
 
 ### Desktop app build (2026-09-14)
 
@@ -94,8 +97,12 @@ keeps the standing positions and the index, and each section below keeps its own
   agent runtime is bundled). Prior art: maa-whirlwind ADR-0005.
 - [DECISION] The web UI is **htmx + Alpine.js**, server-rendered by FastAPI, with
   the two libraries vendored under `clear_record/web/static/` — **no build
-  step**. This **supersedes** the briefly-stated Vue/React direction (and
-  ADR-0013's embedded Python-string assets). See
+  step**. *(Superseded 2026-09-15 by
+  [ADR-0023](../../adr/0023-frontend-toolchain.md): the vendored assets are now
+  built by a committed front-end source tree, so the "no build step" property is
+  gone; the htmx/Alpine choice and the offline guarantee stand.)* This
+  **supersedes** the briefly-stated Vue/React direction (and ADR-0013's embedded
+  Python-string assets). See
   [ADR-0016](../../adr/0016-app-shell-htmx-tray-pi-agent.md).
 - [DECISION] A **native tray supervisor** gives the app an entry point:
   `clear-record tray` runs the console in the background and offers open /

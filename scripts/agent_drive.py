@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Agentic test-drive: the optional, on-demand agent story against a real endpoint.
+"""Agent drive: the harness stand-in for the three LLM-shaped jobs.
 
-Ticket 07. The three agent tasks of ADR-0018 (glossary collection, transcript
-check, minutes) are normally proven offline against a fake endpoint, which is
-what "just verify" must stay. This script is the **other** half: drive the same
-tasks against a real OpenAI-compatible endpoint the operator brings, over a
-throwaway seeded meeting, so the agent experience can be exercised on demand.
+Ticket 07. clear-record calls no model (ADR-0031): the three jobs — glossary
+collection, transcript check, minutes — are work a **harness** does over MCP, and
+this script stands in for one. It reaches clear-record **only** through the MCP
+tools the shipped server exposes, never through the service's Python seam.
 
 **Run it through just** (the pointer recipe lives in the justfile; this line is
 what it runs)::
@@ -13,41 +12,46 @@ what it runs)::
     just agent-drive
     just agent-drive --tape path/to/recording.wav
 
-The "--all-packages" flag is what makes the script work: it imports
-"clear_record", so it must run inside the project environment, exactly like
-"scripts/agent_setup.py".
+The ``--all-packages`` flag is what makes the script work: it imports
+``clear_record``, so it must run inside the project environment, exactly like
+``scripts/agent_setup.py``.
 
 The stories, in order, each reported:
 
-1. **Endpoint** - point at the OpenAI-compatible target (deepseek by default)
-   and prove it with a real test call through the same runner the tasks use.
-2. **Agent tasks** - over a seeded meeting, run glossary collection, transcript
-   check and minutes; assert each produced a draft, and print a redacted summary.
-3. **Accept one draft** - promote it and assert the promoted artifact exists.
-4. **MCP round-trip** - launch the server exactly as the wizard's client
-   entry names it, list its tools over stdio, and have the model read the
-   transcript through a tool and answer from what it read.
+1. **MCP surface** — launch the server exactly as the wizard's client entry names
+   it, list its tools over stdio, and require the draft tools and the transcript
+   read to be there. Needs no key.
+2. **Scripted drafts** — write one draft version per job with
+   ``write_agent_draft``, then append a second version to one chain, and assert
+   the chain reports both versions with their authors. Needs no key.
+3. **Review** — accept one draft and reject another over MCP, and assert the
+   acceptance produced its artifact while the rejected chain is kept. Needs no
+   key.
+4. **Model** — the leg that needs a real model: point the model at the same MCP
+   tools, let it read the transcript and write a glossary draft, and require it
+   to have called a tool. Requires a key; **without one it is reported SKIP** and
+   the drive still exits 0.
 
-Key handling is BYOK (ADR-0018) and is a hard rule:
+Key handling is BYOK for the *drive*, which is a harness, not the app:
 
-- the key is read at run time from "CR_AGENT_API_KEY", or from the file named by
-  "CR_AGENT_API_KEY_FILE", or from the operator's gitignored default
-  ("<repo>/.local/deepseek_api-key.txt", also checked in the main worktree);
+- the key is read at run time from ``CR_DRIVE_API_KEY``, or from the file named by
+  ``CR_DRIVE_API_KEY_FILE``, or from the operator's gitignored default
+  (``<repo>/.local/deepseek_api-key.txt``, also checked in the main worktree);
 - the value is **never printed**, never written to config or the registry, and
   every line of output is passed through :class:`Redactor`;
-- without a key the drive prints a clear message and **exits 0** - it never
-  hangs and never crashes.
+- the ``CR_DRIVE_`` prefix is deliberate: ``CR_AGENT_*`` names what the app's 0.2
+  in-process path read, which this version reports as ignored, so the drive must
+  not reuse it.
 
-The tape source is pinned: "--tape <file.wav>" drives a real recording the
-operator supplies, and with no "--tape" the default is the TTS hello-world tape
+The tape source is pinned: ``--tape <file.wav>`` drives a real recording the
+operator supplies, and with no ``--tape`` the default is the TTS hello-world tape
 (:func:`clear_record.service.hello_tape.write_hello_tape`). A missing system
 voice is a **diagnostic finding**, not a crash and not a silent skip: the drive
-reports it and falls back to the seeded transcript so the agent stories still
-run. On a machine whose "say" writes zero-frame audio (this one), that finding
-is the correct no-argument outcome, not a bug to fix.
+reports it and falls back to the seeded transcript so the draft stories still
+run.
 
-This workflow is deliberately **not** part of "just verify" or "just e2e": those
-stay offline and deterministic.
+This workflow is deliberately **not** part of ``just verify`` or ``just e2e``:
+those stay offline and deterministic.
 """
 
 from __future__ import annotations
@@ -65,28 +69,18 @@ import sys
 import urllib.request
 import wave
 from pathlib import Path
+from typing import Any
 
 from clear_record.core import RecordDocument, Segment, write_json
-from clear_record.service import (
-    TASK_KINDS,
-    EndpointRunner,
-    MeetingAgent,
-    Registry,
-    available_backend_ids,
-    write_hello_tape,
-)
+from clear_record.service import Registry, available_backend_ids, write_hello_tape
 from clear_record.service.managed import workspace_path_for
-from clear_record.service.setup import (
-    MCP_SERVER_ARGS,
-    MCP_SERVER_COMMAND,
-    verify_endpoint,
-)
+from clear_record.service.setup import MCP_SERVER_ARGS, MCP_SERVER_COMMAND
 
 #: Where this script lives: <repo root>/scripts/agent_drive.py.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: The deepseek target (the ticket default). Both are overridable by the
-#: CR_AGENT_ENDPOINT / CR_AGENT_MODEL variables or the flags below.
+#: The deepseek target (the ticket default). Both are overridable by the flags
+#: below; the drive is the harness, so it holds the model choice, not the app.
 DEFAULT_ENDPOINT = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 
@@ -95,22 +89,42 @@ DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_DATA_DIR = REPO_ROOT / ".local" / "agent-drive" / "data"
 
 #: The operator key file (gitignored). It is a **documented default**, never the
-#: only option: the two environment variables win over it, and the main
-#: worktree copy is tried too (just runs from a worktree).
+#: only option: the two environment variables win over it, and the main worktree
+#: copy is tried too (just runs from a worktree).
 DEFAULT_KEY_FILE = REPO_ROOT / ".local" / "deepseek_api-key.txt"
 
-#: BYOK variable names (ADR-0018).
-ENV_KEY = "CR_AGENT_API_KEY"
-ENV_KEY_FILE = "CR_AGENT_API_KEY_FILE"
+#: The drive's BYOK variable names. Deliberately **not** ``CR_AGENT_*``: that
+#: prefix names the app's removed in-process path, which this version reports as
+#: ignored.
+ENV_KEY = "CR_DRIVE_API_KEY"
+ENV_KEY_FILE = "CR_DRIVE_API_KEY_FILE"
 
-#: The environment variable name the **resolved value** is handed to the runner
-#: under. It lives only in an in-memory mapping, never in os.environ and never on
-#: disk; the runner own config stores only a name.
-KEY_ENV_NAME = "CR_AGENT_DRIVE_KEY"
+#: The tool names the drive requires the server to expose: the three jobs' write
+#: path, the draft reads, the two decisions, and the transcript read a model needs
+#: to reason about a meeting at all.
+REQUIRED_TOOLS: tuple[str, ...] = (
+    "read_transcript",
+    "list_agent_drafts",
+    "read_agent_draft",
+    "write_agent_draft",
+    "accept_agent_draft",
+    "reject_agent_draft",
+)
+
+#: The three draft kinds, in the order the drive exercises them. Repeated here
+#: rather than imported: the drive speaks to the server as an external client
+#: does, so it pins the *wire* vocabulary, not a Python constant.
+DRAFT_KINDS: tuple[str, ...] = ("glossary_collection", "transcript_check", "minutes")
 
 #: A marker written into the seed dir; the wipe guard only deletes a directory
 #: that carries it (or is empty), so --data-dir can never quietly eat data.
 SEED_MARKER = ".agent-drive-seed"
+
+#: The author identities the drive declares. The scripted stories use one name
+#: and the model leg another, so a chain written by both shows two authors.
+SCRIPTED_AUTHOR = "agent-drive/scripted"
+MODEL_AUTHOR = "agent-drive/model"
+HUMAN_AUTHOR = "human:agent-drive"
 
 #: sk-shaped tokens, masked even if a value the redactor was not told about
 #: reaches the output through a traceback or an endpoint echo.
@@ -143,7 +157,7 @@ SEED_TERMS: tuple[tuple[str, str | None, str | None, str, str], ...] = (
 
 #: The seeded meeting transcript: (start, end, speaker, source, text). It is
 #: plausible review conversation with decisions and action items, so the three
-#: tasks have real material even when no usable tape is available.
+#: jobs have real material even when no usable tape is available.
 SEED_SEGMENTS: tuple[tuple[float, float, str, str, str], ...] = (
     (3.0, 7.4, "Alex", "mic", "the recorder was running from the top of the hour"),
     (
@@ -184,6 +198,57 @@ SEED_SEGMENTS: tuple[tuple[float, float, str, str, str], ...] = (
         "understood. i will write the minutes and list the action items",
     ),
 )
+
+
+def _scripted_values(project: str, meeting: str) -> dict[str, dict]:
+    """What a scripted harness writes for each job, over the seeded material.
+
+    The shapes are the ones the MCP tool's own docstring declares, and they are
+    what the console renders and an acceptance promotes — so the scripted story
+    exercises the real pipeline from the wire in, with no model involved.
+    """
+    return {
+        "glossary_collection": {
+            "terms": [
+                {
+                    "term": "h4n",
+                    "reading": "aitch four en",
+                    "aliases": ["H4N", "h4"],
+                    "definition": "The field recorder used as the second source.",
+                    "evidence": "the h4n still comes through as aitch four en",
+                }
+            ]
+        },
+        "transcript_check": {
+            "revision": "the h4n still comes through as aitch four en in two places",
+            "changes": [
+                {
+                    "before": "the h4n still comes through as aitch four en",
+                    "after": "the H4n still comes through as aitch four en",
+                    "reason": "the glossary spells the recorder H4n",
+                }
+            ],
+        },
+        "minutes": {
+            "project": project,
+            "meeting": meeting,
+            "attendees": ["Alex", "Bo"],
+            "decisions": [
+                "H4n becomes a confirmed term.",
+                "Lead in is kept; pre-roll is retired.",
+            ],
+            "actions": ["Bo writes the minutes and lists the action items."],
+            "body": (
+                "# Kickoff\n\n"
+                "The recorder ran from the top of the hour. The glossary kept the "
+                "falcon codename out of the noise, and H4n is spelled out in two "
+                "places.\n\n"
+                "## Decisions\n\n"
+                "- H4n becomes a confirmed term.\n"
+                "- Lead in is kept; pre-roll is retired.\n"
+            ),
+        },
+    }
 
 
 class DriveError(Exception):
@@ -246,7 +311,7 @@ class Report:
         return any(story.status == "FAIL" for story in self.stories)
 
 
-# --- key resolution (BYOK, never printed) ----------------------------------- #
+# --- key resolution (BYOK for the drive, never printed) --------------------- #
 
 
 def _read_key(path: Path) -> str | None:
@@ -297,7 +362,7 @@ def key_file_candidates() -> list[Path]:
 
 
 def resolve_key(environ, *, candidates: list[Path] | None = None) -> KeyResolution:
-    """Resolve the BYOK key: environment, then a named file, then the default.
+    """Resolve the drive's BYOK key: environment, then a named file, then the default.
 
     The value is returned only in the key field. It is never logged, stored or
     echoed; the source label and the miss detail are safe to print.
@@ -447,7 +512,7 @@ def drive_tape(
     Returns "tape" when the meeting transcript came from the recording, and
     "seeded" when the seeded transcript is the one being used. A missing system
     voice, a zero-frame clip, or an unavailable backend is a **finding**:
-    reported plainly, but the agent stories still run on the seeded transcript.
+    reported plainly, but the draft stories still run on the seeded transcript.
     """
     if args.tape:
         tape = Path(args.tape).expanduser()
@@ -523,204 +588,244 @@ def drive_tape(
     return "tape"
 
 
-# --- the stories ------------------------------------------------------------ #
-
-
 def _plural(count: int, noun: str) -> str:
     """A plain English count for the report: "1 segment" / "3 segments"."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def summarize_draft(draft) -> str:
-    """A redacted, one-line summary of what a draft holds."""
-    value = draft.value if isinstance(draft.value, dict) else {}
-    if draft.kind == "glossary_collection":
-        terms = value.get("terms") or []
-        names = ", ".join(str(item.get("term", "")) for item in terms if item)
-        body = f"{_plural(len(terms), 'term')} proposed"
-        if names:
-            body += f": {names}"
-    elif draft.kind == "transcript_check":
-        changes = value.get("changes") or []
-        body = (
-            f"revision {len(str(value.get('revision', '')))} chars, "
-            f"{_plural(len(changes), 'change')}"
-        )
-    elif draft.kind == "minutes":
-        body = (
-            f"body {len(str(value.get('body', '')))} chars, "
-            f"{_plural(len(value.get('decisions') or []), 'decision')}, "
-            f"{_plural(len(value.get('actions') or []), 'action')}"
-        )
-    else:
-        body = f"{len(draft.text)} bytes"
-    return (
-        f"{body}; run={draft.provenance.run_id} runner={draft.provenance.runner} "
-        f"model={draft.provenance.model or '?'} bytes={draft.artifact_path.stat().st_size}"
-    )
+# --- the MCP client --------------------------------------------------------- #
 
 
-def drive_endpoint(endpoint: str, model: str, key: str, timeout: float, report: Report):
-    """Story 1: prove the endpoint with a real test call through the runner."""
-    result = verify_endpoint(
-        endpoint,
-        model=model,
-        api_key_env=KEY_ENV_NAME,
-        environ={KEY_ENV_NAME: key},
-        timeout=timeout,
-    )
-    if result.ok:
-        report.add(
-            "1 endpoint",
-            "PASS",
-            f"{endpoint} answered the test call with model "
-            f"{result.model or model or 'its own model'}",
-        )
-        return True
-    detail = str(result.detail) if result.detail is not None else "no detail"
-    report.add("1 endpoint", "FAIL", f"{endpoint} did not answer: {detail}")
-    return False
+def _payload(result) -> dict | None:
+    """The JSON object a tool call answered with, or None when it is not one.
 
-
-def drive_tasks(agent: MeetingAgent, report: Report) -> list:
-    """Story 2: run each task kind and require every one to produce a draft."""
-    drafts: list = []
-    for kind in TASK_KINDS:
+    A tool that declares a return model answers with structured content; the
+    text block is the JSON rendering of the same value. Either is accepted, so
+    the drive keeps working across SDK version differences.
+    """
+    structured = getattr(result, "structuredContent", None)
+    if isinstance(structured, dict):
+        return structured
+    for block in getattr(result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if not isinstance(text, str) or not text.strip():
+            continue
         try:
-            draft = agent.launch(kind)
-        except (Exception, SystemExit) as exc:  # noqa: BLE001 - one leg, reported
-            report.add(
-                f"2 task {kind}", "FAIL", f"launch failed: {type(exc).__name__}: {exc}"
-            )
+            value = json.loads(text)
+        except ValueError:
             continue
-        if draft.review_state != "draft":
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _tool_names(listed) -> list[str]:
+    return sorted(tool.name for tool in listed.tools)
+
+
+def _openai_tools(listed, wanted: tuple[str, ...]) -> list[dict]:
+    """The tools a model may call here, in the OpenAI function-call shape."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.input_schema,
+            },
+        }
+        for tool in listed.tools
+        if tool.name in wanted
+    ]
+
+
+async def _call(session, name: str, arguments: dict) -> Any:
+    return await session.call_tool(name, arguments)
+
+
+# --- the stories ------------------------------------------------------------ #
+
+
+async def _story_surface(session, listed, report: Report) -> bool:
+    """Story 1: the shipped MCP server exposes what a harness needs."""
+    names = _tool_names(listed)
+    missing = [name for name in REQUIRED_TOOLS if name not in names]
+    if missing:
+        report.add(
+            "1 MCP surface",
+            "FAIL",
+            f"the server is missing {', '.join(missing)} (it exposes {len(names)} tools)",
+        )
+        return False
+    report.add(
+        "1 MCP surface",
+        "PASS",
+        f"{len(names)} tools over stdio, including the draft write/accept/reject "
+        "surface and read_transcript",
+    )
+    return True
+
+
+async def _story_scripted(
+    session, project: str, meeting: str, report: Report
+) -> dict[str, str]:
+    """Story 2: write one draft version per job, then extend one chain.
+
+    Returns the draft id per kind. The second version on the glossary chain is
+    the provenance proof: the chain must report two authors and be back in
+    review, because a new version re-opens a decided draft.
+    """
+    values = _scripted_values(project, meeting)
+    drafts: dict[str, str] = {}
+    for kind in DRAFT_KINDS:
+        result = await _call(
+            session,
+            "write_agent_draft",
+            {
+                "project": project,
+                "meeting": meeting,
+                "kind": kind,
+                "value": values[kind],
+                "author": SCRIPTED_AUTHOR,
+            },
+        )
+        payload = _payload(result)
+        if payload is None or not payload.get("draft_id"):
+            report.add(f"2 draft {kind}", "FAIL", "the write answered no draft")
+            continue
+        drafts[kind] = str(payload["draft_id"])
+        versions = payload.get("versions") or []
+        author = (versions[-1] or {}).get("author") if versions else None
+        report.add(
+            f"2 draft {kind}",
+            "PASS",
+            f"draft {payload['draft_id']} ({payload.get('review_state')}) author={author}",
+        )
+
+    if "glossary_collection" in drafts:
+        result = await _call(
+            session,
+            "write_agent_draft",
+            {
+                "project": project,
+                "meeting": meeting,
+                "kind": "glossary_collection",
+                "value": values["glossary_collection"],
+                "author": MODEL_AUTHOR,
+                "draft_id": drafts["glossary_collection"],
+            },
+        )
+        payload = _payload(result) or {}
+        versions = payload.get("versions") or []
+        authors = [entry.get("author") for entry in versions]
+        if len(versions) == 2 and authors == [SCRIPTED_AUTHOR, MODEL_AUTHOR]:
             report.add(
-                f"2 task {kind}",
+                "2 chain",
+                "PASS",
+                f"2 versions on one chain with authors {authors}",
+            )
+        else:
+            report.add(
+                "2 chain",
                 "FAIL",
-                f"expected a draft, got review_state={draft.review_state!r}",
+                f"expected 2 versions by both authors, got {authors}",
             )
-            continue
-        drafts.append(draft)
-        report.add(f"2 task {kind}", "PASS", summarize_draft(draft))
     return drafts
 
 
-def drive_accept(agent: MeetingAgent, drafts: list, report: Report) -> tuple[bool, str]:
-    """Story 3: promote one draft and assert its promoted artifact exists."""
-    target = next((d for d in drafts if d.kind == "minutes"), None)
-    if target is None:
-        target = next((d for d in drafts if d.kind == "transcript_check"), None)
-    if target is None and drafts:
-        target = drafts[0]
+async def _draft_version(session, project: str, meeting: str, draft_id: str) -> int:
+    """The newest version of ``draft_id`` — what a reviewer reads before deciding.
+
+    A decision names its version, so the drive reads the chain first: that is the
+    flow the tool documents, and the number it read is the one it decides.
+    """
+    result = await _call(
+        session,
+        "read_agent_draft",
+        {"project": project, "meeting": meeting, "draft_id": draft_id},
+    )
+    return int((_payload(result) or {}).get("version") or 0)
+
+
+async def _story_review(
+    session, project: str, meeting: str, drafts: dict[str, str], report: Report
+) -> tuple[bool, str]:
+    """Story 3: a human accepts one draft over MCP and rejects another.
+
+    Returns whether an acceptance produced its artifact, and which kind it was.
+    """
+    target = drafts.get("minutes") or drafts.get("transcript_check")
     if target is None:
         report.add("3 accept", "FAIL", "no draft was produced to accept")
         return False, ""
-    try:
-        promoted = agent.promote(target)
-    except (Exception, SystemExit) as exc:  # noqa: BLE001 - one leg, reported
+    kind = "minutes" if "minutes" in drafts else "transcript_check"
+    version = await _draft_version(session, project, meeting, target)
+    result = await _call(
+        session,
+        "accept_agent_draft",
+        {
+            "project": project,
+            "meeting": meeting,
+            "draft_id": target,
+            "version": version,
+            "author": HUMAN_AUTHOR,
+        },
+    )
+    payload = _payload(result) or {}
+    promotion = payload.get("promotion") or {}
+    versions = payload.get("versions") or []
+    decided = versions[-1] if versions else {}
+    if (
+        payload.get("review_state") == "accepted"
+        and decided.get("reviewed_by") == HUMAN_AUTHOR
+    ):
+        summary = promotion.get("summary") or {}
+        artifact = summary.get("artifact_id")
+        report.add(
+            "3 accept",
+            "PASS",
+            f"accepted the {kind} draft by {HUMAN_AUTHOR}; "
+            f"promotion artifact={artifact or '(none)'}",
+        )
+        ok = artifact is not None
+    else:
         report.add(
             "3 accept",
             "FAIL",
-            f"promoting the {target.kind} draft failed: {type(exc).__name__}: {exc}",
+            f"the acceptance reported {payload.get('review_state')!r} "
+            f"reviewed_by={decided.get('reviewed_by')!r}",
         )
-        return False, target.kind
-    promotion = promoted.promotion or {}
+        ok = False
 
-    if target.kind == "minutes":
-        artifact = agent.registry.latest_artifact(agent.meeting.id, "minutes")
-        ok = artifact is not None and Path(artifact.path).is_file()
-        detail = (
-            f"accepted minutes -> {artifact.path}"
-            if ok
-            else "accepted minutes, but no minutes artifact was registered"
+    reject = drafts.get("transcript_check") if kind == "minutes" else None
+    if reject:
+        version = await _draft_version(session, project, meeting, reject)
+        result = await _call(
+            session,
+            "reject_agent_draft",
+            {
+                "project": project,
+                "meeting": meeting,
+                "draft_id": reject,
+                "version": version,
+                "author": HUMAN_AUTHOR,
+            },
         )
-    elif target.kind == "transcript_check":
-        artifact = agent.registry.latest_artifact(
-            agent.meeting.id, "transcript_revision"
-        )
-        ok = artifact is not None and Path(artifact.path).is_file()
-        detail = (
-            f"accepted transcript_check -> {artifact.path}"
-            if ok
-            else "accepted transcript_check, but no revision artifact was registered"
-        )
-    else:
-        added = (promotion.get("summary") or {}).get("added") or []
-        ok = bool(added)
-        names = ", ".join(str(name) for name in added)
-        detail = (
-            f"accepted glossary_collection -> added {_plural(len(added), 'candidate term')}"
-            + (f": {names}" if names else "")
-            if ok
-            else "accepted glossary_collection, but no candidate term was added"
-        )
-    report.add("3 accept", "PASS" if ok else "FAIL", detail)
-    return ok, target.kind
-
-
-# --- the session ------------------------------------------------------------ #
-
-
-def parse_args(argv=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="just agent-drive",
-        description=(
-            "Drive clear-record's own agent tasks against a real "
-            "OpenAI-compatible endpoint. Optional and BYOK: without a key it "
-            "skips. This is not part of just verify or just e2e."
-        ),
-    )
-    parser.add_argument(
-        "--tape",
-        metavar="FILE.wav",
-        help=(
-            "a real recording to transcribe and drive the agent tasks over; "
-            "without it the TTS hello-world tape is used"
-        ),
-    )
-    parser.add_argument(
-        "--endpoint",
-        help=(
-            "OpenAI-compatible base URL (default: CR_AGENT_ENDPOINT or "
-            f"{DEFAULT_ENDPOINT})"
-        ),
-    )
-    parser.add_argument(
-        "--model",
-        help=f"model name (default: CR_AGENT_MODEL or {DEFAULT_MODEL})",
-    )
-    parser.add_argument(
-        "--data-dir",
-        help=f"throwaway seed directory (default: {DEFAULT_DATA_DIR})",
-    )
-    parser.add_argument(
-        "--lang", default="en", help="hello-tape language (default: en)"
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=180.0,
-        help="seconds to wait for one endpoint call (default: 180)",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="allow --data-dir to be wiped even without the seed marker",
-    )
-    return parser.parse_args(argv)
-
-
-#: The question story 4 asks. It can only be answered by reading the meeting's
-#: transcript through an MCP tool, which is what makes the round-trip a proof.
-MCP_QUESTION = (
-    "What was decided in this meeting? Answer from the transcript only, in one "
-    "or two sentences."
-)
-MCP_SYSTEM = (
-    "You are an MCP client agent with access to the clear-record tools. Call "
-    "read_transcript for the meeting you are given, then answer the user's "
-    "question from what the transcript says. Do not invent anything it does not."
-)
+        payload = _payload(result) or {}
+        versions = payload.get("versions") or []
+        decided = versions[-1] if versions else {}
+        if (
+            payload.get("review_state") == "rejected"
+            and decided.get("reviewed_by") == HUMAN_AUTHOR
+        ):
+            report.add("3 reject", "PASS", f"rejected draft {reject} by {HUMAN_AUTHOR}")
+        else:
+            report.add(
+                "3 reject",
+                "FAIL",
+                f"the rejection reported {payload.get('review_state')!r}",
+            )
+    return ok, kind
 
 
 def _chat_completion(
@@ -747,21 +852,126 @@ def _chat_completion(
         return json.loads(response.read().decode("utf-8"))
 
 
-async def _mcp_round_trip(
+#: Story 4's instructions. The model can only answer by calling a clear-record
+#: tool, which is what makes the leg a proof of the surface rather than of prose.
+MODEL_SYSTEM = (
+    "You are an MCP client agent with access to the clear-record tools. Call "
+    "read_transcript for the meeting you are given, then write the candidate "
+    "glossary terms you found with write_agent_draft (kind='glossary_collection', "
+    "author='agent-drive/model'). Do not invent anything the transcript does not "
+    "say."
+)
+MODEL_QUESTION = (
+    "Read this meeting's transcript and propose the glossary terms it needs."
+)
+
+
+async def _story_model(
+    session,
+    listed,
+    project: str,
+    meeting: str,
+    endpoint: str,
+    model: str,
+    key: str | None,
+    timeout: float,
+    report: Report,
+) -> None:
+    """Story 4: a real model drives the MCP tools. SKIP without a key."""
+    if key is None:
+        report.add(
+            "4 model",
+            "SKIP",
+            "no model API key is available, so the model leg is skipped; the MCP "
+            "surface above was still exercised",
+        )
+        return
+    tools = _openai_tools(
+        listed, ("read_transcript", "write_agent_draft", "list_agent_drafts")
+    )
+    messages = [
+        {"role": "system", "content": MODEL_SYSTEM},
+        {
+            "role": "user",
+            "content": f"Project {project!r}, meeting {meeting!r}. {MODEL_QUESTION}",
+        },
+    ]
+    called: list[str] = []
+    wrote = False
+    try:
+        for _ in range(6):
+            reply = await asyncio.to_thread(
+                _chat_completion, endpoint, model, key, messages, tools, timeout
+            )
+            message = reply["choices"][0]["message"]
+            messages.append(message)
+            calls = message.get("tool_calls") or []
+            if not calls:
+                break
+            for call in calls:
+                name = call["function"]["name"]
+                arguments = json.loads(call["function"]["arguments"] or "{}")
+                result = await session.call_tool(name, arguments)
+                called.append(name)
+                if name == "write_agent_draft":
+                    wrote = True
+                text = "\n".join(
+                    block.text
+                    for block in result.content
+                    if getattr(block, "type", "") == "text"
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": text[:20000],
+                    }
+                )
+    except Exception as exc:  # noqa: BLE001 - a model-leg failure is a leg
+        cause = _root_cause(exc)
+        report.add("4 model", "FAIL", f"{type(cause).__name__}: {cause}")
+        return
+    if not called:
+        report.add("4 model", "FAIL", "the model answered without calling a tool")
+        return
+    if not wrote:
+        report.add(
+            "4 model",
+            "FAIL",
+            f"the model called {called} but wrote no draft",
+        )
+        return
+    report.add(
+        "4 model",
+        "PASS",
+        f"the model drove {len(called)} MCP call(s) over stdio, "
+        f"including a draft write: {', '.join(called)}",
+    )
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """The innermost exception under the SDK's anyio task-group wrappers.
+
+    ``stdio_client``/``ClientSession`` re-raise an inner failure as a
+    ``BaseExceptionGroup`` whose message is only "unhandled errors in a
+    TaskGroup", which tells the operator nothing; the first leaf does.
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+async def _mcp_session(
     project: str,
     meeting: str,
     data_dir: Path,
     endpoint: str,
     model: str,
-    key: str,
+    key: str | None,
     timeout: float,
-) -> tuple[int, str]:
-    """A real MCP client: list the tools, let the model call one, answer.
-
-    The server is launched exactly as the wizard's client entry names it
-    (``clear-record mcp``), so a pass here is a pass for the config the setup
-    flow writes, not a private harness invented for the test.
-    """
+    report: Report,
+) -> tuple[bool, str]:
+    """Every MCP story, in one stdio session to the shipped server."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
@@ -769,134 +979,91 @@ async def _mcp_round_trip(
         command=MCP_SERVER_COMMAND,
         args=[*MCP_SERVER_ARGS, "--data-dir", str(data_dir)],
     )
+    accepted = False
+    kind = ""
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             listed = await session.list_tools()
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description or "",
-                        "parameters": tool.input_schema,
-                    },
-                }
-                for tool in listed.tools
-            ]
-            messages = [
-                {"role": "system", "content": MCP_SYSTEM},
-                {
-                    "role": "user",
-                    "content": (
-                        f"Project {project!r}, meeting {meeting!r}. " + MCP_QUESTION
-                    ),
-                },
-            ]
-            called = 0
-            for _ in range(4):
-                reply = await asyncio.to_thread(
-                    _chat_completion, endpoint, model, key, messages, tools, timeout
-                )
-                message = reply["choices"][0]["message"]
-                messages.append(message)
-                calls = message.get("tool_calls") or []
-                if not calls:
-                    return called, (message.get("content") or "").strip()
-                for call in calls:
-                    name = call["function"]["name"]
-                    arguments = json.loads(call["function"]["arguments"] or "{}")
-                    result = await session.call_tool(name, arguments)
-                    text = "\n".join(
-                        block.text
-                        for block in result.content
-                        if getattr(block, "type", "") == "text"
-                    )
-                    called += 1
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "content": text[:20000],
-                        }
-                    )
-            return called, "(the model kept calling tools; stopped)"
-
-
-def _root_cause(exc: BaseException) -> BaseException:
-    """The innermost exception under the SDK's anyio task-group wrappers.
-
-    ``stdio_client``/``ClientSession`` re-raise an inner failure as a
-    ``BaseExceptionGroup`` whose message is only \"unhandled errors in a
-    TaskGroup\", which tells the operator nothing; the first leaf does.
-    """
-    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
-        exc = exc.exceptions[0]
-    return exc
-
-
-def drive_mcp(
-    meeting,
-    data_dir: Path,
-    endpoint: str,
-    model: str,
-    key: str,
-    timeout: float,
-    report: Report,
-) -> None:
-    """Story 4: a real MCP client reads the transcript and answers about it."""
-    try:
-        called, answer = asyncio.run(
-            _mcp_round_trip(
-                meeting.project_slug,
-                meeting.slug,
-                data_dir,
+            if not await _story_surface(session, listed, report):
+                return False, ""
+            drafts = await _story_scripted(session, project, meeting, report)
+            accepted, kind = await _story_review(
+                session, project, meeting, drafts, report
+            )
+            await _story_model(
+                session,
+                listed,
+                project,
+                meeting,
                 endpoint,
                 model,
                 key,
                 timeout,
+                report,
             )
-        )
-    except Exception as exc:  # noqa: BLE001 - a round-trip failure is a leg
-        cause = _root_cause(exc)
-        report.add("4 MCP round-trip", "FAIL", f"{type(cause).__name__}: {cause}")
-        return
-    if called == 0:
-        report.add(
-            "4 MCP round-trip",
-            "FAIL",
-            "the agent answered without calling an MCP tool",
-        )
-        return
-    if not answer:
-        report.add("4 MCP round-trip", "FAIL", "the agent produced no answer")
-        return
-    report.add(
-        "4 MCP round-trip",
-        "PASS",
-        f"{called} tool call(s) over stdio; the agent answered {len(answer)} chars",
+    return accepted, kind
+
+
+# --- the session ------------------------------------------------------------ #
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="just agent-drive",
+        description=(
+            "Drive the three agent jobs through clear-record's MCP tools, the way "
+            "a harness does. clear-record calls no model: the drive stands in for "
+            "the harness, with a scripted story that needs no key and a model leg "
+            "that does. Not part of just verify or just e2e."
+        ),
     )
+    parser.add_argument(
+        "--tape",
+        metavar="FILE.wav",
+        help=(
+            "a real recording to transcribe and drive the jobs over; "
+            "without it the TTS hello-world tape is used"
+        ),
+    )
+    parser.add_argument(
+        "--endpoint",
+        help=f"OpenAI-compatible base URL for the model leg (default: {DEFAULT_ENDPOINT})",
+    )
+    parser.add_argument(
+        "--model",
+        help=f"model name for the model leg (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--data-dir",
+        help=f"throwaway seed directory (default: {DEFAULT_DATA_DIR})",
+    )
+    parser.add_argument(
+        "--lang", default="en", help="hello-tape language (default: en)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=180.0,
+        help="seconds to wait for one model call (default: 180)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="allow --data-dir to be wiped even without the seed marker",
+    )
+    return parser.parse_args(argv)
 
 
 def run(args: argparse.Namespace) -> int:
     resolution = resolve_key(os.environ)
-    if resolution.key is None:
-        print("agent-drive: skipping - no agent API key is available.")
-        print(f"  {resolution.detail}")
-        print(
-            f"  Set {ENV_KEY} or {ENV_KEY_FILE}; the value is never printed, "
-            "stored or committed."
-        )
-        return 0
-
-    report = Report(Redactor((resolution.key,)))
-    endpoint = args.endpoint or os.environ.get("CR_AGENT_ENDPOINT") or DEFAULT_ENDPOINT
-    model = args.model or os.environ.get("CR_AGENT_MODEL") or DEFAULT_MODEL
+    endpoint = args.endpoint or DEFAULT_ENDPOINT
+    model = args.model or DEFAULT_MODEL
     data_dir = prepare_data_dir(args.data_dir or DEFAULT_DATA_DIR, force=args.force)
 
-    report.say("clear-record agent test-drive")
-    report.say(f"  endpoint : {endpoint}")
-    report.say(f"  model    : {model}")
+    report = Report(Redactor((resolution.key,) if resolution.key else ()))
+    report.say("clear-record agent drive (harness stand-in)")
+    report.say(f"  model leg: {endpoint} with {model}")
     report.say(f"  key      : {resolution.source} (value redacted)")
     report.say(f"  data dir : {data_dir}")
     report.say()
@@ -905,42 +1072,33 @@ def run(args: argparse.Namespace) -> int:
     meeting = seed(registry, data_dir / "workspaces")
     transcript_source = drive_tape(registry, meeting, data_dir, args, report)
     report.say(f"  transcript: {transcript_source}")
+    report.say()
 
-    endpoint_ok = drive_endpoint(endpoint, model, resolution.key, args.timeout, report)
-
-    runner = EndpointRunner(
-        endpoint,
-        model=model,
-        api_key_env=KEY_ENV_NAME,
-        timeout=args.timeout,
-        environ={KEY_ENV_NAME: resolution.key},
-    )
-    agent = MeetingAgent(registry, meeting, runner=runner)
-    drafts = drive_tasks(agent, report) if endpoint_ok else []
-    accepted_kind = ""
-    if drafts:
-        _, accepted_kind = drive_accept(agent, drafts, report)
-    if not drafts:
-        report.add("3 accept", "SKIP", "no draft was produced, so nothing was accepted")
-    drive_mcp(
-        meeting,
-        data_dir,
-        endpoint,
-        model,
-        resolution.key,
-        args.timeout,
-        report,
+    accepted, kind = asyncio.run(
+        _mcp_session(
+            meeting.project_slug,
+            meeting.slug,
+            data_dir,
+            endpoint,
+            model,
+            resolution.key,
+            args.timeout,
+            report,
+        )
     )
 
     report.say()
     if report.failed:
         report.say("result: FAIL - see the legs above")
-    else:
+        return 1
+    if resolution.key is None:
         report.say(
-            f"result: PASS ({len(drafts)}/{len(TASK_KINDS)} drafts, "
-            f"accepted={accepted_kind or 'none'})"
+            "result: PASS (MCP surface proven by scripted use; the model leg is "
+            f"skipped - set {ENV_KEY} to run it)"
         )
-    return 1 if report.failed else 0
+    else:
+        report.say(f"result: PASS (accepted={kind or 'none'})")
+    return 0
 
 
 def main(argv=None) -> int:

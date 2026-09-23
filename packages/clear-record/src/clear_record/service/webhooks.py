@@ -16,7 +16,8 @@ The boundaries, and why the defaults are what they are:
   ``emit(..., content=...)`` and it is stripped for every endpoint that did not
   ask for it.
 - **The signing secret lives in the environment, never the registry** (the BYOK
-  rule of ADR-0018). ``secret_env`` names the variable; its value is read at
+  rule: no credential is stored, ADR-0013/ADR-0017). ``secret_env`` names the
+  variable; its value is read at
   delivery time and used for an HMAC-SHA256 signature header. An endpoint that
   names a secret env but finds it unset is recorded as failed and sent nothing:
   there is no silent unsigned downgrade.
@@ -72,9 +73,10 @@ EMITTED_EVENTS: tuple[str, ...] = (
     ARCHIVE_CREATED,
 )
 
-#: Reserved names for hooks whose producer does not exist yet: a glossary edit,
-#: an agent-task draft and an accepted minutes document. Named here so the
-#: vocabulary is stable and a receiver can filter on them early.
+#: Reserved names for hooks nothing emits yet: a glossary edit, an agent-task
+#: draft — ADR-0031 gives drafts a producer (the user's harness), but no event is
+#: wired to them — and an accepted minutes document. Named here so the vocabulary
+#: is stable and a receiver can filter on them early.
 FUTURE_EVENTS: tuple[str, ...] = (
     "glossary.updated",
     "agent_task.draft",

@@ -41,11 +41,12 @@ Design notes:
   attribute access can fire a query after the session that read the row is gone;
   every join is written out in the query that needs it.
 - **Alembic owns the schema, and the registry migrates when it opens**
-  (ADR-0030). The revisions live in :mod:`clear_record.service.migrations`; a
-  registry of any older version is moved forward on open, and one recorded at a
-  revision this build does not carry fails loudly rather than being silently
-  misread. The migration is forward-only — a revision is upgraded, never
-  unwound.
+  (ADR-0030). The revisions live in :mod:`clear_record.service.migrations`; the
+  chain begins at the released baseline and an existing registry that stands at
+  one is moved forward on open, while one recording a revision this build does
+  not carry — or a ladder step no released line stands at — is refused rather
+  than silently misread. The migration is forward-only — a revision is upgraded,
+  never unwound.
 - **Slugs are stable, human-readable ids.** A project is addressable by slug in
   the API, the GUI and any agent context; ids stay internal.
 """
@@ -123,9 +124,14 @@ from clear_record.service.run_options import KEPT_OPTIONS_LEAD, read_run_options
 # --- the schema's history, owned by Alembic (ADR-0030) --------------------- #
 #
 # The revisions in `clear_record.service.migrations` are this registry's schema.
-# They are the retired ladder's steps, adopted one for one and verbatim: the
-# ladder's version numbers became the revision ids, its DDL became the revision
-# bodies, and no table, column, index or constraint changed with the adoption.
+# The chain **begins at the released baseline** — the schema a released install
+# has, ``0006`` — and carries only the deltas from it to the head, so a fresh
+# registry reaches today's schema without replaying the retired ladder's history.
+# An existing registry is placed where it stands — at the released baseline, or
+# at any revision the chain still carries — and refused where it does not: a
+# ladder row that is a step **other than** the released baseline's, or a revision
+# the cut folded away, is a development build's, and no release owes it a
+# migration (the tip wipe policy, `docs/releasing.md`).
 
 #: Where the schema's history lives. Named as a package resource rather than a
 #: path, so that one value resolves both in a checkout (the member is installed
@@ -133,50 +139,67 @@ from clear_record.service.run_options import KEPT_OPTIONS_LEAD, read_run_options
 #: the same value for the developer CLI.
 _SCRIPT_LOCATION = "clear_record.service:migrations"
 
+#: The **released baselines**: the ladder numbers a *released* install records,
+#: and — because a released line's number is also the id of the revision its
+#: schema became — the revision ids this chain begins those lines at.
+#:
+#: **0.2.0 is the only one, and `0.1.x` is not carried.** `v0.2.0` and its
+#: release candidates shipped the registry and recorded their schema as ladder
+#: version **6**; `v0.1.x` predates the registry entirely — it shipped no
+#: registry file and no ladder at all — so it has no version to place and nothing
+#: to carry.
+#: The number is a **fixed number of the retired ladder**, never derived from the
+#: head revision's id: a revision added on top of a baseline (``0007`` onward)
+#: must not move the number a released build compares *itself* with, and a head
+#: id need not be a number at all — Alembic's own default is a hex uuid, which
+#: ``migrations/env.py`` pins away from this chain for exactly this reason.
+#: A later cut adds the next released line's baseline here and folds the deltas
+#: below it into that baseline's DDL; nothing else about the shape changes.
+_RELEASED_BASELINES: tuple[int, ...] = (6,)
+
 #: The retired ladder's last version number, as the ladder itself wrote it.
 #:
-#: The ladder's own ``SCHEMA_VERSION`` when this build adopted its steps: its
-#: numbers became the revision ids ``0001``–``0008``, and its last step was 8.
-#: This is a **fixed number of the retired ladder**, never derived from the head
-#: revision's id. A revision added on top of the ladder (``0009``, and every one
-#: after it) must not move the number an older build compares *itself* with, and
-#: a head id need not be a number at all — Alembic's own default is a hex uuid,
-#: which ``migrations/env.py`` pins away from this chain for exactly this reason.
+#: The ladder's own ``SCHEMA_VERSION`` on the trunk when Alembic replaced it —
+#: **two** steps past the last released line's 6 (7 and 8 are the trunk's). It is
+#: what the levelling write puts in the ladder's row, and it is the bound a row
+#: is read against, so it is a **fixed number of the retired ladder** rather than
+#: the chain's newest id — see `_LEGACY_VERSION_TABLE` for what the row's readers
+#: do with it.
 _LADDER_VERSION = 8
 
 #: The retired ladder's version table, and what it is for now.
 #:
 #: Only a registry that carried it *before* this build has one: the ladder
-#: created it and revision 0001 deliberately does not, so a registry this build
-#: creates has no such record. Where it exists, the row is read once to place the
-#: stamp and then levelled at :data:`_LADDER_VERSION` — a build from before
-#: Alembic reads *this* row, the number is the ladder's own last version, and
-#: that is what lets such a build treat the ladder as already applied instead of
-#: re-running it. Levelling it at the *head* revision's number would do the
-#: opposite: the number would sit above what that build supports, and it refuses
-#: the registry outright ("registry schema version 9 is newer than this build
-#: supports (8)") even though the schema is one it can read. Where this table
-#: does not exist, such a build runs the ladder instead and stops at the first
-#: step it cannot re-run, v4's ``ALTER TABLE meeting ADD COLUMN notes``
-#: ("duplicate column name"), its earlier steps adding nothing but this table. A
-#: revision that changes a shape the ladder describes, rather than adding to it,
-#: is what would revisit this.
+#: created it, the chain's baseline deliberately does not, so a registry this
+#: build creates has no such record. Where it exists, the row is read once to
+#: place the stamp and then levelled at :data:`_LADDER_VERSION`.
 #:
-#: **The build this levelling saves is the trunk's; the released line is not
-#: saved by it.** The trunk's ladder stops at :data:`_LADDER_VERSION`, while
-#: ``v0.2.x`` — the released line — stops at **6**, so it cannot read a registry
-#: this build migrated whatever this row says: 8 sits above its own
-#: ``SCHEMA_VERSION`` and it refuses with "registry schema version 8 is newer than
-#: this build supports (6); upgrade clear-record". Meeting a registry this build
-#: *created* — no ``schema_version`` at all — it does not even reach that
-#: sentence: it runs the ladder and dies on v4's ``ALTER TABLE meeting ADD COLUMN
-#: notes`` with a raw ``sqlite3.OperationalError: duplicate column name: notes``.
-#: One line of builds reads a registry, and migrating with this build moves a
-#: registry off the released line. Seeding this table in revision 0001, so that a
-#: registry *this* build creates would reach the released build as its own
-#: sentence rather than a traceback, was considered and not taken: the row records
-#: the ladder history a registry *migrated from the ladder* carries, and a fresh
-#: registry has none. The limitation is recorded in ADR-0030's consequences.
+#: **What the read is for: the released line, and only the released line.** A
+#: released registry stands at 6, which is :data:`_RELEASED_BASELINES`' one
+#: number, so the row places it at the revision of the same id and the deltas on
+#: top run; nothing else the ladder wrote is carried — see
+#: :func:`_pending_stamp`. Any other row *at or below* the ladder's last version
+#: is a development build's, and the tip wipe policy is the whole
+#: repair path for it; a row above that version is a build newer than this one,
+#: and the sentence it meets says to upgrade.
+#:
+#: **What the write is for: the released line's refusal.** A build of the
+#: released line reads *this* row and compares it with its own ``SCHEMA_VERSION``,
+#: so a migrated registry has to be levelled above that build's number or it
+#: would read a schema that is not its own as if it were: at 8 it refuses with
+#: "registry schema version 8 is newer than this build supports (6); upgrade
+#: clear-record", which is the whole repair path a release can give. The
+#: levelling also leaves a **pre-Alembic trunk** build — the build this replaced,
+#: whose ladder stopped at :data:`_LADDER_VERSION` — reading the registry instead
+#: of re-running its ladder, and that is now a property of the development tree
+#: alone: no released build ever reached 8. A registry this build *created*
+#: carries no row for that trunk build to read, so it runs its ladder there and
+#: dies on v4's ``ALTER TABLE meeting ADD COLUMN notes`` with a raw
+#: ``sqlite3.OperationalError: duplicate column name: notes``; seeding this table
+#: in the baseline, so that such a registry would reach that build as its own
+#: sentence rather than a traceback, was considered and not taken: the row
+#: records the ladder history a registry *migrated from the ladder* carries, and
+#: a fresh registry has none. The limitation is recorded in ADR-0030.
 _LEGACY_VERSION_TABLE = "schema_version"
 
 #: Alembic's own version table.
@@ -291,33 +314,66 @@ def _reduce_version_rows(
 
 
 def _pending_stamp(
-    conn: Connection, known: frozenset[str], head: str, lineage: tuple[str, ...]
+    conn: Connection,
+    db_path: Path,
+    known: frozenset[str],
+    head: str,
+    lineage: tuple[str, ...],
 ) -> str | None:
-    """The revision a registry that predates Alembic stands at, if any.
+    """The baseline a registry that predates this build stands at, if any.
 
-    Three shapes arrive from before this build: a registry Alembic has already
-    stamped (it stands at the revision it records), one the hand-rolled ladder
-    wrote (its ``schema_version`` names that revision directly, because the
-    revision ids *are* the ladder's version numbers, adopted along with its
-    DDL), and one whose version table exists but holds no row — an open that died
-    between Alembic's creation of that table and its final stamp. That last shape
-    is a **misplaced stamp, not "no registry here yet"**: the schema under it is
-    built to *some* point, so the read falls through to the ladder's own row, and
-    where there is none every revision replays from the base. A replay is safe
-    because no step needs a schema it cannot find: the create-table steps are
-    ``IF NOT EXISTS``, each step that adds a column is guarded on that column
-    (revisions 0004, 0006, 0007, 0008), and revision 0009 verifies the index it
-    finds instead of assuming its own ran.
+    A registry arrives here in one of six shapes, and five of them are decided
+    by what it records:
 
-    A registry that records something this build does not carry — a newer
-    release's revision — raises here, before any revision runs:
-    half-understanding a schema is worse than refusing to open it. The one write
-    this read makes is the multi-row repair (:func:`_reduce_version_rows`).
+    - **Alembic has stamped it, at a revision this build carries.** It stands
+      there; a race's several rows are reduced to the head-most, and there is no
+      stamp to apply. *Carried* means the compressed chain, so a registry a
+      *pre-compression* build left at ``0006``–``0009`` belongs here: the
+      compression changed no table, and such a registry opens and migrates.
+    - **Alembic has stamped it, at a revision this build does not carry.** The
+      chain is the schema's history and half-understanding one is worse than
+      refusing to open it, so it raises — *upgrade clear-record* when the
+      revision's number is above the head's (a build newer than this one), and
+      the tip wipe policy's sentence when it is below (a development build's
+      revision, which this release's cut folded away).
+    - **The released line wrote it** — ``schema_version``, a released line's
+      number. :data:`_RELEASED_BASELINES` is the whole of what is carried, and
+      the number is the revision id the chain begins that line at, so the
+      registry is stamped exactly there and only the deltas on top run. For
+      ``0.2.0``, the one released line that ever shipped a registry, that is
+      revision ``0006``.
+    - **A development build left it behind** — the ladder's row at one of its own
+      steps *other than* the released baseline's, or at ``0`` (a ladder run
+      killed before it recorded where it got to). Neither is a released baseline,
+      and the tip wipe policy is the repair path
+      (``docs/releasing.md``): the refusal names the file, because deleting it is
+      what the user does about it.
+    - **A ladder row above the ladder's last version**, which no build of this
+      line ever wrote: a build *newer* than this one, refused with
+      *upgrade clear-record* rather than with the wipe sentence — the registry is
+      not a development build's, and upgrading is what it needs.
+    - **No version state at all.** Either a registry that does not exist yet, or
+      one this build created — which carries no ladder row, by decision — so
+      every revision runs from the baseline. Running them **is** the repair for a
+      stamp that never landed: the baseline only creates (each table
+      ``IF NOT EXISTS``), each delta that adds a column is guarded on that column
+      (``0007``, ``0008``), and ``0009`` verifies the index it finds instead of
+      assuming its own ran, so a replay converges on the schema it started from.
+
+    The one write this read makes is the multi-row repair
+    (:func:`_reduce_version_rows`).
     """
     if _has_table(conn, _ALEMBIC_VERSION_TABLE):
         rows = _stamped_revisions(conn)
         for revision in rows:
-            if revision not in known:
+            if revision in known:
+                continue
+            # A revision this build does not carry: a *newer* release's, or one
+            # this release's cut folded away. The two need different advice, and
+            # the ids are decimal by decision (`migrations/env.py`), so the head's
+            # own number tells them apart: above it is a newer build, below it a
+            # development build's dropped revision.
+            if revision.isdigit() and head.isdigit() and int(revision) > int(head):
                 raise RuntimeError(
                     tr(
                         "registry schema revision {revision} is not one this build "
@@ -326,23 +382,27 @@ def _pending_stamp(
                         head=head,
                     )
                 )
+            raise RuntimeError(
+                tr(
+                    "the registry at {db_path} records schema revision {revision}, "
+                    "which an unreleased development build wrote and this release "
+                    "does not carry; delete {db_path} and start clear-record again",
+                    db_path=db_path,
+                    revision=revision,
+                )
+            )
         if len(rows) > 1:
             _reduce_version_rows(conn, rows, lineage)
         if rows:
             return None
     if not _has_table(conn, _LEGACY_VERSION_TABLE):
-        return None  # no registry here yet: every revision runs from the base
+        return None  # no registry here yet: every revision runs from the baseline
     row = conn.execute(select(_LEGACY_VERSION.c.version)).first()
     version = int(row[0]) if row is not None else 0
-    if version == 0:
-        return None  # the ladder's own "nothing ran yet"
-    revision = f"{version:04d}"
-    # Only the ladder's *own* numbers were adopted as this chain's revision ids,
-    # so a ladder number above :data:`_LADDER_VERSION` is not a revision however
-    # its four digits happen to read: a row a later build levelled or wrote at 9
-    # must be refused, not read as revision ``0009``. The refusal is the same
-    # sentence either way — the registry is from a build newer than this one.
-    if version > _LADDER_VERSION or revision not in known:
+    # A row above the ladder's own last version is not read as a revision however
+    # its four digits happen to read: the ladder's numbers are what a *build from
+    # before Alembic* wrote, and 9 upward is a build newer than this one.
+    if version > _LADDER_VERSION:
         raise RuntimeError(
             tr(
                 "registry schema version {version} is newer than this build "
@@ -351,7 +411,17 @@ def _pending_stamp(
                 head=head,
             )
         )
-    return revision
+    revision = f"{version:04d}"
+    if version in _RELEASED_BASELINES and revision in known:
+        return revision
+    raise RuntimeError(
+        tr(
+            "the registry at {db_path} was written by an unreleased development "
+            "build, which this release does not carry; delete {db_path} and start "
+            "clear-record again",
+            db_path=db_path,
+        )
+    )
 
 
 def _now() -> str:
@@ -500,9 +570,11 @@ class Registry:
     def _migrate(self) -> None:
         """Bring the registry to the schema this build carries, as it opens.
 
-        An existing registry of any older version moves forward here: this is
-        the auto-migration the hand-rolled ladder used to do, now Alembic's. A
-        registry recording a revision this build does not carry is refused
+        An existing registry that stands at a released baseline moves forward
+        here: this is the auto-migration the hand-rolled ladder used to do, now
+        Alembic's, and a registry this build created is already at the head and
+        has nothing to run. A registry recording a revision this build does not
+        carry — or a ladder version that is no released baseline — is refused
         first (see :func:`_pending_stamp`) — before any revision runs, and
         before anything reads it as its own.
 
@@ -535,13 +607,13 @@ class Registry:
                 raise RegistryLocked(self.db_path) from exc
             try:
                 legacy = _has_table(conn, _LEGACY_VERSION_TABLE)
-                stamp = _pending_stamp(conn, known, head, lineage)
+                stamp = _pending_stamp(conn, self.db_path, known, head, lineage)
                 # The revisions run on this connection, inside this lock.
                 config.attributes["connection"] = conn
                 if stamp is not None:
-                    # A registry the hand-rolled ladder wrote: it already stands
-                    # at that revision, so record where it is and let the upgrade
-                    # below run only the revisions it is missing.
+                    # A registry the released line wrote: it already stands at
+                    # that baseline, so record where it is and let the upgrade
+                    # below run only the deltas it is missing.
                     command.stamp(config, stamp)
                 command.upgrade(config, "head")
                 if legacy:

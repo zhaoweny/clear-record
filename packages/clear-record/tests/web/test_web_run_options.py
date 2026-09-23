@@ -35,8 +35,10 @@ _RELEASED_KEY = "formats"
 def _console(tmp_path) -> tuple[TestClient, Registry, int]:
     """A console over one registry holding one queued run, and that run's id.
 
-    The run queue is stopped: a live one would claim a hand-written row on its
-    next rescan (see ``test_web_activity``), and these tests are about the read.
+    The run queue is stopped **by construction** (``start_queue=False`` starts no
+    drain thread): a live one would claim a hand-written row on its next rescan
+    (see ``test_web_activity``), and a queue stopped after the fact would leave
+    that to timing. These tests are about the read.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project("Ops")
@@ -47,8 +49,7 @@ def _console(tmp_path) -> tuple[TestClient, Registry, int]:
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
     )
-    manager = RunManager(registry)
-    manager.shutdown(timeout=5.0)
+    manager = RunManager(registry, start_queue=False)
     client = TestClient(
         create_app(registry, runs=manager, trusted_hosts=("testserver",))
     )

@@ -1,12 +1,14 @@
 {# One meeting's review surface: its transcript, the artifacts and their
-   provenance, the three agent tasks with their drafts, and the meeting's
-   accepted minutes. It is both a page (`/projects/<slug>/meetings/<meeting>`,
-   rendered into `#detail` by `meeting.html`) and a fragment: every control
-   here targets `#detail` and re-renders this fragment in place.
+   provenance, the drafts a harness wrote (with their version chains) and the
+   meeting's accepted minutes. It is both a page
+   (`/projects/<slug>/meetings/<meeting>`, rendered into `#detail` by
+   `meeting.html`) and a fragment: every control here targets `#detail` and
+   re-renders this fragment in place.
 
    The action forms are plain posts to the service-backed routes; a refused
-   launch renders the service's own message in the `error` block rather than an
-   error status htmx would refuse to swap. #}
+   decision (a stale version, a draft that is not there) renders the service's
+   own message in the `error` block rather than an error status htmx would
+   refuse to swap. #}
 <div class="row meeting-head">
   <a class="btn btn-sm btn-ghost"
      href="/projects/{{ project.slug }}/meetings"
@@ -78,29 +80,18 @@
   <div class="empty">{{ tr("No artifacts yet. Run the pipeline to produce a transcript and record.") }}</div>
 {% endif %}
 
-<h3>{{ tr("Agent tasks") }}</h3>
-{% if not agent_ready %}
-<div class="empty">
-  {{ tr("No agent is configured. Set CR_AGENT_ENDPOINT to an OpenAI-compatible endpoint, or an [agent.commands] template for a task kind, then restart the clear-record server so it reads the variable.") }}
+<h3>{{ tr("Agent drafts") }}</h3>
+<div class="muted agent-note">
+  {{ tr("Your harness writes these over MCP: it reads the transcript, does the model work, then writes what it produced as a draft. Nothing is applied until you accept a version; accepting is what promotes it, and a new version puts the draft back in review.") }}
+</div>
+
+{% if legacy_drafts %}
+{# The 0.2 in-process path wrote its own run directories. They are not migrated,
+   so the page says what is not here rather than leaving it silently invisible. #}
+<div class="muted agent-note">
+  {{ trn("{count} draft written before 0.3 by the app's own task run is not part of this chain and is still on disk.", "{count} drafts written before 0.3 by the app's own task runs are not part of this chain and are still on disk.", legacy_drafts, count=legacy_drafts) }}
 </div>
 {% endif %}
-<div class="row agent-launchers">
-  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/glossary_collection"
-        hx-target="#detail" hx-swap="innerHTML">
-    <button type="submit">{{ tr("Collect glossary terms") }}</button>
-  </form>
-  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/transcript_check"
-        hx-target="#detail" hx-swap="innerHTML">
-    <button type="submit">{{ tr("Check the transcript") }}</button>
-  </form>
-  <form hx-post="/ui/meetings/{{ meeting.id }}/agent/minutes"
-        hx-target="#detail" hx-swap="innerHTML">
-    <button type="submit">{{ tr("Write minutes") }}</button>
-  </form>
-</div>
-<div class="muted agent-note">
-  {{ tr("A launch produces a draft. Nothing is applied until you accept it; accepting is what promotes it.") }}
-</div>
 
 {% if drafts %}
   {% for draft in drafts %}
@@ -109,12 +100,21 @@
       <span class="badge status-{{ draft.review_state }}">{{ draft.review_state }}</span>
       <strong>{{ draft.kind }}</strong>
       <span class="muted">
-        {{ draft.provenance.runner }}{% if draft.provenance.model %} &middot; {{ draft.provenance.model }}{% endif %}
-        &middot; {{ draft.provenance.started_at }}
+        {{ draft.provenance.author }} &middot; {{ draft.provenance.written_at }}
       </span>
-      <span class="muted" title="{{ draft.provenance.context_hash }}">{{ tr("context") }} {{ draft.context_hash_short }}</span>
-      <span class="muted" title="{{ draft.provenance.prompt_hash }}">{{ tr("prompt") }} {{ draft.prompt_hash_short }}</span>
     </div>
+
+    {% if draft.versions | length > 1 %}
+    <div class="muted agent-versions">
+      {{ trn("{count} version", "{count} versions", draft.versions | length, count=draft.versions | length) }}:
+      {% for version in draft.versions %}
+      <span class="agent-version">
+        {{ version.author }} &middot; {{ version.written_at }}
+        {% if version.decision %}<span class="badge status-{{ version.decision }}">{{ version.decision }}</span>{% if version.reviewed_by %} <span class="muted">{{ tr("by {who}", who=version.reviewed_by) }}</span>{% endif %}{% endif %}
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     {% if draft.kind == 'glossary_collection' %}
       {% if draft.value['terms'] %}
@@ -176,12 +176,16 @@
 
     {% if draft.review_state == 'draft' %}
     <div class="row">
-      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.run_id }}/accept"
+      {# The decision names the version the reviewer read, so a harness appending
+         a version in the meantime is a refusal, not a decision on unseen text. #}
+      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/accept"
             hx-target="#detail" hx-swap="innerHTML">
+        <input type="hidden" name="version" value="{{ draft.version }}">
         <button class="primary" type="submit">{{ tr("Accept") }}</button>
       </form>
-      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.run_id }}/reject"
+      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/reject"
             hx-target="#detail" hx-swap="innerHTML">
+        <input type="hidden" name="version" value="{{ draft.version }}">
         <button type="submit">{{ tr("Reject") }}</button>
       </form>
     </div>

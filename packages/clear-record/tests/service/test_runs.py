@@ -713,6 +713,80 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
     assert seen["options"].audio_files == (str(tape),)
 
 
+def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
+    tmp_path, monkeypatch
+) -> None:
+    """``start_queue=False`` is a queue that has not started, not one that cannot.
+
+    What the knob guarantees is that nothing **starts** the drain, so nothing is
+    draining and no rescan can race a seeded row. That is read where it is
+    decided: ``_ensure_scheduler`` is the one place the drain is started, so
+    recording its calls says whether anything started one, without timing and
+    without waiting for a first pass — a queue that started the drain and then
+    stopped it records that start here, and still leaves the race the knob
+    exists to remove. The first submission is what starts the drain, and the run
+    it enqueues and the run already waiting at the head of the FIFO both
+    execute.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    queued = registry.create_run(
+        meeting.id,
+        backend="apple",
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+    )
+
+    starts: list[RunManager] = []
+    real_ensure_scheduler = RunManager._ensure_scheduler
+
+    def recording_ensure_scheduler(manager: RunManager) -> None:
+        starts.append(manager)
+        real_ensure_scheduler(manager)
+
+    monkeypatch.setattr(RunManager, "_ensure_scheduler", recording_ensure_scheduler)
+
+    manager = RunManager(registry, pipeline=lambda *args: None, start_queue=False)
+
+    # Built stopped: nothing started the drain, so nothing can claim the row
+    # seeded above. (A ``_scheduler`` reading ``None`` would not say that on its
+    # own — a queue that started the drain and was later retired by a joining
+    # ``shutdown`` reads the same, so a manager in which the very race this knob
+    # removed happened can read ``None``.)
+    assert starts == []
+
+    later_workspace = tmp_path / "later"
+    later_workspace.mkdir()
+    later_tape = tmp_path / "later.wav"
+    later_tape.write_bytes(b"RIFFfake")
+    later = registry.create_meeting("ops", "Retro", workspace_path=str(later_workspace))
+    registry.set_recording_set(later.id, [str(later_tape)])
+
+    run = manager.start(later, origin="console")
+
+    assert manager.wait(run.id, timeout=10).status == "done"
+    assert registry.get_run(queued.id).status == "done"
+
+
+def test_shutting_down_a_queue_built_stopped_is_a_no_op(tmp_path) -> None:
+    """A stopped queue has nothing to ask to stop, and asking must not crash.
+
+    ``shutdown`` reads the scheduler thread to join it and to retire it, and a
+    manager whose queue was never started never made one: the call has to find
+    no thread there and leave the manager stopped anyway. A second ``shutdown``
+    finds no thread either — there was none to retire — so the call is safe
+    however often a caller makes it.
+    """
+    registry = _registry(tmp_path)
+    manager = RunManager(registry, start_queue=False)
+
+    manager.shutdown(timeout=0.0)
+    manager.shutdown(timeout=0.0)
+
+    assert manager._scheduler is None
+
+
 def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     """One unreadable row must not stop the node's queue.
 

@@ -533,6 +533,8 @@ class RunManager:
         registry: Registry,
         pipeline: PipelineCallable | None = None,
         webhooks: WebhookEmitter | None = None,
+        *,
+        start_queue: bool = True,
     ) -> None:
         self._registry = registry
         self._pipeline = pipeline or _default_pipeline
@@ -564,19 +566,39 @@ class RunManager:
         self._cancels: dict[int, threading.Event] = {}
         self._wake = threading.Condition()
         self._scheduler: threading.Thread | None = None
-        self._stopping = False
+        #: Whether the drain has been asked to stop. A queue that has not been
+        #: started is stopped, so a manager built with ``start_queue=False``
+        #: begins here; the comment below says why that is a state and not a
+        #: schedule.
+        self._stopping = True
         # A run the process died in the middle of is not running any more. Do
         # this before anything can drain the queue.
-        self.reconcile()
+        #
+        # ``start_queue=False`` builds the queue **stopped**, and that is a
+        # *state*, not a schedule: no drain thread is started at construction
+        # (the first ``start`` is what starts one), so nothing can take a queued
+        # row between construction and the caller's next act. It has to be a
+        # construction knob rather than a ``shutdown`` after the fact because
+        # ``shutdown`` asks a *running* queue to stop, and cannot un-take a row
+        # a rescan already reached (nor win a race it entered after that pass
+        # began). The console and the MCP server build the default, draining
+        # manager — the queued work a previous process left is theirs to finish
+        # — and a caller that wants to own the queue's lifecycle (a test over a
+        # hand-written row, an embedder that submits itself) says so here.
+        self.reconcile(start_queue=start_queue)
 
     # --- startup reconciliation -------------------------------------------- #
-    def reconcile(self) -> list[int]:
+    def reconcile(self, *, start_queue: bool = True) -> list[int]:
         """Move every ``running`` run no live owner holds to ``interrupted``.
 
         Returns the reconciled run ids. The reason is recorded on the run (its
         ``error``) and logged; a meeting left ``running`` follows its run. Then
         the queue is drained, so **queued** work from a previous process is not
-        lost by the restart.
+        lost by the restart — unless ``start_queue`` is ``False``, which is how
+        a caller builds a manager whose queue is to stay **stopped**: the
+        reaping this method always does happens whatever the caller wants of the
+        queue, but starting the drain is a choice, made at construction (see
+        the comment in ``__init__``).
 
         A run is left alone when a **live owner** holds it (RUN-02): this manager
         is executing it, or its owner is a process on this host that still exists
@@ -607,7 +629,8 @@ class RunManager:
                 count=len(interrupted),
                 run_ids=",".join(str(run_id) for run_id in interrupted),
             )
-        self._ensure_scheduler()
+        if start_queue:
+            self._ensure_scheduler()
         return interrupted
 
     def _running_runs(self) -> list[PipelineRun]:
@@ -1101,7 +1124,7 @@ class RunManager:
         2. Otherwise the **project's confirmed-term snapshot** wins **when it has
            terms**: it is written to the meeting's workspace ``glossary.txt``, so
            a glossary edit reaches the next run with no extra wiring (the
-           ADR-0018 tuning loop).
+           ADR-0031 tuning loop).
         3. When the project has **no confirmed terms**, the registry has nothing
            to say and the user's ``glossary.txt`` — a documented, user-editable
            artifact (``clear-record glossary`` / the README) — **stands**: it is
@@ -1168,7 +1191,14 @@ class RunManager:
 
     # --- the scheduler ------------------------------------------------------ #
     def _ensure_scheduler(self) -> None:
-        """Start (or wake) the one thread that drains the queue."""
+        """Start (or wake) the one thread that drains the queue.
+
+        The one place the drain is started. A manager built draining reaches it
+        through :meth:`reconcile`; a manager built **stopped** does not, and
+        starts draining the moment it is asked to enqueue anything
+        (:meth:`start`), so ``start_queue=False`` holds a queue that has not
+        started, never a queue that will not start.
+        """
         with self._wake:
             self._stopping = False
             if self._scheduler is not None and self._scheduler.is_alive():
@@ -1896,13 +1926,22 @@ class RunManager:
         contract, so this signals the scheduler and returns without waiting for
         a multi-hour pipeline. Pass a real ``timeout`` to wait for the scheduler
         thread itself (it exits promptly when no run is executing).
+
+        A manager whose queue was never started (``start_queue=False``, and
+        nothing that reaches ``_ensure_scheduler`` — an enqueue, or an explicit
+        ``reconcile`` with its default ``start_queue=True`` — has happened since)
+        has no drain thread: there is nothing to ask and nothing to join, so
+        this leaves the queue exactly as it found it. The call is safe to
+        repeat — a second ``shutdown`` re-asks a queue this one already asked,
+        or finds no thread at all.
         """
         with self._wake:
             self._stopping = True
             self._wake.notify_all()
             scheduler = self._scheduler
-        if scheduler is not None:
-            scheduler.join(timeout)
+        if scheduler is None:
+            return
+        scheduler.join(timeout)
         with self._wake:
             if self._scheduler is scheduler and not scheduler.is_alive():
                 self._scheduler = None

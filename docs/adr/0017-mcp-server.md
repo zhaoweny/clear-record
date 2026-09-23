@@ -3,6 +3,13 @@
 Status: active
 Date: 2026-09-14
 
+- Superseded **in part** by [ADR-0031](0031-harness-is-the-only-agent.md)
+  (2026-09-23): this ADR's boundary is now the **only** agent integration —
+  clear-record calls no model, so the in-process runner that used to sit beside
+  the MCP rung is deleted and `run_agent_task` is replaced by the harness-facing
+  `write_agent_draft`. Everything else here stands, including the thin-adapter
+  and no-credential decisions.
+
 ## Context
 
 - [VOICE: owner, 2026-09-14] The owner fixed the application shape:
@@ -48,8 +55,8 @@ Date: 2026-09-14
 - [DECISION] `clear-record mcp` is registered **unconditionally** through the
   `clear_record.commands` entry point
   (`mcp = "clear_record.mcp:register"`), so the CLI never imports the SDK and a
-  missing extra fails with an install hint naming `clear-record[agents]` (and
-  `clear-record web` as the no-agent alternative) instead of a traceback
+  missing extra fails with an install hint naming `clear-record[agents]` (so a
+  harness has a server to connect to) instead of a traceback
   (ADR-0013's seam).
 - [DECISION] The transport is **stdio**: the user's agent launches
   `clear-record mcp` as a subprocess and speaks MCP over its stdin/stdout. A
@@ -64,8 +71,8 @@ Date: 2026-09-14
     `update_meeting`, `set_meeting_tapes`;
   - runs: `start_run`, `list_runs`, `run_status`, `run_events`;
   - artifacts: `list_artifacts`, `read_transcript`;
-  - agent drafts (ADR-0018): `list_agent_drafts`, `read_agent_draft`,
-    `run_agent_task`, `accept_agent_draft`, `reject_agent_draft`.
+  - agent drafts (ADR-0031): `list_agent_drafts`, `read_agent_draft`,
+    `write_agent_draft`, `accept_agent_draft`, `reject_agent_draft`.
 - [DECISION] Tools return **structured, JSON-serializable** values (annotated
   `dict`/`list[dict]`), so the SDK publishes an output schema and an agent gets
   machine-readable data. Anticipated failures (unknown project/meeting, no tape
@@ -136,10 +143,11 @@ Date: 2026-09-14
   No-backend-available and `--auto`'s model-not-on-disk come back as
   `ToolError`s. Closes the earlier open question on run options.
 - [OPEN] Run **stop** is not exposed: `RunManager` has no stop operation yet.
-- [FACT] The agent-task tools (**run a task, list/read a draft, accept or
-  reject it**) **landed**: the service's runner and the three tasks (ADR-0018)
-  are built and exposed above. This closes the earlier `[OPEN]` that had them
-  "join this surface when they land".
+- [FACT] The draft tools (**write a draft, list/read the chain, accept or
+  reject a version**) **landed**: a harness reads a transcript with
+  `read_transcript` and writes what it produced with `write_agent_draft`, and a
+  human decides it here or in the console (ADR-0031). clear-record runs no model,
+  so this is the whole agent surface — there is no in-process task to launch.
 
 ## Update (2026-09-20) — the tools' results are declared models (ADR-0030)
 
@@ -148,7 +156,7 @@ Date: 2026-09-14
   ADR-0030's boundary decision replaced it. Every tool now annotates its return
   with a declared model — one derived from the domain value it publishes
   (`clear_record.service.schemas`), a shape a service view computes (`DraftView`,
-  `AgentTasksOut`), or an envelope the MCP module declares for a value it wraps
+  `AgentDraftsOut`), or an envelope the MCP module declares for a value it wraps
   (`RunStartedOut`, `RunStatusOut`, `RunEventPageOut`) — so the SDK publishes the
   fields themselves as the output schema rather than `additionalProperties`, and
   it **validates** the returned value against that model before sending it. What

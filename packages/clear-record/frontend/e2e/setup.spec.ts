@@ -46,7 +46,7 @@ test("the setup page renders the numbered steps and the shared agent panel", asy
   await expect(page.locator('#setup-try a[href="/settings/status"]')).toBeVisible();
   // The agent step is the one panel Settings -> Agent mounts, loaded by htmx.
   await expect(page.locator("#setup-agent #agent-setup .agent-setup")).toBeVisible();
-  await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(4);
+  await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(3);
 });
 
 test("a stale marker shows the update notice and the nav Setup link", async ({

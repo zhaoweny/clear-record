@@ -1,7 +1,14 @@
 # ADR-0028 — Repair malformed LLM output with json-repair
 
-Status: active
+Status: superseded — see [ADR-0031](0031-harness-is-the-only-agent.md) (2026-09-23)
 Date: 2026-09-16
+
+- Superseded **in full** by [ADR-0031](0031-harness-is-the-only-agent.md)
+  (2026-09-23): the decision below was about the app validating a **model's**
+  reply against an output contract. clear-record calls no model, so the contract
+  and `json-repair` with it are deleted from `src/` and the base distribution;
+  a harness supplies JSON through a tool call, which the MCP boundary already
+  parses. Kept as the record of the finding that motivated it.
 
 ## Context
 

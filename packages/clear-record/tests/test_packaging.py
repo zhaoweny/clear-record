@@ -62,10 +62,11 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # `pydantic` joined with the same ADR: the service layer validates the run
 # options at the seam that reads them, so every base install (not just one with
 # the `web` extra, whose FastAPI used to pull it in transitively) needs it.
+# `json-repair` left the base set with ADR-0031: it existed only for the deleted
+# in-process agent output contract.
 RUNTIME_DEPS = {
     "alembic",
     "click",
-    "json-repair",
     "numpy",
     "platformdirs",
     "pydantic",
@@ -325,12 +326,7 @@ EXPECTED_MIGRATIONS = frozenset(
     {
         "env.py",
         "script.py.mako",
-        "versions/0001_project_and_glossary.py",
-        "versions/0002_meeting_run_and_artifact.py",
-        "versions/0003_archive.py",
-        "versions/0004_meeting_notes.py",
-        "versions/0005_tape.py",
-        "versions/0006_run_state_and_events.py",
+        "versions/0006_released_baseline.py",
         "versions/0007_run_ownership.py",
         "versions/0008_run_cancel_and_resume.py",
         "versions/0009_active_run_per_meeting.py",
@@ -370,7 +366,7 @@ def test_schema_history_guard_catches_a_deleted_revision(tmp_path: Path) -> None
     source = PACKAGE_DIRS[0] / "src" / "clear_record" / "service" / "migrations"
     copied = tmp_path / "migrations"
     shutil.copytree(source, copied)
-    victim = "versions/0005_tape.py"
+    victim = "versions/0007_run_ownership.py"
     assert victim in EXPECTED_MIGRATIONS
     (copied / victim).unlink()
     assert _missing_migrations(copied) == [victim]

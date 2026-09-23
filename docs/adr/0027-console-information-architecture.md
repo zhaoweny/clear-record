@@ -3,6 +3,13 @@
 Status: active
 Date: 2026-09-15
 
+- Superseded **in part** by [ADR-0031](0031-harness-is-the-only-agent.md)
+  (2026-09-23): the agent wizard is **Harness → MCP config → Try it**. There is
+  no endpoint stage, no small-LLM pull and no in-process task launch, the setup
+  state no longer carries `endpoint`/`model`, and Settings writes the MCP client
+  config alone. Everything else here — the page structure, the settings home, the
+  non-blocking setup path and the hello-world acceptance test — stands.
+
 ## Context
 
 - [FACT] The console has been **one page plus fragments**: `index.html` renders a
@@ -18,8 +25,9 @@ Date: 2026-09-15
 - [FACT] The console is htmx 4 + Alpine over server-rendered Jinja, dark/light,
   bilingual (EN / zh-CN), localhost-only with no auth (ADR-0021), and now has a
   Playwright gate that drives the real server and captures screenshots.
-- [FACT] The setup state already exists (`agent-setup.json`: endpoint, model,
-  harness, mcp_config) with a tri-state view (ready / not_configured / problem).
+- [FACT] The setup state already exists (`agent-setup.json`: harness,
+  mcp_config, seen_version) with a tri-state view (ready / not_configured /
+  problem). (ADR-0031 dropped the endpoint/model keys the 0.2 path wrote.)
 
 ## Decision
 
@@ -39,19 +47,20 @@ Date: 2026-09-15
   sub-tabs — Overview, Meetings, Glossary, Media (every meeting's tapes and
   transcripts in one inventory).
 - [DECISION] **Settings v1 is read-mostly.** It shows status and keeps the writes
-  the console already performs (the agent endpoint and the MCP client config);
-  models, webhooks and storage are displayed with the config path to edit, so the
-  first pass adds no new config-write surface.
+  the console already performs (the MCP client config); models, webhooks and
+  storage are displayed with the config path to edit, so the first pass adds no
+  new config-write surface.
 - [DECISION] **Setup is non-blocking.** A fresh install lands on `/setup`; after
   an update a dismissible notice points at it; a returning user is never
   redirected away from their work. "After an update" is detected by a **setup
   version marker** recorded in the setup state.
-- [DECISION] The **agent wizard is a step-flow** (Endpoint → Harness → MCP
-  config → Try it) inside setup. Its last step generates a **hello-world tape in
-  the user's language with the system TTS**, runs it through ingest → transcribe,
-  shows the transcript, then launches one agent task to prove the MCP round-trip.
+- [DECISION] The **agent wizard is a step-flow** (Harness → MCP config → Try
+  it) inside setup. Its last step generates a **hello-world tape in the user's
+  language with the system TTS**, runs it through ingest → transcribe, shows the
+  transcript, and shows the MCP read that exposes it.
   A TTS adapter is a **provider** (the vendor-free core rule, ADR-0012), and the
-  generated tape records its provenance.
+  generated tape records its provenance. (ADR-0031: the step does **not** launch
+  an agent task — that needs a model, which this app no longer has.)
 
 ## Rationale
 
@@ -103,7 +112,7 @@ becoming a dashboard.
 - [DESIGN] **Projects is the daily workspace** (~90% of use): project list →
   project detail → tapes, transcriptions and the project glossary. It must not
   drift into an administration screen.
-- [DESIGN] **Settings is the control plane**: endpoints, MCP, webhooks, storage,
+- [DESIGN] **Settings is the control plane**: MCP, webhooks, storage,
   runtime knobs, status and diagnostics — configured occasionally, read often.
 - [DESIGN] **Setup is system readiness**: first launch and upgrades, the path from
   installed to usable.
@@ -135,22 +144,23 @@ honestly assert:
   hello-world tape → ingest → transcribe → read the transcript with the same read
   the MCP tool exposes — and reports the exact MCP client entry
   (`clear-record mcp`) and the exposed tool (`read_transcript`). It does **not**
-  start an agent task: that needs a real model endpoint, and `just verify` /
-  `just e2e` stay offline and deterministic.
+  start an agent task: clear-record calls no model (ADR-0031), and `just verify`
+  / `just e2e` stay offline and deterministic.
 - [DECISION] **Every anticipated failure is a finding that names the leg**:
   `tts` (no system voice), `backend` (no ASR backend), `model` (no checkpoint on
   disk, and none is ever downloaded), `transcribe` (the decode failed). The
   finding carries the CLI's/service's own message; the console only translates it.
-- [DECISION] The **agent-answers** leg is proven on demand by the optional,
-  bring-your-own-key (BYOK) `just agent-drive` workflow (ticket 07), not by the
-  console check.
+- [DECISION] The **agent-answers** leg is proven on demand by the optional
+  harness stand-in `just agent-drive` (ADR-0031), not by the console check: it
+  drives the MCP tools as a harness does, with a scripted story that needs no key
+  and a model leg that does.
 - [FACT] The tape's provenance (engine, language, voice, spoken phrase, and any
   English fallback) is **surfaced on the result**; the scratch workspace is wiped
   and recreated each run, so nothing is persisted. This narrows the earlier
   "the generated tape records its provenance" clause to what the code does.
 - [DECISION] The **same** check is the permanent diagnostic at Settings → Status;
-  `/setup/agent` and `/settings/agent` render the one four-stage flow
-  (Endpoint → Harness → MCP config → Try it).
+  `/setup/agent` and `/settings/agent` render the one three-stage flow
+  (Harness → MCP config → Try it).
 
 ## Update — 2026-09-16: one job per setup step, and the hello-check truth split
 
@@ -158,8 +168,9 @@ A follow-up refinement to the ticket-04/05 console work (owner-approved).
 
 - [FACT] The setup wizard's second step was named **Models** and its copy
   presented a checkpoint as a hard prerequisite, conflating two different
-  models: the **ASR checkpoint** this step is about and the small *LLM* the
-  Agent step can pull into Ollama (`DEFAULT_SMALL_MODEL` = `qwen2.5:1.5b`). It
+  models: the **ASR checkpoint** this step is about and a small *LLM* the Agent
+  step could pull into Ollama. (ADR-0031 removed the LLM half entirely;
+  `DEFAULT_SMALL_MODEL` is gone.) It
   also pointed at read-only Models settings as somewhere to "fetch" a
   checkpoint, and it was conditionally false on macOS 26, where the preferred
   backend (`apple-speech`) is model-free.
@@ -186,8 +197,8 @@ A follow-up refinement to the ticket-04/05 console work (owner-approved).
   and harness are present; otherwise the screen names what is missing), and
   **Agent round-trip verified**, which the console cannot prove and therefore
   never shows as a green badge — it points at the optional `just agent-drive`
-  workflow. The old "the whole system worked once" badge was re-scoped to what
-  the check actually proves.
+  harness stand-in. The old "the whole system worked once" badge was re-scoped to
+  what the check actually proves.
 
 ## Update — 2026-09-16: the missing-model remediation
 
@@ -223,8 +234,8 @@ previously read-only surface.
   in its download action.
 - [DECISION] **Settings -> Status** gains a **walk-setup-again** knob
   (`POST /setup/restart`): it forgets the setup marker and returns to `/setup`,
-  and writes no other key, so a returning user's runner and MCP config survive
-  it. A plain link to the wizard sits beside it.
+  and writes no other key, so a returning user's harness and MCP client config
+  survive it. A plain link to the wizard sits beside it.
 - [FACT] `MODEL_LADDER` is now public (`cli.auto`, re-exported by
   `service.auto`) so the console can list the sizes without importing `cli`.
 

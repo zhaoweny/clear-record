@@ -51,26 +51,28 @@ format:
 test:
     uv run --all-packages pytest
 
-# Terminal wizard for the human-only agent provisioning (ticket 20): detect and
-# verify a local endpoint, record it, and point an MCP client at clear-record's
-# tools. Pointer to a Python script because it branches; `--all-packages` because
-# the script imports `clear_record`, so it must run in the project environment
-# (unlike `web-assets-check`, whose script declares its own dependencies). Note
+# Terminal wizard for the human-only agent provisioning: point at an MCP harness
+# and register clear-record's MCP server in its client config. Pointer to a
+# Python script because it branches; `--all-packages` because the script imports
+# `clear_record`, so it must run in the project environment (unlike
+# `web-assets-check`, whose script declares its own dependencies). Note
 # `--no-project` is a latent trap here: it fails with ModuleNotFoundError
 # outside a synced checkout but *accidentally succeeds* inside the repo root,
 # where a project `.venv` already exists.
 agent-setup:
     uv run --all-packages python scripts/agent_setup.py
 
-# Optional bring-your-own-key (BYOK) agent test-drive (ticket 07): drives
-# clear-record's own agent tasks against a real OpenAI-compatible endpoint over a
-# throwaway seeded data dir, and prints a redacted report. It is NOT part of
-# `verify` or `e2e` — those stay offline and deterministic. Without a key it
-# skips with a message and exits 0. A supplied recording drives the tape leg:
-# `just agent-drive --tape <file.wav>`; with no `--tape` the TTS hello-world
-# tape is used (a missing system voice is a reported finding). Pointer to a
-# Python script because it branches; `--all-packages` because it imports
-# `clear_record`.
+# Optional agent test-drive: stands in for a harness and drives the three jobs
+# (glossary collection, transcript check, minutes) through clear-record's MCP
+# tools over a throwaway seeded data dir, then prints a redacted report. It is
+# NOT part of `verify` or `e2e` — those stay offline and deterministic. The
+# scripted stories need no key; with a model key in `CR_DRIVE_API_KEY` (or the
+# file `CR_DRIVE_API_KEY_FILE` names) a real model drives the same tools, and
+# without one that leg reports SKIP and the drive still exits 0. A supplied
+# recording drives the tape leg: `just agent-drive --tape <file.wav>`; with no
+# `--tape` the TTS hello-world tape is used (a missing system voice is a
+# reported finding). Pointer to a Python script because it branches;
+# `--all-packages` because it imports `clear_record`.
 agent-drive *ARGS:
     uv run --all-packages python scripts/agent_drive.py {{ARGS}}
 

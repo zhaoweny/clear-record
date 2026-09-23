@@ -1,6 +1,6 @@
-"""The guided agent flow and its hello-world acceptance check (ticket 05).
+"""The agent setup flow and its hello-world acceptance check.
 
-One reusable flow — **Endpoint -> Harness -> MCP config -> Try it** — answers the
+One reusable flow — **Harness -> MCP config -> Try it** — answers the
 question "is this machine ready for an agent to work with clear-record?". It is
 reached two ways (the setup wizard's Agent step and Settings -> Agent), and the
 same **Try it** check is the permanent diagnostic Settings -> Status re-runs.

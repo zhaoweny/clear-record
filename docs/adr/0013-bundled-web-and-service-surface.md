@@ -7,10 +7,10 @@ Date: 2026-09-14
   (2026-09-14): the console is now server-rendered htmx/Alpine with **package-data
   templates and vendored static assets**, not embedded Python string assets, and
   there is a PySide6 `tray` surface beside `web`.
-- Superseded in part by [ADR-0022](0022-adopt-click.md),
-  [ADR-0025](0025-platformdirs.md) and
-  [ADR-0028](0028-repair-llm-output.md): the base dist also carries `click`,
-  `platformdirs` and `json-repair`, not `numpy` + `soundfile` alone.
+- Superseded in part by [ADR-0022](0022-adopt-click.md) and
+  [ADR-0025](0025-platformdirs.md): the base dist also carries `click` and
+  `platformdirs`, not `numpy` + `soundfile` alone. (ADR-0031 removed the
+  `json-repair` addition ADR-0028 made here.)
 
 ## Context
 
@@ -42,7 +42,7 @@ Date: 2026-09-14
 
 - [DECISION] The service and web surfaces ship as **subpackages of the single
   `clear-record` dist** — `clear_record.service` (headless registry, later runs,
-  archive and agent tasks) and `clear_record.web` (the FastAPI app, the bundled
+  archive and agent drafts) and `clear_record.web` (the FastAPI app, the bundled
   no-build frontend, and the `web` subcommand). `uv_build`'s one-import-package
   rule makes this the only way to keep **one published wheel**.
 - [DECISION] The base dist's runtime dependencies were **`numpy` + `soundfile`**
@@ -53,8 +53,8 @@ Date: 2026-09-14
 
   A CLI-only install therefore stays audio-only; a user who wants the console
   installs `clear-record[web]` (or `uvx --from 'clear-record[web]' clear-record
-  web`). The MCP SDK will get its own `agents` extra when the MCP server lands —
-  no speculative dependency is declared before it does.
+  web`). The MCP SDK has its own `agents` extra (it landed with ADR-0017's
+  server) — no speculative dependency was declared before it did.
 - [DECISION] The **`web` subcommand is registered unconditionally** through the
   `clear_record.commands` entry-point group, so it is visible in `--help` and,
   when the extra is missing, fails with an actionable install hint instead of an
@@ -66,9 +66,8 @@ Date: 2026-09-14
   `web`. The layering guard grows by two layers.
 - [DECISION] **BYOK** (bring your own key), inherited from maa-whirlwind
   ADR-0005: no provider key or agent runtime is bundled or defaulted. The user's
-  agent connects to the `clear-record mcp` server or is invoked through a
-  user-configured command template; the harness never enters
-  `clear_record.core`.
+  agent connects to the `clear-record mcp` server and owns its own model
+  (ADR-0031); the harness never enters `clear_record.core`.
 - [DESIGN] The frontend is embedded as **Python string assets**, not files on
   disk, so the wheel needs no package-data configuration and cannot silently
   ship without its UI.

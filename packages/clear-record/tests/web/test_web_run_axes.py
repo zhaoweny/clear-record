@@ -26,11 +26,11 @@ def _console(registry: Registry) -> TestClient:
     app's own :class:`RunManager` would otherwise claim a hand-seeded ``queued``
     row on its next 1 s rescan and fail it — the row has no tape set — turning
     the row terminal underneath an assertion that expects a live run.
-    Stopping the drain through the manager's own API first leaves every seeded
-    row exactly as written.
+    ``start_queue=False`` leaves every seeded row exactly as written, and leaves
+    it so **by construction**: no drain thread is started, so nothing is decided
+    by whether the first pass or the shutdown gets there first.
     """
-    manager = RunManager(registry)
-    manager.shutdown(timeout=5.0)
+    manager = RunManager(registry, start_queue=False)
     return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
 
 

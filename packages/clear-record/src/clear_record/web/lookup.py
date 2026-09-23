@@ -1,10 +1,9 @@
 """Find the thing a request named — or answer that it is not here.
 
 The console is asked for a project, a meeting, a tape, a run, a term, an archive,
-an agent draft, an agent-task kind or one of its own settings sections — by a
-page, by a fragment or by the JSON API — and the answer to *"and if it is not
-there?"* is one rule. That rule lives here, once: a finder returns the value, or
-raises :class:`NotFound`.
+an agent draft or one of its own settings sections — by a page, by a fragment or
+by the JSON API — and the answer to *"and if it is not there?"* is one rule. That
+rule lives here, once: a finder returns the value, or raises :class:`NotFound`.
 
 The **two behaviours** the surfaces need are preserved exactly, and they are a
 difference in *answering*, never in *finding*:
@@ -43,7 +42,6 @@ from clear_record.service import (
     RunManager,
     RunState,
     Tape,
-    TASK_KINDS,
 )
 
 
@@ -137,19 +135,12 @@ def tape(registry: Registry, meeting: Meeting, tape_id: int) -> Tape:
     return found
 
 
-def draft(agent: MeetingAgent, run_id: str) -> Draft:
-    """The agent draft ``run_id`` names for the agent's own meeting."""
-    found = agent.draft(run_id)
+def draft(agent: MeetingAgent, draft_id: str) -> Draft:
+    """The agent draft ``draft_id`` names for the agent's own meeting."""
+    found = agent.draft(draft_id)
     if found is None:
-        raise NotFound(f"no draft {run_id!r} for meeting {agent.meeting.id}")
+        raise NotFound(f"no draft {draft_id!r} for meeting {agent.meeting.id}")
     return found
-
-
-def task_kind(kind: str) -> str:
-    """``kind`` if the service declares it as an agent task."""
-    if kind not in TASK_KINDS:
-        raise NotFound(f"no agent task {kind!r}")
-    return kind
 
 
 def settings_section(
@@ -180,6 +171,5 @@ __all__ = [
     "run_state",
     "settings_section",
     "tape",
-    "task_kind",
     "term",
 ]

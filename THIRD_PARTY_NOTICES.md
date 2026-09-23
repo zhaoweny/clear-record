@@ -35,7 +35,6 @@ this repository.
 | --- | --- | --- |
 | [`alembic`](https://pypi.org/project/alembic/) | 1.20.0 | MIT |
 | [`click`](https://pypi.org/project/click/) | 8.5.0 | BSD-3-Clause |
-| [`json-repair`](https://pypi.org/project/json-repair/) | 0.63.4 | MIT |
 | [`numpy`](https://pypi.org/project/numpy/) | 2.5.3 | BSD-3-Clause (the wheel also bundles code under 0BSD, MIT, Zlib and CC0-1.0) |
 | [`platformdirs`](https://pypi.org/project/platformdirs/) | 4.11.8 | MIT |
 | [`pydantic`](https://pypi.org/project/pydantic/) | 2.13.5 | MIT |

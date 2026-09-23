@@ -17,9 +17,10 @@ that diff is nine ``alter_column`` calls, one per table's ``id`` (SQLite reflect
 an ``INTEGER PRIMARY KEY`` as nullable; the mapping declares it not), seven
 ``drop_index``, ten ``drop_constraint``/``create_foreign_key`` pairs, and — on a
 registry the retired ladder wrote — ``drop_table('schema_version')``, the table
-``store._migrate`` still reads. Adopting the ladder's steps adds no table,
-column or index of its own: the diff above is what *autogenerate* would want to
-change, not what this build has.
+``store._migrate`` still reads. The chain's shape changes nothing about that:
+the released baseline and the deltas on top of it describe the tables the
+retired ladder's steps did, so the diff above is what *autogenerate* would want
+to change, not what this build has.
 """
 
 from __future__ import annotations
@@ -31,11 +32,15 @@ from sqlalchemy.engine import URL
 
 config = context.config
 
-#: The lowest revision id the pinned numbering reaches. Revision ids in this
-#: chain are decimal (``0001``…), because the retired ladder's version numbers
-#: are what they were adopted as and ``store._LADDER_VERSION`` is the number a
-#: pre-Alembic build compares *itself* with — a hex id would make that number
-#: unrecoverable, which is the landmine this pins away.
+#: The id a revision gets on an **empty** chain. It is a fallback and nothing
+#: more: the chain ships with a revision (``0006``, the released baseline), so
+#: the lowest id it actually reaches is the baseline's, and this value is reached
+#: only by a chain someone has emptied. Revision ids in this chain are decimal
+#: because the baseline's id is the ladder number a released install records
+#: (``store._RELEASED_BASELINES``), and because ``store._LADDER_VERSION`` is the
+#: number a pre-Alembic build compares *itself* with — a hex id would make the
+#: first unexpressible and the second unrecoverable, which is the landmine this
+#: pins away.
 _FIRST_REVISION = 1
 
 
@@ -99,13 +104,16 @@ def _next_revision_id(*_args: object, **_kwargs: object) -> None:
     """Give a new revision a **decimal** id, the way the chain's ids are written.
 
     ``alembic revision`` (the workflow ``alembic.ini`` documents) otherwise names
-    the file with ``${up_revision}`` = a hex uuid, and the retired ladder's number
-    (``store._LADDER_VERSION``) could then no longer be derived from the chain at
-    all — every registry carrying the ladder's row would fail to open after such
-    a revision landed. The id is the newest revision's number plus one
-    (:data:`_FIRST_REVISION` on an empty chain), so the chain keeps the ladder's
-    own numbering and the file name, the ``alembic_version`` row and
-    ``schema_version`` all stay comparable.
+    the file with ``${up_revision}`` = a hex uuid, and the chain's ids have to
+    stay decimal for the **first** of them: the baseline's id is the ladder
+    number the released line recorded its schema as
+    (``store._RELEASED_BASELINES``), because that number is what places a
+    released registry at that revision, and a hex id there would make it
+    unexpressible. The id is the newest revision's number plus one
+    (:data:`_FIRST_REVISION` on an empty chain), so a new revision also stays
+    comparable with the number a pre-Alembic build wrote
+    (``store._LADDER_VERSION``) and with the file name and the
+    ``alembic_version`` row beside it.
 
     Wired as ``process_revision_directives``, which Alembic calls with the
     pending directives, so the pin holds for ``--autogenerate`` too. An explicit

@@ -22,7 +22,7 @@
       <div class="setup-step-head">
         <h3>{{ tr("Welcome") }}</h3>
       </div>
-      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Your own tape becomes a transcript under Projects → Meetings, and — once an agent endpoint is connected — minutes under that project's Minutes. Nothing here is required before you start; this path gets transcription ready, connects an MCP harness, and ends with an acceptance test.") }}</p>
+      <p class="muted">{{ tr("clear-record records, transcribes and reviews meetings locally. Your own tape becomes a transcript under Projects → Meetings, and — once a harness is connected — drafts under that meeting's review, and minutes under that project's Minutes. Nothing here is required before you start; this path gets transcription ready, connects an MCP harness, and ends with an acceptance test.") }}</p>
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-transcription">{{ tr("Next: Transcription") }}</a>
         <a class="btn btn-sm btn-ghost" href="#setup-agent">{{ tr("Skip") }}</a>
@@ -35,7 +35,7 @@
       <div class="setup-step-head">
         <h3>{{ tr("Agent") }}</h3>
       </div>
-      <p class="muted">{{ tr("Connect an OpenAI-compatible model endpoint and register clear-record with your MCP harness. This is the same panel as Settings → Agent; there is only one.") }}</p>
+      <p class="muted">{{ tr("Register clear-record with your MCP harness. This is the same panel as Settings → Agent; there is only one.") }}</p>
       {# The one agent flow, loaded by htmx (and visible to e2e on page load). #}
       <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
         <div class="muted">{{ tr("Loading agent setup…") }}</div>

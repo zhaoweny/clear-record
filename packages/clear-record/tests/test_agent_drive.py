@@ -1,9 +1,16 @@
-"""The agent test-drive script's BYOK rules, at the surface only.
+"""The agent-drive script: its BYOK rules and its offline run.
 
-"just agent-drive" is optional and never part of verify or e2e, but the two
-rules that live only in the script - resolve the key without ever printing it,
-and skip cleanly when there is none - are worth a red test. The drive itself is
-run by the operator against a real endpoint; nothing here touches the network.
+``just agent-drive`` is optional and never part of verify or e2e, but two things
+about it are load-bearing and worth a red test:
+
+- the rules that live only in the script — resolve the key without ever printing
+  it, and skip the model leg cleanly when there is none;
+- the **offline run**: with no key the drive must still prove the MCP surface by
+  scripted use, report the model leg as skipped, and exit 0 (ADR-0031's
+  acceptance).
+
+The model leg itself is run by the operator with a key; nothing here touches a
+model or the network.
 """
 
 from __future__ import annotations
@@ -84,18 +91,34 @@ def test_missing_key_is_a_skip_not_a_crash(drive) -> None:
     assert drive.ENV_KEY in resolution.detail
 
 
-def test_main_without_a_key_returns_zero_and_says_skip(
-    drive, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+def test_the_offline_run_proves_the_mcp_surface_and_skips_the_model_leg(
+    drive, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd
 ) -> None:
+    """The acceptance: no key, exit 0, the surface proven, the model leg skipped.
+
+    This spawns the real ``clear-record mcp`` server over stdio and drives it the
+    way a harness does — list the tools, write the three drafts, append a version,
+    accept one and reject another — so it fails if the shipped surface stops
+    answering what the drive needs. ``capfd`` rather than ``capsys``: the SDK's
+    stdio client hands the child a real stderr, which a captured in-memory stream
+    cannot provide.
+    """
     monkeypatch.setattr(drive, "key_file_candidates", lambda: [])
     monkeypatch.delenv(drive.ENV_KEY, raising=False)
     monkeypatch.delenv(drive.ENV_KEY_FILE, raising=False)
 
-    assert drive.main([]) == 0
+    code = drive.main(["--data-dir", str(tmp_path / "data")])
 
-    out = capsys.readouterr().out
-    assert "skip" in out.lower()
-    assert drive.ENV_KEY in out
+    out = capfd.readouterr().out
+    assert code == 0
+    assert "FAIL" not in out
+    assert "PASS    1 MCP surface" in out
+    assert "PASS    2 draft " in out
+    assert "PASS    2 chain" in out
+    assert "PASS    3 accept" in out
+    assert "SKIP    4 model" in out
+    # Nothing is asked of the app but the throwaway seed dir.
+    assert (tmp_path / "data" / drive.SEED_MARKER).is_file()
 
 
 # --- redaction: the key value never reaches a line ------------------------- #

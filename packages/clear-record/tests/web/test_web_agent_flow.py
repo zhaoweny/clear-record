@@ -26,7 +26,6 @@ from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 
 STAGES = (
-    ("agent-stage-endpoint", "Endpoint"),
     ("agent-stage-harness", "Harness"),
     ("agent-stage-mcp", "MCP config"),
     ("agent-stage-try", "Try it"),
@@ -88,11 +87,11 @@ def test_both_entry_points_mount_the_same_flow(tmp_path) -> None:
         assert 'hx-get="/ui/agent-setup"' in page, path
 
 
-def test_the_flow_has_the_four_numbered_stages(tmp_path) -> None:
+def test_the_flow_has_the_three_numbered_stages(tmp_path) -> None:
     panel = _client(tmp_path).get("/ui/agent-setup").text
 
     assert 'class="agent-flow"' in panel
-    assert panel.count('class="agent-stage"') == 4
+    assert panel.count('class="agent-stage"') == 3
     for stage_id, label in STAGES:
         assert f'id="{stage_id}"' in panel, stage_id
         assert label in panel, label

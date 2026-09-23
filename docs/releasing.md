@@ -257,8 +257,8 @@ can never be reused; on TestPyPI it is only a rehearsal). TestPyPI may also be
    sdist** with the expected metadata (bundled license file, no `cr-*`
    requirements).
 
-5. Run the external resolver smoke below against the rehearsal (adjust the pins
-   to the version you published).
+5. Run the external resolver smoke **and the registry smoke** below against the
+   rehearsal (adjust the pins to the version you published).
 
 ### External resolver smoke (TestPyPI)
 
@@ -300,7 +300,38 @@ uv run python -c "import clear_record, clear_record.core, clear_record.engine, c
 
 All three checks must succeed. `clear-record --help` proves the console script;
 `backends` exercises a real command; the import check proves every layer loads.
-Delete `/tmp/cr-testpypi-smoke` afterward.
+### Registry smoke (the migration chain in the installed package)
+
+The checks above prove the distribution installs and runs; nothing in this loop
+opens a **registry**, and the registry is where the packaging risk sits: the
+migration chain ships inside `clear_record/service/migrations/versions/` with no
+`alembic.ini` beside it, so the script location and the revision files must both
+resolve from the installed package. A candidate whose chain does not would pass
+every check above and fail on the one path an upgrade takes.
+
+Write a registry with the **previous release**, then open it with the candidate:
+
+```sh
+# the released line, in its own environment, writes a registry
+uv venv /tmp/cr-prev-env
+VIRTUAL_ENV=/tmp/cr-prev-env uv pip install 'clear-record[web]<the released version>'
+CR_DATA_DIR=/tmp/cr-prev-data /tmp/cr-prev-env/bin/clear-record serve --port 8790 &
+curl -s -X POST localhost:8790/api/projects -H 'content-type: application/json' \
+  -d '{"name":"Registry smoke"}'   # then stop the server: the registry exists now
+
+# the candidate, from the scratch project above, over a copy of that directory
+cp -r /tmp/cr-prev-data /tmp/cr-candidate-data
+CR_DATA_DIR=/tmp/cr-candidate-data uv run clear-record serve --port 8791 &
+curl -s localhost:8791/api/projects   # the project is there, and /api/health names the registry
+```
+
+It opens in place: the same file, `alembic_version` at the chain's head, the
+`schema_version` row levelled, and the projects, meetings, tapes and glossary
+terms it held still there. A registry **no released line wrote** is refused with
+the sentence naming the file — that is the policy working, not a failure.
+
+Delete `/tmp/cr-testpypi-smoke`, `/tmp/cr-prev-env`, `/tmp/cr-prev-data` and
+`/tmp/cr-candidate-data` afterward.
 
 ## Release loops
 

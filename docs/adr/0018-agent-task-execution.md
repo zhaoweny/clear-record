@@ -1,6 +1,6 @@
 # ADR-0018 — Agent tasks run as BYOK pipelines; no bundled agent harness
 
-Status: superseded — see [ADR-0031](0031-harness-is-the-only-agent.md) (2026-09-23)
+Status: active
 Date: 2026-09-14
 
 - Superseded **in part** by [ADR-0031](0031-harness-is-the-only-agent.md)

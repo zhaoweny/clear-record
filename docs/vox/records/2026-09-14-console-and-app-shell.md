@@ -97,8 +97,12 @@ keeps the standing positions and the index, and each section below keeps its own
   agent runtime is bundled). Prior art: maa-whirlwind ADR-0005.
 - [DECISION] The web UI is **htmx + Alpine.js**, server-rendered by FastAPI, with
   the two libraries vendored under `clear_record/web/static/` — **no build
-  step**. This **supersedes** the briefly-stated Vue/React direction (and
-  ADR-0013's embedded Python-string assets). See
+  step**. *(Superseded 2026-09-15 by
+  [ADR-0023](../../adr/0023-frontend-toolchain.md): the vendored assets are now
+  built by a committed front-end source tree, so the "no build step" property is
+  gone; the htmx/Alpine choice and the offline guarantee stand.)* This
+  **supersedes** the briefly-stated Vue/React direction (and ADR-0013's embedded
+  Python-string assets). See
   [ADR-0016](../../adr/0016-app-shell-htmx-tray-pi-agent.md).
 - [DECISION] A **native tray supervisor** gives the app an entry point:
   `clear-record tray` runs the console in the background and offers open /

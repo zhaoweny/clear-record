@@ -68,6 +68,15 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.0" date="2026-09-23">
+      <description>
+        <p>
+          Development trunk after 0.3.0: the server-centric restructure — the
+          node and its clients, the access position — with dictation as a
+          stretch.
+        </p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-09-16">
       <description>
         <p>

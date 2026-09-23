@@ -180,7 +180,7 @@ wheels = [
 
 [[package]]
 name = "clear-record"
-version = "0.3.0"
+version = "0.4.0.dev0"
 source = { editable = "packages/clear-record" }
 dependencies = [
     { name = "alembic" },
@@ -226,7 +226,7 @@ provides-extras = ["apple", "nvidia", "amd", "apple-speech", "all", "web", "tray
 
 [[package]]
 name = "clear-record-workspace"
-version = "0.3.0"
+version = "0.4.0.dev0"
 source = { virtual = "." }
 
 [package.optional-dependencies]

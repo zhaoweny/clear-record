@@ -111,22 +111,24 @@ the `testpypi` environment.
 
 ## Release tracks
 
-Three lines exist as of 2026-09-21 (ADR-0011's Updates):
+Four lines exist as of 2026-09-23 (ADR-0011's Updates):
 
 | Line | Branch | Version | What it carries |
 |---|---|---|---|
 | 0.1 maintenance | `releases/v0.1.x`, cut from the `v0.1.1` tag | `0.1.1` | the released 0.1.x code — patches only |
 | 0.2 maintenance | `releases/v0.2.x`, cut from the `v0.2.0` tag | `0.2.0` | the released 0.2.x code — patches only |
-| 0.3 development | `main` | `0.3.0.dev0` | the current work |
+| 0.3 maintenance | `releases/v0.3.x`, cut from the `v0.3.0` tag | `0.3.0` | the released 0.3.x code — patches only |
+| 0.4 development | `main` | `0.4.0.dev0` | the current work |
 
 A **patch release** is made from its line's branch: `just set-version
 <X.Y.<next>>`, commit, rehearse on TestPyPI, tag `vX.Y.Z`. Nothing publishes
-automatically from a maintenance branch. Both maintenance branches and the
+automatically from a maintenance branch. The maintenance branches and the
 released tags are on `public` today — `main`, `releases/v0.1.x`,
-`releases/v0.2.x`, and `v0.1.0` / `v0.1.1` / `v0.1.1rc2` / `v0.2.0rc1` /
-`v0.2.0rc4` / `v0.2.0` — and `v0.1.1` and `v0.2.0` are live on PyPI.
+`releases/v0.2.x`, `releases/v0.3.x`, and `v0.1.0` / `v0.1.1` / `v0.1.1rc2` /
+`v0.2.0rc1` / `v0.2.0rc4` / `v0.2.0` / `v0.3.0rc1` / `v0.3.0` — and `v0.1.1`,
+`v0.2.0` and `v0.3.0` are live on PyPI.
 
-`main` is the **0.3.x trunk**; the dev / rc / stable tiers below are unchanged.
+`main` is the **0.4.x trunk**; the dev / rc / stable tiers below are unchanged.
 
 ## The registry's schema history is compressed at a cut
 
@@ -409,7 +411,8 @@ packages, `dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli.cli
 
 `main` is the development trunk, not a maintenance line. A maintenance branch is
 cut from the **last tag of the line it carries** when the next line opens — as
-`releases/v0.1.x` was cut from `v0.1.1` and `releases/v0.2.x` from `v0.2.0` — so
+`releases/v0.1.x` was cut from `v0.1.1`, `releases/v0.2.x` from `v0.2.0` and
+`releases/v0.3.x` from `v0.3.0` — so
 a released line keeps a home for patch fixes while `main` moves on
 (ADR-0011).
 

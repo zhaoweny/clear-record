@@ -1,6 +1,6 @@
 # ADR-0011 — Versioning and the release train
 
-Status: active (amended by the 2026-09-13 Updates below)
+Status: active (amended by the Updates below)
 Date: 2026-09-13
 
 - Superseded in part by [ADR-0012](0012-single-distribution.md) (2026-09-13): the `cr-*` dists are now internal `clear_record` subpackages.
@@ -232,3 +232,20 @@ review hook in Consequences ("revisit when 0.2 development starts") and
 - [OPEN] The branch is **local only**. Nothing in this repository has been
   pushed, so publishing the branch (`git push -u origin releases/v0.1.x`) is a
   deliberate owner step.
+
+## Update (2026-09-23) — the 0.3 line shipped; `main` is the 0.4 development trunk
+
+Owner directive, verbatim: *"open 0.4 pls. I'll do the push to public for opening 0.4"*.
+
+- [FACT] The 0.3 line shipped. `v0.3.0rc1` (`7dd8c5d`) was rehearsed on TestPyPI, promoted as
+  `356b5e3`, tagged `v0.3.0`, and published by `publish.yml`; the wheel and the sdist on PyPI
+  are the same bytes the rehearsal carried (544,711 B / 473,949 B), and `v0.3.0` is the latest
+  release. The registry policy held end to end: a registry the **published 0.2.0 wheel** wrote
+  opened in place under the released build, and the refusal shapes refused with their sentences.
+- [DECISION] `releases/v0.3.x` is cut from the **`v0.3.0` tag** — the same rule as
+  `releases/v0.1.x` from `v0.1.1` and `releases/v0.2.x` from `v0.2.0` — and stands on `public`
+  and `staging`. A 0.3.x patch release is made from that branch.
+- [DECISION] **`main` is the 0.4.x development trunk**, carrying **`0.4.0.dev0`**. The dev / rc /
+  stable tiers are unchanged.
+- [FACT] The line table in [`docs/releasing.md`](../releasing.md) names four lines, and the
+  status lines in [`docs/architecture.md`](../architecture.md) follow it.

@@ -1,8 +1,9 @@
 # clear-record — Architecture & Provenance
 
-Status: **v0.3 development trunk** (`0.3.0.dev0`; `releases/v0.2.x` is the 0.2
-maintenance line and `releases/v0.1.x` the 0.1 one — ADR-0011's 2026-09-14
-Update and the 2026-09-21 scope entry in `docs/vox/voice-of-owner.md`) ·
+Status: **v0.4 development trunk** (`0.4.0.dev0`; `releases/v0.3.x` is the 0.3
+maintenance line, `releases/v0.2.x` the 0.2 one and `releases/v0.1.x` the 0.1
+one — ADR-0011's 2026-09-23 Update and the 2026-09-21 scope entry in
+`docs/vox/voice-of-owner.md`) ·
 Updated: 2026-09-21
 
 This document distills the original concept into an architecture + provenance
@@ -344,7 +345,7 @@ docs/vox/voice-of-owner.md    owner voice: the standing positions and the in-for
 docs/vox/records/             dated owner-voice records, one file per topic
 ```
 
-**Current status: v0.3 development trunk.** The pipeline below is landed and
+**Current status: v0.4 development trunk.** The pipeline below is landed and
 runnable, and the **project console** is built on top of it:
 
 - `clear_record.service` — the headless service: an app-owned SQLite **project

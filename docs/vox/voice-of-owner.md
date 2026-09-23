@@ -38,7 +38,7 @@ Rows name the owning document and never restate its decision text.
 | Distribution | one published dist (`clear-record`), layers internal, web/tray/agents behind extras | ADR-0012, ADR-0013 | `records/2026-09-13-release-and-packaging.md` |
 | Build toolchain | `uv_build`, front to back | ADR-0010 | same record |
 | CLI | the command is `clear-record`; Click; one declaration per knob | ADR-0022 | same record |
-| Versions, releases, and lines | dev builds are CI artifacts; rc and stable publish; 0.1 and 0.2 maintenance, 0.3 development on `main` | ADR-0011 and its Updates | same record, and `records/2026-09-21-v03-scope.md` |
+| Versions, releases, and lines | dev builds are CI artifacts; rc and stable publish; 0.1, 0.2 and 0.3 maintenance, 0.4 development on `main` | ADR-0011 and its Updates | same record, and `records/2026-09-21-v03-scope.md` |
 | Backends | native first (Apple `apple-speech`); system `whisper-cli` + a ggml plugin as the portable fallback; profiles tune knobs, `--auto` is opt-in | ADR-0005 and its 2026-09-14 Update; ADR-0019 | `records/2026-09-14-backends.md` |
 | Console and app shell | server-rendered htmx/Alpine with committed compiled assets; a PySide6 tray; the page IA and the view/lookup seam | ADR-0016, ADR-0023, ADR-0027, ADR-0030 | `records/2026-09-14-console-and-app-shell.md` |
 | Agent boundary | clear-record is a **backend for harnesses**: MCP is the only agent integration, and the in-process BYOK path is dropped in 0.3 | ADR-0017, ADR-0031 (which supersedes ADR-0018) | `records/2026-09-14-agent-task-execution.md`, `records/2026-09-21-v03-scope.md` |

@@ -506,7 +506,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/core       backend-agnostic domain model (no vendor/ML code)
   src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
   src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech)
-  src/clear_record/pipeline   the pipeline's execution: stage wiring, chunking, workspace, --auto resolvers
+  src/clear_record/pipeline   the stage wiring and the machinery that runs it (chunking, workspace, --auto resolvers)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
   src/clear_record/service    headless app service: SQLite registry, meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine

@@ -6,7 +6,7 @@
 #       clear_record.core       backend-agnostic application core (no third-party deps)
 #       clear_record.engine     audio I/O, alignment, reconcile (numpy, soundfile)
 #       clear_record.providers  per-vendor ASR backend adapters
-#       clear_record.pipeline   the pipeline's execution: the stages and the machinery that runs them
+#       clear_record.pipeline   the stage wiring and the machinery that runs it
 #       clear_record.cli        the `clear-record` command implementation
 #       clear_record.service    the console's registry, meetings, runs, archive
 #       clear_record.web        the console's browser surface (FastAPI + htmx/Alpine)

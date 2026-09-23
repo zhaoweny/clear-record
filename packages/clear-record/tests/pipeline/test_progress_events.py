@@ -6,6 +6,8 @@ event sequence is observed end to end rather than mocked.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -66,6 +68,62 @@ def test_stages_emit_progress_and_leave_stdout_to_the_command_surface(
     # ``test_stage_stdout``), and the only mid-stage text is a line the stage
     # reports on the sink.
     assert capsys.readouterr().out == ""
+
+
+def test_each_ingest_decode_line_arrives_before_its_own_work(
+    tmp_path, monkeypatch
+) -> None:
+    """An ingest decode line is reported where that decode begins.
+
+    The command surface printed each line *before* normalizing that input; once
+    the stage stopped printing and returned its inputs as report data instead,
+    the whole batch of lines came back with the report and was rendered after
+    the pass. A stage's own line travels on its sink, one per decode, in file
+    order — so a stage that holds them until it returns, or a surface that
+    renders them afterwards, fails the interleaving pinned here.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name in ("a.wav", "b.wav", "c.wav"):
+        _write_tone(wd / name)
+
+    timeline: list[str] = []
+    work = stages.prepare_16k_wav
+
+    def announcing(source, dest, **kwargs):
+        timeline.append(f"work {Path(source).name}")
+        return work(source, dest, **kwargs)
+
+    monkeypatch.setattr(stages, "prepare_16k_wav", announcing)
+
+    events: list[JobEvent] = []
+
+    class Sink:
+        def __call__(self, event: JobEvent) -> None:
+            events.append(event)
+
+        def line(self, text: str) -> None:
+            timeline.append(text)
+
+    stages.ingest(str(wd), on_event=Sink())
+
+    # Every decode line precedes its own input's work, as it did when the
+    # command surface printed it.
+    assert timeline == [
+        "[ingest] decode a.wav -> a.wav",
+        "work a.wav",
+        "[ingest] decode b.wav -> b.wav",
+        "work b.wav",
+        "[ingest] decode c.wav -> c.wav",
+        "work c.wav",
+    ]
+    # And they are the stage's *events* too, not only a print on the sink: the
+    # console's run stream reads the same lines out of the message.
+    assert [e.message for e in events if e.message.startswith("[ingest] decode")] == [
+        "[ingest] decode a.wav -> a.wav",
+        "[ingest] decode b.wav -> b.wav",
+        "[ingest] decode c.wav -> c.wav",
+    ]
 
 
 def test_run_threads_the_sink_to_every_stage(tmp_path, monkeypatch) -> None:

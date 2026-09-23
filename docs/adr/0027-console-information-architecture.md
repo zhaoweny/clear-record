@@ -237,7 +237,8 @@ previously read-only surface.
   and writes no other key, so a returning user's harness and MCP client config
   survive it. A plain link to the wizard sits beside it.
 - [FACT] `MODEL_LADDER` is now public (`pipeline.auto`, re-exported by
-  `service.auto`) so the console can list the sizes without importing `cli`.
+  `service.auto`) so the console can list the sizes without importing
+  `pipeline`.
 
 ## Update — 2026-09-17: the pipeline status page and a live header chip
 

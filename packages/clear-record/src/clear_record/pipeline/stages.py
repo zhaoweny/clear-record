@@ -235,6 +235,11 @@ def ingest(
 
     No audio to ingest is an actionable :class:`PipelineError`, not an empty
     report: a run that discovered nothing has nothing to say.
+
+    Each input's decode line is reported on the sink (:func:`report_line`) as
+    that decode begins — one line per decode, before normalizing that input, not
+    batched after the pass — so a caller watching a long ingest sees every file
+    announced where its work starts.
     """
     w = Workspace.at(directory)
     d = w.root
@@ -253,7 +258,7 @@ def ingest(
     # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
     decodes: list[DecodedInput] = []
-    for p in files:
+    for number, p in enumerate(files, start=1):
         base = _source_id(p, d)
         nch = channel_count(p)
         do_split = (split == "split") or (split == "auto" and nch > 2)
@@ -263,6 +268,17 @@ def ingest(
             for ch in range(nch):
                 sid = f"{base}__ch{ch + 1}"
                 norm = audio_dir / f"{sid}.wav"
+                # The line announces this decode, where the pre-move CLI printed
+                # it: before normalizing that input, not batched after the pass.
+                report_line(
+                    w,
+                    on_event,
+                    Step.INGEST.value,
+                    f"[ingest] decode {p.name} ch{ch + 1}/{nch} -> {norm.name}",
+                    source=sid,
+                    index=number - 1,
+                    total=len(files),
+                )
                 prepare_16k_wav(p, norm, channel=ch)
                 decodes.append(DecodedInput(p, norm, channel=ch + 1, channels=nch))
                 sources.append(
@@ -275,6 +291,15 @@ def ingest(
                 )
         else:
             norm = audio_dir / f"{base}.wav"
+            report_line(
+                w,
+                on_event,
+                Step.INGEST.value,
+                f"[ingest] decode {p.name} -> {norm.name}",
+                source=base,
+                index=number - 1,
+                total=len(files),
+            )
             prepare_16k_wav(p, norm)
             decodes.append(DecodedInput(p, norm, channels=nch))
             sources.append(

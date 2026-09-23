@@ -25,8 +25,8 @@ Rules:
 - ``engine`` may import ``core`` (and third-party audio libraries).
 - ``providers`` may import ``core``.
 - ``pipeline`` may import ``core``, ``engine`` and ``providers``; it is the
-  pipeline's execution (the stages and the machinery that runs them) and must
-  not reach the command surface.
+  stage wiring and the machinery that runs it, and must not reach the command
+  surface.
 - ``cli`` may import any layer below it (``core``, ``engine``, ``providers``,
   ``pipeline``).
 - ``service`` may import ``core`` and ``pipeline``; it must not reach the

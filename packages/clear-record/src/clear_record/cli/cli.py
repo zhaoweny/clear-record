@@ -716,14 +716,9 @@ class _StageLines:
 
 
 def _render_ingest(report: stages.IngestReport, workspace: Workspace) -> None:
-    for decode in report.decodes:
-        if decode.channel is None:
-            print(f"[ingest] decode {decode.path.name} -> {decode.output.name}")
-        else:
-            print(
-                f"[ingest] decode {decode.path.name} ch{decode.channel}/"
-                f"{decode.channels} -> {decode.output.name}"
-            )
+    # The per-input decode lines are the stage's own, reported on the sink as
+    # each decode begins (``_StageLines``); what is left here is the summary and
+    # the source list, which are about the pass as a whole.
     print(f"[ingest] {len(report.sources)} source(s) -> {workspace.manifest_path}")
     for source in report.sources:
         print(f"  {source.id:24s} {source.path}")
@@ -864,6 +859,7 @@ def _cmd_ingest(**kwargs: Any) -> int:
         kwargs["directory"],
         audio_files=list(kwargs["inputs"]) or None,
         split=_split_value(kwargs["split_channels"], kwargs["mix_down"]),
+        on_event=_StageLines(),
     )
     _render_ingest(report, Workspace.at(kwargs["directory"]))
     return 0
@@ -974,7 +970,10 @@ _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
     Step.EXPORT: (_cmd_export, (_DIRECTORY,)),
 }
 
-#: The conveniences that are not stage-derived, with the argparse-era help text.
+#: The subcommands that are not one declared stage, with the argparse-era help
+#: text: `run`/`calibrate` (the run conveniences), the pipeline's conveniences
+#: that are not stage-derived (diarize / attribute / glossary), and the
+#: development and diagnostic commands (synth / backends).
 _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "run",

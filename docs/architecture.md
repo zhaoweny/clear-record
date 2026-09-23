@@ -332,7 +332,7 @@ packages/clear-record → clear-record  single published dist; import clear_reco
   src/clear_record/core       domain model — NO vendor/ML code
   src/clear_record/engine     audio I/O (16 kHz normalize), cross-correlation align, reconcile (numpy + soundfile)
   src/clear_record/providers  ASR adapters (apple · nvidia · amd · apple-speech) and the system-TTS provider (tts)
-  src/clear_record/pipeline   the pipeline's execution: the stages and the machinery that runs them
+  src/clear_record/pipeline   the stage wiring and the machinery that runs it
   src/clear_record/cli        the CLI implementation and command
   src/clear_record/service    headless app service: project registry (SQLite), meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine (extra: web)

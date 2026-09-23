@@ -1,4 +1,4 @@
-"""The pipeline's **execution**: the stages and the machinery that runs them.
+"""The stage wiring and the machinery that runs it.
 
 :mod:`clear_record.core.pipeline` owns the pipeline's **declaration** — ``Step``,
 ``PipelineStage`` and ``PipelineSpec``, the one source of stage truth the CLI's

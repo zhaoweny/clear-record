@@ -1,7 +1,7 @@
 """The structured progress seam: counting, timing, and thread safety.
 
 The `Progress` helper is tested directly (a fake clock makes the ETA
-deterministic); stage-level wiring is covered in `tests/cli/test_progress_events`.
+deterministic); stage-level wiring is covered in `tests/pipeline/test_progress_events`.
 """
 
 from __future__ import annotations

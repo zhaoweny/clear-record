@@ -3,7 +3,7 @@
 These are the pure data types and their (de)serialization. This module must stay
 free of numpy/GPU/framework imports. Audio loading, alignment and merging are
 the job of ``clear_record.engine``; ASR is the job of
-``clear_record.providers``; wiring is the job of ``clear_record.cli``.
+``clear_record.providers``; wiring is the job of ``clear_record.pipeline``.
 """
 
 from __future__ import annotations

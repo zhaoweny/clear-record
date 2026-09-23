@@ -561,11 +561,14 @@ def drive_tape(
         return "seeded"
 
     try:
-        from clear_record.cli import stages
+        from clear_record.pipeline import stages
 
         stages.ingest(str(workspace), [str(tape)])
         stages.transcribe(str(workspace), backend_id, language=args.lang)
-    except (Exception, SystemExit) as exc:  # noqa: BLE001 - transcript fallback
+    except Exception as exc:  # noqa: BLE001 - transcript fallback
+        # The stages refuse with ``stages.PipelineError``, an ``Exception``, so
+        # the pipeline's own failure channel arrives here with everything else
+        # the two calls can raise; no stage ends the process by itself.
         report.add(
             "tape",
             "FINDING",

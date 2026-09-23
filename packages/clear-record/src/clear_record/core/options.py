@@ -1,8 +1,8 @@
 """The run-options value and the built-in transcription profiles.
 
 ``core`` is dependency-free and every layer may import it (``engine → core``,
-``providers → core``, ``cli → core``, ``service → core``, ``web → core``,
-``tray → core``, ``mcp → core``), so this is the one home for
+``providers → core``, ``pipeline → core``, ``cli → core``, ``service → core``,
+``web → core``, ``tray → core``, ``mcp → core``), so this is the one home for
 the run configuration. The CLI, the service, the web console and the MCP server
 all read the same :class:`PipelineOptions` and the same :data:`PROFILES` table,
 so a profile cannot mean different things on different surfaces.
@@ -22,7 +22,7 @@ them.
 A new knob is that row plus the places a static type or signature still names it
 by hand: its field annotation in this file, the keyword the ``Backend`` protocol
 takes (``providers/base.py``) and the keyword the stage's ``transcribe`` takes
-(``cli/stages.py``). Each of those three is pinned to the declaration by a test,
+(``pipeline/stages.py``). Each of those three is pinned to the declaration by a test,
 so a forgotten one fails in the suite, named, rather than at a user's run.
 
 Resolution precedence (see :func:`resolve_options`)::
@@ -232,7 +232,7 @@ SUPERSEDED_KEYS: tuple[SupersededKey, ...] = (
 #: Their field names, for the places that carry names only (a backend's
 #: ``decoder_knobs`` and the stage's support check). A backend advertises the
 #: subset it supports; a requested but unsupported knob fails loudly instead of
-#: being silently dropped (see ``cli.transcription``).
+#: being silently dropped (see ``pipeline.transcription``).
 DECODER_KNOB_FIELDS: tuple[str, ...] = tuple(knob.name for knob in DECODER_KNOBS)
 
 #: The fields :func:`resolve_options` manages: a caller leaves one ``None`` to
@@ -268,7 +268,7 @@ class DecoderKnobs:
     Python needs the annotations, so this is the one place they exist: the field
     names are the decoder rows of :data:`RUN_KNOBS`, and the two types that carry
     the knobs — :class:`PipelineOptions` (the whole run) and
-    ``cli.transcription.TranscriptionOptions`` (the stage) — inherit them instead
+    ``pipeline.transcription.TranscriptionOptions`` (the stage) — inherit them instead
     of restating them.
     """
 

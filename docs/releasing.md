@@ -4,7 +4,7 @@ The workspace publishes **one** PyPI distribution, `clear-record`:
 
 | Distribution | Import | Contents |
 |---|---|---|
-| `clear-record` | `clear_record` | the whole tool: `clear_record.{core,engine,providers,cli,service,web,tray,mcp}` layers as subpackages |
+| `clear-record` | `clear_record` | the whole tool: `clear_record.{core,engine,providers,pipeline,cli,service,web,tray,mcp}` layers as subpackages |
 
 Each release moves both `version =` fields **together** — the virtual root and
 the single member — and there are no intra-project dependencies left to pin
@@ -106,7 +106,7 @@ so every upload waits for a human approval. The PyPI upload uses `publish.yml`
 the `testpypi` environment.
 
 > The package name is settled: `clear-record` is the single published dist
-> (ADR-0012), and its eight layers are internal subpackages. Claim one pending
+> (ADR-0012), and its nine layers are internal subpackages. Claim one pending
 > publisher per index.
 
 ## Release tracks
@@ -297,7 +297,7 @@ TOML
 uv sync
 uv run clear-record --help
 uv run clear-record backends
-uv run python -c "import clear_record, clear_record.core, clear_record.engine, clear_record.providers, clear_record.cli"
+uv run python -c "import clear_record, clear_record.core, clear_record.engine, clear_record.providers, clear_record.pipeline, clear_record.cli"
 ```
 
 All three checks must succeed. `clear-record --help` proves the console script;
@@ -396,16 +396,17 @@ unzip -p dist/clear_record-${version}-py3-none-any.whl '*/METADATA' | grep -E 'R
 
 You should see `Requires-Dist: numpy>=2.0`, `Requires-Dist: soundfile>=0.12`,
 the four backend extras (`Provides-Extra`) and `License-File: LICENSE` — and
-**no `cr-*` requirement**. The wheel also contains the eight layers and the
+**no `cr-*` requirement**. The wheel also contains the nine layers and the
 bundled license, and the console script targets the CLI layer:
 
 ```sh
-unzip -l dist/clear_record-${version}-py3-none-any.whl | grep -E 'clear_record/(core|engine|providers|cli|service|web|tray|mcp)/|licenses/LICENSE'
+unzip -l dist/clear_record-${version}-py3-none-any.whl | grep -E 'clear_record/(core|engine|providers|pipeline|cli|service|web|tray|mcp)/|licenses/LICENSE'
 unzip -p dist/clear_record-${version}-py3-none-any.whl '*/entry_points.txt'
 ```
 
-You should see the `clear_record/{core,engine,providers,cli,service,web,tray,mcp}`
-packages, `dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli.cli:main`.
+You should see the
+`clear_record/{core,engine,providers,pipeline,cli,service,web,tray,mcp}` packages,
+`dist-info/licenses/LICENSE`, and `clear-record = clear_record.cli.cli:main`.
 
 ## The release train is lazy
 

@@ -2,15 +2,16 @@
 
 One subcommand per pipeline stage (plus `run`/`calibrate` conveniences). The
 subcommand surface is derived from the pipeline spec so the CLI and domain cannot
-drift; the heavy per-stage logic lives in :mod:`clear_record.cli.stages`.
+drift; the heavy per-stage logic lives in :mod:`clear_record.pipeline.stages`.
 
 The parser is **Click** (ADR-0022). The two properties the port must keep are:
 
 - the subcommand surface is **derived from** :func:`pipeline_spec` — the built-in
   stage commands are added in a loop over ``pipeline_spec().stages``, exactly as
   the ``run`` dispatch is, so the CLI and the domain still read one declaration;
-- the pipeline stages' **default stdout is byte-identical** — only the parser
-  changed, never what a stage prints.
+- the commands' **default stdout is byte-identical**: the stages print nothing
+  and this module renders every word of what they returned and reported, pinned
+  command by command in ``tests/cli/test_stage_stdout.py``.
 
 A run knob — its flag spelling, its ``CR_*`` binding, its type and its ``--help``
 text — is declared once, in ``core.options.RUN_KNOBS``; the options for
@@ -20,8 +21,9 @@ and the resolution order — flag > ``CR_*`` environment > profile > built-in
 default — lives in one mechanism (:func:`clear_record.core.resolve_options`).
 That chain is a run knob's own, not ADR-0007's app-directory precedence, which
 has a config-file layer and no profile.
-The ``CR_*`` reads that live outside the CLI (``providers``, ``service``, ``web``,
-``core.diagnostics``) are deliberately left where they are.
+The ``CR_*`` reads that live outside the CLI (``providers``, ``pipeline``,
+``service``, ``web``, ``tray``, ``mcp``, ``core.diagnostics`` and
+``core.i18n``'s ``CR_LANG``) are deliberately left where they are.
 
 Recordings and model weights are environment-local data — never commit them.
 See docs/architecture.md §6 and ADR-0006.
@@ -30,10 +32,11 @@ See docs/architecture.md §6 and ADR-0006.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import click
 
@@ -42,8 +45,12 @@ from clear_record.core import (
     PROFILE_CUSTOM,
     PROFILES,
     RUN_KNOBS,
+    Alignment,
+    JobEvent,
     PipelineOptions,
+    RecordDocument,
     ScopeError,
+    Segment,
     Step,
     log_event,
     parse_time_range,
@@ -65,8 +72,16 @@ from clear_record.providers import (
     resolve_models_dir,
 )
 
-from clear_record.cli import auto
-from clear_record.cli import stages
+from clear_record.cli.calibrate import calibrate_report
+from clear_record.cli.synth import synth
+from clear_record.pipeline import auto
+from clear_record.pipeline import stages
+
+# The preview's timestamp format is the pipeline's own (``format_timestamp``): the
+# Markdown serializer renders through it too, while the SRT/VTT renderers go
+# through ``_srt_tc``, so a copy here would be a second format to keep in step.
+from clear_record.pipeline.stages import format_timestamp
+from clear_record.pipeline.workspace import Workspace
 
 #: Entry-point group for optional subcommand providers. The bundled web console
 #: registers here (ADR-0013) so this module never imports it, keeping the
@@ -670,6 +685,152 @@ def _options(kwargs: dict) -> PipelineOptions:
 
 
 # --------------------------------------------------------------------------- #
+# rendering what a stage produced
+# --------------------------------------------------------------------------- #
+# The pipeline returns what a stage produced and reports its own mid-stage lines
+# through the sink it is handed; how either reads is this surface's business.
+# Each renderer takes the value the stage returned (and the workspace, for the
+# artifact path a command names) and writes the bytes the stage used to print for
+# itself — one renderer per stage, so a single stage command and `run`'s blocks
+# cannot drift apart.
+
+
+class _StageLines:
+    """This surface's sink on a stage: print the stage's own lines as they arrive.
+
+    A stage's mid-stage lines are reported on its sink — one structured
+    :class:`~clear_record.core.JobEvent` per line, the same payload the console's
+    run stream already listens to — and the line's text is additionally offered
+    to the sink's optional ``line`` capability (the seam
+    :func:`~clear_record.pipeline.workspace.report_line` reads it through).
+    Progress events are for a bar this surface does not draw, so it consumes
+    none of them.
+    """
+
+    def __call__(self, _event: JobEvent) -> None:
+        """A progress report: nothing for this surface to render."""
+
+    def line(self, text: str) -> None:
+        """One of the stage's own lines, printed where the stage produced it."""
+        print(text)
+
+
+def _render_ingest(report: stages.IngestReport, workspace: Workspace) -> None:
+    # The per-input decode lines are the stage's own, reported on the sink as
+    # each decode begins (``_StageLines``); what is left here is the summary and
+    # the source list, which are about the pass as a whole.
+    print(f"[ingest] {len(report.sources)} source(s) -> {workspace.manifest_path}")
+    for source in report.sources:
+        print(f"  {source.id:24s} {source.path}")
+
+
+def _render_align(alignment: Alignment, _workspace: Workspace) -> None:
+    print(
+        f"[align] reference={alignment.reference} method={alignment.method} "
+        f"conf={alignment.confidence} unresolved={len(alignment.unresolved)}"
+    )
+    for sid, offset in alignment.offsets.items():
+        marker = " (ref)" if sid == alignment.reference else ""
+        print(f"  {sid:24s} offset={offset:+.4f}s{marker}")
+    for sid in alignment.unresolved:
+        print(f"  {sid:24s} UNRESOLVED (could not place this source)")
+
+
+def _render_transcribe(report: stages.TranscribeReport, workspace: Workspace) -> None:
+    print(
+        f"[transcribe] {report.meta.get('model')!r} via "
+        f"{report.meta.get('backend')} -> segments.json"
+    )
+    for sid, segs in report.per_source.items():
+        info = report.meta.get("sources", {}).get(sid, {})
+        duration = info.get("duration")
+        print(
+            f"  {sid:24s} segments={len(segs):4d}  "
+            f"duration={duration if duration is not None else '?'}  "
+            f"chunks={info.get('chunks', '?')}"
+        )
+    if report.attribution is not None:
+        # The attribution pass is this stage's own (`--attribute-energy` is an
+        # alternative to diarization, not a declared stage), so its line follows
+        # the summary the stage that ran it renders.
+        _render_attribute(report.attribution, workspace)
+
+
+def _render_attribute(report: stages.AttributeReport, _workspace: Workspace) -> None:
+    if not report.segments:
+        print("[attribute] no segments to attribute")
+        return
+    suffix = f" (room reference: {report.mixed_source})" if report.mixed_source else ""
+    if report.window_s is not None:
+        suffix += f" (rolling window: {report.window_s:g}s)"
+    print(
+        f"[attribute] {report.segments} segment(s), {report.speakers} speaker(s), "
+        f"{report.changed} re-attributed{suffix}"
+    )
+
+
+def _render_glossary(report: stages.GlossaryReport, _workspace: Workspace) -> None:
+    print(f"[glossary] {report.path} ({len(report.terms)} term(s))")
+    for term in report.terms:
+        print(f"  {term}")
+
+
+def _render_reconcile(record: RecordDocument, workspace: Workspace) -> None:
+    speakers = {seg.speaker for seg in record.segments}
+    print(
+        f"[reconcile] {len(record.segments)} segment(s), {len(speakers)} attributed "
+        f"speaker(s) -> {workspace.record_path}"
+    )
+    _render_transcript_preview(record.segments)
+
+
+def _render_transcript_preview(segments: Sequence[Segment], limit: int = 12) -> None:
+    for seg in segments[:limit]:
+        print(
+            f"  {format_timestamp(seg.start)} [{seg.speaker or seg.source}] {seg.text}"
+        )
+    if len(segments) > limit:
+        print(f"  … {len(segments) - limit} more")
+
+
+def _render_export(written: dict[str, Path], _workspace: Workspace) -> None:
+    for fmt, path in written.items():
+        print(f"[export] {fmt:4s} -> {path}")
+
+
+#: One renderer per declared stage: the single-stage commands call these
+#: directly, and ``run`` renders each stage through the same table.
+_RENDERERS: dict[Step, Callable[[Any, Workspace], None]] = {
+    Step.INGEST: _render_ingest,
+    Step.ALIGN: _render_align,
+    Step.TRANSCRIBE: _render_transcribe,
+    Step.RECONCILE: _render_reconcile,
+    Step.EXPORT: _render_export,
+}
+
+
+def _render_stage(workspace: Workspace, step: Step, result: Any) -> None:
+    """Render one stage of a `run`, where that stage ran (see ``stages.run``)."""
+    _RENDERERS[step](result, workspace)
+
+
+def _run_pipeline(directory: str, options: PipelineOptions) -> None:
+    """Run the whole pipeline, rendering each stage's block as it lands.
+
+    ``on_result`` is what keeps a run's stdout in one order: a stage's own lines
+    are printed through the sink while it works, so its summary has to be
+    rendered the moment that stage finishes rather than after the last one.
+    """
+    workspace = Workspace.at(directory)
+    stages.run(
+        directory,
+        options,
+        on_event=_StageLines(),
+        on_result=functools.partial(_render_stage, workspace),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # command bodies
 # --------------------------------------------------------------------------- #
 def _cmd_backends(**kwargs: Any) -> int:
@@ -683,7 +844,7 @@ def _cmd_backends(**kwargs: Any) -> int:
 
 
 def _cmd_synth(**kwargs: Any) -> int:
-    stages.synth(
+    synth(
         kwargs["directory"],
         devices=kwargs["devices"],
         duration_s=kwargs["duration"],
@@ -694,22 +855,25 @@ def _cmd_synth(**kwargs: Any) -> int:
 
 
 def _cmd_ingest(**kwargs: Any) -> int:
-    stages.ingest(
+    report = stages.ingest(
         kwargs["directory"],
         audio_files=list(kwargs["inputs"]) or None,
         split=_split_value(kwargs["split_channels"], kwargs["mix_down"]),
+        on_event=_StageLines(),
     )
+    _render_ingest(report, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_align(**kwargs: Any) -> int:
-    stages.align(kwargs["directory"], reference=kwargs["reference"])
+    alignment = stages.align(kwargs["directory"], reference=kwargs["reference"])
+    _render_align(alignment, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_transcribe(**kwargs: Any) -> int:
     options = _options(kwargs)
-    stages.transcribe(
+    report = stages.transcribe(
         kwargs["directory"],
         options.backend,
         model=options.model,
@@ -723,46 +887,56 @@ def _cmd_transcribe(**kwargs: Any) -> int:
         check_plugin=options.check_plugin,
         rerun_sources=options.rerun_sources,
         rerun_range=options.rerun_range,
+        on_event=_StageLines(),
         # The decoder knobs are the declaration's; read them off the resolved
         # options rather than relisting them (unset stays None = no flag).
         **{knob.name: getattr(options, knob.name) for knob in DECODER_KNOBS},
     )
+    _render_transcribe(report, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_diarize(**kwargs: Any) -> int:
     # The command is `diarize`; it has no on/off flag to read (see
     # `_DIARIZE_ONLY`), so it simply runs the stage.
-    stages.diarize(kwargs["directory"], speakers=kwargs["speakers"])
-    return 0
-
-
-def _cmd_attribute(**kwargs: Any) -> int:
-    stages.attribute(
+    stages.diarize(
         kwargs["directory"],
-        mixed_source=kwargs["mixed_source"],
-        window_s=kwargs["window_s"],
+        speakers=kwargs["speakers"],
+        on_event=_StageLines(),
     )
     return 0
 
 
+def _cmd_attribute(**kwargs: Any) -> int:
+    report = stages.attribute(
+        kwargs["directory"],
+        mixed_source=kwargs["mixed_source"],
+        window_s=kwargs["window_s"],
+    )
+    _render_attribute(report, Workspace.at(kwargs["directory"]))
+    return 0
+
+
 def _cmd_glossary(**kwargs: Any) -> int:
-    stages.glossary(kwargs["directory"], add=list(kwargs["add"]) or None)
+    report = stages.glossary(kwargs["directory"], add=list(kwargs["add"]) or None)
+    _render_glossary(report, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_reconcile(**kwargs: Any) -> int:
-    stages.reconcile(kwargs["directory"], prefer=kwargs["reference"])
+    record = stages.reconcile(kwargs["directory"], prefer=kwargs["reference"])
+    _render_reconcile(record, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_export(**kwargs: Any) -> int:
-    stages.export(kwargs["directory"])
+    written = stages.export(kwargs["directory"])
+    _render_export(written, Workspace.at(kwargs["directory"]))
     return 0
 
 
 def _cmd_run(**kwargs: Any) -> int:
-    stages.run(kwargs["directory"], _options(kwargs))
+    _run_pipeline(kwargs["directory"], _options(kwargs))
     print(
         tr(
             "[next] the record is in {directory}/export; review it and accept "
@@ -774,10 +948,8 @@ def _cmd_run(**kwargs: Any) -> int:
 
 
 def _cmd_calibrate(**kwargs: Any) -> int:
-    stages.run(kwargs["directory"], _options(kwargs))
-    stages.calibrate_report(
-        kwargs["directory"], reference=kwargs["reference_transcript"]
-    )
+    _run_pipeline(kwargs["directory"], _options(kwargs))
+    calibrate_report(kwargs["directory"], reference=kwargs["reference_transcript"])
     return 0
 
 
@@ -798,7 +970,10 @@ _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
     Step.EXPORT: (_cmd_export, (_DIRECTORY,)),
 }
 
-#: The conveniences that are not stage-derived, with the argparse-era help text.
+#: The subcommands that are not one declared stage, with the argparse-era help
+#: text: `run`/`calibrate` (the run conveniences), the pipeline's conveniences
+#: that are not stage-derived (diarize / attribute / glossary), and the
+#: development and diagnostic commands (synth / backends).
 _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "run",
@@ -942,6 +1117,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except click.Abort:
         click.echo("Aborted!", err=True)
         return 1
+    except stages.PipelineError as exc:
+        # The pipeline's failure channel is not an exit: a stage raises the
+        # message, and the command surface is what decides that a failure at the
+        # process boundary means one. Same message, same exit code as the stage's
+        # own ``SystemExit`` produced — ``str`` goes to stderr, status 1.
+        raise SystemExit(str(exc)) from exc
     return 0 if rv is None else int(rv)
 
 

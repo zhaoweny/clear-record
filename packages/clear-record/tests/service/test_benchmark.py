@@ -20,9 +20,9 @@ import soundfile as sf
 from click.testing import CliRunner
 
 from clear_record.cli import cli as cli_module
-from clear_record.cli import stages
-from clear_record.cli.transcription import WorkerRssSampler
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline import stages
+from clear_record.pipeline.transcription import WorkerRssSampler
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import RecordDocument, Segment, Source, TranscriptionResult
 from clear_record.core.process import CancellableProcessRunner
 from clear_record.providers import BackendBase, BackendInfo

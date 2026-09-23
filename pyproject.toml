@@ -2,11 +2,16 @@
 #
 # One workspace member is published:
 #   packages/clear-record -> dist "clear-record", import "clear_record"
-#     with four internal layers as subpackages:
+#     with nine internal layers as subpackages:
 #       clear_record.core       backend-agnostic application core (no third-party deps)
 #       clear_record.engine     audio I/O, alignment, reconcile (numpy, soundfile)
 #       clear_record.providers  per-vendor ASR backend adapters
+#       clear_record.pipeline   the stage wiring and the machinery that runs it
 #       clear_record.cli        the `clear-record` command implementation
+#       clear_record.service    the console's registry, meetings, runs, archive
+#       clear_record.web        the console's browser surface (FastAPI + htmx/Alpine)
+#       clear_record.tray       the native desktop supervisor
+#       clear_record.mcp        the agent boundary
 #
 # The workspace is kept (rather than flattened to a root package) so a future
 # GUI/MCP member is a new `packages/*` member, not a reparenting.

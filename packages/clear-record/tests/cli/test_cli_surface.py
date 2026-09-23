@@ -8,8 +8,9 @@ import pytest
 from click.testing import CliRunner
 
 from clear_record.core import pipeline_spec
-from clear_record.cli import cli, stages
+from clear_record.cli import cli
 from clear_record.cli.cli import _build_group, _pipeline_options
+from clear_record.pipeline import stages
 
 
 def _parse(command: str, argv: list[str]) -> SimpleNamespace:
@@ -54,10 +55,10 @@ def test_subcommands_match_pipeline(monkeypatch) -> None:
 
 
 def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
-    """The spec covers all three consumers: itself, the CLI subcommands, and the
-    `run` dispatch table. Order is asserted for the CLI (Click's command mapping
-    preserves insertion order); `run`'s execution order is pinned in
-    test_cli_pipeline."""
+    """The spec covers all four consumers: itself, the CLI subcommands, the
+    `run` dispatch table, and the command surface's renderer table. Order is
+    asserted for the CLI (Click's command mapping preserves insertion order);
+    `run`'s execution order is pinned in test_cli_pipeline."""
     spec = pipeline_spec()
     group = _build_group()
 
@@ -69,11 +70,16 @@ def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
     # run: the dispatch table covers exactly the spec's stages.
     assert set(stages._STAGE_RUNNERS) == set(spec.steps)
 
+    # ...and so does the renderer `run` feeds each stage's result to: a stage
+    # added to the spec with no renderer would otherwise raise a `KeyError`
+    # inside `run`, past a green dispatch-table assertion.
+    assert set(cli._RENDERERS) == set(spec.steps)
+
 
 def test_backend_choices_come_from_the_catalog() -> None:
     """The `--backend` choices and default follow the provider catalog, so a new
     backend is offered without a CLI edit (no literal tuple)."""
-    from clear_record.cli.auto import BACKEND_AUTO
+    from clear_record.pipeline.auto import BACKEND_AUTO
     from clear_record.providers import BACKENDS
 
     command = _build_group().commands["transcribe"]
@@ -172,7 +178,7 @@ def test_diarize_flags_still_work_one_at_a_time() -> None:
 
 
 def test_eval_error_rates_perfect_and_bad() -> None:
-    from clear_record.cli.eval import error_rates
+    from clear_record.pipeline.eval import error_rates
 
     assert error_rates("hello world", "hello world")["wer"] == 0.0
     assert error_rates("hello world", "hello there")["wer"] > 0.0
@@ -182,7 +188,7 @@ def test_eval_error_rates_perfect_and_bad() -> None:
     "text", ["你好世界", "The quick brown fox", "Mixed 中文 and english"]
 )
 def test_eval_tokenizes_nonempty(text: str) -> None:
-    from clear_record.cli.eval import _tokenize
+    from clear_record.pipeline.eval import _tokenize
 
     assert len(_tokenize(text)) > 0
 

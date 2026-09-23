@@ -18,7 +18,7 @@ publishes no sidecar at all. The trade-off is coverage: only names listed here
 can be checked.
 
 The table covers the sizes ``clear-record`` selects for itself (the ladder in
-``clear_record.cli.auto``) plus the ``.en`` variants users name explicitly. A
+``clear_record.pipeline.auto``) plus the ``.en`` variants users name explicitly. A
 name with **no** entry — an arbitrary ``ggml-*.bin`` passed to ``--model``, or
 an unusual quantization — is not an error: there is no digest to check it
 against, so the download proceeds unchecked. This is defence in depth on the
@@ -61,7 +61,7 @@ _DISABLED_VALUES = frozenset({"0", "false", "no", "off"})
 #: this table and the tests override entries in it, so a digest is never restated
 #: in a second place that could drift.
 GGML_MODEL_SHA256: dict[str, str] = {
-    # The multilingual sizes `clear_record.cli.auto` can recommend.
+    # The multilingual sizes `clear_record.pipeline.auto` can recommend.
     "ggml-tiny.bin": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
     "ggml-base.bin": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
     "ggml-small.bin": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",

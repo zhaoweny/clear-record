@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.cli.tts import TtsError, TtsUnavailable
+from clear_record.pipeline.tts import TtsError, TtsUnavailable
 from clear_record.service import agent_flow
 from clear_record.service.hello_tape import HelloTape
 from clear_record.service.setup import SetupError
@@ -381,6 +381,35 @@ def test_a_named_download_targets_the_ggml_checkpoint_not_the_backend(
     assert (called_model, called_name) == ("medium", "ggml-medium.bin")
     assert candidate == result
     assert result.endswith("ggml-medium.bin")
+
+
+def test_a_named_download_lands_the_checkpoint_the_provider_fetched(
+    tmp_path, monkeypatch
+) -> None:
+    """The model leg, through the pipeline layer the service may import.
+
+    Only the provider's network edge is replaced, so the real path resolver above
+    it runs: the service asks ``pipeline.stages``, which asks ``providers``, and
+    what comes back is the checkpoint landed under the models directory.
+    """
+    from clear_record.providers import backends
+
+    models = tmp_path / "models"
+    models.mkdir()
+    fetched: list[tuple[str, str]] = []
+
+    def fake_fetch(model: str, name: str, base: str, candidate: str) -> str:
+        fetched.append((model, candidate))
+        Path(candidate).write_bytes(b"ggml")
+        return candidate
+
+    monkeypatch.setattr(backends, "_download_ggml_model", fake_fetch)
+
+    result = agent_flow.download_transcription_model("small", model_dir=str(models))
+
+    assert fetched == [("small", str(models / "ggml-small.bin"))]
+    assert result == str(models / "ggml-small.bin")
+    assert Path(result).read_bytes() == b"ggml"
 
 
 def test_an_unknown_model_is_a_setup_error_not_a_value_error(tmp_path) -> None:

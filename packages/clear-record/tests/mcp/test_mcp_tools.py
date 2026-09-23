@@ -414,7 +414,7 @@ def _runnable_meeting(tmp_path: Path) -> tuple[Registry, Meeting]:
 def test_start_run_backend_auto_resolves_and_reports_the_choice(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """``backend='auto'`` runs the resolved backend and returns the CLI's why."""
+    """``backend='auto'`` runs the resolved backend and returns the resolver's why."""
     monkeypatch.setattr(
         "clear_record.service.auto.available_backend_ids", lambda: ("amd", "nvidia")
     )
@@ -519,11 +519,11 @@ def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
     """The tuning loop is cheap to repeat: the cache key follows the intent.
 
     The transcription chunk cache is keyed on backend/model/language/glossary
-    (``clear_record.cli.workspace.chunk_cache_key``). Two runs with the same
+    (``clear_record.pipeline.workspace.chunk_cache_key``). Two runs with the same
     options produce the same key — a re-run is served from cache, no needless
     re-decode — while a glossary edit changes the key and re-decodes.
     """
-    from clear_record.cli.workspace import chunk_cache_key
+    from clear_record.pipeline.workspace import chunk_cache_key
 
     registry = _registry(tmp_path)
     registry.create_project("Ops")

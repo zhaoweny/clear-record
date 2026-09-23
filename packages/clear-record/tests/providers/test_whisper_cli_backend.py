@@ -423,10 +423,10 @@ def test_present_model_needs_no_network_and_is_not_re_hashed(tmp_path, monkeypat
 def test_pinned_table_covers_the_auto_ladder() -> None:
     """Every size ``--auto`` can recommend has a digest to check.
 
-    The ladder lives in ``cli.auto``; reading it here keeps the two in step
+    The ladder lives in ``pipeline.auto``; reading it here keeps the two in step
     without restating the list in a second place.
     """
-    from clear_record.cli.auto import MODEL_LADDER
+    from clear_record.pipeline.auto import MODEL_LADDER
 
     missing = [
         size for size in MODEL_LADDER if f"ggml-{size}.bin" not in GGML_MODEL_SHA256

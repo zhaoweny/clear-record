@@ -759,10 +759,10 @@ def test_run_form_offers_the_opt_in_auto_and_backend_auto(console, tmp_path) -> 
     assert '<option value="auto"' in detail
 
 
-def test_ui_run_auto_records_and_shows_the_cli_explanation(
+def test_ui_run_auto_records_and_shows_the_resolver_explanation(
     console, tmp_path, monkeypatch
 ) -> None:
-    """Checking `auto` resolves the run and surfaces the CLI's own explanation."""
+    """Checking `auto` resolves the run and surfaces the resolver's own explanation."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
         f"/api/meetings/{meeting['id']}/tapes",

@@ -1,10 +1,11 @@
 """clear-record: a local-first multitrack transcription and record-reconstruction tool.
 
-The published distribution is a single package with eight internal layers:
+The published distribution is a single package with nine internal layers:
 
 - :mod:`clear_record.core` — backend-agnostic domain model (no third-party deps);
 - :mod:`clear_record.engine` — audio I/O, alignment, reconcile (numpy/soundfile);
 - :mod:`clear_record.providers` — per-vendor ASR backend adapters;
+- :mod:`clear_record.pipeline` — the stage wiring and the machinery that runs it;
 - :mod:`clear_record.cli` — the ``clear-record`` command implementation;
 - :mod:`clear_record.service` — the console's registry, meetings, runs, archive;
 - :mod:`clear_record.web` — the console's browser surface (FastAPI + htmx/Alpine);

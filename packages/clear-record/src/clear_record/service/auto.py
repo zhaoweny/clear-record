@@ -1,12 +1,13 @@
-"""The console's use of the CLI's explainable ``--auto`` resolvers.
+"""The console's use of the pipeline's explainable ``--auto`` resolvers.
 
-The resolvers live in ``clear_record.cli.auto`` (``--auto`` picks a profile +
-model; ``--backend auto`` picks the best available backend). The **web** layer
-sits above ``service`` in the layering DAG and may not import ``cli``, so this
-module is the one place the console reaches them: ``service`` may import ``cli``
-(it already drives the CLI's stage wiring), and the resolver is **re-exported**,
-not reimplemented. The explanation the console shows is therefore byte-for-byte
-the CLI's — the two surfaces cannot drift.
+The resolvers live in ``clear_record.pipeline.auto`` (``--auto`` picks a profile
++ model; ``--backend auto`` picks the best available backend). The **web** layer
+sits above ``service`` in the layering DAG and may not import ``pipeline``, so
+this module is the one place the console reaches them: ``service`` may import
+``pipeline`` (it already drives the pipeline's stage wiring), and the resolver is
+**re-exported**, not reimplemented. The console therefore shows the same
+explanation the CLI shows, translated at its own boundary with its own ``tr``
+— the two surfaces cannot drift.
 
 Nothing here runs on the default path: :func:`resolve_run` returns the plain
 :func:`clear_record.core.resolve_options` result unless the caller explicitly
@@ -18,16 +19,16 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from clear_record.cli import auto as _auto
+from clear_record.pipeline import auto as _auto
 from clear_record.core import PipelineOptions, resolve_options
 from clear_record.core.i18n import deferred
 
 #: The ``--backend`` sentinel ``--backend auto`` accepts (re-exported so ``web``
-#: can name it without importing ``cli`` or ``providers``).
+#: can name it without importing ``pipeline`` or ``providers``).
 BACKEND_AUTO = _auto.BACKEND_AUTO
 
 #: The ggml model sizes the picker and ``--auto`` share, smallest to largest
-#: (re-exported so ``web`` can list them without importing ``cli``).
+#: (re-exported so ``web`` can list them without importing ``pipeline``).
 MODEL_LADDER = _auto.MODEL_LADDER
 
 #: The backend's own built-in checkpoint (providers.base.DEFAULT_MODEL),
@@ -36,8 +37,8 @@ MODEL_LADDER = _auto.MODEL_LADDER
 DEFAULT_MODEL = _auto.DEFAULT_MODEL
 
 #: The re-exported resolver values and types. ``web`` names only what it needs;
-#: ``available_backend_ids`` rides along from ``cli.auto``'s own namespace
-#: (``cli.auto`` legitimately imports ``providers``), which is how ``service``
+#: ``available_backend_ids`` rides along from ``pipeline.auto``'s own namespace
+#: (``pipeline.auto`` legitimately imports ``providers``), which is how ``service``
 #: reaches the one availability probe without importing ``providers`` itself.
 AutoChoice = _auto.AutoChoice
 AutoProbe = _auto.AutoProbe
@@ -79,7 +80,7 @@ class AutoRun:
 
     ``meta`` is merged into the run's recorded meta by
     :meth:`clear_record.service.RunManager.start`; ``explanations`` is what the
-    console shows (the CLI's own words, in the CLI's own order).
+    console shows (the resolver's own words, in the resolver's own order).
     """
 
     options: PipelineOptions
@@ -177,7 +178,7 @@ def resolve_run(
     return AutoRun(resolved, _with_backend(auto_meta), tuple(explanations))
 
 
-#: Re-exported so the console (which may not import ``cli``) can render a stored
+#: Re-exported so the console (which may not import ``pipeline``) can render a stored
 #: explanation node with its own ``tr`` — the boundary owns the translation.
 render_message = _auto.render_message
 

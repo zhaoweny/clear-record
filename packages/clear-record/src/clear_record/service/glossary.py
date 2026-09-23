@@ -15,8 +15,8 @@ Two invariants keep the loop honest:
   order — renders the same text and the same sha256, so a run can record which
   snapshot it used and a re-run is explainable.
 
-The ``service → cli`` import edge is allowed (ADR-0012); ``Workspace`` owns the
-glossary path so this module never composes it itself.
+The ``service → pipeline`` import edge is allowed (ADR-0012); ``Workspace`` owns
+the glossary path so this module never composes it itself.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import os
 from collections.abc import Iterable
 from pathlib import Path
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service.models import GlossaryTerm
 from clear_record.service.store import Registry
 

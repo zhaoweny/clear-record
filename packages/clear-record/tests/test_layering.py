@@ -1,7 +1,8 @@
 """Import-boundary guard: the ``clear_record`` layer DAG and the vendor-free core.
 
-The single ``clear-record`` distribution ships eight internal layers as
-subpackages (``clear_record.{core,engine,providers,cli,service,web,tray,mcp}``). One
+The single ``clear-record`` distribution ships nine internal layers as
+subpackages:
+``clear_record.{core,engine,providers,pipeline,cli,service,web,tray,mcp}``. One
 distribution means there is no per-dist dependency graph left to enforce the
 layering or the vendor-free core, so this test enforces both with two independent
 passes (no third-party imports):
@@ -23,18 +24,22 @@ Rules:
   and **no** sibling layer: it is the vendor-free, dependency-free core.
 - ``engine`` may import ``core`` (and third-party audio libraries).
 - ``providers`` may import ``core``.
-- ``cli`` may import any internal layer (``core``, ``engine``, ``providers``).
-- ``service`` may import ``core`` and ``cli`` (it drives the CLI's stage wiring
-  in-process); it owns the app registry and must not reach the web layer.
+- ``pipeline`` may import ``core``, ``engine`` and ``providers``; it is the
+  stage wiring and the machinery that runs it, and must not reach the command
+  surface.
+- ``cli`` may import any layer below it (``core``, ``engine``, ``providers``,
+  ``pipeline``).
+- ``service`` may import ``core`` and ``pipeline``; it must not reach the
+  command surface, ``web``, ``tray`` or ``mcp``.
 - ``web`` may import ``core`` and ``service``; it is the browser surface.
 - ``tray`` may import ``core``, ``service`` and ``web``; it supervises the console
   and is the native desktop entry point.
 - ``mcp`` may import ``core`` and ``service``; it is the agent boundary, a thin
   adapter over the service (ADR-0017), and must not reach the browser or native
   surfaces.
-- ``core``/``engine``/``providers`` never import ``cli``, ``service``, ``web``,
-  ``tray`` or ``mcp``; the CLI reaches the optional surfaces only through entry
-  points, never an import (ADR-0013).
+- ``core``/``engine``/``providers`` never import ``pipeline``, ``cli``,
+  ``service``, ``web``, ``tray`` or ``mcp``; the CLI reaches the optional
+  surfaces only through entry points, never an import (ADR-0013).
 
 If a real edge does not fit this DAG, that is a deliberate design change: update
 the layer DAG here and in the ADRs (ADR-0004 / ADR-0012) — do not silently widen
@@ -54,15 +59,26 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src" / "clear_record"
 
 # Internal layers, leaf-first: each layer may only import layers to its left
 # (plus its own submodules).
-LAYERS = ("core", "engine", "providers", "cli", "service", "web", "tray", "mcp")
+LAYERS = (
+    "core",
+    "engine",
+    "providers",
+    "pipeline",
+    "cli",
+    "service",
+    "web",
+    "tray",
+    "mcp",
+)
 
 # The exact internal edges derived from the code. ``layer -> layers it imports``.
 ALLOWED_INTERNAL: dict[str, frozenset[str]] = {
     "core": frozenset(),
     "engine": frozenset({"core"}),
     "providers": frozenset({"core"}),
-    "cli": frozenset({"core", "engine", "providers"}),
-    "service": frozenset({"core", "cli"}),
+    "pipeline": frozenset({"core", "engine", "providers"}),
+    "cli": frozenset({"core", "engine", "providers", "pipeline"}),
+    "service": frozenset({"core", "pipeline"}),
     "web": frozenset({"core", "service"}),
     "tray": frozenset({"core", "service", "web"}),
     "mcp": frozenset({"core", "service"}),
@@ -78,16 +94,26 @@ BLOCKED_THIRD_PARTY = ("numpy", "soundfile", "torch", "tensorflow", "onnxruntime
 # each runs in its own subprocess so a failure names the offending layer.
 #
 # A case may only poison layers the layer does **not** need transitively: the
-# upper layers legitimately pull the lower ones in (``web → service → cli →
-# engine → core``), so poisoning ``engine`` while importing ``web`` would break a
-# legal chain. The static pass above is the real edge check; this pass catches a
-# *dynamic* import of a layer the layer must never reach.
+# upper layers legitimately pull the lower ones in (``web → service → pipeline
+# → engine → core``, and ``cli → pipeline → core``), so poisoning ``engine``
+# while importing ``web`` would break a legal chain. The static pass above is
+# the real edge check; this pass catches a *dynamic* import of a layer the layer
+# must never reach.
 ISOLATION_CASES = (
-    ("core", ("engine", "providers", "cli", "service", "web", "tray", "mcp"), True),
-    ("engine", ("providers", "cli", "service", "web", "tray", "mcp"), False),
-    ("providers", ("cli", "service", "web", "tray", "mcp"), False),
+    (
+        "core",
+        ("engine", "providers", "pipeline", "cli", "service", "web", "tray", "mcp"),
+        True,
+    ),
+    (
+        "engine",
+        ("providers", "pipeline", "cli", "service", "web", "tray", "mcp"),
+        False,
+    ),
+    ("providers", ("pipeline", "cli", "service", "web", "tray", "mcp"), False),
+    ("pipeline", ("cli", "service", "web", "tray", "mcp"), False),
     ("cli", ("service", "web", "tray", "mcp"), False),
-    ("service", ("web", "tray", "mcp"), False),
+    ("service", ("cli", "web", "tray", "mcp"), False),
     ("web", ("tray", "mcp"), False),
     ("tray", ("mcp",), False),
     ("mcp", ("web", "tray"), False),
@@ -228,9 +254,11 @@ def test_internal_import_edges(layer: str) -> None:
     """A layer imports only the internal layers its DAG edge allows.
 
     ``core`` has no internal edges; ``engine``/``providers`` may import
-    ``core``; ``cli`` may import ``core``/``engine``/``providers``. Importing a
-    sibling outside that set — or importing the CLI from a lower layer — fails,
-    whether the import is absolute or relative.
+    ``core``; ``pipeline`` may import ``core``/``engine``/``providers``; ``cli``
+    may import those plus ``pipeline``; ``service`` may import ``core`` and
+    ``pipeline``. Importing a sibling outside that set — including the CLI,
+    which no layer outside it may import — fails, whether the import is
+    absolute or relative.
     """
     allowed = ALLOWED_INTERNAL[layer]
     violations: list[str] = []
@@ -273,15 +301,21 @@ def test_core_imports_no_third_party() -> None:
 
 
 def test_no_layer_imports_the_cli() -> None:
-    """No domain layer imports the command surface.
+    """No layer outside the command surface imports it; four are checked here.
 
     Keeping ``core``/``engine``/``providers`` free of ``clear_record.cli`` stops
-    the vendor-free/domain layers depending on the command surface. The service
-    layer may later reach the CLI's stage wiring, and ``web`` sits above both
-    (ADR-0013), so only the three domain layers are checked here.
+    the vendor-free/domain layers depending on the command surface (they sit
+    below it), and ``service`` joins them: it used to drive the stage wiring
+    while that wiring lived in the CLI package, and may no longer, because the
+    pipeline moved out into ``clear_record.pipeline`` (ADR-0012's clause (c)
+    restated, ADR-0030's ``C3``). ``ALLOWED_INTERNAL``
+    now carries no edge into ``cli`` at all, so the layers above ``service``
+    (``web``/``tray``/``mcp``, ADR-0013 added ``web``, ADR-0016 ``tray``,
+    ADR-0017 ``mcp``) are covered by :func:`test_internal_import_edges`; the
+    four named here are the ones this test checks directly.
     """
     violations: list[str] = []
-    for layer in ("core", "engine", "providers"):
+    for layer in ("core", "engine", "providers", "service"):
         for path in _python_files(layer):
             for module, lineno in _imports(path):
                 kind, imported_layer = _classify(module)
@@ -289,7 +323,8 @@ def test_no_layer_imports_the_cli() -> None:
                     rel = path.relative_to(PACKAGE_SRC)
                     violations.append(f"{rel}:{lineno}: imports {module!r}")
     assert not violations, (
-        "no internal layer may import clear_record.cli, but:\n" + "\n".join(violations)
+        "no layer outside clear_record.cli may import it, but:\n"
+        + "\n".join(violations)
     )
 
 

@@ -11,7 +11,8 @@ from __future__ import annotations
 import numpy as np
 import soundfile as sf
 
-from clear_record.cli import stages
+from clear_record.cli.calibrate import calibrate_report
+from clear_record.pipeline import stages
 from clear_record.providers import BackendBase
 
 
@@ -36,7 +37,7 @@ def _workspace(tmp_path) -> str:
 
 def test_ingest_align_reconcile_export(tmp_path) -> None:
     wd = _workspace(tmp_path)
-    sources = stages.ingest(wd)
+    sources = stages.ingest(wd).sources
     assert len(sources) == 2
     alignment = stages.align(wd)
     assert alignment.reference == sources[0].id
@@ -64,7 +65,7 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
             )
         ],
     }
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     Workspace.at(tmp_path / "rec").write_segments(
         per_source, {"backend": "none", "model": "none"}
@@ -76,15 +77,40 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
     written = stages.export(wd)
     assert "md" in written and written["md"].exists()
 
-    report = stages.calibrate_report(wd)
+    report = calibrate_report(wd)
     assert report["coverage"] is not None
+
+
+def test_a_stage_failure_is_a_pipeline_error_the_cli_exits_on(tmp_path) -> None:
+    """A stage refuses by raising the pipeline's own error; the command surface
+    is what turns that into an exit, with the stage's own message.
+
+    An empty workspace is the shortest such refusal and the first one a user
+    meets, and the same channel serves a whole run: no stage ends the process
+    itself any more.
+    """
+    import pytest
+
+    from clear_record.cli import cli
+
+    wd = tmp_path / "empty"
+    wd.mkdir()
+
+    with pytest.raises(stages.PipelineError, match="no audio files"):
+        stages.ingest(str(wd))
+    with pytest.raises(stages.PipelineError, match="no audio files"):
+        stages.run(str(wd))
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["ingest", str(wd)])
+    assert str(exit_info.value.code).startswith("[ingest] no audio files found in")
 
 
 def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
     """The workspace directory name travels into the record metadata and becomes
     the exported H1, so a qmd index can tell recordings apart."""
     wd = _workspace(tmp_path)
-    sources = stages.ingest(wd)
+    sources = stages.ingest(wd).sources
     stages.align(wd)
 
     # Seed segments "by hand" (transcribe stage is backend-gated).
@@ -101,7 +127,7 @@ def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
             )
         ],
     }
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     Workspace.at(tmp_path / "rec").write_segments(
         per_source, {"backend": "none", "model": "none"}
@@ -119,7 +145,7 @@ def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
     """Backward compatibility: a record written before titles were stored (no
     `title` metadata) still renders the bare `# Record`."""
     from clear_record.core import RecordDocument
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -148,13 +174,70 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
 
     shutil.copy(str(quad), str(wd / "meeting.wav"))
 
-    split_sources = stages.ingest(str(wd), split="auto")
+    split_sources = stages.ingest(str(wd), split="auto").sources
     assert len(split_sources) == 4
     assert all(s.id.endswith(("ch1", "ch2", "ch3", "ch4")) for s in split_sources)
 
-    mixed = stages.ingest(str(wd), split="mix")
+    mixed = stages.ingest(str(wd), split="mix").sources
     assert len(mixed) == 1
     assert not mixed[0].id.endswith("ch1")
+
+
+def test_diarize_hands_back_what_each_source_yielded(tmp_path) -> None:
+    """`diarize` returns what the pass produced, per source: the segments it holds
+    with the labels it applied, and the counts each source's line states — the
+    speakers the clustering found, and the decode failure that skipped a source.
+
+    Only that last decision is missing from the segments: a skipped source keeps
+    its segments and its old labels, so nothing there tells it apart from a source
+    the pass found one speaker in. Two harmonic voices an octave apart over four
+    seeded segments are a split the engine decides deterministically (its own
+    diarize tests pin that).
+    """
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 16000
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(sr, dtype=np.float64) / sr
+        return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    voices = np.concatenate(seq)
+    voices /= np.max(np.abs(voices)) or 1.0
+    sf.write(str(wd / "mixed.wav"), voices.astype(np.float32), sr)
+    _write_tone(wd / "broken.wav", seconds=1.0)
+
+    ids = [s.id for s in stages.ingest(str(wd)).sources]
+    assert sorted(ids) == ["broken", "mixed"]
+    seeded = {
+        "mixed": [
+            Segment(start=float(i), end=i + 1.0, text="line", source="mixed")
+            for i in range(4)
+        ],
+        "broken": [Segment(start=0.0, end=1.0, text="line", source="broken")],
+    }
+    Workspace.at(wd).write_segments(seeded, {"backend": "none", "model": "none"})
+    # An unreadable source is non-fatal: it is skipped, not a failed pass.
+    (wd / "audio" / "broken.wav").unlink()
+
+    report = stages.diarize(str(wd), speakers=2)
+
+    facts = {fact.id: fact for fact in report.sources}
+    assert facts["mixed"].speakers == 2
+    assert facts["mixed"].segments == 4
+    assert facts["mixed"].skipped is None
+    assert facts["broken"].skipped, "the unreadable source came back with its reason"
+    # The relabelled segments ride beside the counts: each voice keeps one label,
+    # and the two voices do not share one (which number is which is the engine's).
+    labels = [seg.speaker for seg in report.per_source["mixed"]]
+    assert labels[0] == labels[2] and labels[1] == labels[3] and labels[0] != labels[1]
+    assert all(label and label.startswith("Speaker ") for label in labels)
+    # A source that could not be decoded keeps its segments and its old labels.
+    assert report.per_source["broken"] == seeded["broken"]
 
 
 def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -> None:
@@ -165,7 +248,7 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
     from clear_record.core import Segment
     from clear_record.engine import SYNTH_SR
     from clear_record.engine.synth import make_crosstalk_scene
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=16.0, n_speakers=2, bleed_db=-6.0, seed=7, non_overlapping=True
@@ -175,7 +258,7 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
     for i, device in enumerate(devices):
         sf.write(str(wd / f"lav{i}.wav"), device, SYNTH_SR)
 
-    sources = stages.ingest(str(wd))
+    sources = stages.ingest(str(wd)).sources
     labels = {s.id: s.label for s in sources}
     truth = {f"w{i}": labels[f"lav{e['speaker']}"] for i, e in enumerate(events)}
     # Every segment is taken from the bleed channel and given the naive label.
@@ -215,7 +298,7 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
     from clear_record.engine import SYNTH_SR
     from clear_record.engine.synth import make_crosstalk_scene
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=20.0, n_speakers=2, bleed_db=-9.0, seed=5, non_overlapping=True
@@ -228,7 +311,7 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
             str(wd / f"lav{i}.wav"), (device * gains[i]).astype("float32"), SYNTH_SR
         )
 
-    sources = stages.ingest(str(wd))
+    sources = stages.ingest(str(wd)).sources
     labels = {s.id: s.label for s in sources}
     per_source: dict[str, list[Segment]] = {s.id: [] for s in sources}
     for i, e in enumerate(events):
@@ -263,7 +346,7 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     from clear_record.engine import SYNTH_SR, mix_crosstalk
     from clear_record.engine.synth import make_speaker_stems
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     stems, events = make_speaker_stems(
         duration_s=16.0, n_speakers=3, seed=7, non_overlapping=True
@@ -276,7 +359,7 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
         )
     sf.write(str(wd / "room.wav"), np.sum(stems, axis=0).astype(np.float32), SYNTH_SR)
 
-    sources = stages.ingest(str(wd))
+    sources = stages.ingest(str(wd)).sources
     labels = {s.id: s.label for s in sources}
     per_source: dict[str, list[Segment]] = {s.id: [] for s in sources}
     expected: dict[str, str] = {}
@@ -305,7 +388,7 @@ def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""
     from clear_record.core import Segment
-    from clear_record.cli.transcription import merge_chunk_segments
+    from clear_record.pipeline.transcription import merge_chunk_segments
 
     def seg(start: float, end: float, text: str) -> Segment:
         return Segment(start=start, end=end, text=text, source="src")
@@ -336,10 +419,11 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
     recording a fake zero offset."""
     import dataclasses
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.cli import cli
+    from clear_record.pipeline.workspace import Workspace
 
     wd = _workspace(tmp_path)
-    sources = stages.ingest(wd)
+    sources = stages.ingest(wd).sources
     broken = [
         dataclasses.replace(s, path=str(tmp_path / "missing.wav")) if s.id == "b" else s
         for s in sources
@@ -348,6 +432,9 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
 
     alignment = stages.align(wd)
     assert "b" in alignment.unresolved
+    # The stage returns what it found; naming it on the terminal is the command
+    # surface's rendering (and the pin for its bytes is the stdout golden).
+    cli._render_align(alignment, Workspace.at(wd))
     assert "UNRESOLVED" in capsys.readouterr().out
 
 
@@ -381,12 +468,18 @@ def test_run_attribute_energy_selects_energy_path(tmp_path, monkeypatch) -> None
 
     def spy_attribute(directory, mixed_source=None, window_s=None):
         calls["attribute"] += 1
-        return {}
+        return stages.AttributeReport(per_source={}, segments=0, speakers=0, changed=0)
 
-    def spy_diarize(directory, speakers=None):
+    def spy_diarize(directory, speakers=None, *, on_event=None):
         calls["diarize"] += 1
 
-    monkeypatch.setattr(stages, "transcribe", lambda *a, **k: None)
+    # The transcribe stage hands `run` a report, and the attribution pass rides
+    # on it (`--attribute-energy` is that stage's alternative to diarization).
+    monkeypatch.setattr(
+        stages,
+        "transcribe",
+        lambda *a, **k: stages.TranscribeReport(per_source={}, meta={}),
+    )
     monkeypatch.setattr(stages, "reconcile", lambda *a, **k: None)
     monkeypatch.setattr(stages, "export", lambda *a, **k: None)
     monkeypatch.setattr(stages, "attribute", spy_attribute)
@@ -441,7 +534,7 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -524,7 +617,7 @@ def test_a_resumed_run_counts_reused_chunks_apart_from_decoded_ones(
     no machine sustained: the seed's own 112-of-120 reuse shape prints ~260x
     where the machine measures ~2.4x.
     """
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import JobEvent, Segment, TranscriptionResult
     from clear_record.engine.chunk import plan_chunks
     from clear_record.providers import BackendInfo
@@ -532,7 +625,7 @@ def test_a_resumed_run_counts_reused_chunks_apart_from_decoded_ones(
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav", seconds=8.0)
-    sources = stages.ingest(str(wd))
+    sources = stages.ingest(str(wd)).sources
 
     class Fake(BackendBase):
         calls = 0
@@ -603,6 +696,85 @@ def test_a_resumed_run_counts_reused_chunks_apart_from_decoded_ones(
     assert last.index - last.reused == Fake.calls
 
 
+def test_the_console_bar_never_steps_back_inside_a_stage(tmp_path, monkeypatch) -> None:
+    """The console draws its bar — and the "N / M" beside it — from the newest
+    event of a run's stream (``RunState.summary``), and a stage reports its own
+    lines on that stream. A line about one source's chunk must therefore carry
+    the **pass's** counters, not that source's ordinal: two bases on one stream
+    make the pass read 1/4 after 1/8 and 2/8 after 2/4.
+
+    The sequence asserted is the one the console actually reads, replayed event
+    by event over a real two-source pass; the per-source facts are pinned where
+    they live — the event's ``source`` and the line's own text.
+    """
+    from clear_record.core import JobEvent, Segment, TranscriptionResult
+    from clear_record.providers import BackendInfo
+    from clear_record.service import RunState
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", seconds=8.0)
+    _write_tone(wd / "b.wav", seconds=8.0, freq=260.0)
+    stages.ingest(str(wd), split="mix")
+
+    class Fake(BackendBase):
+        info = BackendInfo(
+            id="fake",
+            vendor="test",
+            frameworks=(),
+            description="fake",
+            default_model="fake",
+        )
+
+        def available(self) -> bool:
+            return True
+
+        def transcribe(self, audio_path, **kwargs):
+            data, sample_rate = sf.read(audio_path)
+            duration = len(data) / sample_rate
+            return TranscriptionResult(
+                source="fake",
+                segments=(Segment(0.0, round(duration, 3), "chunk", "fake"),),
+                language="en",
+                backend="fake",
+                model="fake",
+                audio_duration=duration,
+            )
+
+    monkeypatch.setattr(stages, "get_backend", lambda _id: Fake())
+
+    events: list[JobEvent] = []
+    stages.transcribe(
+        str(wd),
+        "fake",
+        chunk_seconds=3.0,
+        overlap_seconds=1.0,
+        jobs=1,  # the pool serial, so the recorded order is the decoded order
+        on_event=events.append,
+    )
+
+    # One reading per prefix of the stream: this is what the console sees.
+    readings = [
+        RunState(run_id=1, meeting_id=1, events=events[:length]).summary()
+        for length in range(1, len(events) + 1)
+    ]
+    assert readings, "the pass reported nothing"
+
+    indices = [reading.index for reading in readings]
+    assert indices == sorted(indices), [(r.stage, r.index, r.total) for r in readings]
+    # One unit base for the pass: two sources of four chunks each is 8, and no
+    # line may state a base of its own (2 for the plan, 4 for a source's chunk).
+    assert {reading.total for reading in readings} == {8}, indices
+
+    # The per-source facts a reader of one line wants are on the line.
+    chunk_lines = [
+        event for event in events if event.message.startswith("[transcribe]   ")
+    ]
+    assert [event.source for event in chunk_lines] == ["a"] * 4 + ["b"] * 4
+    assert "chunk 1/4 [0-3s] -> 1 segment(s)" in chunk_lines[0].message
+    assert "chunk 4/4 [6-8s] -> 1 segment(s)" in chunk_lines[-1].message
+
+
 def test_transcription_module_is_a_single_seam(tmp_path) -> None:
     """The resumable transcriber is callable through one function — plan ->
     cache -> pool -> merge — driven by a `Workspace` and plain data types, with
@@ -610,8 +782,8 @@ def test_transcription_module_is_a_single_seam(tmp_path) -> None:
     from clear_record.core import Segment, Source, TranscriptionResult
     from clear_record.providers import BackendInfo
 
-    from clear_record.cli.transcription import TranscriptionOptions, transcribe
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.transcription import TranscriptionOptions, transcribe
+    from clear_record.pipeline.workspace import Workspace
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -670,7 +842,7 @@ def test_transcription_module_is_a_single_seam(tmp_path) -> None:
 
 
 def test_resolve_jobs_is_adaptive() -> None:
-    from clear_record.cli.transcription import resolve_jobs
+    from clear_record.pipeline.transcription import resolve_jobs
 
     assert resolve_jobs(False, 10, 4) == 1  # in-process -> serialized
     assert resolve_jobs(True, 1, 4) == 1  # no work to parallelize
@@ -684,7 +856,7 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     import threading
     import time
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
@@ -755,11 +927,11 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     fake = Fake()
     monkeypatch.setattr(stages, "get_backend", lambda _id: fake)
 
-    per_source = stages.transcribe(
+    report = stages.transcribe(
         str(wd), "fake", chunk_seconds=2.0, overlap_seconds=0.5, jobs=4
     )
     assert fake.max_active > 1  # chunks actually overlapped
-    assert per_source["a"]  # and the merged output is complete
+    assert report.per_source["a"]  # and the merged output is complete
 
 
 def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -> None:
@@ -769,7 +941,7 @@ def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -
     import threading
     import time
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
@@ -852,7 +1024,7 @@ def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> N
     explicit `--jobs` / `CR_JOBS` still wins."""
     import os
 
-    from clear_record.cli.transcription import (
+    from clear_record.pipeline.transcription import (
         auto_jobs,
         detect_vram_gb,
         model_vram_gb,
@@ -906,7 +1078,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
 
     import pytest
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.engine import plan_chunks
     from clear_record.providers import BackendInfo
@@ -1088,7 +1260,7 @@ def test_transcribe_check_plugin_gates_on_the_load_probe(tmp_path, monkeypatch) 
 
     monkeypatch.setattr(stages, "probe_ggml_plugin_load", fake_probe)
 
-    with pytest.raises(SystemExit, match="did not load"):
+    with pytest.raises(stages.PipelineError, match="did not load"):
         stages.transcribe(str(wd), "fake", check_plugin=True)
     assert len(calls) == 1, "the probe must run exactly once per invocation"
 
@@ -1111,7 +1283,7 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     scoped; both complete with independent caches."""
     import threading
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 

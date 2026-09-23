@@ -17,9 +17,9 @@ This is **not telemetry.** Nothing is transmitted anywhere: the user creates the
 file, reads it, and chooses whether to attach it. There is no network call in
 this module.
 
-Layering: this is a ``service`` module, so it may import ``core`` and ``cli``.
-It reaches the provider probe through the ``cli`` layer (the only layer allowed
-to import ``providers``), never by importing ``providers`` itself.
+Layering: this is a ``service`` module, so it must not import ``providers``. It
+reaches the provider probe through :mod:`clear_record.pipeline.auto`: the
+``pipeline`` layer may import ``providers``, this module may not.
 """
 
 from __future__ import annotations
@@ -175,13 +175,13 @@ def redact_log_line(line: str) -> str:
 
 
 def backend_status() -> dict[str, dict]:
-    """Each catalog backend's verdict with its reason (via the ``cli`` layer).
+    """Each catalog backend's verdict with its reason (via the pipeline layer).
 
-    ``service`` may not import ``providers``; ``cli`` is the layer that may, and
-    its ``backend_availability`` is the one probe. This is never imported at
+    ``service`` may not import ``providers``; ``pipeline`` may, and its
+    ``auto.backend_availability`` is the one probe. This is never imported at
     module load, so a plain ``import clear_record.service`` stays light.
     """
-    from clear_record.cli.cli import backend_availability
+    from clear_record.pipeline.auto import backend_availability
     from clear_record.core.diagnostics import log_event
 
     status = backend_availability()
@@ -388,7 +388,7 @@ def _private_sections(
     """
     if not include_private or workspace is None:
         return {}
-    from clear_record.cli.workspace import GLOSSARY, TRANSCRIBE_LOG, Workspace
+    from clear_record.pipeline.workspace import GLOSSARY, TRANSCRIBE_LOG, Workspace
 
     ws = Workspace.at(workspace)
     sections: dict[str, str] = {}

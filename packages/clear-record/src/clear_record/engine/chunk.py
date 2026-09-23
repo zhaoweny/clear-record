@@ -2,8 +2,8 @@
 
 Long meeting tapes are transcribed in fixed overlapping windows so that (a) the
 work is checkpointed and resumable, and (b) each unit of work is bounded. This
-module is pure timeline math + WAV slicing; orchestration and caching live in the
-CLI stage.
+module is pure timeline math + WAV slicing; orchestration and caching live in
+:mod:`clear_record.pipeline.transcription`.
 """
 
 from __future__ import annotations

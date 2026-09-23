@@ -4,14 +4,14 @@ BENCH-01: everything a benchmark shows is derived, at display time, from the run
 record, on four axes and no fifth:
 
 * **accuracy** -- WER against a reference transcript when one is configured,
-  otherwise coverage and mean confidence. The arithmetic is the CLI's
-  (:func:`clear_record.cli.stages.calibration_report`), reused verbatim, so the
+  otherwise coverage and mean confidence. The arithmetic is the pipeline's
+  (:func:`clear_record.pipeline.stages.calibration_report`), reused verbatim, so the
   terminal report and the console cannot disagree.
 * **speed** -- audio seconds over total wall seconds, presented as x-realtime.
   Both primitives come from the run's cost record (RUN-01); the ratio itself is
   never stored.
 * **memory** -- the peak RSS of the transcribe stage's decoder workers, measured
-  while they ran (see :mod:`clear_record.cli.transcription`). A platform that
+  while they ran (see :mod:`clear_record.pipeline.transcription`). A platform that
   cannot measure it reports ``None`` with a reason, never zero.
 * **fit** -- what ``--auto`` chose and the facts it had to work with, read back
   from the run meta the resolvers recorded.
@@ -21,9 +21,9 @@ Every axis is a dict, and an axis whose primitives are missing carries a
 recorded before the cost record existed, a run that failed before its first
 stage, or no run at all yields the same four axes -- never an exception.
 
-Layering: this is a ``service`` module, so it may import ``cli`` (it reuses the
-CLI's calibration arithmetic and the workspace reader). The ``bench`` subcommand
-is registered through the ``clear_record.commands`` entry point, so
+Layering: this is a ``service`` module, so it may import ``pipeline`` (it reuses
+the pipeline's calibration arithmetic and the workspace reader). The ``bench``
+subcommand is registered through the ``clear_record.commands`` entry point, so
 ``clear_record.cli`` never imports this module (ADR-0013) and the terminal and
 the console render the *same* dict.
 """
@@ -34,8 +34,8 @@ from pathlib import Path
 
 import click
 
-from clear_record.cli import stages
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core.i18n import deferred, tr
 from clear_record.core.paths import registry_path
 from clear_record.service.models import PipelineRun
@@ -81,7 +81,7 @@ def run_axes(
 def _accuracy_axis(directory: str | Path | None, reference: str | Path | None) -> dict:
     """WER against a reference, else coverage and mean confidence.
 
-    The numbers come from the CLI's one calibration implementation; an
+    The numbers come from the pipeline's one calibration implementation; an
     unreadable workspace or record is a reason, not a traceback.
     """
     axis: dict = {
@@ -180,7 +180,7 @@ def _memory_axis(directory: str | Path | None, cost: dict | None) -> dict:
 def _fit_axis(run: PipelineRun | None, cost: dict) -> dict:
     """What ``--auto`` chose, and the resolved facts the run worked with.
 
-    ``chose`` and ``explanations`` are the CLI resolver's own recorded words;
+    ``chose`` and ``explanations`` are the pipeline resolver's own recorded words;
     ``facts`` is the post-precedence profile and the cost record's backend,
     model, jobs, chunk size and machine description.
     """

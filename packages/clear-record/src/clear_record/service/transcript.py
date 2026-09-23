@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.stages import format_timestamp
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     Segment,
     load_json,
@@ -26,16 +27,9 @@ from clear_record.core import (
 from clear_record.service.models import Meeting
 
 
-def _fmt_ts(seconds: float) -> str:
-    """``HH:MM:SS.mmm`` for a segment start, matching the console's preview."""
-    m, s = divmod(max(0.0, float(seconds)), 60.0)
-    h, m = divmod(int(m), 60)
-    return f"{h:02d}:{m:02d}:{s:06.3f}"
-
-
 def _render(segments: list[Segment]) -> str:
     return "\n".join(
-        f"{_fmt_ts(seg.start)} [{seg.speaker or seg.source}] {seg.text}"
+        f"{format_timestamp(seg.start)} [{seg.speaker or seg.source}] {seg.text}"
         for seg in segments
     )
 

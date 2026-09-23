@@ -54,9 +54,15 @@ Date: 2026-09-13
   allowed internal edges — at this date `engine → core`, `providers → core`,
   `cli → {core, engine, providers}`, the edges between the four `cr_*` layers the
   collapse kept (ADR-0013 added `service` and `web` the next day, ADR-0016 and
-  ADR-0017 `tray` and `mcp`, so the guard's DAG is eight layers today) — and (c)
-  that `core`, `engine` and `providers` do not import `clear_record.cli`. It is
-  dependency-free, and it must genuinely fail when the rule is broken.
+  ADR-0017 `tray` and `mcp`, so the guard's DAG is nine layers today) — and (c)
+  that no layer outside `clear_record.cli` imports it: a rule that held for the
+  four layers this ADR named, was narrowed when ADR-0013 widened the guard to
+  `service`, which imported the command surface deliberately, and holds for every
+  layer outside `cli` since 2026-09-24, when the pipeline left the CLI package
+  and `ALLOWED_INTERNAL` lost the `service → cli` edge.
+  `test_no_layer_imports_the_cli` checks `core`, `engine`, `providers` and
+  `service` directly (see the Update below). It is dependency-free, and it must
+  genuinely fail when the rule is broken.
 - [DESIGN] The workspace is **kept** (root is still a virtual project with
   `members = ["packages/*"]`), so a future GUI/MCP server is a *new* member, not
   a reparenting. The root's aggregate extras now reference
@@ -127,3 +133,31 @@ Date: 2026-09-13
   moves the stage wiring out of the CLI package, which is what lets the
   `service → cli` edge go. Restate this clause and the guard together when it
   lands; until then the guard is the rule and the stronger clause is not.
+
+## Update (2026-09-24) — clause (c) restated, and the edge it waited for is gone
+
+- [FACT] **The 2026-09-19 Update's instruction above is discharged**: the
+  pipeline move has landed, and this restates the clause and the guard together.
+  The pipeline module (`C3`, [ADR-0030](0030-persistence-layer-and-the-restructure-order.md))
+  is `clear_record.pipeline` — a layer of its own in the guard's DAG, nine layers
+  where eight stood — and the stage wiring is no longer
+  `clear_record.cli.stages`.
+- [FACT] **`ALLOWED_INTERNAL` no longer carries `service → cli`.** The service
+  row is `{core, pipeline}`, and the ten modules the 2026-09-19 Update named as
+  importing the CLI package deliberately (`service.agent_flow`, `service.auto`,
+  `service.benchmark`, `service.diagnostics`, `service.glossary`,
+  `service.hello_tape`, `service.managed`, `service.runs`, `service.setup`,
+  `service.transcript`) reach the pipeline layer instead — none of them imports
+  the command surface any more.
+- [FACT] **Clause (c) holds again in the guard's own words — no layer outside
+  `clear_record.cli` imports it — and the coverage is worth stating exactly.**
+  `ALLOWED_INTERNAL` carries no edge into `cli`; `test_no_layer_imports_the_cli`
+  checks `core`, `engine`, `providers` and `service` directly; and the isolation
+  pass poisons `clear_record.cli` in those four layers' cases, so for them the
+  rule holds at runtime as well as through the static parse. The layers above
+  `service` — `web`, `tray` and `mcp` (ADR-0013 added `web`, ADR-0016 `tray`,
+  ADR-0017 `mcp`) — are held by the static edge test: their isolation cases
+  poison the surfaces they must not reach, which is not `cli`. Adding an
+  `import clear_record.cli` to a service module fails all three cli-guard tests
+  — `test_internal_import_edges[service]`, `test_no_layer_imports_the_cli` and
+  `test_layer_imports_in_isolation[service]`; removing it restores all three.

@@ -15,16 +15,17 @@ import pytest
 import soundfile as sf
 from click.testing import CliRunner
 
-from clear_record.cli import stages
+from clear_record.pipeline import stages
 from clear_record.cli.cli import _build_group, _pipeline_options
-from clear_record.cli.transcription import (
+from clear_record.pipeline.transcription import (
     ChunkReport,
     TranscriptionOptions,
     transcribe,
 )
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     ChunkScope,
+    JobEvent,
     ScopeError,
     Segment,
     Source,
@@ -87,13 +88,19 @@ class Harness:
             _text(self.wd / f"{name}.wav", freq=220.0 + 40.0 * i)
         stages.ingest(str(self.wd), split="mix")
         self.backend = CountingBackend()
+        # Every line the stage reports, in the order it reported them: the
+        # stage's own accounting is on the sink, the terminal's copy of it is
+        # the command surface's (and the stdout golden's).
+        self.events: list[JobEvent] = []
         monkeypatch.setattr(stages, "get_backend", lambda _id: self.backend)
 
     def run(self, **kwargs):
         """Run the stage once; return ``(segments, chunk_report, decode_count)``."""
         self.backend.calls = 0
+        self.events = []
         kwargs.setdefault("chunk_seconds", CHUNK_S)
         kwargs.setdefault("overlap_seconds", OVERLAP_S)
+        kwargs.setdefault("on_event", self.events.append)
         stages.transcribe(str(self.wd), "counting", **kwargs)
         _, meta = Workspace.at(self.wd).load_segments()
         report = ChunkReport(**meta["chunk_report"])
@@ -119,7 +126,7 @@ class Harness:
 
 # --- acceptance 1: strictly fewer chunks than today ------------------------- #
 def test_a_scoped_glossary_edit_redecodes_fewer_chunks_than_an_unscoped_one(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch
 ) -> None:
     """The measured before/after, pinned.
 
@@ -142,7 +149,6 @@ def test_a_scoped_glossary_edit_redecodes_fewer_chunks_than_an_unscoped_one(
 
     # The same kind of edit, scoped to one chunk of source `a` (range 5-6 s only
     # overlaps plan chunk (4, 7)).
-    capsys.readouterr()  # clear the earlier passes' output
     harness.set_glossary("ProjectY")
     report, calls = harness.run(rerun_sources=("a",), rerun_range="5-6")
     assert calls == 1, "only the scoped chunk re-decoded"
@@ -150,11 +156,18 @@ def test_a_scoped_glossary_edit_redecodes_fewer_chunks_than_an_unscoped_one(
     assert report.scoped is True
     assert report.scope == "sources=a range=0:00:05-0:00:06"
 
-    # And the run says what it cost, rather than leaving it to be inferred.
-    out = capsys.readouterr().out
-    assert "1 re-decoded, 7 reused" in out
-    assert "7 of the reused under an earlier glossary" in out
-    assert "still carry an earlier glossary" in out
+    # And the run says what it cost, rather than leaving it to be inferred: the
+    # lines are reported on the stage's sink (the terminal's copy of them is the
+    # stdout golden's), and the run's cost line still carries the pass's own
+    # tally, so a reader taking the newest event for a bar or a rate is told the
+    # count the pass ended on rather than the line's own zeros.
+    lines = [event.message for event in harness.events]
+    assert any("1 re-decoded, 7 reused" in line for line in lines), lines
+    assert any("7 of the reused under an earlier glossary" in line for line in lines)
+    assert any("still carry an earlier glossary" in line for line in lines)
+    cost = [event for event in harness.events if "re-decoded" in event.message][-1]
+    assert cost.stage == "transcribe"
+    assert (cost.index, cost.total, cost.reused) == (total, total, total - 1)
 
     # The carried chunks are honest: an unscoped run finishes applying the
     # glossary to exactly them.
@@ -257,7 +270,7 @@ def test_the_run_meta_records_the_cost(tmp_path, monkeypatch) -> None:
 def test_an_unknown_source_is_an_actionable_error(tmp_path, monkeypatch) -> None:
     harness = Harness(tmp_path, monkeypatch)
     harness.run()
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(stages.PipelineError) as excinfo:
         harness.run(rerun_sources=("typo",))
     message = str(excinfo.value)
     assert "typo" in message
@@ -269,7 +282,7 @@ def test_a_range_that_covers_no_chunk_is_an_actionable_error(
 ) -> None:
     harness = Harness(tmp_path, monkeypatch)
     harness.run()
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(stages.PipelineError) as excinfo:
         harness.run(rerun_range="1000-2000")
     message = str(excinfo.value)
     assert "selects no chunk" in message
@@ -286,7 +299,7 @@ def test_a_range_that_covers_no_chunk_does_not_invalidate_the_cache(
         p.name for p in Workspace.at(harness.wd).chunk_cache("a").directory.iterdir()
     )
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(stages.PipelineError):
         harness.run(rerun_range="1000-2000")
 
     after = sorted(
@@ -318,12 +331,12 @@ def test_the_transcription_module_refuses_an_unknown_source(tmp_path) -> None:
         )
 
 
-# --- the CLI-owned scope strings follow the installed catalog ---------------- #
-def test_the_cli_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> None:
-    """The strings ``cli/transcription.py`` owns go through ``tr()``.
+# --- the pipeline-owned scope strings follow the installed catalog ----------- #
+def test_the_pipeline_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> None:
+    """The strings ``pipeline/transcription.py`` owns go through ``tr()``.
 
     The zh_CN catalog carries all three; before the fix they were plain
-    f-strings, so a Chinese user read English for every CLI-owned scope error.
+    f-strings, so a Chinese user read English for every pipeline-owned scope error.
     """
     from clear_record.core import i18n
 
@@ -340,12 +353,12 @@ def test_the_cli_owned_scope_errors_are_translated(tmp_path, monkeypatch) -> Non
 
     harness = Harness(tmp_path, monkeypatch)
     harness.run()
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(stages.PipelineError) as excinfo:
         harness.run(rerun_sources=("typo",))
     assert "重新运行范围指定了清单中不存在的来源" in str(excinfo.value)
     assert "not in the manifest" not in str(excinfo.value)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(stages.PipelineError) as excinfo:
         harness.run(rerun_range="1000-2000")
     assert "没有选中" in str(excinfo.value)
     assert "selects no chunk" not in str(excinfo.value)

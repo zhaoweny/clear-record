@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.cli.workspace import Workspace, discover_audio
+from clear_record.pipeline.workspace import Workspace, discover_audio
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths
 from clear_record.service import Registry

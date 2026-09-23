@@ -61,13 +61,14 @@ uvx clear-record --help              # run without installing
 uv tool install clear-record         # or: pipx install clear-record
 ```
 
-Its internal layers (`core`, `engine`, `providers`, `cli`, then the console's
-`service`, `web`, `tray` and `mcp`) are `clear_record` subpackages, not separate
-distributions — see ADR-0012. The console layers are optional extras: `web`
-(FastAPI + htmx/Alpine), `tray` (PySide6) and `agents` (the MCP SDK), so a
-CLI-only install stays audio-only (ADR-0013/0016/0017). Transcription uses a
-native OS path where one exists and the system `whisper-cli` + a ggml plugin as
-the fallback (ADR-0005); `clear-record backends` reports what the machine can run.
+Its internal layers (`core`, `engine`, `providers`, `pipeline`, `cli`, then the
+console's `service`, `web`, `tray` and `mcp`) are `clear_record` subpackages,
+not separate distributions — see ADR-0012. The console layers are optional
+extras: `web` (FastAPI + htmx/Alpine), `tray` (PySide6) and `agents` (the MCP
+SDK), so a CLI-only install stays audio-only (ADR-0013/0016/0017). Transcription
+uses a native OS path where one exists and the system `whisper-cli` + a ggml
+plugin as the fallback (ADR-0005); `clear-record backends` reports what the
+machine can run.
 
 For development, work from a source checkout:
 
@@ -505,6 +506,7 @@ packages/clear-record → dist clear-record, import clear_record
   src/clear_record/core       backend-agnostic domain model (no vendor/ML code)
   src/clear_record/engine     audio I/O, cross-correlation alignment, reconcile (numpy + soundfile)
   src/clear_record/providers  per-vendor ASR adapters (apple · nvidia · amd · apple-speech)
+  src/clear_record/pipeline   the stage wiring and the machinery that runs it (chunking, workspace, --auto resolvers)
   src/clear_record/cli        the CLI implementation and the `clear-record` command
   src/clear_record/service    headless app service: SQLite registry, meetings, tape sets, runs, archive
   src/clear_record/web        the local console: FastAPI + server-rendered htmx/Alpine

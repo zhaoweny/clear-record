@@ -1,9 +1,12 @@
 """Structured progress events for the pipeline.
 
-A stage may report progress through an optional **sink**. With no sink attached
-the CLI's existing text output is the only reporting, so command-line behaviour
-is unchanged; the web/service consumer attaches a sink to drive a progress bar
-and an ETA, and a test attaches one to assert the sequence.
+A stage reports progress through an optional **sink**, and its own mid-stage
+lines travel the same way. With no sink attached a stage writes only its durable
+log: a line's text reaches stdout through the sink's optional ``line``
+capability, which the command surface attaches — so what a command prints is
+unchanged by whether a consumer is listening. The web/service consumer attaches
+a sink to drive a progress bar and an ETA, and a test attaches one to assert the
+sequence.
 
 The event shape is deliberately flat and small: a stage, an optional source, a
 1-based unit counter against a total, and the timing needed for an estimate.

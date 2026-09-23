@@ -15,8 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from clear_record.cli import cli, stages
+from clear_record.cli import cli
 from clear_record.core import Step, diagnostics as core_diagnostics, read_recent
+from clear_record.pipeline import stages
 
 
 @pytest.fixture(autouse=True)

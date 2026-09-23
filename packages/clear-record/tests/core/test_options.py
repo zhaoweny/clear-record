@@ -198,7 +198,7 @@ def test_resolvable_fields_cover_every_profile_and_env_knob() -> None:
 def test_cli_service_and_core_share_the_same_options_type() -> None:
     """The ADR-0017 seam: callers reach the run options without importing ``cli``,
     and the CLI/Service names are the same object, not copies."""
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
     from clear_record.service import PipelineOptions as ServiceOptions
 
     assert ServiceOptions is PipelineOptions

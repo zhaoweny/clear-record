@@ -6,7 +6,7 @@ The public workflow, carried over from the original concept, is:
 
 The core only *declares* the shape and each step's contract. Executing a step
 against real audio and a real ASR backend is the job of a provider (see
-``clear_record.providers``) wired in by the CLI.
+``clear_record.providers``) wired in by the pipeline layer.
 
 This declaration is the **single source of stage truth**: the CLI builds one
 subcommand per stage from it and the full-pipeline ``run`` iterates it, so the
@@ -94,7 +94,7 @@ class RunCancelled(Exception):
     """A run stopped because its cancel was requested (RUN-04).
 
     Raised where a pipeline checks its cancel signal — at a stage boundary in
-    :func:`clear_record.cli.stages.run`, and between chunks inside the transcribe
+    :func:`clear_record.pipeline.stages.run`, and between chunks inside the transcribe
     pool — so a cancellation lands on a boundary the work can be stopped at,
     never mid-write. The run's owner turns it into the run's terminal ``stopped``
     state; nothing else catches it, and a caller that is not running a pipeline

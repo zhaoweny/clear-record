@@ -17,8 +17,8 @@ that follows* a function of the request's locale rather than of whatever the
 process last spoke; a caller with no request (a test building a context
 directly) gets the locale it named. A **row builder** takes the locale when it
 renders a translated string into its own context — an upload guard's reason, the
-chip's label — and not otherwise; :func:`_auto_view` renders the CLI explanation
-without one, because the surface context that calls it has already spoken.
+chip's label — and not otherwise; :func:`_auto_view` renders the resolver's
+explanation without one, because the surface context that calls it has spoken.
 
 One group of names is read from :mod:`clear_record.web.app` rather than imported
 (:func:`_adapters`): the process probes the console binds there, and which the
@@ -253,11 +253,11 @@ def _auto_view(meta: dict | None) -> dict:
     """The run-explanation keys for the run fragment.
 
     ``profile`` / ``knobs`` are the **resolved** values the run meta recorded;
-    ``explanations`` is the CLI's own wording, reused verbatim, for whichever of
-    ``--backend auto`` / ``--auto`` ran (backend first, the CLI's order). The
-    meta records that wording as a stable ID+parameters (``message``); the
+    ``explanations`` is the resolver's own wording, reused verbatim, for whichever
+    of ``--backend auto`` / ``--auto`` ran (backend first, the resolver's order).
+    The meta records that wording as a stable ID+parameters (``message``); the
     console renders it with ``tr`` here, so the explanation is translated even
-    though the CLI composed it. A run recorded before ``message`` existed falls
+    though the pipeline composed it. A run recorded before ``message`` existed falls
     back to the English ``explanation``. Every key is empty when the meta has
     neither, so a run without auto renders unchanged.
     """
@@ -837,8 +837,8 @@ def minutes_rows(registry: Registry, slug: str) -> list[dict]:
 def backend_rows() -> list[dict]:
     """Each ASR backend's availability and its message node, in catalog order.
 
-    diagnostics.backend_status is the service's one probe (it reaches
-    providers through cli, which the web layer may not import); the console
+    diagnostics.backend_status is the service's one probe (it reaches providers
+    through the pipeline layer, which the web layer may not import); the console
     only renders the verdict and the reason, never recomputes them. The
     reason is a :class:`~clear_record.core.message.Message` JSON node, and
     the shared template renders it with `tr` at the boundary.
@@ -1144,7 +1144,7 @@ def models_context(locale: str) -> dict:
     """The transcription defaults: model, language, models dir, profiles.
 
     models_on_disk and DEFAULT_MODEL are the service's own reads
-    (re-exported from cli.auto), and profile_preview is the same resolver
+    (re-exported from pipeline.auto), and profile_preview is the same resolver
     the run form previews, so the page cannot disagree with a run.
     """
     _speaks(locale)

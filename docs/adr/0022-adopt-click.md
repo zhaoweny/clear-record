@@ -42,8 +42,11 @@ Date: 2026-09-15
   precedence lives in one mechanism instead of several modules.
 - [DECISION] `prog` stays `clear-record`. **`--help` output will change** — that
   break is accepted and deliberate.
-- [DECISION] The **default stdout of the pipeline stages stays byte-identical**:
-  the port is about the parser, and must not touch what the stages print.
+- [DECISION] The **commands' default stdout stays byte-identical**: the parser
+  port left what each command prints alone, and the extraction that later took
+  the printing out of the stages kept every byte — the stages print nothing and
+  the command surface renders every word of what they returned and reported.
+  `tests/cli/test_stage_stdout.py` is the pin, command by command.
 - [DECISION] `click` joins the base dist's runtime dependencies, and the packaging
   guard (`test_packaging.py`'s `RUNTIME_DEPS`) is widened to say so.
 

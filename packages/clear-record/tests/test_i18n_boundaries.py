@@ -22,9 +22,9 @@ import click
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.cli import stages
+from clear_record.pipeline import stages
 from clear_record.cli.cli import _build_group, _split_value
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     PipelineOptions,
     RecordDocument,
@@ -278,14 +278,14 @@ def test_the_quarantine_keeps_the_detail_english(pseudo, tmp_path) -> None:
     assert stored in error
 
 
-def test_the_console_translates_the_cli_auto_explanation(pseudo) -> None:
-    """``--auto``'s explanation is composed in the CLI but shown by the console.
+def test_the_console_translates_the_pipeline_auto_explanation(pseudo) -> None:
+    """``--auto``'s explanation is composed in the pipeline but shown by the console.
 
     The resolvers keep it English for the terminal and the run meta; the meta
     also records the stable ID + parameters, and the console renders *that* with
     ``tr``, so the explanatory UI text is translated where the user reads it.
     """
-    from clear_record.cli.auto import AutoProbe, resolve_auto
+    from clear_record.pipeline.auto import AutoProbe, resolve_auto
     from clear_record.web.app import _auto_view
 
     choice = resolve_auto(

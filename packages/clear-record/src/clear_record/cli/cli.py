@@ -9,9 +9,9 @@ The parser is **Click** (ADR-0022). The two properties the port must keep are:
 - the subcommand surface is **derived from** :func:`pipeline_spec` — the built-in
   stage commands are added in a loop over ``pipeline_spec().stages``, exactly as
   the ``run`` dispatch is, so the CLI and the domain still read one declaration;
-- the stage commands' **default stdout is byte-identical**: the stages print
-  nothing and this module renders every word of what they returned and reported,
-  pinned command by command in ``tests/cli/test_stage_stdout.py``.
+- the commands' **default stdout is byte-identical**: the stages print nothing
+  and this module renders every word of what they returned and reported, pinned
+  command by command in ``tests/cli/test_stage_stdout.py``.
 
 A run knob — its flag spelling, its ``CR_*`` binding, its type and its ``--help``
 text — is declared once, in ``core.options.RUN_KNOBS``; the options for

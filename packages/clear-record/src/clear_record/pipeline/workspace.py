@@ -490,12 +490,15 @@ def report_line(
     the source it is about, the line's text in ``message`` (byte for byte what the
     command surface prints), and the counters described below.
 
-    **One unit base per stage.** The console draws its bar from the *newest*
-    event of a run's stream (``RunState.summary``, the "N / M" beside it, and the
-    rate ``_run_speed_so_far`` divides by), so a line that reported its own unit —
-    which source it is, which chunk of that source — would move that bar
-    backwards the moment it landed. A line therefore reports on the base its
-    stage already reports on:
+    **One unit base per stage's bar.** The console draws its bar from the
+    *newest* event of a run's stream (``RunState.summary``, the "N / M" beside
+    it, and the rate ``_run_speed_so_far`` divides by), so a line that reported a
+    unit finer than its stage's — a chunk of one source, under a pass that counts
+    chunks across all of them — would move that bar backwards the moment it
+    landed. A line therefore reports on the base its stage already reports on,
+    and where the stage's base is that coarse the line's own subject *is* that
+    base: ``diarize`` counts sources, one line per source, and states
+    ``index``/``total`` over them.
 
     - ``report`` — the progress report the line belongs to (the chunk it just
       finished): the line goes out as a copy of that event, with the line's own
@@ -506,9 +509,8 @@ def report_line(
       the final tally — states the counters it has (``index``/``total``/``reused``).
     - the per-source facts are ``source`` and the line's own text ("a chunk 3/4
       [4-7s] -> 1 segment(s)"), which is where a reader of one source's line
-      wants them. That is a deliberate narrowing of the payload this ticket's
-      census listed: ``index``/``total`` cannot carry both the console's bar and
-      a per-source ordinal.
+      wants them: ``index``/``total`` carry the console's bar, so a per-source
+      ordinal travels in the line's text rather than in a field of its own.
 
     The line's *kind*, and the window it covers where it has one, are part of
     that text: ``JobEvent`` is one of the frozen boundary dataclasses of ADR-0030,

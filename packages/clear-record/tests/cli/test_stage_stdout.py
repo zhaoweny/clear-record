@@ -1,20 +1,20 @@
 """The commands' default stdout, pinned byte for byte.
 
-``cli/cli.py`` states the contract — the port to a new parser changed the
-parser, never what a stage prints, so the stages' default stdout stays
-byte-identical — and nothing enforced it: the suite's only exact-stdout
-assertion was an *empty* output (``test_diagnostics_cli``), and every other
-stage assertion is a substring check. This module is the pin: the eight
-stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
+``cli/cli.py`` states the contract — the stages print nothing and the command
+surface renders every word of what they returned and reported, so the commands'
+default stdout is byte-identical — and nothing enforced it: the suite's only
+exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
+every other stage assertion is a substring check. This module is the pin: the
+eight stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
 actually types, and the ``synth`` development command.
 
 What makes it a stable pin rather than a flaky one:
 
 - ``CR_JOBS=1``: the chunk pool is then serial, so the lines the transcriber
   reports keep one order — the pool's interleaving is what would otherwise
-  move. (Since 202 the stages print nothing at all: a line is reported on the
-  stage's sink, which the command surface renders to stdout and which
-  ``Workspace.log`` keeps in ``transcribe.log``.)
+  move. (The stages print nothing at all: a line is reported on the stage's
+  sink, which the command surface renders to stdout and which ``Workspace.log``
+  keeps in ``transcribe.log``.)
 - a **cold** chunk cache (``CR_CACHE_DIR`` under the test's ``tmp_path``, which
   does not exist yet), and one fresh workspace per block, so no command's
   output depends on what an earlier one left behind — the pending/cached/

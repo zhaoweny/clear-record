@@ -7,8 +7,9 @@ cancel signal the transcribe pool takes off the caller's sink; the model
 provisioning (``prepare_model`` / ``download_ggml_model``) that ``service``
 reaches the providers through; ``calibration_report``, whose numbers the
 `calibrate` command writes into ``export/calibration.json``; and
-``format_timestamp``, the one ``HH:MM:SS.mmm`` the export serializers and the
-command surface's transcript preview both render.
+``format_timestamp``, the one ``HH:MM:SS.mmm`` the Markdown serializer renders
+with the command surface's transcript preview — the SRT/VTT renderers go through
+``_srt_tc``, which writes the comma form.
 
 A stage **returns** what it produced — the record, the artifact set, the report
 of what it did — and reports its progress through the sink it is handed; nothing

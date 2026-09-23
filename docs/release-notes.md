@@ -21,7 +21,11 @@ unchanged: recordings, models and the registry are local files, and everything
 works offline once your backends and models are provisioned (the only network
 request the tool makes on its own is the first-use model download).
 
-### What 0.3.0 adds
+### What 0.3.0 ships
+
+The bullets below are what the release offers. Those tagged **carried from
+`0.2.0`** are capabilities a published `0.2.0` install already has; the rest are
+new or extended in this release.
 
 - **A run queue with live status.** The console's **Activity** page (`/activity`)
   shows the runs in flight and the most recently finished runs across every
@@ -47,29 +51,30 @@ request the tool makes on its own is the first-use model download).
   `--rerun-range`) re-decodes only the chunks it selects and reuses every other
   chunk from the cache. **An edit with no scope still re-decodes every chunk of
   every source** — the glossary is the decoder's initial prompt, so any chunk's
-  output can move; what is new is that you can say which part to re-decode instead
-  of paying for all of it. The scope is a command-line option: the console and the
+  output can move; the scope is how you say which part to re-decode instead of
+  paying for all of it. The scope is a command-line option: the console and the
   MCP tools do not offer it (`cli/cli.py`, `cli/stages.py`, `core.ChunkScope`,
-  `engine/text.py`).
+  `engine/text.py`). **Carried from `0.2.0`.**
 - **Profiles and `--auto`.** The built-in decoder presets (`fast`, `balanced`,
   `accurate`) trade decoder effort at a fixed model; the opt-in `--auto` flag
   picks a profile and a model and explains the choice; `--backend auto` picks the
   first available ASR backend. `--auto` never downloads a model
-  (`core/options.py`, `cli/auto.py`, `cli/cli.py`).
+  (`core/options.py`, `cli/auto.py`, `cli/cli.py`). **Carried from `0.2.0`.**
 - **The MCP tuning loop.** The stdio MCP server exposes the loop as tools — read
   the transcript, write candidate terms, start a run with an explicit
   profile/backend/model or let the auto resolvers choose — so a harness, not the
-  app, does the model work. Its surface is 22 tools (`mcp/server.py`).
+  app, does the model work. Its surface is 22 tools (`mcp/server.py`). **Carried
+  from `0.2.0`.**
 - **The archive view.** The project's **Meetings** tab lists its archives (a copy
   plus a sha256 manifest); each row checks its archive as it appears, and the
   **Verify** button re-runs the check (`web/templates/_archives.html`,
-  `web/app.py`, `service/archive.py`).
+  `web/app.py`, `service/archive.py`). **Carried from `0.2.0`.**
 - **A tape upload that starts only when there is room.** An upload into a managed
   workspace is refused when the workspace has no room for the declared size; the
   body is copied to a scratch file and moved into place only once it is complete,
   a failure removes the partial file and leaves no tape behind, and a scratch file
   left by a killed process is refused on reuse — resume is not built
-  (`service/managed.py`, `web/app.py`).
+  (`service/managed.py`, `web/app.py`). **Carried from `0.2.0`.**
 - **The registry, with no separate migration step.** An ordinary start brings the
   schema current. The SQLite registry is mapped with the SQLAlchemy ORM (with the
   Core expression kept where a statement must be exactly what the database does),

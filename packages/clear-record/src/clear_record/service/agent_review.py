@@ -1,21 +1,17 @@
-"""The meeting-scoped agent-task surface: launch, review, promote.
+"""The meeting-scoped draft surface: what a harness writes, and what a human accepts.
 
-:mod:`clear_record.service.agent` owns the runner seam and
-:mod:`clear_record.service.agent_tasks` the task kinds. This module is the third
-piece ADR-0018 implies but the seam alone does not provide: **what an accepted
-draft of each kind actually produces**, and the meeting-scoped operations a
-console or an agent actually calls.
+:mod:`clear_record.service.agent_drafts` owns the store — a version chain with
+author provenance. This module is the second half: **what accepting a version of
+each kind actually produces**, and the meeting-scoped operations a console or an
+MCP client actually calls.
 
 Two halves:
 
-- :class:`MeetingAgent` packages a meeting's three tasks from its workspace
-  transcript and the project's confirmed-term glossary snapshot, launches one
-  with the configured runner (or an injected one), and lists/reads the drafts
-  written under ``<workspace>/agent/``.
-- :func:`promote_draft` is the typed promotion behind an acceptance. A bare
-  ``accept_draft`` flips a flag and changes nothing (which is exactly the gap
-  this module closes); promotion makes the acceptance **mean** something per
-  kind:
+- :class:`MeetingAgent` reads a meeting's chains under ``<workspace>/agent/``,
+  opens one with what a harness wrote, and decides a version on the human's
+  behalf.
+- :func:`promote_draft` is the typed promotion behind an acceptance, and it is
+  what makes an acceptance **mean** something per kind:
 
   - ``glossary_collection`` → the proposed terms become ``candidate`` registry
     terms (``added_by="agent"``). They do **not** become ``confirmed``: only a
@@ -23,23 +19,22 @@ Two halves:
     confirming is the owner's per-term act, not a bulk side effect of accepting a
     draft full of proposals.
   - ``transcript_check`` → the corrected revision is written as a **new file**
-    (``revision.txt`` beside the draft) plus its change list (``changes.json``),
+    (``revision.txt`` beside the chain) plus its change list (``changes.json``),
     and registered as a ``transcript_revision`` artifact. The reconciled
     ``record.json`` is never overwritten in place.
-  - ``minutes`` → the Markdown minutes body is written beside the draft
+  - ``minutes`` → the Markdown minutes body is written beside the chain
     (``minutes.md``) and registered as the meeting's ``minutes`` artifact.
 
-**Promotion is explicit and idempotent.** The outcome is recorded in the run's
-``run.json`` under ``promotion`` and read back through
-:attr:`clear_record.service.agent.Draft.promotion`; a second
-:func:`promote_draft` on the same draft returns the recorded outcome without
-repeating a side effect. The write helpers are independently idempotent too (a
-term already in the registry is skipped, an artifact path already registered is
-reused), so a promotion interrupted between its side effect and its record is
-still safe to repeat.
+**Promotion is explicit and idempotent.** The decision and its outcome are one
+write into the chain's newest version, and a version that already carries a
+decision is never decided again — so a repeated accept cannot run a side effect
+twice. The write helpers are independently idempotent too (a term already in the
+registry is skipped, an artifact path already registered is reused), so a
+promotion interrupted between its side effect and its record is still safe to
+repeat.
 
-Depends only on ``core``, ``service`` and ``cli`` (the layering DAG); nothing
-here names an agent runtime or a vendor.
+Depends only on ``core`` and ``service`` (the layering DAG); nothing here names a
+model, an endpoint or a runtime.
 """
 
 from __future__ import annotations
@@ -53,31 +48,24 @@ from pathlib import Path
 from typing import Any
 
 from clear_record.core.i18n import deferred
-from clear_record.service.agent import (
-    AgentConfig,
-    AgentTaskError,
+from clear_record.service.agent_drafts import (
+    DRAFT_FILENAME,
     Draft,
-    Runner,
-    default_config,
-    read_draft,
-    reject_draft,
-    run_task,
+    StaleVersion,
+    TASK_KINDS,
+    append_version,
+    list_drafts,
+    record_review,
+    require_shape,
+    start_draft,
 )
-from clear_record.service.agent_tasks import (
-    glossary_collection_task,
-    minutes_task,
-    transcript_check_task,
-    unknown_kind,
-)
-from clear_record.service.glossary import project_snapshot
 from clear_record.service.models import Meeting
 from clear_record.service.schemas import ArtifactOut, ProvenanceOut, Shape
 from clear_record.service.store import Registry
-from clear_record.service.transcript import read_transcript
 
-#: The subdirectory of a meeting workspace holding its agent-task runs. It is
-#: not the pipeline's (``AUDIO_DIR``/``export``/``chunks``) and holds no audio,
-#: so ``discover_audio`` never sees it.
+#: The subdirectory of a meeting workspace holding its agent drafts. It is not
+#: the pipeline's (``AUDIO_DIR``/``export``/``chunks``) and holds no audio, so
+#: ``discover_audio`` never sees it.
 AGENT_DIRNAME = "agent"
 
 
@@ -85,8 +73,8 @@ def _now() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
 
 
-class MeetingAgentError(AgentTaskError):
-    """A meeting cannot launch the task, in the service's own words.
+class MeetingAgentError(RuntimeError):
+    """A meeting cannot open a draft, in the service's own words.
 
     The message is a **stable ID plus parameters** (:func:`deferred` marks the ID
     for the catalog), so a presentation boundary renders it with
@@ -99,251 +87,272 @@ class MeetingAgentError(AgentTaskError):
         super().__init__(msgid.format(**params) if params else msgid)
 
 
-class PromotionError(AgentTaskError):
-    """A draft cannot be promoted (no workspace, or no promoter for its kind)."""
+class PromotionError(MeetingAgentError):
+    """A draft cannot be promoted (no workspace, or a value its kind cannot use)."""
+
+
+def _stale(exc: StaleVersion) -> MeetingAgentError:
+    """A decision that named a version the harness has since superseded."""
+    return MeetingAgentError(
+        deferred(
+            "the version you read ({version}) is not the newest one ({newest}), so "
+            "the decision was not recorded"
+        ),
+        version=exc.version,
+        newest=exc.newest,
+    )
 
 
 def _agent_dir(meeting: Meeting) -> Path:
     if not meeting.workspace_path:
         raise MeetingAgentError(
             deferred(
-                "meeting {meeting} has no workspace; set one before running an "
-                "agent task"
+                "meeting {meeting} has no workspace; set one before writing an "
+                "agent draft"
             ),
             meeting=meeting.slug,
         )
     return Path(meeting.workspace_path) / AGENT_DIRNAME
 
 
-# --- how each kind's task is packaged --------------------------------------- #
-# A uniform signature over the declared context sections, so ``MeetingAgent.task``
-# is a lookup and never a fallthrough: a kind added to ``TASK_KINDS`` without a
-# builder here fails loudly instead of being silently packaged as another kind.
-
-
-def _glossary_collection(
-    project: str, meeting: str, *, transcript: str, glossary: str, context: str
-):
-    return glossary_collection_task(
-        project, meeting, transcript=transcript, glossary=glossary
-    )
-
-
-def _transcript_check(
-    project: str, meeting: str, *, transcript: str, glossary: str, context: str
-):
-    return transcript_check_task(
-        project, meeting, transcript=transcript, glossary=glossary, context=context
-    )
-
-
-def _minutes(
-    project: str, meeting: str, *, transcript: str, glossary: str, context: str
-):
-    return minutes_task(
-        project, meeting, transcript=transcript, glossary=glossary, context=context
-    )
-
-
-#: The task builder per kind — the one place a kind and its packaged sections
-#: meet, mirroring :data:`PROMOTERS` for the review half.
-TASKS: dict[str, Callable[..., object]] = {
-    "glossary_collection": _glossary_collection,
-    "transcript_check": _transcript_check,
-    "minutes": _minutes,
-}
-
-
 class MeetingAgent:
-    """The agent-task operations for one meeting.
+    """The draft operations for one meeting.
 
-    ``runner`` (tests, embedders) wins over ``config``, which wins over the
-    process's resolved default (:func:`~clear_record.service.agent.default_config`).
     Holding the meeting and the registry here keeps every operation a one-liner at
     the call site and gives the console and the MCP adapter one shared
     implementation.
     """
 
-    def __init__(
-        self,
-        registry: Registry,
-        meeting: Meeting,
-        *,
-        runner: Runner | None = None,
-        config: AgentConfig | None = None,
-    ) -> None:
+    def __init__(self, registry: Registry, meeting: Meeting) -> None:
         self.registry = registry
         self.meeting = meeting
-        self.runner = runner
-        self.config = config
 
     # --- reading ----------------------------------------------------------- #
     @property
     def directory(self) -> Path:
-        """The meeting's agent-run directory (``<workspace>/agent``)."""
+        """The meeting's draft directory (``<workspace>/agent``)."""
         return _agent_dir(self.meeting)
 
-    def configured(self) -> bool:
-        """Whether a runner is available for a launch, without calling one."""
-        if self.runner is not None:
-            return True
-        config = self.config if self.config is not None else default_config()
-        return bool(config.endpoint or config.commands)
-
     def drafts(self) -> list[Draft]:
-        """Every agent draft this meeting produced, newest first.
+        """Every draft chain this meeting owns, newest version first.
 
-        A run directory written by another meeting (or a corrupt one) is skipped
+        A directory written by another meeting (or a corrupt one) is skipped
         rather than failing the whole listing: this is a view over files.
         """
-        directory = self.directory
-        if not directory.is_dir():
-            return []
-        found: list[Draft] = []
-        for run_dir in sorted(directory.iterdir()):
-            if not (run_dir / "run.json").is_file():
-                continue
-            try:
-                draft = read_draft(run_dir)
-            except (OSError, ValueError, KeyError, TypeError):
-                continue
-            if (
-                draft.project == self.meeting.project_slug
-                and draft.meeting == self.meeting.slug
-            ):
-                found.append(draft)
-        found.sort(
-            key=lambda draft: (draft.provenance.started_at, draft.provenance.run_id),
-            reverse=True,
-        )
-        return found
+        return [
+            draft
+            for draft in list_drafts(self.directory)
+            if draft.project == self.meeting.project_slug
+            and draft.meeting == self.meeting.slug
+        ]
 
-    def draft(self, run_id: str) -> Draft | None:
-        """The meeting's draft with this run id, or ``None``."""
+    def draft(self, draft_id: str) -> Draft | None:
+        """The meeting's chain with this id, or ``None``."""
         return next(
-            (draft for draft in self.drafts() if draft.provenance.run_id == run_id),
-            None,
+            (draft for draft in self.drafts() if draft.draft_id == draft_id), None
         )
 
     def minutes_artifact(self):
         """The meeting's newest accepted minutes artifact, or ``None``."""
         return self.registry.latest_artifact(self.meeting.id, "minutes")
 
-    # --- launching --------------------------------------------------------- #
-    def task(self, kind: str):
-        """Package ``kind`` from the meeting's transcript, glossary and context.
+    # --- writing ----------------------------------------------------------- #
+    def write(
+        self,
+        kind: str,
+        value: Any,
+        *,
+        author: str,
+        draft_id: str | None = None,
+        clock: Callable[[], str] = _now,
+    ) -> Draft:
+        """Record what a harness (or a human) produced for ``kind``.
 
-        A lookup in :data:`TASKS`, never a fallthrough: an unknown kind (including
-        one a future ``TASK_KINDS`` adds without a builder) is a named error, so a
-        new kind can never be silently packaged as another.
+        ``value`` is stored as it came — the app did not produce it and does not
+        second-guess it. ``draft_id`` appends to an existing chain; without it a
+        new chain is opened. The author identity is the writer's own declaration
+        and is recorded on the version.
         """
-        builder = TASKS.get(kind)
-        if builder is None:
-            problem = unknown_kind(kind)
-            raise MeetingAgentError(problem.msgid, **dict(problem.params))
-        transcript = self.transcript_text()
-        glossary = project_snapshot(self.registry, self.meeting.project_slug).text
-        return builder(
-            self.meeting.project_slug,
-            self.meeting.slug,
-            transcript=transcript,
-            glossary=glossary,
-            context=self.context_text(),
-        )
-
-    def transcript_text(self) -> str:
-        """The meeting's transcript text, or an actionable error naming the meeting."""
-        try:
-            return read_transcript(self.meeting).text
-        except FileNotFoundError as exc:
-            raise MeetingAgentError(
-                deferred("no transcript for {project}/{meeting} yet: {detail}"),
+        directory = self.directory
+        if draft_id is None:
+            if kind not in TASK_KINDS:
+                raise MeetingAgentError(
+                    deferred("unknown draft kind {kind}; known kinds: {known}"),
+                    kind=kind,
+                    known=", ".join(TASK_KINDS),
+                )
+            problem = require_shape(kind, value)
+            if problem is not None:
+                raise MeetingAgentError(
+                    deferred("the {kind} draft cannot be written: {detail}"),
+                    kind=kind,
+                    detail=problem,
+                )
+            return start_draft(
+                directory,
+                kind=kind,
                 project=self.meeting.project_slug,
                 meeting=self.meeting.slug,
-                detail=str(exc),
-            ) from exc
-
-    def context_text(self) -> str:
-        """The meeting/project metadata and notes, as the task's ``context``."""
-        project = self.registry.get_project(self.meeting.project_slug)
-        lines = [
-            f"project: {self.meeting.project_slug}"
-            + (f" ({project.name})" if project is not None else ""),
-            f"meeting: {self.meeting.slug} ({self.meeting.title})",
-        ]
-        if self.meeting.recorded_at:
-            lines.append(f"recorded_at: {self.meeting.recorded_at}")
-        if project is not None and project.notes.strip():
-            lines.append(f"project notes: {project.notes.strip()}")
-        if self.meeting.notes.strip():
-            lines.append(f"meeting notes: {self.meeting.notes.strip()}")
-        return "\n".join(lines)
-
-    def launch(self, kind: str) -> Draft:
-        """Run ``kind`` and return its draft (nothing is promoted here)."""
-        return run_task(
-            self.task(kind),
-            self.directory,
-            runner=self.runner,
-            config=self.config,
-        )
+                value=value,
+                author=author,
+                clock=clock,
+            )
+        target = self.draft(draft_id)
+        if target is None:
+            raise MeetingAgentError(
+                deferred("no draft {draft} for {meeting}"),
+                draft=draft_id,
+                meeting=self.meeting.slug,
+            )
+        problem = require_shape(target.kind, value)
+        if problem is not None:
+            raise MeetingAgentError(
+                deferred("the {kind} draft cannot be written: {detail}"),
+                kind=target.kind,
+                detail=problem,
+            )
+        return append_version(target.path, value=value, author=author, clock=clock)
 
     # --- reviewing --------------------------------------------------------- #
-    def promote(self, draft: Draft) -> Draft:
-        """Accept ``draft`` and produce what its kind's acceptance means."""
-        return promote_draft(draft, registry=self.registry, meeting=self.meeting)
+    def promote(
+        self,
+        draft: Draft,
+        *,
+        author: str = "human",
+        version: int | None = None,
+        clock: Callable[[], str] = _now,
+    ) -> Draft:
+        """Accept ``draft``'s ``version``; produce what its acceptance means."""
+        try:
+            return promote_draft(
+                draft,
+                registry=self.registry,
+                meeting=self.meeting,
+                author=author,
+                version=version,
+                clock=clock,
+            )
+        except StaleVersion as exc:
+            raise _stale(exc) from exc
 
-    def reject(self, draft: Draft) -> Draft:
-        """Reject ``draft``, keeping it and its provenance on disk."""
-        return reject_draft(draft)
+    def reject(
+        self,
+        draft: Draft,
+        *,
+        author: str = "human",
+        version: int | None = None,
+        clock: Callable[[], str] = _now,
+    ) -> Draft:
+        """Reject a version, keeping the whole chain on disk as history."""
+        try:
+            return record_review(
+                draft, "rejected", author=author, version=version, clock=clock
+            )
+        except StaleVersion as exc:
+            raise _stale(exc) from exc
+
+    def legacy_drafts(self) -> tuple[str, ...]:
+        """The 0.2 agent runs still on disk under this meeting's agent directory.
+
+        The 0.2 in-process path wrote one directory per run
+        (``<workspace>/agent/<kind>-<run_id>/``, with ``run.json``). ADR-0031's
+        store does not read those and does not migrate them: they are named here
+        so a surface can say **what** is not part of the chain instead of leaving
+        it silently invisible.
+        """
+        directory = self.directory
+        if not directory.is_dir():
+            return ()
+        return tuple(
+            sorted(
+                child.name
+                for child in directory.iterdir()
+                if (child / "run.json").is_file()
+                and not (child / DRAFT_FILENAME).is_file()
+            )
+        )
+
+
+# --- the boundary views (the console's and MCP's shared shape) -------------- #
+
+
+class VersionView(Shape):
+    """One link of a chain, as a reader is told about it.
+
+    The provenance and the decision, not the value: a caller that wants the text
+    a version holds reads the draft's ``value`` (the newest), and a chain's
+    history is there to say **who wrote it and what was decided**, which is what
+    the store records about a run it did not perform.
+    """
+
+    version: int
+    author: str
+    written_at: str
+    decision: str | None
+    reviewed_by: str | None
+    reviewed_at: str | None
+    promotion: dict[str, Any] | None
 
 
 class DraftView(Shape):
-    """A draft as the console and the MCP tools both report it (ADR-0030).
+    """A draft chain as the console and the MCP tools both report it (ADR-0030).
 
-    Provenance and value are included whole: a reviewer needs the runner, model
-    and hashes that justify a draft as much as its content, and a machine caller
-    needs the structured value, not a rendering of it. ``value`` and ``promotion``
-    stay JSON-shaped — their schema belongs to the task kind, not to this view.
+    ``provenance`` and ``value`` are the newest version's — what a reviewer acts
+    on — and ``versions`` is the whole chain. ``value`` and ``promotion`` stay
+    JSON-shaped: their schema belongs to the kind, not to this view.
     """
 
-    run_id: str
+    draft_id: str
     kind: str
+    version: int
     review_state: str
     accepted: bool
     rejected: bool
     promotion: dict[str, Any] | None
     provenance: ProvenanceOut
     value: Any
-    run_dir: str
+    versions: list[VersionView]
+    draft_dir: str
 
 
-class AgentTasksOut(Shape):
-    """A meeting's agent-task surface: the kinds, the drafts, the minutes.
+class AgentDraftsOut(Shape):
+    """A meeting's draft surface: the kinds, the chains, the minutes.
 
     Shared by the JSON API and the MCP tool, so the browser and an agent read one
-    shape. ``configured`` says whether a runner is available at all, and
-    ``minutes`` is the accepted minutes artifact, or ``None`` until one exists.
+    shape. ``minutes`` is the accepted minutes artifact, or ``None`` until one
+    exists.
     """
 
-    tasks: list[str]
-    configured: bool
+    kinds: list[str]
     drafts: list[DraftView]
     minutes: ArtifactOut | None
 
 
 def describe_draft(draft: Draft) -> DraftView:
-    """A draft as declared data (the console's and MCP's shared view)."""
+    """A draft chain as declared data (the console's and MCP's shared view)."""
     return DraftView(
-        run_id=draft.provenance.run_id,
+        draft_id=draft.draft_id,
         kind=draft.kind,
+        version=draft.version,
         review_state=draft.review_state,
         accepted=draft.accepted,
         rejected=draft.rejected,
         promotion=draft.promotion,
         provenance=ProvenanceOut(**dataclasses.asdict(draft.provenance)),
         value=draft.value,
-        run_dir=str(draft.run_dir),
+        versions=[
+            VersionView(
+                version=number,
+                author=version.provenance.author,
+                written_at=version.provenance.written_at,
+                decision=version.decision,
+                reviewed_by=version.reviewed_by,
+                reviewed_at=version.reviewed_at,
+                promotion=version.promotion,
+            )
+            for number, version in enumerate(draft.versions, start=1)
+        ],
+        draft_dir=str(draft.run_dir),
     )
 
 
@@ -383,7 +392,7 @@ def _promote_glossary(
     value = draft.value if isinstance(draft.value, dict) else {}
     proposed = value.get("terms") or []
     existing = {term.term for term in registry.list_terms(meeting.project_slug)}
-    note = f"agent draft {draft.provenance.run_id}"
+    note = f"agent draft {draft.draft_id} by {draft.provenance.author}"
     added: list[str] = []
     skipped: list[str] = []
     for item in proposed:
@@ -426,7 +435,8 @@ def _promote_transcript_check(
         json.dumps(
             {
                 "changes": changes,
-                "provenance": dataclasses.asdict(draft.provenance),
+                "author": draft.provenance.author,
+                "written_at": draft.provenance.written_at,
             },
             indent=2,
             ensure_ascii=False,
@@ -465,7 +475,7 @@ def _promote_minutes(
 
 
 #: What an acceptance produces, per kind. Adding a kind means adding a promoter
-#: here (and a test), not editing the seam.
+#: here (and a test), not editing the store.
 PROMOTERS: dict[str, Callable[..., dict]] = {
     "glossary_collection": _promote_glossary,
     "transcript_check": _promote_transcript_check,
@@ -478,42 +488,62 @@ def promote_draft(
     *,
     registry: Registry,
     meeting: Meeting,
+    author: str = "human",
+    version: int | None = None,
     clock: Callable[[], str] = _now,
 ) -> Draft:
-    """Accept ``draft`` and promote it into what its kind produces.
+    """Accept ``draft``'s ``version`` and promote it into what its kind produces.
 
-    Idempotent: a draft whose ``run.json`` already carries a ``promotion`` record
-    is returned as-is, with no second side effect. The flag flip and the record
-    are one write, so the accepted state and its outcome never disagree.
+    ``version`` names the version the human read; a draft whose harness has since
+    appended another one is refused (:class:`~clear_record.service.StaleVersion`)
+    **before** any side effect runs, so a promotion can never apply text nobody
+    reviewed.
+
+    Idempotent: a version that already carries a decision is returned as-is, with
+    no second side effect. The decision and the promotion's outcome are one
+    write, so the accepted state and what it produced never disagree.
     """
-    if draft.promotion is not None:
+    if version is not None and version != draft.version:
+        raise StaleVersion(version=version, newest=draft.version)
+    if not draft.current.pending:
         return draft
+    problem = require_shape(draft.kind, draft.value)
+    if problem is not None:
+        # A chain written before this check existed, or by hand: promoting it
+        # would register an artifact that is not the thing its kind promises.
+        raise PromotionError(
+            deferred("the {kind} draft cannot be accepted: {detail}"),
+            kind=draft.kind,
+            detail=problem,
+        )
     promoter = PROMOTERS.get(draft.kind)
     if promoter is None:  # pragma: no cover - TASK_KINDS and PROMOTERS agree
         raise PromotionError(
-            deferred("no promotion is defined for task kind {kind}"), kind=draft.kind
+            deferred("no promotion is defined for draft kind {kind}"), kind=draft.kind
         )
     _agent_dir(meeting)  # refuses a meeting with no workspace
     summary = promoter(draft, registry=registry, meeting=meeting)
     promotion = {"kind": draft.kind, "at": clock(), "summary": summary}
-    document = json.loads(draft.provenance_path.read_text(encoding="utf-8"))
-    document["review_state"] = "accepted"
-    document["promotion"] = promotion
-    draft.provenance_path.write_text(
-        json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    return record_review(
+        draft,
+        "accepted",
+        author=author,
+        promotion=promotion,
+        version=version,
+        clock=clock,
     )
-    return dataclasses.replace(draft, review_state="accepted", promotion=promotion)
 
 
 __all__ = [
     "AGENT_DIRNAME",
-    "AgentTasksOut",
+    "AgentDraftsOut",
     "DraftView",
     "MeetingAgent",
     "MeetingAgentError",
     "PROMOTERS",
     "PromotionError",
-    "TASKS",
+    "TASK_KINDS",
+    "VersionView",
     "describe_draft",
     "promote_draft",
 ]

@@ -1124,7 +1124,7 @@ class RunManager:
         2. Otherwise the **project's confirmed-term snapshot** wins **when it has
            terms**: it is written to the meeting's workspace ``glossary.txt``, so
            a glossary edit reaches the next run with no extra wiring (the
-           ADR-0018 tuning loop).
+           ADR-0031 tuning loop).
         3. When the project has **no confirmed terms**, the registry has nothing
            to say and the user's ``glossary.txt`` — a documented, user-editable
            artifact (``clear-record glossary`` / the README) — **stands**: it is

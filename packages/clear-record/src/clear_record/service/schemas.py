@@ -13,7 +13,7 @@ shape cannot drift from the value it describes, and one value has one shape on b
 edges rather than a copy per edge. The rest have a home beside what they describe,
 one each: a shape a *function* computes (the run-state summary, a draft view) is
 declared where that function builds it; a shape **both edges** publish while
-neither builds it (the agent-task surface, ``AgentTasksOut``) is declared beside
+neither builds it (the draft surface, ``AgentDraftsOut``) is declared beside
 the service module that owns that surface; and a shape an *edge* declares for its
 own envelope (a health answer, a page of a run's event stream) is declared beside
 that edge, under its own name.
@@ -32,7 +32,7 @@ from typing import Any, Self, get_type_hints
 from pydantic import BaseModel, ConfigDict, create_model
 
 from clear_record.core.events import JobEvent
-from clear_record.service.agent import Provenance
+from clear_record.service.agent_drafts import Provenance
 from clear_record.service.models import (
     Archive,
     Artifact,

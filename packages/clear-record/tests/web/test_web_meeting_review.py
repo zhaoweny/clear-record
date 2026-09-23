@@ -1,30 +1,22 @@
 """The console's meeting review surface: transcript, artifacts, agent drafts.
 
 The meeting review is server-rendered over the same service seam the API and MCP
-use, so these tests drive it with a temp registry, a temp meeting workspace and
-an **injected stub runner** — no endpoint, no model, no key. They assert the
-page's contract: the transcript and artifacts are shown, each of the three tasks
-can be launched, a draft is reviewable, and accepting it shows the promoted
-result in place (and on the project page, for minutes).
+use, so these tests drive it with a temp registry and a temp meeting workspace. A
+draft is **written the way a harness writes it** — through
+:meth:`~clear_record.service.MeetingAgent.write` — because the console no longer
+launches anything itself; what is asserted here is the human's half: the draft is
+reviewable in place, accepting it shows the promoted result (and, for minutes,
+the project page), and rejecting keeps the chain as history.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.core import RecordDocument, Segment, write_json
-from clear_record.service import (
-    AgentConfig,
-    Registry,
-    Runner,
-    RunnerOutput,
-    RunnerRequest,
-    RunManager,
-)
+from clear_record.service import AGENT_DIRNAME, MeetingAgent, Registry, RunManager
 from clear_record.web.app import create_app
 
 _ANSWERS: dict[str, dict] = {
@@ -54,24 +46,34 @@ _ANSWERS: dict[str, dict] = {
 }
 
 
-class StubRunner(Runner):
-    kind = "stub"
+class SimpleConsole:
+    def __init__(self, *, client, registry, meeting, workspace) -> None:
+        self.client = client
+        self.registry = registry
+        self.meeting = meeting
+        self.workspace = workspace
 
-    def __init__(self, answers: dict[str, dict] | None = None) -> None:
-        self.answers = answers or _ANSWERS
-
-    def run(self, request: RunnerRequest) -> RunnerOutput:
-        return RunnerOutput(
-            text=json.dumps(self.answers[request.kind]), model="stub-model"
+    def write(
+        self,
+        kind: str,
+        author: str = "pi-agent",
+        value: dict | None = None,
+        draft_id: str | None = None,
+    ):
+        return MeetingAgent(self.registry, self.meeting).write(
+            kind,
+            value if value is not None else _ANSWERS[kind],
+            author=author,
+            draft_id=draft_id,
         )
 
+    def drafts(self) -> list[dict]:
+        res = self.client.get(f"/api/meetings/{self.meeting.id}/agent")
+        assert res.status_code == 200
+        return res.json()["drafts"]
 
-#: Distinguishes "inject the stub runner" (the default) from "inject no runner",
-#: which is the unconfigured-agent case.
-_STUB = object()
 
-
-def _console(tmp_path: Path, *, runner: Runner | None | object = _STUB, config=None):
+def _console(tmp_path: Path) -> SimpleConsole:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project("Ops")
     workspace = tmp_path / "ws"
@@ -87,33 +89,10 @@ def _console(tmp_path: Path, *, runner: Runner | None | object = _STUB, config=N
         ),
     )
     meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    app = create_app(
-        registry,
-        RunManager(registry),
-        agent_runner=StubRunner() if runner is _STUB else runner,
-        agent_config=config,
-    )
+    app = create_app(registry, RunManager(registry))
     return SimpleConsole(
         client=TestClient(app), registry=registry, meeting=meeting, workspace=workspace
     )
-
-
-class SimpleConsole:
-    def __init__(self, *, client, registry, meeting, workspace) -> None:
-        self.client = client
-        self.registry = registry
-        self.meeting = meeting
-        self.workspace = workspace
-
-
-def _launch(console: SimpleConsole, kind: str):
-    return console.client.post(f"/ui/meetings/{console.meeting.id}/agent/{kind}")
-
-
-def _drafts(console: SimpleConsole) -> list[dict]:
-    res = console.client.get(f"/api/meetings/{console.meeting.id}/agent")
-    assert res.status_code == 200
-    return res.json()["drafts"]
 
 
 def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> None:
@@ -132,7 +111,9 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
     assert "the falcon is up" in page.text
     assert "record.json" in page.text
     assert "pipeline" in page.text  # the artifact's provenance
-    assert "Collect glossary terms" in page.text
+    # The panel explains where drafts come from; it launches nothing itself.
+    assert "Your harness writes these over MCP" in page.text
+    assert "/agent/glossary_collection" not in page.text
 
 
 def test_the_project_view_links_to_the_meeting_review(tmp_path: Path) -> None:
@@ -142,30 +123,45 @@ def test_the_project_view_links_to_the_meeting_review(tmp_path: Path) -> None:
     assert 'href="/projects/ops/meetings/kickoff"' in page.text
 
 
-@pytest.mark.parametrize("kind", ("glossary_collection", "transcript_check", "minutes"))
-def test_each_task_launches_and_lands_as_a_reviewable_draft(
-    kind: str, tmp_path: Path
+def test_each_kind_lands_as_a_reviewable_draft_with_its_author(
+    tmp_path: Path,
 ) -> None:
     console = _console(tmp_path)
 
-    page = _launch(console, kind)
+    for kind in _ANSWERS:
+        console.write(kind, author="pi-agent")
 
-    assert page.status_code == 200
-    assert kind in page.text
+    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    for kind in _ANSWERS:
+        assert kind in page.text
+    assert "pi-agent" in page.text  # the author is shown, not a model name
     assert "Accept" in page.text and "Reject" in page.text
-    drafts = _drafts(console)
-    assert [(draft["kind"], draft["review_state"]) for draft in drafts] == [
-        (kind, "draft")
-    ]
+    assert sorted(draft["kind"] for draft in console.drafts()) == sorted(_ANSWERS)
+
+
+def test_a_second_version_is_shown_on_the_chain(tmp_path: Path) -> None:
+    console = _console(tmp_path)
+    first = console.write("minutes")
+    console.write(
+        "minutes",
+        author="other-agent",
+        value=_ANSWERS["minutes"],
+        draft_id=first.draft_id,
+    )
+
+    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+
+    assert "2 versions" in page.text
+    assert "pi-agent" in page.text and "other-agent" in page.text
+    assert first.draft_id in page.text
 
 
 def test_accepting_glossary_draft_adds_candidate_terms(tmp_path: Path) -> None:
     console = _console(tmp_path)
-    _launch(console, "glossary_collection")
-    run_id = _drafts(console)[0]["run_id"]
+    draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{run_id}/accept"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
     )
 
     assert page.status_code == 200
@@ -179,11 +175,10 @@ def test_accepting_minutes_shows_them_per_meeting_and_across_the_project(
     tmp_path: Path,
 ) -> None:
     console = _console(tmp_path)
-    _launch(console, "minutes")
-    run_id = _drafts(console)[0]["run_id"]
+    draft = console.write("minutes")
 
     meeting_page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{run_id}/accept"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
     )
     assert "We shipped it." in meeting_page.text
     assert "Minutes recorded for this meeting." in meeting_page.text
@@ -195,40 +190,78 @@ def test_accepting_minutes_shows_them_per_meeting_and_across_the_project(
 
 def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None:
     console = _console(tmp_path)
-    _launch(console, "glossary_collection")
-    run_id = _drafts(console)[0]["run_id"]
+    draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{run_id}/reject"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/reject"
     )
 
     assert page.status_code == 200
     assert "rejected" in page.text
     assert console.registry.list_terms("ops") == []
+    assert console.drafts()[0]["review_state"] == "rejected"
 
 
-def test_an_unconfigured_agent_says_so_and_refuses_cleanly(tmp_path: Path) -> None:
-    console = _console(tmp_path, runner=None, config=AgentConfig())
+def test_the_panel_names_the_0_2_drafts_it_does_not_read(tmp_path: Path) -> None:
+    """A 0.2 run directory is stated, not silently invisible."""
+    console = _console(tmp_path)
+    legacy = console.workspace / AGENT_DIRNAME / "minutes-abc123"
+    legacy.mkdir(parents=True)
+    (legacy / "run.json").write_text("{}", encoding="utf-8")
 
     page = console.client.get("/ui/projects/ops/meetings/kickoff")
-    assert "No agent is configured" in page.text
 
-    refused = _launch(console, "minutes")
-    assert refused.status_code == 200
-    assert "no agent configured" in refused.text
-    assert _drafts(console) == []
+    assert "written before 0.3" in page.text
+    assert "still on disk" in page.text
 
 
-def test_launch_without_a_transcript_renders_the_service_message(
+def test_the_panel_says_nothing_about_0_2_drafts_when_there_are_none(
     tmp_path: Path,
 ) -> None:
     console = _console(tmp_path)
-    (console.workspace / "record.json").unlink()
 
-    page = _launch(console, "minutes")
+    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+
+    assert "written before 0.3" not in page.text
+
+
+def test_the_console_posts_the_version_and_a_stale_one_is_refused(
+    tmp_path: Path,
+) -> None:
+    console = _console(tmp_path)
+    first = console.write("minutes")
+    console.write(
+        "minutes",
+        author="other-agent",
+        value=_ANSWERS["minutes"] | {"body": "# Two"},
+        draft_id=first.draft_id,
+    )
+
+    stale = console.client.post(
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
+        data={"version": 1},
+    )
+    assert "not the newest" in stale.text
+    assert console.drafts()[0]["review_state"] == "draft"
+
+    accepted = console.client.post(
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
+        data={"version": 2},
+    )
+    assert "Minutes recorded for this meeting." in accepted.text
+
+
+def test_reviewing_an_unknown_draft_re_renders_with_the_service_message(
+    tmp_path: Path,
+) -> None:
+    console = _console(tmp_path)
+
+    page = console.client.post(
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/nope/accept"
+    )
 
     assert page.status_code == 200
-    assert "no transcript" in page.text
+    assert "No draft nope for this meeting." in page.text
 
 
 def test_the_transcript_pages(tmp_path: Path) -> None:
@@ -252,17 +285,21 @@ def test_the_transcript_pages(tmp_path: Path) -> None:
     assert "line 0" in page.text and "line 4" in page.text
 
 
-def test_the_api_runs_and_accepts_a_draft(tmp_path: Path) -> None:
+def test_the_api_lists_and_accepts_a_draft(tmp_path: Path) -> None:
     console = _console(tmp_path)
+    draft = console.write("transcript_check")
 
-    launched = console.client.post(
-        f"/api/meetings/{console.meeting.id}/agent/transcript_check"
-    )
-    assert launched.status_code == 201
-    run_id = launched.json()["run_id"]
+    listed = console.client.get(f"/api/meetings/{console.meeting.id}/agent")
+    assert listed.status_code == 200
+    assert listed.json()["kinds"] == [
+        "glossary_collection",
+        "transcript_check",
+        "minutes",
+    ]
+    assert listed.json()["drafts"][0]["draft_id"] == draft.draft_id
 
     accepted = console.client.post(
-        f"/api/meetings/{console.meeting.id}/agent/drafts/{run_id}/accept"
+        f"/api/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
     )
     assert accepted.status_code == 200
     body = accepted.json()
@@ -274,11 +311,11 @@ def test_the_api_runs_and_accepts_a_draft(tmp_path: Path) -> None:
     )
 
 
-def test_an_unknown_task_kind_is_a_404(tmp_path: Path) -> None:
+def test_an_unknown_draft_is_a_404(tmp_path: Path) -> None:
     console = _console(tmp_path)
     assert (
         console.client.post(
-            f"/api/meetings/{console.meeting.id}/agent/not-a-kind"
+            f"/api/meetings/{console.meeting.id}/agent/drafts/nope/accept"
         ).status_code
         == 404
     )

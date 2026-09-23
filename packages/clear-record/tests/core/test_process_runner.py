@@ -261,8 +261,8 @@ def test_run_keeps_cwd_env_and_check_meanings(tmp_path) -> None:
     """``cwd``/``env`` reach the child; ``check`` raises as ``subprocess.run`` does.
 
     ``engine.audio``'s ``ffmpeg`` decode relies on the ``check`` failure staying a
-    ``CalledProcessError``; ``service.agent``'s command runner relies on the child
-    running in the render directory with the caller's environment.
+    ``CalledProcessError``; the shared seam's callers rely on the child running
+    in the render directory with the caller's environment.
     """
     write = "import os, pathlib; pathlib.Path('marked.txt').write_text(os.environ['CR_SEAM_TEST'])"
     SubprocessRunner().run(

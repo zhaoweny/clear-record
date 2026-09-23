@@ -2,7 +2,7 @@
 
 The glossary is the ASR decoder's initial prompt, read from
 ``<workspace>/glossary.txt`` as one term/phrase per line. The MCP tuning loop
-(ADR-0018) lets an agent edit the project's glossary and then re-run; this module
+(ADR-0031) lets an agent edit the project's glossary and then re-run; this module
 is the **bridge** that turns the registry's terms into that file, so a run after
 a glossary edit actually applies it (before this, nothing generated the file).
 

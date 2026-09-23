@@ -6,11 +6,11 @@ Three pieces, in this order:
   renders, as a named function taking the registry, the run manager and the
   request's locale;
 - :mod:`clear_record.web.lookup` owns the one rule *"find this project, meeting,
-  tape, run, term, archive, draft, agent-task kind or settings section — or answer
+  tape, run, term, archive, draft or settings section — or answer
   that it is not here"* both surfaces ask;
 - **this module is the wiring**: the middleware, the route table, the declared
   request and response shapes, and the injected adapters (the registry, the run
-  manager, the webhook emitter, the agent seam). A route body finds the thing,
+  manager, the webhook emitter). A route body finds the thing,
   builds a context and renders it — it does not build one.
 
 Two surfaces over the same **thin** service adapter:
@@ -54,9 +54,7 @@ from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
     BUNDLE_FILENAME,
     RUN_IN_FLIGHT,
-    AgentConfig,
-    AgentTaskError,
-    AgentTasksOut,
+    AgentDraftsOut,
     ArchiveOut,
     ArtifactOut,
     DraftView,
@@ -64,16 +62,17 @@ from clear_record.service import (
     MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingAgentError,
     MeetingOut,
     ModelNotOnDisk,
     NoBackendAvailable,
     PipelineOptions,
     ProjectCountOut,
     ProjectOut,
+    PromotionError,
     Registry,
     RunManager,
     RunOut,
-    Runner,
     RunState,
     RunSummary,
     Shape,
@@ -84,7 +83,6 @@ from clear_record.service import (
     TermOut,
     archive_meeting,
     collect_bundle,
-    default_config,
     describe_draft,
     format_mib,
     format_rate,
@@ -106,20 +104,14 @@ from clear_record.service.auto import (
     render_message as render_service_message,
 )
 from clear_record.service.setup import (
-    DEFAULT_SMALL_MODEL,
-    Detection,
     SetupError,
     SetupStatusOut,
     clear_seen_version,
-    detect,
-    pull_model,
     record_seen_version,
     remember_harness,
     resolve_harness,
     seen_version,
     setup_view,
-    verify_endpoint,
-    write_agent_settings,
     write_mcp_config,
 )
 from clear_record.service.webhooks import WebhookEmitter, default_emitter
@@ -138,15 +130,14 @@ from clear_record.web import guard, lookup, views
 # effective: a seam that imported its own copy would go on passing the suite while
 # the pins had stopped meaning anything.
 #
-# Six more service calls are frozen here for the same reason, and their pins are
+# Five more service calls are frozen here for the same reason, and their pins are
 # on *this* module: the **routes** call them by name, so a route rewritten to
 # reach one any other way would leave its pin silently ineffective. They are
 # ``transcription_status`` (stubbed for every console test in
 # ``tests/web/conftest.py``, overridden in ``tests/web/test_web_setup.py``),
 # ``run_hello_check`` (``tests/web/test_web_agent_flow.py``),
 # ``download_transcription_model`` (``tests/web/test_web_settings.py``,
-# ``tests/web/test_web_setup.py``), ``verify_endpoint`` and ``detect``
-# (``tests/web/test_web_agent_setup.py``), and ``serve``
+# ``tests/web/test_web_setup.py``) and ``serve``
 # (``tests/cli/test_serve.py``, ``tests/web/test_web_tailscale.py``). Two names
 # belong to *both* groups, and they are the case this paragraph exists for:
 # ``verify_archive`` (``tests/web/test_web_api.py``) and ``setup_view``
@@ -373,7 +364,7 @@ class ArchiveCreate(BaseModel):
 # is derived from that value in `clear_record.service.schemas`; a shape a service
 # *function* computes is declared where that function builds it (`DraftView`,
 # `MeetingStorage`, `ArchiveVerification`, `SetupStatusOut`, `RunSummary`) —
-# except `AgentTasksOut`, which both edges build out of the agent-task surface and
+# except `AgentDraftsOut`, which both edges build out of the draft surface and
 # which is declared beside that surface in `service/agent_review.py` — and the
 # webhook view, which both surfaces render, is declared beside its builder in
 # `clear_record.web.views`. What is left here is this edge's own: a computed
@@ -530,8 +521,6 @@ def create_app(
     *,
     trusted_hosts: Sequence[str] | None = None,
     webhooks: WebhookEmitter | None = None,
-    agent_runner: Runner | None = None,
-    agent_config: AgentConfig | None = None,
 ) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
 
@@ -546,12 +535,6 @@ def create_app(
     ``webhooks`` is the emitter whose health the console reports; it defaults to
     the shared config-driven one the runs already deliver through, and a test can
     inject an inert or a failing one to exercise the status surface offline.
-
-    ``agent_runner`` / ``agent_config`` are the agent-task seam's two injection
-    points, mirroring ``runs``: a test injects a runner so a launch never touches
-    an endpoint, and an embedder can pin a config. With neither, the process's
-    resolved config (:func:`clear_record.service.default_config`) is read **once**
-    here rather than per request, so a page render never re-reads the config file.
     """
     # The console's user-facing text is translated per process. A CLI ``--lang``
     # (or an explicit ``install``) has already chosen; otherwise honour
@@ -563,9 +546,6 @@ def create_app(
     # the shared one), so the console reports on the same delivery the runs make.
     # Injecting one lets a test drive the status surface with no config file.
     emitter = webhooks if webhooks is not None else default_emitter()
-    config_from_process = agent_runner is None and agent_config is None
-    if config_from_process:
-        agent_config = default_config()
     app = FastAPI(
         title="clear-record",
         summary="Local project console: projects, glossary, meetings and runs.",
@@ -577,12 +557,6 @@ def create_app(
     # embedder reach the same seam.
     app.state.runs = runs
     app.state.webhooks = emitter
-    app.state.agent_runner = agent_runner
-    app.state.agent_config = agent_config
-    # Whether this app pinned the process config (no injected runner/config).
-    # Only then may a settings write refresh it; an injected config is the
-    # caller's and is never replaced (tests, embedders).
-    app.state.agent_config_from_process = config_from_process
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -733,46 +707,21 @@ def create_app(
             },
         )
 
-    # --- the app's injected agent seam (wiring, never a view) -------------- #
+    # --- the app's draft seam (wiring, never a view) ----------------------- #
     def meeting_agent(meeting: Meeting) -> MeetingAgent:
-        """The agent seam for one meeting, over the app's injected plumbing."""
-        return MeetingAgent(
-            registry,
-            meeting,
-            runner=app.state.agent_runner,
-            config=app.state.agent_config,
-        )
-
-    def refresh_agent_config() -> None:
-        """Re-resolve the pinned agent config after a settings write.
-
-        ``write_agent_settings`` drops the process-wide default, but this app
-        captured the old object at startup; without this the panel reads
-        "agent ready" from the config file while a meeting launch still reports
-        "no agent configured" until the server restarts. An injected config is
-        the caller's and stays pinned.
-        """
-        if app.state.agent_config_from_process:
-            app.state.agent_config = default_config()
-
-    def agent_ready() -> bool:
-        """Whether a launch has a runner at all (a display hint, not a guard)."""
-        if app.state.agent_runner is not None:
-            return True
-        config = app.state.agent_config
-        return bool(config and (config.endpoint or config.commands))
+        """The draft seam for one meeting, over the app's registry."""
+        return MeetingAgent(registry, meeting)
 
     def meeting_view(
         request: Request, meeting: Meeting, *, offset: int = 0, error: str | None = None
     ) -> dict:
-        """The review view's context, with this app's agent seam wired in."""
+        """The review view's context, with this app's draft seam wired in."""
         return views.meeting_context(
             registry,
             runs,
             locale(request),
             meeting,
             agent=meeting_agent(meeting),
-            ready=agent_ready(),
             offset=offset,
             error=error,
         )
@@ -1160,7 +1109,7 @@ def create_app(
     def ui_project_media(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="media")
 
-    # --- HTML views: a meeting's transcript, artifacts and agent tasks ------ #
+    # --- HTML views: a meeting's transcript, artifacts and drafts ---------- #
     @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
     def ui_meeting(
         request: Request, slug: str, meeting_slug: str, offset: int = 0
@@ -1174,61 +1123,65 @@ def create_app(
         meeting = lookup.meeting_in(registry, slug, meeting_slug)
         return render_meeting(request, meeting, offset=max(0, offset))
 
-    @app.post("/ui/meetings/{meeting_id}/agent/{kind}", response_class=HTMLResponse)
-    def ui_run_agent_task(request: Request, meeting_id: int, kind: str) -> HTMLResponse:
-        """Launch one agent task for a meeting and re-render the meeting view.
-
-        A refused launch (no configured agent, no transcript, a runner failure)
-        re-renders the view with the service's own message as a 200, so htmx
-        swaps it in and the operator can fix the cause in place.
-        """
-        meeting = lookup.meeting(registry, meeting_id)
-        lookup.task_kind(kind)
-        try:
-            meeting_agent(meeting).launch(kind)
-        except AgentTaskError as exc:
-            return render_meeting(
-                request, meeting, error=views.error_message(locale(request), exc)
-            )
-        return render_meeting(request, meeting)
-
-    def review_draft(request: Request, meeting_id: int, run_id: str, accept: bool):
+    def review_draft(
+        request: Request,
+        meeting_id: int,
+        draft_id: str,
+        accept: bool,
+        version: int | None = None,
+    ):
         meeting = lookup.meeting(registry, meeting_id)
         agent = meeting_agent(meeting)
         try:
-            draft = lookup.draft(agent, run_id)
+            draft = lookup.draft(agent, draft_id)
         except lookup.NotFound:
             return render_meeting(
                 request,
                 meeting,
-                error=tr("No draft {run_id} for this meeting.", run_id=run_id),
+                error=tr("No draft {draft_id} for this meeting.", draft_id=draft_id),
             )
         try:
             if accept:
-                agent.promote(draft)
+                agent.promote(draft, version=version)
             else:
-                agent.reject(draft)
-        except AgentTaskError as exc:
+                agent.reject(draft, version=version)
+        except (MeetingAgentError, PromotionError) as exc:
             return render_meeting(
                 request, meeting, error=views.error_message(locale(request), exc)
             )
         return render_meeting(request, meeting)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{run_id}/accept",
+        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/accept",
         response_class=HTMLResponse,
     )
-    def ui_accept_draft(request: Request, meeting_id: int, run_id: str) -> HTMLResponse:
-        """Accept a draft: promote it into what its kind produces, then show it."""
-        return review_draft(request, meeting_id, run_id, accept=True)
+    def ui_accept_draft(
+        request: Request,
+        meeting_id: int,
+        draft_id: str,
+        version: int | None = Form(None),
+    ) -> HTMLResponse:
+        """Accept a draft version: promote it into what its kind produces.
+
+        ``version`` is the version the reviewer read, posted by the form beside
+        it; a stale one re-renders with the service's own refusal.
+        """
+        return review_draft(request, meeting_id, draft_id, accept=True, version=version)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{run_id}/reject",
+        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/reject",
         response_class=HTMLResponse,
     )
-    def ui_reject_draft(request: Request, meeting_id: int, run_id: str) -> HTMLResponse:
-        """Reject a draft, keeping it and its provenance as history."""
-        return review_draft(request, meeting_id, run_id, accept=False)
+    def ui_reject_draft(
+        request: Request,
+        meeting_id: int,
+        draft_id: str,
+        version: int | None = Form(None),
+    ) -> HTMLResponse:
+        """Reject a draft version, keeping the chain as history."""
+        return review_draft(
+            request, meeting_id, draft_id, accept=False, version=version
+        )
 
     @app.post("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_add_term(
@@ -1539,21 +1492,21 @@ def create_app(
             {"status": views.webhook_status_view(locale(request), emitter.status())},
         )
 
-    # --- guided agent setup (ADR-0018's onboarding half) ------------------- #
+    # --- agent setup (ADR-0031's onboarding half) -------------------------- #
     def agent_setup_panel(
         request: Request,
         *,
-        detection: Detection | None = None,
         error: str | None = None,
         notice: str | None = None,
         part: str = "agent",
     ) -> HTMLResponse:
         """The setup panel: the service's state, plus whatever a step just did.
 
-        Every fact is the service's own — the resolved endpoint, the config
-        problems, what a probe found — so the console cannot show a different
-        endpoint from the one a task would call. The seam builds the context and
-        this boundary only renders it.
+        Every fact is the service's own — the harness and MCP client config that
+        are recorded, whether those paths are still there, and what the 0.2 agent
+        configuration this version ignores. The seam builds the context and this
+        boundary only renders it. There is no key to ask for: the page would be a
+        bug if it prompted for one.
         """
         standalone = part == "mcp"
         return render(
@@ -1561,7 +1514,6 @@ def create_app(
             "_mcp_setup.html" if standalone else "_agent_setup.html",
             views.agent_setup_context(
                 locale(request),
-                detection=detection,
                 error=error,
                 notice=notice,
                 part=part,
@@ -1570,92 +1522,8 @@ def create_app(
 
     @app.get("/ui/agent-setup", response_class=HTMLResponse)
     def ui_agent_setup(request: Request, part: str = "agent") -> HTMLResponse:
-        """The setup state, with no probe on a plain render (so a page is instant)."""
+        """The setup state, as the harness and MCP rungs the page can check."""
         return agent_setup_panel(request, part="mcp" if part == "mcp" else "agent")
-
-    @app.get("/ui/agent-setup/detect", response_class=HTMLResponse)
-    def ui_agent_setup_detect(request: Request) -> HTMLResponse:
-        """Probe the known local servers and test-call the first usable one."""
-        return agent_setup_panel(request, detection=detect())
-
-    @app.post("/ui/agent-setup/use", response_class=HTMLResponse)
-    def ui_agent_setup_use(
-        request: Request,
-        endpoint: str = Form(...),
-        model: str = Form(""),
-        api_key_env: str = Form(""),
-    ) -> HTMLResponse:
-        """Verify an endpoint with a real call, then record it in the config.
-
-        Verification comes first and is a precondition: an endpoint that cannot
-        answer a test call is never written as if it worked — the failure is
-        shown with what the endpoint actually said. ``api_key_env`` stays a
-        **name**; no value is read here or stored anywhere.
-        """
-        try:
-            verification = verify_endpoint(
-                endpoint, model=model or None, api_key_env=api_key_env or None
-            )
-            if not verification.ok:
-                shown = (
-                    verification.detail.render(tr)
-                    if verification.detail is not None
-                    else tr("The endpoint did not answer a test call.")
-                )
-                return agent_setup_panel(request, error=shown)
-            path = write_agent_settings(
-                endpoint, model=model or None, api_key_env=api_key_env or None
-            )
-            refresh_agent_config()
-        except SetupError as exc:
-            return agent_setup_panel(request, error=exc.message.render(tr))
-        return agent_setup_panel(
-            request,
-            notice=tr(
-                "Recorded {endpoint} in {path}.",
-                endpoint=endpoint,
-                path=str(path),
-            ),
-        )
-
-    @app.post("/ui/agent-setup/pull", response_class=HTMLResponse)
-    def ui_agent_setup_pull(
-        request: Request,
-        endpoint: str = Form(...),
-        model: str = Form(""),
-    ) -> HTMLResponse:
-        """Pull a small model where the server supports it, then record the choice.
-
-        A pull is a download the user asked for here, never a silent one, and the
-        model it actually chose is what gets recorded — verified by a test call
-        first, so a pull that succeeded but cannot serve does not get written.
-        """
-        chosen = model.strip() or DEFAULT_SMALL_MODEL
-        pulled = pull_model(chosen, endpoint=endpoint)
-        if not pulled.ok:
-            shown = (
-                pulled.detail.render(tr)
-                if pulled.detail is not None
-                else tr("The model could not be pulled.")
-            )
-            return agent_setup_panel(request, error=shown)
-        verification = verify_endpoint(endpoint, model=pulled.model)
-        if not verification.ok:
-            shown = (
-                verification.detail.render(tr)
-                if verification.detail is not None
-                else tr("The endpoint did not answer a test call.")
-            )
-            return agent_setup_panel(request, error=shown)
-        try:
-            write_agent_settings(endpoint, model=pulled.model)
-            refresh_agent_config()
-        except SetupError as exc:
-            return agent_setup_panel(request, error=exc.message.render(tr))
-        return agent_setup_panel(
-            request,
-            notice=tr("Pulled {model} and recorded it.", model=pulled.model),
-        )
 
     @app.post("/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
     def ui_agent_setup_mcp_harness(
@@ -1701,7 +1569,7 @@ def create_app(
         pre-fills only the path a previous run recorded. What is written is the
         one ``mcpServers`` entry :func:`mcp_server_entry` builds — a command and
         its args, with no environment block, because the MCP server needs no
-        credential (the agent brings its own model).
+        credential (the harness brings its own model).
         """
         panel_part = "mcp" if part == "mcp" else "agent"
         try:
@@ -1739,14 +1607,14 @@ def create_app(
         return render(request, "_hello_check.html", {"check": result})
 
     @app.get("/api/agent/setup")
-    def agent_setup_status(detect_now: bool = False) -> SetupStatusOut:
-        """The machine surface for the setup state; ``?detect_now=1`` probes first.
+    def agent_setup_status() -> SetupStatusOut:
+        """The machine surface for the agent setup state.
 
-        JSON, so it stays English (the i18n boundary). The key is never part of
-        it: ``api_key_env`` is a variable name, and a value is never read.
+        JSON, so it stays English (the i18n boundary). There is no key and no
+        endpoint in it, because this version has neither; ``ignored`` names the
+        0.2 configuration the user may still have that nothing reads now.
         """
-        found = detect() if detect_now else None
-        return setup_view(detection=found).as_dict()
+        return setup_view().as_dict()
 
     # --- JSON API (machines, scripts and integrations) ---------------------- #
     @app.get("/api/health")
@@ -1883,50 +1751,52 @@ def create_app(
     def get_meeting(meeting_id: int) -> MeetingOut:
         return MeetingOut.model_validate(lookup.meeting(registry, meeting_id))
 
-    # --- JSON API: a meeting's agent tasks --------------------------------- #
+    # --- JSON API: a meeting's drafts -------------------------------------- #
     @app.get("/api/meetings/{meeting_id}/agent")
-    def meeting_agent_tasks(meeting_id: int) -> AgentTasksOut:
-        """A meeting's agent-task surface: the kinds, the drafts and the minutes."""
+    def meeting_agent_drafts(meeting_id: int) -> AgentDraftsOut:
+        """A meeting's draft surface: the kinds, the chains and the minutes."""
         meeting = lookup.meeting(registry, meeting_id)
         agent = meeting_agent(meeting)
         minutes = agent.minutes_artifact()
-        return AgentTasksOut(
-            tasks=list(TASK_KINDS),
-            configured=agent_ready(),
+        return AgentDraftsOut(
+            kinds=list(TASK_KINDS),
             drafts=[describe_draft(draft) for draft in agent.drafts()],
             minutes=None if minutes is None else ArtifactOut.of(minutes),
         )
 
-    @app.post("/api/meetings/{meeting_id}/agent/{kind}", status_code=201)
-    def run_agent_task(meeting_id: int, kind: str) -> DraftView:
-        """Launch one agent task; the result is a draft, never auto-accepted."""
-        meeting = lookup.meeting(registry, meeting_id)
-        lookup.task_kind(kind)
-        try:
-            draft = meeting_agent(meeting).launch(kind)
-        except AgentTaskError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return describe_draft(draft)
-
-    def review_api(meeting_id: int, run_id: str, accept: bool) -> DraftView:
+    def review_api(
+        meeting_id: int, draft_id: str, accept: bool, version: int | None = None
+    ) -> DraftView:
         meeting = lookup.meeting(registry, meeting_id)
         agent = meeting_agent(meeting)
-        draft = lookup.draft(agent, run_id)
+        draft = lookup.draft(agent, draft_id)
         try:
-            reviewed = agent.promote(draft) if accept else agent.reject(draft)
-        except AgentTaskError as exc:
+            reviewed = (
+                agent.promote(draft, version=version)
+                if accept
+                else agent.reject(draft, version=version)
+            )
+        except (MeetingAgentError, PromotionError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return describe_draft(reviewed)
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/accept")
-    def accept_agent_draft(meeting_id: int, run_id: str) -> DraftView:
-        """Accept a draft and return what its acceptance produced."""
-        return review_api(meeting_id, run_id, accept=True)
+    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
+    def accept_agent_draft(
+        meeting_id: int, draft_id: str, version: int | None = None
+    ) -> DraftView:
+        """Accept a draft version and return what its acceptance produced.
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{run_id}/reject")
-    def reject_agent_draft(meeting_id: int, run_id: str) -> DraftView:
-        """Reject a draft, keeping it and its provenance on disk."""
-        return review_api(meeting_id, run_id, accept=False)
+        ``?version=N`` names the version the caller read (versions are numbered
+        from 1); a stale one is a 400 rather than a decision on unseen text.
+        """
+        return review_api(meeting_id, draft_id, accept=True, version=version)
+
+    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
+    def reject_agent_draft(
+        meeting_id: int, draft_id: str, version: int | None = None
+    ) -> DraftView:
+        """Reject a draft version, keeping the chain on disk as history."""
+        return review_api(meeting_id, draft_id, accept=False, version=version)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
     def set_tapes(meeting_id: int, body: TapesUpdate) -> TapeSetOut:

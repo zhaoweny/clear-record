@@ -56,10 +56,10 @@ test("the same check runs from the agent flow's Try it stage", async ({ page }) 
   expect(errors).toEqual([]);
 });
 
-test("the setup wizard's Agent step mounts the same four-stage flow", async ({ page }) => {
+test("the setup wizard's Agent step mounts the same three-stage flow", async ({ page }) => {
   await page.goto("/setup");
 
-  await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(4);
+  await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(3);
   await expect(page.locator("#setup-agent #hello-check")).toBeVisible();
   // The final step points at the permanent check, not a second implementation.
   await expect(page.locator('#setup-try a[href="/settings/status"]')).toBeVisible();

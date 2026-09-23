@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.core import RecordDocument, Segment, write_json
-from clear_record.service import AgentConfig, Registry, setup
+from clear_record.service import Registry, setup
 from clear_record.web.app import create_app
 
 
@@ -33,7 +33,7 @@ def _seeded(tmp_path):
 
 
 def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
-    client = _client(tmp_path, agent_config=AgentConfig())
+    client = _client(tmp_path)
 
     home = client.get("/")
 
@@ -49,13 +49,14 @@ def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
 
 
 @pytest.mark.own_setup_marker
-def test_the_setup_link_follows_the_marker_not_the_agent_config(tmp_path) -> None:
-    """A configured runner does not hide Setup; the marker does."""
-    client = _client(
-        tmp_path, agent_config=AgentConfig(endpoint="http://local.test/v1")
+def test_the_setup_link_follows_the_marker_not_the_agent_setup(tmp_path) -> None:
+    """A configured agent setup does not hide Setup; the marker does."""
+    setup.update_setup_state(
+        harness=str(tmp_path / "pi-agent"), mcp_config=str(tmp_path / "mcp.json")
     )
+    client = _client(tmp_path)
 
-    # No marker yet: Setup shows even though an agent endpoint is configured.
+    # No marker yet: Setup shows even though a harness is recorded.
     assert 'href="/setup"' in client.get("/").text
 
     setup.record_seen_version()

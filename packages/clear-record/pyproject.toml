@@ -57,7 +57,6 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.13",
     "click>=8.1",
-    "json-repair>=0.63",
     "numpy>=2.0",
     "platformdirs>=4.0",
     "pydantic>=2.0",

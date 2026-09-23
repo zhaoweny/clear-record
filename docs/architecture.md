@@ -361,7 +361,7 @@ runnable, and the **project console** is built on top of it:
   **compiled output is committed**, so the console works offline with no Node on
   the user's machine (ADR-0023). Inside the package, a page's **context** is
   built by a named function in `web/views.py`, the rule that finds a named thing
-  — a project, meeting, tape, run, term, archive, draft, agent-task kind or
+  — a project, meeting, tape, run, term, archive, draft or
   settings section — or answers that it is not there, has one implementation in
   `web/lookup.py`, and `web/app.py` is wiring: the middleware, the route table
   and the injected adapters (ADR-0030).
@@ -369,8 +369,9 @@ runnable, and the **project console** is built on top of it:
   point (open / status / quit) over a Qt-free `ServiceController` (extra:
   `tray`) (ADR-0016).
 - `clear_record.mcp` — the **agent boundary**: the service exposed as stdio MCP
-  tools (projects, glossary, meetings, runs, artifacts), BYOK, with no harness
-  entering the core (extra: `agents`) (ADR-0016, ADR-0017).
+  tools (projects, glossary, meetings, runs, artifacts, drafts), holding no
+  credential of its own, with no harness entering the core (extra: `agents`)
+  (ADR-0016, ADR-0017, ADR-0031).
 - Packaging on top of the wheel: a **PyInstaller** desktop build
   (`clear-record-web` / `clear-record.app`, unsigned, no bundled weights) and a
   deferred Flatpak story (ADR-0014, ADR-0015).
@@ -382,12 +383,14 @@ workspace: the project list, then Overview / Meetings / Glossary / Media),
 **Settings** (the control plane), **Setup** (system readiness) and the one
 **Agent** flow — over the **live run view**, **tape upload** into a managed
 workspace and the **archive view**; the **MCP surface** carries the **tuning
-loop** and the **agent tasks** (ADR-0017, ADR-0018). The **agent tasks**' runner
-seam, prompts, drafts, accept/reject states, their **console wiring** and the
-guided **agent setup** have all landed, and the setup path's **hello-world
-acceptance test** proves tape → transcription → transcript while localizing a
-failure to a leg (`tts`, `backend`, `model`, `transcribe`). The real agent
-round-trip over MCP is proven by the optional `just agent-drive`.
+loop** and the **draft chain** (ADR-0017, ADR-0031). clear-record calls no
+model: every draft is written by the user's harness over MCP with the author
+identity it declares, the drafts' accept/reject states and author provenance
+have landed, and the harness is the only agent integration — see
+[ADR-0031](adr/0031-harness-is-the-only-agent.md). The setup path's
+**hello-world acceptance test** proves tape → transcription → transcript while
+localizing a failure to a leg (`tts`, `backend`, `model`, `transcribe`), and the
+optional `just agent-drive` stands in for a harness over the MCP tools.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves

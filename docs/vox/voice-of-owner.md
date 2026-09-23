@@ -41,7 +41,7 @@ Rows name the owning document and never restate its decision text.
 | Versions, releases, and lines | dev builds are CI artifacts; rc and stable publish; 0.1 and 0.2 maintenance, 0.3 development on `main` | ADR-0011 and its Updates | same record, and `records/2026-09-21-v03-scope.md` |
 | Backends | native first (Apple `apple-speech`); system `whisper-cli` + a ggml plugin as the portable fallback; profiles tune knobs, `--auto` is opt-in | ADR-0005 and its 2026-09-14 Update; ADR-0019 | `records/2026-09-14-backends.md` |
 | Console and app shell | server-rendered htmx/Alpine with committed compiled assets; a PySide6 tray; the page IA and the view/lookup seam | ADR-0016, ADR-0023, ADR-0027, ADR-0030 | `records/2026-09-14-console-and-app-shell.md` |
-| Agent boundary | clear-record is a **backend for harnesses**: MCP is the only agent integration, and the in-process BYOK path is dropped in 0.3 | ADR-0017; ADR-0018 stands until the removal's own ADR | `records/2026-09-14-agent-task-execution.md`, `records/2026-09-21-v03-scope.md` |
+| Agent boundary | clear-record is a **backend for harnesses**: MCP is the only agent integration, and the in-process BYOK path is dropped in 0.3 | ADR-0017, ADR-0031 (which supersedes ADR-0018) | `records/2026-09-14-agent-task-execution.md`, `records/2026-09-21-v03-scope.md` |
 | Paths and deployment | platform-native directories; localhost only, remote access is the operator's reverse proxy | ADR-0025, ADR-0021 | `records/2026-09-15-service-paths-and-i18n.md` |
 | Managed workspace | tapes upload into an app-owned workspace; the data-not-state split holds | ADR-0024, ADR-0025 | same record |
 | i18n | `tr()` with English message IDs, the English default unchanged; logs, JSON, exports and the diagnostics bundle are never translated | `docs/i18n.md` | same record |
@@ -103,7 +103,8 @@ Dated testimony, one file per topic, moved verbatim from this file (2026-09-21):
 - [`records/2026-09-14-grilling-rounds-1-4.md`](records/2026-09-14-grilling-rounds-1-4.md) — the consolidated
   open-question answers.
 - [`records/2026-09-14-agent-task-execution.md`](records/2026-09-14-agent-task-execution.md) — no bundled
-  harness, the three rungs, the tuning loop, and the 2026-09-21 correction.
+  harness, the three rungs, the tuning loop, and the 2026-09-21 correction
+  (superseded by [ADR-0031](../adr/0031-harness-is-the-only-agent.md), 2026-09-23).
 - [`records/2026-09-15-webhooks.md`](records/2026-09-15-webhooks.md) — outbound notifications.
 - [`records/2026-09-15-service-paths-and-i18n.md`](records/2026-09-15-service-paths-and-i18n.md) — logging and
   feedback, the deployment investigation, i18n, the managed workspace, `platformdirs`, Tailscale, and Click.

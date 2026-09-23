@@ -74,12 +74,12 @@ test("status carries the hello-world check and the setup knob", async ({ page })
   await expect(page.locator("#hello-check")).toBeVisible();
 });
 
-test("the agent flow is one four-stage panel with two entry points", async ({ page }) => {
+test("the agent flow is one three-stage panel with two entry points", async ({ page }) => {
   for (const path of ["/settings/agent", "/setup/agent"]) {
     await page.goto(path);
     await expect(page.locator(".agent-setup")).toBeVisible();
-    await expect(page.locator(".agent-flow .agent-stage")).toHaveCount(4);
-    await expect(page.locator("#agent-stage-endpoint")).toContainText("Endpoint");
+    await expect(page.locator(".agent-flow .agent-stage")).toHaveCount(3);
+    await expect(page.locator("#agent-stage-harness")).toContainText("Harness");
     await expect(page.locator("#agent-stage-try")).toContainText("Try it");
     await expect(page.locator("#agent-stage-try #hello-check")).toBeVisible();
   }

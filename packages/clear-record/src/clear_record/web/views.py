@@ -89,7 +89,6 @@ from clear_record.service.lifecycle import (
 )
 from clear_record.service.runs import number_or_none
 from clear_record.service.setup import (
-    DEFAULT_SMALL_MODEL,
     PI_AGENT,
     current_version,
     mcp_server_entry,
@@ -529,21 +528,6 @@ def error_message(locale: str, exc: BaseException) -> str:
     return str(exc)
 
 
-def draft_view(draft) -> dict:
-    """A draft as the templates render it: the shared view plus display fields.
-
-    Everything factual comes from :func:`~clear_record.service.describe_draft`
-    (the same shape the MCP adapter returns), so the browser and an agent cannot
-    disagree about a draft; only the two short checksums are added here.
-    """
-    view = describe_draft(draft)
-    return {
-        **view.model_dump(),
-        "context_hash_short": view.provenance.context_hash[:12],
-        "prompt_hash_short": view.provenance.prompt_hash[:12],
-    }
-
-
 # --- webhooks: delivery health (ADR-0020) ---------------------------------- #
 # The label for each overall webhook state. Each branch calls ``tr`` with a
 # literal so the catalog tooling can extract it; a state the service adds *later*
@@ -926,7 +910,6 @@ def meeting_context(
     meeting: Meeting,
     *,
     agent: MeetingAgent,
-    ready: bool,
     offset: int = 0,
     error: str | None = None,
 ) -> dict:
@@ -935,12 +918,11 @@ def meeting_context(
     The transcript is the same :func:`read_transcript` the MCP adapter uses
     (paged here), the artifacts are the registry's rows, and the drafts are
     read back from the workspace with
-    :meth:`~clear_record.service.MeetingAgent.drafts`, so an accepted result
-    and its provenance are shown rather than re-derived.
+    :meth:`~clear_record.service.MeetingAgent.drafts`, so a harness's result and
+    its author provenance are shown rather than re-derived.
 
-    ``agent`` and ``ready`` are the app's injected agent seam and its launch
-    hint: constructing the seam from the process's own config is wiring, and a
-    view may not do it.
+    ``agent`` is the app's injected draft seam; constructing it from the meeting
+    is wiring, and a view may not do it.
     """
     _speaks(locale)
     try:
@@ -979,8 +961,8 @@ def meeting_context(
             }
             for artifact in registry.list_artifacts(meeting.id)
         ],
-        "drafts": [draft_view(draft) for draft in agent.drafts()],
-        "agent_ready": ready,
+        "drafts": [describe_draft(draft).model_dump() for draft in agent.drafts()],
+        "legacy_drafts": len(agent.legacy_drafts()),
         "minutes_artifact": minutes_artifact,
         "minutes_text": artifact_text(minutes_artifact)
         if minutes_artifact is not None
@@ -1309,16 +1291,15 @@ def page_context(registry: Registry, locale: str, *, nav: str, **extra) -> dict:
 def agent_setup_context(
     locale: str,
     *,
-    detection=None,
     error: str | None = None,
     notice: str | None = None,
     part: str = "agent",
 ) -> dict:
-    """The guided agent setup panel's context: the service's state, plus a step's result.
+    """The agent setup panel's context: the service's state, plus a step's result.
 
-    Every fact is the service's own — the resolved endpoint, the config
-    problems, what a probe found — so the console cannot show a different
-    endpoint from the one a task would call. This boundary only renders and
+    Every fact is the service's own — the harness and MCP client config that are
+    recorded, whether their paths are still there, and what the 0.2 agent
+    configuration this version ignores. This boundary only renders and
     translates (the same split ``refusal()`` uses for an upload guard).
     """
     _speaks(locale)
@@ -1326,8 +1307,7 @@ def agent_setup_context(
     standalone = part == "mcp"
     console = _adapters()
     return {
-        "setup": console.setup_view(detection=detection),
-        "default_model": DEFAULT_SMALL_MODEL,
+        "setup": console.setup_view(),
         # The default-named harness, looked up on PATH. It is a *hint* for
         # the "point at an existing pi-agent" rung, never a fallback: the
         # harness and its client config are both the user's choice.

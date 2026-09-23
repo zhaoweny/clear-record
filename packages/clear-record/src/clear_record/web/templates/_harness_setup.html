@@ -13,11 +13,11 @@
   <div class="row">
     <code class="muted">{{ harness.name }}</code>
     {% if harness.found %}
-    {# hx-vals carries the path find_harness found -- the same shape the endpoint
-       forms use, so no input markup the CSS scanner would read as a utility
-       class. tojson escapes the path into valid JSON, and the JSON's own quotes
-       are safe inside the single-quoted attribute. The path is still the user's
-       to accept: this only saves typing it. #}
+    {# hx-vals carries the path find_harness found -- no input markup the CSS
+       scanner would read as a utility class. tojson escapes the path into valid
+       JSON, and the JSON's own quotes are safe inside the single-quoted
+       attribute. The path is still the user's to accept: this only saves typing
+       it. #}
     <form hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
           hx-swap="innerHTML" hx-vals='{{ {"harness": harness.path} | tojson }}'>
       {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}

@@ -2,9 +2,9 @@
 
 Settings is the control plane (ADR-0027). Every section is its own real URL
 with the nav marked, and an unknown section is a page 404. Most sections only
-read; the writes are the agent endpoint and the MCP client config, the Models
-download (a user-triggered, verified checkpoint fetch) and Status's
-walk-setup-again (which forgets the setup marker and nothing else).
+read; the writes are the agent setup (the harness path and the MCP client
+config), the Models download (a user-triggered, verified checkpoint fetch) and
+Status's walk-setup-again (which forgets the setup marker and nothing else).
 """
 
 from __future__ import annotations
@@ -22,10 +22,8 @@ from clear_record.web.app import LANG_COOKIE, SETTINGS_SECTIONS, create_app
 #: The slugs the pinned section list must expose, in order.
 SECTIONS = tuple(slug for slug, _label, _template in SETTINGS_SECTIONS)
 
-#: The two write surfaces, and the routes only they post to.
+#: The agent-setup write surfaces, and the routes only they post to.
 WRITE_ROUTES = (
-    "/ui/agent-setup/use",
-    "/ui/agent-setup/pull",
     "/ui/agent-setup/mcp/harness",
     "/ui/agent-setup/mcp/config",
 )
@@ -395,9 +393,9 @@ def test_the_mcp_fragment_is_the_mcp_rung_alone(tmp_path) -> None:
 
     assert "/ui/agent-setup/mcp/harness" in mcp
     assert "/ui/agent-setup/mcp/config" in mcp
-    # The endpoint rung belongs to the agent panel, not the MCP section.
-    assert "/ui/agent-setup/use" not in mcp
-    assert "/ui/agent-setup/use" in agent
+    # The Try it stage belongs to the agent panel, not the MCP section.
+    assert 'id="hello-check"' not in mcp
+    assert 'id="hello-check"' in agent
     assert "/ui/agent-setup/mcp/config" in agent
 
 

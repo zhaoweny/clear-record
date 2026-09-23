@@ -62,10 +62,11 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+")
 # `pydantic` joined with the same ADR: the service layer validates the run
 # options at the seam that reads them, so every base install (not just one with
 # the `web` extra, whose FastAPI used to pull it in transitively) needs it.
+# `json-repair` left the base set with ADR-0031: it existed only for the deleted
+# in-process agent output contract.
 RUNTIME_DEPS = {
     "alembic",
     "click",
-    "json-repair",
     "numpy",
     "platformdirs",
     "pydantic",

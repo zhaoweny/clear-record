@@ -43,7 +43,6 @@ from clear_record.service import (
     RunManager,
     RunState,
     Tape,
-    TASK_KINDS,
 )
 
 
@@ -137,19 +136,12 @@ def tape(registry: Registry, meeting: Meeting, tape_id: int) -> Tape:
     return found
 
 
-def draft(agent: MeetingAgent, run_id: str) -> Draft:
-    """The agent draft ``run_id`` names for the agent's own meeting."""
-    found = agent.draft(run_id)
+def draft(agent: MeetingAgent, draft_id: str) -> Draft:
+    """The agent draft ``draft_id`` names for the agent's own meeting."""
+    found = agent.draft(draft_id)
     if found is None:
-        raise NotFound(f"no draft {run_id!r} for meeting {agent.meeting.id}")
+        raise NotFound(f"no draft {draft_id!r} for meeting {agent.meeting.id}")
     return found
-
-
-def task_kind(kind: str) -> str:
-    """``kind`` if the service declares it as an agent task."""
-    if kind not in TASK_KINDS:
-        raise NotFound(f"no agent task {kind!r}")
-    return kind
 
 
 def settings_section(
@@ -180,6 +172,5 @@ __all__ = [
     "run_state",
     "settings_section",
     "tape",
-    "task_kind",
     "term",
 ]

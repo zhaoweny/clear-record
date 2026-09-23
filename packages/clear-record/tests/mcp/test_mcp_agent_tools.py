@@ -1,19 +1,19 @@
-"""The MCP agent-task tools: launch, read, accept, reject, over the real client.
+"""The MCP draft tools: write, read, accept, reject, over the real client.
 
-The adapter is thin, so these assert exactly that: the five tools exist, a launch
-returns the draft's structured value, an acceptance returns the promotion's
-outcome, and a bad kind or unknown draft comes back as an actionable
-``is_error`` rather than a crash. A stub runner keeps it offline (ADR-0018).
+The adapter is thin, so these assert exactly that: the five tools exist, a write
+returns the chain's structured value with the author it declared, a new version
+goes on the same chain, an acceptance returns the promotion's outcome and records
+who decided it, and a bad kind or unknown draft comes back as an actionable
+``is_error`` rather than a crash. No model, endpoint or key is involved
+(ADR-0031): the harness writes, the app stores.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.mcp.server import TOOL_NAMES, build_server
-from clear_record.service import Registry, Runner, RunnerOutput, RunnerRequest
+from clear_record.service import Registry
 from mcp_client import error_text as _error
 from mcp_client import names as _names
 from mcp_client import payload as _payload
@@ -45,34 +45,30 @@ _ANSWERS: dict[str, dict] = {
 }
 
 
-class StubRunner(Runner):
-    kind = "stub"
-
-    def run(self, request: RunnerRequest) -> RunnerOutput:
-        return RunnerOutput(text=json.dumps(_ANSWERS[request.kind]), model="stub-model")
-
-
 def _registry(tmp_path: Path) -> Registry:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project("Ops")
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    write_json(
-        workspace / "record.json",
-        RecordDocument(
-            sources=(),
-            alignment=None,
-            segments=(
-                Segment(start=3.0, end=4.0, text="the falcon is up", source="a"),
-            ),
-        ),
-    )
     registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
     return registry
 
 
 def _server(tmp_path: Path):
-    return build_server(_registry(tmp_path), runner=StubRunner())
+    return build_server(_registry(tmp_path))
+
+
+def _write(server, kind: str, *, author: str = "pi-agent", draft_id=None):
+    arguments = {
+        "project": "ops",
+        "meeting": "kickoff",
+        "kind": kind,
+        "value": _ANSWERS[kind],
+        "author": author,
+    }
+    if draft_id is not None:
+        arguments["draft_id"] = draft_id
+    return _payload(server, "write_agent_draft", arguments)
 
 
 def test_the_agent_tools_are_registered(tmp_path: Path) -> None:
@@ -80,7 +76,7 @@ def test_the_agent_tools_are_registered(tmp_path: Path) -> None:
     for name in (
         "list_agent_drafts",
         "read_agent_draft",
-        "run_agent_task",
+        "write_agent_draft",
         "accept_agent_draft",
         "reject_agent_draft",
     ):
@@ -95,59 +91,80 @@ def test_list_agent_drafts_reports_the_kinds_and_an_empty_start(
         "list_agent_drafts",
         {"project": "ops", "meeting": "kickoff"},
     )
-    assert listing["tasks"] == [
+    assert listing["kinds"] == [
         "glossary_collection",
         "transcript_check",
         "minutes",
     ]
-    assert listing["configured"] is True
     assert listing["drafts"] == []
     assert listing["minutes"] is None
 
 
-def test_run_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
+def test_write_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
     server = _server(tmp_path)
 
-    launched = _payload(
-        server,
-        "run_agent_task",
-        {"project": "ops", "meeting": "kickoff", "kind": "glossary_collection"},
-    )
-    assert launched["review_state"] == "draft"
-    assert launched["value"]["terms"][0]["term"] == "Falcon"
-    run_id = launched["run_id"]
+    written = _write(server, "glossary_collection")
+    assert written["review_state"] == "draft"
+    assert written["value"]["terms"][0]["term"] == "Falcon"
+    assert written["provenance"]["author"] == "pi-agent"
+    draft_id = written["draft_id"]
 
     read = _payload(
         server,
         "read_agent_draft",
-        {"project": "ops", "meeting": "kickoff", "run_id": run_id},
+        {"project": "ops", "meeting": "kickoff", "draft_id": draft_id},
     )
-    assert read["value"] == launched["value"]
-    assert read["provenance"]["runner"] == "stub"
+    assert read["value"] == written["value"]
+    assert read["provenance"]["author"] == "pi-agent"
+    assert read["versions"] == written["versions"]
 
-    accepted = _payload(
-        server,
-        "accept_agent_draft",
-        {"project": "ops", "meeting": "kickoff", "run_id": run_id},
-    )
-    assert accepted["review_state"] == "accepted"
-    assert accepted["promotion"]["summary"]["added"] == ["Falcon"]
-
-
-def test_accepting_minutes_registers_the_meeting_minutes(tmp_path: Path) -> None:
-    server = _server(tmp_path)
-    launched = _payload(
-        server,
-        "run_agent_task",
-        {"project": "ops", "meeting": "kickoff", "kind": "minutes"},
-    )
     accepted = _payload(
         server,
         "accept_agent_draft",
         {
             "project": "ops",
             "meeting": "kickoff",
-            "run_id": launched["run_id"],
+            "draft_id": draft_id,
+            "author": "human:owner",
+        },
+    )
+    assert accepted["review_state"] == "accepted"
+    assert accepted["promotion"]["summary"]["added"] == ["Falcon"]
+    # Who wrote it and who decided it are both on the chain.
+    assert accepted["versions"][0]["author"] == "pi-agent"
+    assert accepted["versions"][0]["reviewed_by"] == "human:owner"
+
+
+def test_a_second_write_appends_a_version_with_its_own_author(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    first = _write(server, "minutes")
+
+    second = _write(server, "minutes", author="other-agent", draft_id=first["draft_id"])
+
+    assert [version["author"] for version in second["versions"]] == [
+        "pi-agent",
+        "other-agent",
+    ]
+    # A new version puts the draft back in review.
+    assert second["review_state"] == "draft"
+    listing = _payload(
+        server, "list_agent_drafts", {"project": "ops", "meeting": "kickoff"}
+    )
+    assert len(listing["drafts"]) == 1
+
+
+def test_accepting_minutes_registers_the_meeting_minutes(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    written = _write(server, "minutes")
+    accepted = _payload(
+        server,
+        "accept_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "draft_id": written["draft_id"],
         },
     )
     assert accepted["promotion"]["kind"] == "minutes"
@@ -160,18 +177,78 @@ def test_accepting_minutes_registers_the_meeting_minutes(tmp_path: Path) -> None
 
 def test_rejecting_a_draft_keeps_it(tmp_path: Path) -> None:
     server = _server(tmp_path)
-    launched = _payload(
-        server,
-        "run_agent_task",
-        {"project": "ops", "meeting": "kickoff", "kind": "minutes"},
-    )
+    written = _write(server, "minutes")
     rejected = _payload(
         server,
         "reject_agent_draft",
-        {"project": "ops", "meeting": "kickoff", "run_id": launched["run_id"]},
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "draft_id": written["draft_id"],
+            "author": "human:owner",
+        },
     )
     assert rejected["review_state"] == "rejected"
     assert rejected["promotion"] is None
+    assert rejected["versions"][-1]["reviewed_by"] == "human:owner"
+
+
+def test_a_payload_that_cannot_be_its_kind_is_refused_over_mcp(
+    tmp_path: Path,
+) -> None:
+    """The refusal is actionable: it names the key that is missing."""
+    server = _server(tmp_path)
+
+    text = _error(
+        server,
+        "write_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "kind": "minutes",
+            "value": {},
+            "author": "pi-agent",
+        },
+    )
+
+    assert "minutes" in text and "body" in text
+    listing = _payload(
+        server, "list_agent_drafts", {"project": "ops", "meeting": "kickoff"}
+    )
+    assert listing["drafts"] == []
+
+
+def test_a_decision_naming_a_stale_version_is_refused_over_mcp(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    first = _write(server, "minutes")
+    _write(server, "minutes", author="other-agent", draft_id=first["draft_id"])
+
+    text = _error(
+        server,
+        "accept_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "draft_id": first["draft_id"],
+            "version": 1,
+        },
+    )
+    assert "not the newest" in text
+
+    accepted = _payload(
+        server,
+        "accept_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "draft_id": first["draft_id"],
+            "version": 2,
+        },
+    )
+    assert accepted["review_state"] == "accepted"
+    assert accepted["versions"][1]["reviewed_by"] == "human"
 
 
 def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
@@ -180,18 +257,24 @@ def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
     server = _server(tmp_path)
     text = _error(
         server,
-        "run_agent_task",
-        {"project": "ops", "meeting": "kickoff", "kind": "summarize"},
+        "write_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "kind": "summarize",
+            "value": {},
+            "author": "pi-agent",
+        },
     )
-    # The service's own AgentTaskError carries the kind and the known kinds;
-    # the adapter no longer pre-checks, so assert those facts, not its sentence.
-    assert "unknown task kind" in text
+    # The service's own message carries the kind and the known kinds; the
+    # adapter does not restate it.
+    assert "unknown draft kind" in text
     assert "summarize" in text
     assert "glossary_collection" in text
 
     text = _error(
         server,
         "read_agent_draft",
-        {"project": "ops", "meeting": "kickoff", "run_id": "nope"},
+        {"project": "ops", "meeting": "kickoff", "draft_id": "nope"},
     )
     assert "unknown agent draft" in text

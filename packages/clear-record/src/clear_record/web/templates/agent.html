@@ -8,7 +8,7 @@
    so the two entry points cannot drift. #}
 <section class="content agent-page">
   <h2>{{ tr("Agent readiness") }}</h2>
-  <p class="muted agent-page-intro">{{ tr("Connect a model endpoint, point at an MCP harness, register clear-record's MCP server, then run the hello-world acceptance test. Every step is skippable; you can return here from Settings or Setup.") }}</p>
+  <p class="muted agent-page-intro">{{ tr("Point at an MCP harness, register clear-record's MCP server, then run the hello-world acceptance test. clear-record holds no model and asks for no key — your harness does the model work. Every step is skippable; you can return here from Settings or Setup.") }}</p>
   <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
     <div class="muted">{{ tr("Loading agent setup…") }}</div>
   </div>

@@ -19,12 +19,11 @@ here writes to stdout and nothing here exits the process. Two shapes carry that:
   it was asked raises it with the operator's message, and the caller decides
   what a failure means (the command surface turns it into an exit, the run
   queue records the run as failed, the hello check reports a finding);
-- the reports a stage hands back beside its result — ``IngestReport`` (the input
-  facts ``Source`` cannot carry: the basename and the channel split, one
-  ``DecodedInput`` per decode), ``TranscribeReport`` (the meta the stage writes
-  into ``segments.json``), ``DiarizeReport`` (one ``DiarizedSource`` per source
-  the pass looked at: the counts each source's line states, and the decode failure
-  that skipped a source), ``AttributeReport``, ``GlossaryReport`` — because the
+- the reports a stage hands back beside its result — ``IngestReport``,
+  ``TranscribeReport`` (the meta the stage writes into ``segments.json``),
+  ``DiarizeReport`` (one ``DiarizedSource`` per source the pass looked at: the
+  counts each source's line states, and the decode failure that skipped a
+  source), ``AttributeReport``, ``GlossaryReport`` — because the
   boundary dataclasses are frozen and are never widened to hold them (ADR-0030):
   a gap closes as a report object in this layer instead.
 
@@ -101,29 +100,10 @@ class PipelineError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
-class DecodedInput:
-    """One input file ``ingest`` normalized, and the source it became.
-
-    ``channel`` is the 1-based channel this decode took out of ``channels``, or
-    ``None`` when the whole file became one source — downmixed, or already mono.
-    ``Source`` cannot carry either fact: a source is a stream, its id is a
-    workspace slug derived from the path (several inputs can share one), and a
-    stream split out of a four-channel capture has no memory of which channel it
-    was.
-    """
-
-    path: Path
-    output: Path
-    channel: int | None = None
-    channels: int = 1
-
-
-@dataclasses.dataclass(frozen=True)
 class IngestReport:
     """What one ``ingest`` pass produced: the sources, in file order."""
 
     sources: tuple[Source, ...]
-    decodes: tuple[DecodedInput, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -257,7 +237,6 @@ def ingest(
     # so every source gets a positional ``Speaker N`` (an explicit caller label
     # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
-    decodes: list[DecodedInput] = []
     for number, p in enumerate(files, start=1):
         base = _source_id(p, d)
         nch = channel_count(p)
@@ -280,7 +259,6 @@ def ingest(
                     total=len(files),
                 )
                 prepare_16k_wav(p, norm, channel=ch)
-                decodes.append(DecodedInput(p, norm, channel=ch + 1, channels=nch))
                 sources.append(
                     Source(
                         id=sid,
@@ -301,7 +279,6 @@ def ingest(
                 total=len(files),
             )
             prepare_16k_wav(p, norm)
-            decodes.append(DecodedInput(p, norm, channels=nch))
             sources.append(
                 Source(
                     id=base,
@@ -312,7 +289,7 @@ def ingest(
             )
         progress.advance(source=base)
     w.write_manifest(sources)
-    return IngestReport(sources=tuple(sources), decodes=tuple(decodes))
+    return IngestReport(sources=tuple(sources))
 
 
 # --------------------------------------------------------------------------- #
@@ -1105,7 +1082,6 @@ def calibration_report(directory: str, reference: str | None = None) -> dict:
 
 __all__ = [
     "AttributeReport",
-    "DecodedInput",
     "DiarizeReport",
     "DiarizedSource",
     "GlossaryReport",

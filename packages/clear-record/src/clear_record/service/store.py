@@ -131,7 +131,7 @@ from clear_record.service.run_options import KEPT_OPTIONS_LEAD, read_run_options
 # at any revision the chain still carries — and refused where it does not: a
 # ladder row that is a step **other than** the released baseline's, or a revision
 # the cut folded away, is a development build's, and no release owes it a
-# migration (the tip wipe-and-reinstall policy, `docs/releasing.md`).
+# migration (the tip wipe policy, `docs/releasing.md`).
 
 #: Where the schema's history lives. Named as a package resource rather than a
 #: path, so that one value resolves both in a checkout (the member is installed
@@ -179,7 +179,7 @@ _LADDER_VERSION = 8
 #: number, so the row places it at the revision of the same id and the deltas on
 #: top run; nothing else the ladder wrote is carried — see
 #: :func:`_pending_stamp`. Any other row *at or below* the ladder's last version
-#: is a development build's, and the tip wipe-and-reinstall policy is the whole
+#: is a development build's, and the tip wipe policy is the whole
 #: repair path for it; a row above that version is a build newer than this one,
 #: and the sentence it meets says to upgrade.
 #:
@@ -334,7 +334,7 @@ def _pending_stamp(
       chain is the schema's history and half-understanding one is worse than
       refusing to open it, so it raises — *upgrade clear-record* when the
       revision's number is above the head's (a build newer than this one), and
-      the wipe-and-reinstall sentence when it is below (a development build's
+      the tip wipe policy's sentence when it is below (a development build's
       revision, which this release's cut folded away).
     - **The released line wrote it** — ``schema_version``, a released line's
       number. :data:`_RELEASED_BASELINES` is the whole of what is carried, and
@@ -345,7 +345,7 @@ def _pending_stamp(
     - **A development build left it behind** — the ladder's row at one of its own
       steps *other than* the released baseline's, or at ``0`` (a ladder run
       killed before it recorded where it got to). Neither is a released baseline,
-      and the tip wipe-and-reinstall policy is the repair path
+      and the tip wipe policy is the repair path
       (``docs/releasing.md``): the refusal names the file, because deleting it is
       what the user does about it.
     - **A ladder row above the ladder's last version**, which no build of this

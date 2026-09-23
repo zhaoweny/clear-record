@@ -453,8 +453,8 @@ def test_a_ladder_registry_from_a_development_build_is_not_carried(
     development builds' — a trunk build at the ladder's last step (8) as much as
     one that stopped at 3, and 0 as much as either, which is a ladder run that was
     killed before it recorded where it got to. None of them is a shape a released
-    install has, and the policy for a registry a tip install left behind is wipe
-    and reinstall (`docs/releasing.md`): the refusal names the file to delete, and
+    install has, and a registry a tip install left behind meets the tip wipe
+    policy (`docs/releasing.md`): the refusal names the file to delete, and
     nothing was migrated or stamped.
 
     The schema is built at the baseline and the row is the development build's,

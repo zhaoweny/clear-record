@@ -144,15 +144,16 @@ first `0.3.0` start on such a registry migrates it in place: the projects,
 meetings, runs, tapes and glossary terms it holds stay, and the schema's history
 begins at the released baseline rather than replaying the retired ladder.
 
-**A registry the tip left behind is not carried — wipe it and reinstall.** The
-release carries the released baseline and the revisions the compressed chain
-still holds; no other `main` state is promised a migration. The refusal is about
-**where a registry stands, not which build wrote it**, so it meets exactly two
-shapes: a `schema_version` row that is a ladder step other than the released
-line's 6, and a stamped revision the cut folded away (`0001`–`0005`). A registry
-stamped anywhere inside the compressed chain — `0006` to `0009`, which is what
-the trunk itself wrote before the cut — opens and migrates like the released one
-above; it is the *ladder* row, and the stamps the cut dropped, that are refused.
+**A registry the tip left behind is not carried — wipe it and start clear-record
+again.** The release carries the released baseline and the revisions the
+compressed chain still holds; no other `main` state is promised a migration. The
+refusal is about **where a registry stands, not which build wrote it**, so it
+meets exactly two shapes: a `schema_version` row that is a ladder step other than
+the released line's 6, and a stamped revision the cut folded away
+(`0001`–`0005`). A registry stamped anywhere inside the compressed chain —
+`0006` to `0009`, which is what the trunk itself wrote before the cut — opens and
+migrates like the released one above; it is the *ladder* row, and the stamps the
+cut dropped, that are refused.
 For those, delete the registry file and start clear-record again: it is rebuilt
 empty. On Linux the file is `~/.local/share/clear-record/registry.sqlite3` where
 `paths.data_dir` in the configuration has not moved the data directory. Nothing

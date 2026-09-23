@@ -19,8 +19,8 @@ chain this one replaces replayed the ladder's eight DDL steps one apiece
 could be placed at whatever ladder number it had reached. That was the *shape*
 the ladder needed and the compressed baseline replaces: five of those revisions
 (``0001``–``0005``) are gone — a released registry never stood at one of them,
-and a development build's registry that did is not carried (the tip
-wipe-and-reinstall policy, ``docs/releasing.md``) — while ``0007`` and ``0008``
+and a development build's registry that did is not carried (the tip wipe policy,
+``docs/releasing.md``) — while ``0007`` and ``0008``
 survive as the deltas they are from a released registry's viewpoint. What is left
 of the ladder in this chain is one thing only — the number a released install
 stands at, which is this revision's id.

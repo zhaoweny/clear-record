@@ -87,8 +87,8 @@ request the tool makes on its own is the first-use model download).
 ### Upgrading an existing install
 
 Clear-record opens your registry when it starts, and what the registry records
-decides what happens next. A released install is carried; a development install
-is not.
+decides what happens next. A released install's registry is carried; a
+development install's is carried only where the chain holds what it records.
 
 **A released install — `0.2.0` and its release candidates.** That is the only
 line that ever shipped a registry (`0.1.x` has no registry file at all). Your
@@ -99,35 +99,39 @@ runs, tapes and glossary terms it holds stay. This is the policy
 > **A registry the released line left behind is carried forward.**
 
 **A development install — a build from `main` before this release.** No migration
-is promised for one, and clear-record refuses the registries it left behind
-rather than half-understanding them. The policy, again quoted unchanged:
+is promised for one, and clear-record refuses the registries it left that stand
+outside the compressed chain — the ladder registries, and the stamps the cut
+dropped — rather than half-understanding them. The policy, again quoted unchanged:
 
-> **A registry the tip left behind is not carried — wipe it and reinstall.**
+> **A registry the tip left behind is not carried — wipe it and start clear-record
+> again.**
 
 Three stored states decide, in this order:
 
 1. **A revision this release carries (`0006`–`0009`).** The registry opens and
-   migrates, **whatever its `schema_version` row says** — `0006`–`0009` is what
-   the `main` branch itself wrote before this release, and the release changed no
-   table. The `schema_version` row is read only when there is no such revision.
+   migrates, **whatever its `schema_version` row says** — `0006`–`0009` is the
+   part of what the `main` branch wrote before this release that the chain still
+   holds, and the compression changed no table. The `schema_version` row is read
+   only when there is no such revision.
 2. **No such revision, and a `schema_version` row of `6`** — the number the
    released line recorded. Clear-record records the registry at the released
    baseline and runs only the changes made since; the rows it holds stay.
-3. **No such revision, and any other state** — a `schema_version` row that is not
-   `6` (including `0`, a build killed before it recorded where it got to, and `7`
-   or `8`, which older development builds of this line wrote), or a stored
-   revision this release no longer carries (`0001`–`0005`). Clear-record refuses
-   to open it and names the file.
+3. **No such revision, and any state a development build left** — a
+   `schema_version` row of `0` (a build killed before it recorded where it got
+   to), `1`–`5`, `7` or `8` (the ladder steps no released line stands at), or a
+   stored revision this release no longer carries (`0001`–`0005`). Clear-record
+   refuses to open it and names the file.
 
-The repair is the same for every refused state: **delete the registry file and
+The repair is the same for the registries in 3: **delete the registry file and
 start clear-record again** — the registry is rebuilt empty, and the package
 itself is not reinstalled. On Linux the file is
 `~/.local/share/clear-record/registry.sqlite3` where `paths.data_dir` in the
 configuration has not moved the data directory. Nothing else is touched —
 recordings, workspaces, archives and models stay where they are; the registry is
-one SQLite file of metadata beside them (ADR-0007, ADR-0013). A registry recording
-a revision *newer* than this build carries is the one case that is not the wipe
-path: clear-record says to upgrade instead.
+one SQLite file of metadata beside them (ADR-0007, ADR-0013). Not every refusal is
+a wipe: a registry recording a revision *newer* than this build carries — or a
+`schema_version` row above the ladder's last version, `8`, which only a build
+newer than this one writes — meets *upgrade clear-record* instead.
 
 **Your agent configuration — what to do.** If your install pointed the console at
 an LLM endpoint, point a harness at the MCP surface instead: the stdio server

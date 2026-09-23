@@ -266,10 +266,10 @@ behind an accepted recommendation is not a committed document.
   a **released baseline** — the schema a released install actually has — and
   carries only the real deltas from it to the head; a registry the released line
   left behind migrates forward in place, and a registry a development build left
-  behind is not carried: the user wipes it and reinstalls. Which states are
-  refused is the [FACT]s' to name, and they name two — a ladder row that is a
-  step other than the released line's 6, and a stamped revision the cut folded
-  away. The owner's own words
+  behind is not carried: the user deletes the registry file and starts
+  clear-record again. Which states are refused is the [FACT]s' to name, and they
+  name two — a ladder row that is a step other than the released line's 6, and a
+  stamped revision the cut folded away. The owner's own words
   on the timing: *at the release branch cut*. This is the decision the two
   [FACT]s about the ladder's own steps (2026-09-20, above) were waiting on, and
   it settles the [OPEN] beside them in the direction of the single baseline the
@@ -356,11 +356,11 @@ behind an accepted recommendation is not a committed document.
 - [FACT] **The tip refusal is stated where a user meets it.**
   ``docs/releasing.md`` carries the two sentences the 0.3.0 release notes will
   quote — *a registry the released line left behind is carried forward* and *a
-  registry the tip left behind is not carried — wipe it and reinstall* — and it
-  names the two shapes the refusal meets, because "the tip" is not the same thing
-  as "a development build" any more: a registry the trunk itself stamped inside
-  the compressed chain is carried. The shim's refusals name the file to delete, so
-  the remedy travels with the failure.
+  registry the tip left behind is not carried — wipe it and start clear-record
+  again* — and it names the two shapes the refusal meets, because "the tip" is
+  not the same thing as "a development build" any more: a registry the trunk
+  itself stamped inside the compressed chain is carried. The shim's wipe refusals
+  name the file to delete, so the remedy travels with the failure.
 - [FACT] **The stamped branch tells its two cases apart.** A registry stamped at
   a revision this build does not carry meets one of two sentences: *upgrade
   clear-record* when the revision's number is above the head's (a build newer

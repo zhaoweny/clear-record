@@ -14,12 +14,21 @@ worktree_dir = ".wt"
 branch_template = "agents/{slug}"
 
 [gates]
-# The command the run's verify gate runs, in the tree it certifies. `gwt
-# integrate` runs it in the integration tree before it stages a merge, and the
-# batch checkpoint runs the same command in the same tree. Absent, no gate runs
-# and every integration logs `gate="none"` while nothing was checked; this repo
-# runs these three as separate CI jobs, so the gate here is the compound.
-verify = "just verify && just web-assets-check && just i18n-check"
+# The command the run's verify gate runs, in the tree it certifies: CI's `verify`
+# job, which is `just verify` (sync --locked, ruff check + format-check, pytest).
+#
+# The freshness guards (`just web-assets-check`, `just i18n-check`) are
+# deliberately NOT here. Both read `git status` over their artifact's paths, and
+# `gwt integrate` runs this gate with the ticket's squash-merge *staged* — so a
+# ticket that touches `web/static/` or `locales/` is refused for the change the
+# merge itself staged, not for anything stale (measured 2026-09-23: a fresh build
+# reproduced the staged `app.css` byte for byte and the guard still failed). The
+# guards are the batch gate's job, run in the integration tree on committed
+# content; `docs/agents/shared-artifacts.toml` declares both artifacts, so a
+# merge that touches one runs its guard there. The durable fix — a guard that
+# compares a fresh build against the *index* rather than HEAD — is a proposal for
+# the owner, not a change to make under a release run.
+verify = "just verify"
 
 [control]
 # Who performs the final review-and-land on main:

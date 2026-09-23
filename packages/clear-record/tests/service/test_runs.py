@@ -752,8 +752,8 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
     # Built stopped: nothing started the drain, so nothing can claim the row
     # seeded above. (A ``_scheduler`` reading ``None`` would not say that on its
     # own — a queue that started the drain and was later retired by a joining
-    # ``shutdown`` reads the same, so the very race this knob removes can read
-    # ``None``.)
+    # ``shutdown`` reads the same, so a manager in which the very race this knob
+    # removed happened can read ``None``.)
     assert starts == []
 
     later_workspace = tmp_path / "later"

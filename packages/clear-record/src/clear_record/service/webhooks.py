@@ -73,9 +73,10 @@ EMITTED_EVENTS: tuple[str, ...] = (
     ARCHIVE_CREATED,
 )
 
-#: Reserved names for hooks whose producer does not exist yet: a glossary edit,
-#: an agent-task draft and an accepted minutes document. Named here so the
-#: vocabulary is stable and a receiver can filter on them early.
+#: Reserved names for hooks nothing emits yet: a glossary edit, an agent-task
+#: draft — ADR-0031 gives drafts a producer (the user's harness), but no event is
+#: wired to them — and an accepted minutes document. Named here so the vocabulary
+#: is stable and a receiver can filter on them early.
 FUTURE_EVENTS: tuple[str, ...] = (
     "glossary.updated",
     "agent_task.draft",

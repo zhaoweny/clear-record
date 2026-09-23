@@ -37,6 +37,7 @@ from clear_record.providers import (
     DEFAULT_MODEL,
     WINDOWS_AI_BACKEND_ID,
     available_backend_ids,
+    backend_availability,
     resolve_models_dir,
 )
 
@@ -477,6 +478,7 @@ __all__ = [
     "BackendChoice",
     "Message",
     "NoBackendAvailable",
+    "backend_availability",
     "max_channels",
     "model_paths_on_disk",
     "models_on_disk",

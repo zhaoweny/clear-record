@@ -198,6 +198,9 @@ def prepare_model(
     its own so the setup wizard can offer an explicit, user-triggered download.
     Nothing calls it implicitly: the hello-world acceptance check never
     downloads.
+
+    It belongs to the pipeline layer: provisioning a stage's model is pipeline
+    work, and ``service`` reaches ``providers`` through that layer.
     """
     return get_backend(backend_id).prepare(model, model_dir)
 
@@ -205,11 +208,11 @@ def prepare_model(
 def download_ggml_model(model: str, model_dir: str | None = None) -> str:
     """Download a named ggml checkpoint, independent of the active backend.
 
-    The bridge ``service`` uses (it may import ``cli`` but not ``providers``).
-    Unlike :func:`prepare_model`, the argument is always a ggml name/size, so a
-    named download fetches exactly ``ggml-<model>.bin`` whatever backend this
-    machine prefers -- on macOS 26 that is ``apple-speech``, whose ``prepare``
-    provisions a language asset rather than a ggml checkpoint.
+    The bridge ``service`` uses, from the pipeline layer that may import
+    ``providers``. Unlike :func:`prepare_model`, the argument is always a ggml
+    name/size, so a named download fetches exactly ``ggml-<model>.bin`` whatever
+    backend this machine prefers -- on macOS 26 that is ``apple-speech``, whose
+    ``prepare`` provisions a language asset rather than a ggml checkpoint.
     """
     return _providers_download_ggml_model(model, model_dir)
 

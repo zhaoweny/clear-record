@@ -2,7 +2,9 @@
 
 No test here needs a system voice: the service's one provider call
 (synthesize_clip) is replaced, so the test asserts phrase selection, the
-fallback handshake and the provenance record without touching an engine.
+fallback handshake and the provenance record without touching an engine. One
+test replaces the provider's *engine probe* instead and lets the real call fail,
+which is the service's own route to the provider's error.
 """
 
 from __future__ import annotations
@@ -11,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.providers.tts import Synthesis, TtsUnavailable
+import clear_record.providers.tts as provider_tts
+from clear_record.pipeline.tts import Synthesis, TtsEngine, TtsError, TtsUnavailable
 from clear_record.service import hello_tape
 from clear_record.service.hello_tape import (
     HELLO_PHRASES,
@@ -129,6 +132,29 @@ def test_write_hello_tape_surfaces_an_unavailable_provider(
 
     with pytest.raises(TtsUnavailable):
         write_hello_tape(tmp_path, lang="en")
+
+
+def test_a_detected_engine_that_cannot_run_raises_the_providers_tts_error(
+    monkeypatch, tmp_path
+) -> None:
+    """The failure path the service reaches through ``pipeline.tts``.
+
+    Only the engine *probe* is replaced: the real ``synthesize_clip`` tries each
+    detected engine, cannot launch it, records the failure and raises the
+    provider's own ``TtsError`` -- a subclass of ``TtsUnavailable``, so a caller
+    that knows only the broader error still catches it, as the acceptance check
+    does to report its ``tts`` leg.
+    """
+    missing = TtsEngine(
+        name="espeak-ng", path=str(tmp_path / "not-an-engine"), kind="espeak"
+    )
+    monkeypatch.setattr(provider_tts, "detect", lambda: (missing,))
+
+    with pytest.raises(TtsError) as excinfo:
+        write_hello_tape(tmp_path / "tape", lang="en")
+
+    assert "every system text-to-speech engine failed" in str(excinfo.value)
+    assert "espeak-ng" in str(excinfo.value)
 
 
 def test_two_locales_do_not_overwrite_each_other(monkeypatch, tmp_path) -> None:

@@ -16,9 +16,10 @@ This module owns the two things the tape needs beyond the TTS provider:
   (ADR-0006), but where it came from -- engine, language, phrase, voice and
   whether the language fell back -- is durable and travels with the tape.
 
-The provider is reached through :mod:`clear_record.cli.tts` because the layering
-DAG (ADR-0012) lets ``service`` import ``cli`` but not ``providers`` directly; see
-:mod:`clear_record.service.auto` for the same pattern.
+The provider is reached through :mod:`clear_record.pipeline.tts`: the layering
+DAG (ADR-0012) lets ``service`` import ``pipeline`` but not ``providers``, so the
+names cross there -- the route :mod:`clear_record.service.agent_flow` takes to
+:mod:`clear_record.pipeline.stages` for the model provisioning.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from clear_record.cli.tts import Synthesis, synthesize_clip
+from clear_record.pipeline.tts import Synthesis, synthesize_clip
 from clear_record.core.i18n import normalize_locale
 
 #: The spoken phrase per base language. Deliberately **not** gettext: this is

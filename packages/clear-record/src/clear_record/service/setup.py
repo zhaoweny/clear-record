@@ -22,7 +22,7 @@ Two rules this module holds to:
   existing config file keeps working and nothing writes to it.
 
 User-facing failures are a stable message ID plus parameters
-(:class:`clear_record.cli.auto.Message`, marked with
+(:class:`clear_record.pipeline.auto.Message`, marked with
 :func:`clear_record.core.i18n.deferred`), so a presentation boundary renders
 them in the user's locale while :func:`str` stays the English form for the JSON
 API and the logs — the :mod:`clear_record.service.managed` pattern.

@@ -16,7 +16,10 @@ nothing here imports back up into the command-surface package.
 - :mod:`~clear_record.pipeline.auto` — the capability resolvers behind
   ``--auto`` and ``--backend auto``;
 - :mod:`~clear_record.pipeline.eval` — the decoder-knob evaluation ``calibrate``
-  reports.
+  reports;
+- :mod:`~clear_record.pipeline.tts` — the text-to-speech provider seam: the
+  engines, the clip writer and both error classes the setup flow's hello-world
+  tape needs, re-exported because ``service`` may not import ``providers``.
 
 Declaration and execution live apart because they belong to different layers:
 the declaration is ``core`` — dependency-free, and the layer both the CLI's

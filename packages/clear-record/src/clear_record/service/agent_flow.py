@@ -10,7 +10,7 @@ The check proves the local chain once, in one synchronous call:
 1. create the locale's hello-world tape with the system voice
    (:func:`clear_record.service.hello_tape.write_hello_tape`);
 2. ingest and transcribe it with the existing pipeline
-   (``clear_record.cli.stages`` — the same stages ``scripts/agent_drive.py``
+   (``clear_record.pipeline.stages`` — the same stages ``scripts/agent_drive.py``
    drives, never a second implementation);
 3. read the transcript back with the same read the MCP tool and the review use
    (:func:`clear_record.service.transcript.read_transcript`);
@@ -21,9 +21,9 @@ The check proves the local chain once, in one synchronous call:
 Every anticipated failure is a **finding**, not an exception: the result names
 the leg that stopped — ``tts`` (no system voice), ``backend`` (no ASR backend),
 ``model`` (no checkpoint on disk), ``transcribe`` (the decode failed) — which is
-the diagnostic's whole value. The finding carries the CLI's/service's own
-:class:`~clear_record.cli.auto.Message`; the console renders it with ``tr`` and
-never restates the rule.
+the diagnostic's whole value. The finding carries the pipeline's own
+:class:`~clear_record.pipeline.auto.Message`; the console renders it with ``tr``
+and never restates the rule.
 
 The scratch workspace is app-owned state under ``<state>/hello-check``
 (ADR-0006): the generated clip and its transcript are environment-local and are
@@ -41,7 +41,7 @@ from pathlib import Path
 
 from clear_record.pipeline import auto as _auto
 from clear_record.pipeline.auto import Message
-from clear_record.cli.tts import TtsError, TtsUnavailable
+from clear_record.pipeline.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
 from clear_record.core.paths import resolve_models_dir, resolve_state_dir
 from clear_record.service.auto import (
@@ -96,8 +96,8 @@ class HelloCheck:
     """One hello-world check's outcome — the transcript, or the leg that failed.
 
     ``message`` is a stable ID plus parameters; a boundary renders it with
-    ``tr`` (:meth:`clear_record.cli.auto.Message.render`) and ``str`` stays the
-    English form for logs. On success ``transcript`` is the rendered page and
+    ``tr`` (:meth:`clear_record.pipeline.auto.Message.render`) and ``str`` stays
+    the English form for logs. On success ``transcript`` is the rendered page and
     ``segments`` its size; on a finding they are empty. ``entry``/``tool`` are
     the MCP leg the console shows — the client config entry and the transcript
     read the server exposes.
@@ -157,7 +157,7 @@ class TranscriptionStatus:
     or ``model`` (the backend needs a checkpoint and none is on disk). It is the
     decision :func:`run_hello_check` makes before it transcribes, exposed on its
     own so the setup wizard can state readiness instead of describing theory.
-    ``message`` is the CLI's own finding for a ``backend`` state, so the
+    ``message`` is the pipeline's own finding for a ``backend`` state, so the
     acceptance check reports the same words the resolver chose.
     """
 
@@ -213,9 +213,10 @@ def download_transcription_model(
     """Download (and verify) a transcription checkpoint, on request.
 
     The console's explicit remediation for the ``model`` readiness state, and
-    its model picker. It reuses the CLI's pinned, checksum-verified downloader,
-    so a click here and a first transcription install identical bytes -- and it
-    is reached only by a click: the acceptance check stays side-effect-free.
+    its model picker. It reuses the pipeline's pinned, checksum-verified
+    downloader, so a click here and a first transcription install identical bytes
+    -- and it is reached only by a click: the acceptance check stays
+    side-effect-free.
 
     ``model`` is a size from the ladder (tiny .. large-v3) or ``None`` for the
     resolved backend's own default. A named model is fetched as that exact ggml
@@ -257,7 +258,7 @@ def _run_pipeline(
     model: str | None,
     language: str,
 ) -> None:
-    """Ingest ``tape`` and transcribe it with the existing CLI stages.
+    """Ingest ``tape`` and transcribe it with the existing pipeline stages.
 
     Imported lazily so a plain ``import clear_record.service`` stays light, and
     so the service reuses the **one** stage wiring ``scripts/agent_drive.py``
@@ -362,7 +363,7 @@ def run_hello_check(
         #    wizard and this check cannot disagree about what is ready.
         status = transcription_status(backends=backends, checkpoint=checkpoint)
         if status.state == LEG_BACKEND:
-            # A ``backend`` state always carries the CLI's own finding.
+            # A ``backend`` state always carries the pipeline's own finding.
             assert status.message is not None
             return finding(LEG_BACKEND, status.message, tape=tape)
 

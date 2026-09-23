@@ -771,10 +771,10 @@ def test_shutting_down_a_queue_built_stopped_is_a_no_op(tmp_path) -> None:
     """A stopped queue has nothing to ask to stop, and asking must not crash.
 
     ``shutdown`` reads the scheduler thread to join it and to retire it, and a
-    manager built stopped never made one: the call has to find no thread there
-    and leave the manager stopped anyway. That is the same thing a second
-    ``shutdown`` meets — the scheduler the first one retired — so the call is
-    safe however often a caller makes it.
+    manager whose queue was never started never made one: the call has to find
+    no thread there and leave the manager stopped anyway. A second ``shutdown``
+    finds no thread either — there was none to retire — so the call is safe
+    however often a caller makes it.
     """
     registry = _registry(tmp_path)
     manager = RunManager(registry, start_queue=False)

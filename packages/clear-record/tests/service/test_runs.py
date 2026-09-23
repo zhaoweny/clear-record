@@ -719,13 +719,14 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
     """``start_queue=False`` is a queue that has not started, not one that cannot.
 
     What the knob guarantees is that nothing **starts** the drain, so nothing is
-    draining a seeded row that a rescan could be raced against. That is read
-    where it is decided: ``_ensure_scheduler`` is the one place the drain is
-    started, so recording its calls says whether anything started one, without
-    timing and without waiting for a first pass — a queue started and then asked
-    to stop would record the same call and leave the race the knob exists to
-    remove. The first submission is what starts the drain, and the run it
-    enqueues and the run already waiting at the head of the FIFO both execute.
+    draining and no rescan can race a seeded row. That is read where it is
+    decided: ``_ensure_scheduler`` is the one place the drain is started, so
+    recording its calls says whether anything started one, without timing and
+    without waiting for a first pass — a queue that started the drain and then
+    stopped it records that start here, and still leaves the race the knob
+    exists to remove. The first submission is what starts the drain, and the run
+    it enqueues and the run already waiting at the head of the FIFO both
+    execute.
     """
     registry = _registry(tmp_path)
     tape = tmp_path / "a.wav"
@@ -750,8 +751,9 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
 
     # Built stopped: nothing started the drain, so nothing can claim the row
     # seeded above. (A ``_scheduler`` reading ``None`` would not say that on its
-    # own — a queue started and then stopped *retires* its thread object, so the
-    # very race this knob removes would read the same.)
+    # own — a queue that started the drain and was later retired by a joining
+    # ``shutdown`` reads the same, so the very race this knob removes can read
+    # ``None``.)
     assert starts == []
 
     later_workspace = tmp_path / "later"

@@ -1928,10 +1928,11 @@ class RunManager:
         thread itself (it exits promptly when no run is executing).
 
         A manager whose queue was never started (``start_queue=False``, and
-        nothing enqueued since) has no drain thread: there is nothing to ask and
-        nothing to join, so this leaves the queue exactly as it found it. The
-        call is safe to repeat — a second ``shutdown`` re-asks a queue this one
-        already asked, or finds no thread at all.
+        nothing that reaches ``_ensure_scheduler`` — an enqueue, or an explicit
+        ``reconcile`` — has happened since) has no drain thread: there is
+        nothing to ask and nothing to join, so this leaves the queue exactly as
+        it found it. The call is safe to repeat — a second ``shutdown``
+        re-asks a queue this one already asked, or finds no thread at all.
         """
         with self._wake:
             self._stopping = True

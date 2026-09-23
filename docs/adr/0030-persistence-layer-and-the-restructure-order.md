@@ -87,6 +87,7 @@ behind an accepted recommendation is not a committed document.
   command surface; it is the item that brings the layering revision with it
   (ADR-0012's correction), and it is what lets
   `service → clear_record.cli` stop being a deliberate edge.
+  **`C3` landed 2026-09-24** — the Update at the end records it.
 
 ## Rationale
 
@@ -132,11 +133,14 @@ behind an accepted recommendation is not a committed document.
 
 ## Consequences / review hook
 
-- **ADR-0004 and ADR-0012 are corrected, not yet superseded.** Their clause
-  lists predate the layers ADR-0013 added; until `C3` lands, the guard keeps
-  `core`, `engine` and `providers` free of `clear_record.cli` while `service`
-  imports it deliberately. `C3` restates those clauses with the guard when the
-  pipeline moves out of the CLI package.
+- **ADR-0004 and ADR-0012 are corrected, and the correction is complete:** `C3`
+  landed on 2026-09-24 (the Update at the end carries what it did). Their clause
+  lists predate the layers ADR-0013 added; while `C3` was pending, the guard
+  kept `core`, `engine` and `providers` free of `clear_record.cli` while
+  `service` imported it deliberately. The pipeline moved out of the CLI package
+  into `clear_record.pipeline`, and the guard restated those clauses with it: the
+  `service → clear_record.cli` edge is gone from `ALLOWED_INTERNAL` and the
+  narrower rule covers `service` too.
 - **The batch order is the sprint's, not a standing rule.** It lives in the
   tracker's `restructure-1` lane; the windowed vote in `engine` (`C9`) may be
   taken at any point or never, and the service interface regrouping (`C10`) is
@@ -378,3 +382,30 @@ behind an accepted recommendation is not a committed document.
   baseline to ``_RELEASED_BASELINES`` and folds the deltas below it into that
   baseline's DDL; the shape does not otherwise change.
 
+## Update (2026-09-24) — `C3` landed, and the guard restated with it
+
+- [FACT] **The item the Decision above scheduled is done.** The pipeline whose
+  stage wiring was `clear_record.cli.stages` is `clear_record.pipeline` — a layer
+  of its own, the nine-layer DAG where eight stood, holding the stage wiring,
+  the transcription knobs and chunking, the workspace layout, the backend and
+  model resolution, and the decoder-knob evaluation. The provider bridges the
+  pipeline needs (`pipeline/tts.py`) live inside that layer, so the move added no
+  edge to the DAG, and the stages that followed it print nothing: they return
+  their results and report through the event sink they are handed, with the
+  command surface owning rendering and the failure-to-exit mapping
+  (`pipeline/**` carries no `print` call, no `SystemExit`).
+- [FACT] **The edge this ADR named as the one `C3` would retire is retired.**
+  `packages/clear-record/tests/test_layering.py`'s `ALLOWED_INTERNAL["service"]`
+  is `{core, pipeline}`; its isolation case for `service` poisons
+  `clear_record.cli`; and `test_no_layer_imports_the_cli` iterates `core`,
+  `engine`, `providers` and `service`. The guard proves it rather than promising
+  it: an `import clear_record.cli` added to a service module fails all three
+  cli-guard tests — `test_internal_import_edges[service]`,
+  `test_no_layer_imports_the_cli` and `test_layer_imports_in_isolation[service]`
+  — and removing it restores all three.
+- [FACT] **ADR-0004's Update and ADR-0012's clause (c) were restated in the same
+  change**, which is the obligation the Consequences above recorded and
+  ADR-0012's 2026-09-19 Update scheduled: the Update there carries nine layers
+  and no `service → cli` edge, and clause (c) reads as the rule it was written
+  to be — no layer outside `clear_record.cli` imports it — with the guard
+  carrying no edge into `cli` at all.

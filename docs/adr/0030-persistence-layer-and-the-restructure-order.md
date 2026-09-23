@@ -321,7 +321,7 @@ behind an accepted recommendation is not a committed document.
   first for the ladder's steps 0, 3, 7 and 8, and
   `test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy`
   the second. A registry the *pre-compression trunk itself* left — stamped at
-  ``0006``, ``0007``, ``0008`` or ``0009``, with no ladder row at all — is
+  ``0006``, ``0007``, ``0008`` or ``0009`` — is
   **carried**, because the compression changed no table; that is what makes the
   refusal a statement about where a registry stands rather than about which build
   wrote it, and it is why `docs/releasing.md` says so in those words.

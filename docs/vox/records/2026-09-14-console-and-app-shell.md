@@ -1,6 +1,6 @@
 # The console, the desktop app, and the app shell — owner-voice record (2026-09-14)
 
-Status: In force, except the *no build step* property, superseded by ADR-0023 (annotated in place). Live owners: ADR-0016, ADR-0023, ADR-0027, ADR-0014.
+Status: In force, except the *no build step* property, superseded by ADR-0023 (annotated in place), and the *command-template runner* half of the agent seam, superseded by ADR-0031 (annotated in place). Live owners: ADR-0016, ADR-0023, ADR-0027, ADR-0014.
 Moved here verbatim from `docs/vox/voice-of-owner.md` on 2026-09-21: no wording changed — the entry
 keeps the standing positions and the index, and each section below keeps its own date.
 
@@ -61,7 +61,10 @@ keeps the standing positions and the index, and each section below keeps its own
   semantic tools over shared services, a reference external MCP consumer, **BYOK**
   (no bundled provider key), and the harness never entering the core. The
   clear-record agent seam follows that shape (MCP server + a command-template
-  runner), also recorded in ADR-0013.
+  runner), also recorded in ADR-0013. *(Superseded 2026-09-23 by
+  [ADR-0031](../../adr/0031-harness-is-the-only-agent.md): the command-template
+  runner is deleted and MCP is the only agent integration — the MCP-server half
+  of the shape stands.)*
 
 ### Desktop app build (2026-09-14)
 

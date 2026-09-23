@@ -3,13 +3,15 @@
 Status: superseded — see [ADR-0031](0031-harness-is-the-only-agent.md) (2026-09-23)
 Date: 2026-09-14
 
-- Superseded **in full** by [ADR-0031](0031-harness-is-the-only-agent.md)
+- Superseded **in part** by [ADR-0031](0031-harness-is-the-only-agent.md)
   (2026-09-23): clear-record calls no model. The runner seam (the endpoint and
   the command runners), the prompt renderer, the task plumbing and the
   `[agent]`/`CR_AGENT_*` credential plumbing are **deleted**; MCP is the only
   agent integration, and the draft store this ADR anticipated is now a version
   chain with author provenance. This document is kept as the record of why the
-  in-process path was tried, and ADR-0031 says why it went.
+  in-process path was tried, and ADR-0031 says why it went. The **2026-09-15
+  update below stands**: the scoped re-run is a live CLI feature, and ADR-0031
+  cites it as one.
 
 ## Context
 

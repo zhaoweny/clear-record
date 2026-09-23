@@ -1,5 +1,18 @@
-"""The clear-record pipeline stage implementations (ingest / align / transcribe /
-reconcile / export / run / calibrate).
+"""The clear-record pipeline stage implementations.
+
+The module's surface: the five declared stages (ingest / align / transcribe /
+reconcile / export); the conveniences that are not stage-derived (diarize /
+attribute / glossary); ``run``, which composes them; ``run_cancel_signal``, the
+cancel signal the transcribe pool takes off the caller's sink; the model
+provisioning (``prepare_model`` / ``download_ggml_model``) that ``service``
+reaches the providers through; and ``calibration_report``, whose numbers the
+`calibrate` command writes into ``export/calibration.json``.
+
+Left out on purpose: ``PipelineOptions``, a re-export of ``core``'s, and
+everything private — the ``_run_*`` body one per stage and ``_STAGE_RUNNERS``,
+the export serializers with ``_fmt_ts``, the ``_print_*`` renderers,
+``_load_glossary``, ``_source_id`` and the ``_eval`` alias. They are machinery
+the module runs on, not what a caller comes here for.
 
 Everything here is the thin wiring layer: it reads/writes the workspace files
 and delegates the real work to ``clear_record.core`` (domain),
@@ -896,10 +909,13 @@ __all__ = [
     "attribute",
     "calibration_report",
     "diarize",
+    "download_ggml_model",
     "export",
     "glossary",
     "ingest",
+    "prepare_model",
     "reconcile",
     "run",
+    "run_cancel_signal",
     "transcribe",
 ]

@@ -4,7 +4,7 @@ Genuine bad published multi-track is scarce and usually has no correct
 answer, so this command **synthesizes the badness** and keeps the clean
 aligned ground truth to score recovery against. It is a development command,
 not a pipeline stage: it produces the fixture a `calibrate` run is scored on,
-and its output is the only artifact the pipeline never reads back.
+and its ground truth is the one artifact the pipeline never reads back.
 """
 
 from __future__ import annotations

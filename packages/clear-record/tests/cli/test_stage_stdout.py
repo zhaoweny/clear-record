@@ -205,9 +205,9 @@ _STAGE_COMMANDS: tuple[tuple[str, ...], ...] = (
 #: line — the line whose ``tr`` is why ``CR_LANG`` is pinned — `calibrate` is
 #: that run plus the report it writes and prints, and `synth` is the development
 #: command that builds the fixture a `calibrate` run is scored on. `run` and
-#: `calibrate` are what a user actually types and the aggregate #203 rewires;
-#: `calibrate`'s report and `synth` are the two helpers the pipeline package
-#: hands back to the command surface.
+#: `calibrate` are what a user actually types and the aggregates the stages'
+#: return change rewires; `calibrate`'s report and `synth` are the two helpers
+#: the pipeline package hands back to the command surface.
 _BLOCKS: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
     ("tape", _STAGE_COMMANDS),
     ("run", (("run",),)),
@@ -315,11 +315,11 @@ def _capture(root: Path) -> str:
         monkey.setenv("CR_DATA_DIR", str(root / "data"))
         monkey.setenv("CR_STATE_DIR", str(root / "state"))
         monkey.setenv("CR_LOG_DIR", str(root / "logs"))
-        # ``--backend`` is a Click choice over the provider catalog, so the
-        # commands are invoked with the catalog's own default id and the fake is
-        # substituted at the seam the stages call. The id they print is
-        # therefore the catalog's default, which keeps that line tied to the
-        # declaration rather than to a literal in this file.
+        # ``--backend`` is a Click choice over the provider catalog; the
+        # commands are invoked without it, so the catalog's own default id
+        # applies, and the fake is substituted at the seam the stages call. The
+        # id they print is therefore the catalog's default, which keeps that
+        # line tied to the declaration rather than to a literal in this file.
         monkey.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
 
         # Cold: a warm chunk cache prints cached/kept lines instead, and the pin

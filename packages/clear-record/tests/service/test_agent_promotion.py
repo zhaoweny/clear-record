@@ -16,6 +16,7 @@ service semantics underneath it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -309,6 +310,35 @@ def test_a_second_accepted_minutes_draft_supersedes_the_first(tmp_path: Path) ->
     assert promoted.promotion["summary"]["artifact_id"] == latest.id
 
 
+def test_a_re_accepted_version_leaves_a_row_that_describes_the_file(
+    tmp_path: Path,
+) -> None:
+    """A second version of one chain is promoted to the same path as the first.
+
+    Reusing the row by ``(kind, path)`` would leave the first version's
+    ``sha256``/``bytes`` on the artifact the console, the API and the archive read,
+    while the file holds the second version's text.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = agent.promote(_write(agent, "minutes"))
+    agent.write(
+        "minutes",
+        _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
+        author="another-agent",
+        draft_id=first.draft_id,
+    )
+
+    assert agent.promote(agent.draft(first.draft_id), version=2).accepted
+
+    latest = registry.latest_artifact(meeting.id, "minutes")
+    assert latest is not None
+    body = Path(latest.path).read_bytes()
+    assert body.decode("utf-8").strip() == "# Kickoff (revised)"
+    assert latest.sha256 == hashlib.sha256(body).hexdigest()
+    assert latest.bytes == len(body)
+
+
 # --- review ----------------------------------------------------------------- #
 
 
@@ -354,6 +384,13 @@ def test_a_value_that_cannot_be_its_kind_is_refused_at_the_write(
 
     with pytest.raises(MeetingAgentError, match="'body' is missing"):
         agent.write("minutes", {}, author=_AUTHOR)
+    # A blank string is the empty document the key rules out, not a value: without
+    # this an empty (or whitespace) minutes body accepts and registers a 1-byte
+    # minutes artifact as the meeting's final minutes.
+    with pytest.raises(MeetingAgentError, match="'body' is empty"):
+        agent.write("minutes", {"body": "  "}, author=_AUTHOR)
+    with pytest.raises(MeetingAgentError, match="'revision' is empty"):
+        agent.write("transcript_check", {"revision": "", "changes": []}, author=_AUTHOR)
     with pytest.raises(MeetingAgentError, match="'terms' must be a list"):
         agent.write("glossary_collection", {"terms": "Falcon"}, author=_AUTHOR)
     with pytest.raises(MeetingAgentError, match=r"terms\[0\]\.term"):
@@ -393,6 +430,22 @@ def test_a_chain_that_does_not_hold_its_kind_cannot_be_accepted(
 
     assert registry.list_artifacts(meeting.id) == []
     assert not (draft.run_dir / "minutes.md").exists()
+
+    # An empty document is not a minutes document either: the check before the
+    # promotion reads the same shape rule the write does.
+    blank = start_draft(
+        agent.directory,
+        kind="minutes",
+        project="ops",
+        meeting="kickoff",
+        value={"body": "  "},
+        author=_AUTHOR,
+    )
+
+    with pytest.raises(PromotionError, match="'body' is empty"):
+        agent.promote(blank)
+
+    assert registry.list_artifacts(meeting.id) == []
 
 
 def test_a_decision_names_the_version_the_human_read(tmp_path: Path) -> None:
@@ -435,6 +488,35 @@ def test_a_rejection_names_its_version_too(tmp_path: Path) -> None:
         agent.reject(agent.draft(first.draft_id), version=1)
 
     assert agent.draft(first.draft_id).review_state == "draft"
+
+
+def test_a_decision_refuses_a_chain_that_gained_a_version_after_the_read(
+    tmp_path: Path,
+) -> None:
+    """A decision is written as the whole chain, so it must not drop a version.
+
+    The snapshot was read before the harness appended, and its version number
+    still matches the one decided — which is the case the named-version check
+    cannot see, and the one where a rewrite would erase the harness's text.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = _write(agent, "minutes")
+    read = agent.draft(first.draft_id)
+    agent.write(
+        "minutes",
+        _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
+        author="another-agent",
+        draft_id=first.draft_id,
+    )
+
+    with pytest.raises(MeetingAgentError, match="not the newest"):
+        agent.reject(read, version=1)
+
+    stored = agent.draft(first.draft_id)
+    assert stored.version == 2
+    assert stored.review_state == "draft"
+    assert stored.versions[1].value["body"] == "# Kickoff (revised)"
 
 
 def test_two_writes_in_one_second_open_two_chains(tmp_path: Path) -> None:

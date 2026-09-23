@@ -330,9 +330,10 @@ class PipelineOptions(DecoderKnobs):
     window_s: float | None = None
     jobs: int | None = 0
     check_plugin: bool = False
-    #: An explicit re-run scope (ADR-0031): re-decode only these sources and/or
-    #: this time range, reuse every other chunk from the cache. Raw inputs, so
-    #: :meth:`chunk_scope` is the one place that parses/validates them.
+    #: An explicit re-run scope (ADR-0018's 2026-09-15 update, which stands):
+    #: re-decode only these sources and/or this time range, reuse every other
+    #: chunk from the cache. Raw inputs, so :meth:`chunk_scope` is the one place
+    #: that parses/validates them.
     rerun_sources: tuple[str, ...] | None = None
     rerun_range: str | None = None
     #: The profile this configuration was resolved from (informational).

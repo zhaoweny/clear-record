@@ -82,8 +82,10 @@ def require_shape(kind: str, value: object) -> str | None:
 
     The check is structural and deliberately shallow: the keys the acceptance
     reads have to be there and have to be the right kind of thing, and every item
-    of a kind's list field has to carry its keys. Anything else about the content
-    is the harness's claim, which the human reviews.
+    of a kind's list field has to carry its keys. A required string has to carry
+    something too — a blank ``body`` or ``revision`` is the empty document the
+    key exists to rule out, not a value the human can review. Anything else about
+    the content is the harness's claim, which the human reviews.
     """
     if kind not in DRAFT_SHAPE:  # pragma: no cover - callers check the kind first
         return f"unknown draft kind {kind!r}"
@@ -98,6 +100,8 @@ def require_shape(kind: str, value: object) -> str | None:
                 f"{key!r} must be {_TYPE_NAMES[expected]}, "
                 f"not {type(value[key]).__name__}"
             )
+        elif expected is str and not value[key].strip():
+            problems.append(f"{key!r} is empty")
     field, keys = DRAFT_ITEM_SHAPE.get(kind, ("", ()))
     if field and not problems:
         items = value.get(field) or []
@@ -348,7 +352,13 @@ def read_draft(path: str | Path) -> Draft:
 
 
 def write_draft(draft: Draft) -> Path:
-    """Persist a chain, replacing the file wholesale (the chain is the document)."""
+    """Persist a chain, replacing the file wholesale (the chain is the document).
+
+    Replacing the file is what makes the chain one document, so the write is only
+    safe against a chain nobody else moved: a decision write checks that first
+    (:func:`_refuse_if_superseded`), because the console and the MCP server are
+    two processes over one directory.
+    """
     draft.path.parent.mkdir(parents=True, exist_ok=True)
     draft.path.write_text(
         json.dumps(draft.as_dict(), indent=2, ensure_ascii=False) + "\n",
@@ -429,6 +439,33 @@ def append_version(
     return updated
 
 
+def _stored_versions(path: Path) -> tuple[Version, ...] | None:
+    """The chain ``path`` holds right now, or ``None`` when there is none to lose."""
+    try:
+        return read_draft(path).versions
+    except (OSError, ValueError):
+        return None
+
+
+def _refuse_if_superseded(draft: Draft) -> None:
+    """Refuse to write a chain over a version another writer added meanwhile.
+
+    A write replaces ``draft.json`` wholesale, so a version a harness appended
+    between the reader's read and this write would be **dropped** by it; the
+    stored chain has to be the one this draft holds or the write is refused
+    (:class:`StaleVersion`) and the reader decides on what is actually there. A
+    chain that is gone or unreadable is not a version to lose, and is written as
+    before.
+    """
+    stored = _stored_versions(draft.path)
+    if stored is None:
+        return
+    if [version.as_dict() for version in stored] != [
+        version.as_dict() for version in draft.versions
+    ]:
+        raise StaleVersion(version=draft.version, newest=len(stored))
+
+
 def record_review(
     draft: Draft,
     decision: str,
@@ -438,11 +475,18 @@ def record_review(
     version: int | None = None,
     clock: Callable[[], str] = _now,
 ) -> Draft:
-    """Record a human's accept/reject on the version they decided, and write it."""
+    """Record a human's accept/reject on the version they decided, and write it.
+
+    The decision is written as the whole document, so it is refused
+    (:class:`StaleVersion`) when the chain on disk gained a version since
+    ``draft`` was read: that version is the harness's, and a decision must not
+    drop it.
+    """
     reviewed = draft.reviewed(
         decision, author=author, at=clock(), promotion=promotion, version=version
     )
     if reviewed is not draft:
+        _refuse_if_superseded(draft)
         write_draft(reviewed)
     return reviewed
 

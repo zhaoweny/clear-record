@@ -77,11 +77,12 @@ Date: 2026-09-15
 
 ## Consequences / review hook
 
-- [DECISION: owner, 2026-09-15] **Content stays off until the agent runtime.**
-  Webhooks carry **metadata on lifecycle events only** — ids, status, counts and
-  artifact paths. `include_content` stays implemented and tested but unused: the
-  harness (ADR-0031) is the producer, and a built-in summary would be a
-  second, worse producer for clear-record to own.
+- [DECISION: owner, 2026-09-15] **Content stays off** — the "until the agent
+  runtime" this once hung on names ADR-0018's in-process runtime, which ADR-0031
+  deletes. Webhooks carry **metadata on lifecycle events only** — ids, status,
+  counts and artifact paths. `include_content` stays implemented and tested but
+  unused: the harness (ADR-0031) is the producer, and a built-in summary would be
+  a second, worse producer for clear-record to own.
 - [DECISION: owner, 2026-09-15] **The console surfaces endpoint health and the last
   delivery outcome** (ok / failed / why). "Loud config errors" cannot mean only a
   log line a user never reads — a silently-disabled webhook is the exact defect

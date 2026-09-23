@@ -1022,7 +1022,7 @@ def create_app(
         """Forget the marker: the nav Setup link returns and the wizard re-opens.
 
         The Settings -> Status walk-setup-again action. It writes no other key,
-        so a returning user's runner and MCP config survive it.
+        so a returning user's harness and MCP client config survive it.
         """
         clear_seen_version()
         return RedirectResponse("/setup", status_code=303)

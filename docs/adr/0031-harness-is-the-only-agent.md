@@ -74,6 +74,12 @@ Date: 2026-09-23
   - deciding a version **happens once**: a version that already carries a
     decision is returned unchanged, so a repeated accept can never run a
     promotion twice.
+- [DECISION] **A 0.2 install's own agent runs are not part of the chain.** The
+  0.2 in-process path wrote one directory per run
+  (`<workspace>/agent/<kind>-<run_id>/`, with `run.json`); the store reads only
+  `<draft_id>/draft.json` and does **not** migrate those runs, so they are named
+  on the meeting's page (`MeetingAgent.legacy_drafts`) rather than left silently
+  invisible.
 - [DECISION] **The human's accept/reject survives, and it means something.** An
   acceptance promotes per kind: `glossary_collection` → **candidate** registry
   terms (never confirmed — confirming is the owner's per-term act);

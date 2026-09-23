@@ -29,9 +29,10 @@ Two halves:
 write into the chain's newest version, and a version that already carries a
 decision is never decided again — so a repeated accept cannot run a side effect
 twice. The write helpers are independently idempotent too (a term already in the
-registry is skipped, an artifact path already registered is reused), so a
-promotion interrupted between its side effect and its record is still safe to
-repeat.
+registry is skipped, an artifact whose bytes are already registered is reused), so
+a promotion interrupted between its side effect and its record is still safe to
+repeat. A **later** version accepted on the same chain registers its own artifact
+row rather than rewriting the earlier one's.
 
 Depends only on ``core`` and ``service`` (the layering DAG); nothing here names a
 model, an endpoint or a runtime.
@@ -366,11 +367,23 @@ def _register_file(
     *,
     kind: str,
 ):
-    """Record ``path`` as a final agent artifact; idempotent by (kind, path)."""
-    for existing in registry.list_artifacts(meeting.id):
-        if existing.kind == kind and existing.path == str(path):
-            return existing
+    """Record ``path`` as a final agent artifact, one row per content.
+
+    Idempotent by **content**: a row that already describes these bytes is
+    reused, so accepting one version twice registers nothing twice. A row for the
+    same path holding *different* bytes is an earlier accepted version of the same
+    chain, and is left as it is — the promotion registers its own row, which is
+    what makes :meth:`Registry.latest_artifact` the most recently accepted version
+    and keeps ``sha256``/``bytes`` describing the file they name (ADR-0030).
+    """
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    for existing in registry.list_artifacts(meeting.id):
+        if (
+            existing.kind == kind
+            and existing.path == str(path)
+            and existing.sha256 == digest
+        ):
+            return existing
     return registry.add_artifact(
         meeting.id,
         kind=kind,

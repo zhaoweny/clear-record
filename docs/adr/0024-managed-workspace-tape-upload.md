@@ -28,7 +28,7 @@ Date: 2026-09-15
   **managed** workspace is app-owned, so this feature must amend that rule
   without deleting it.
 - [FACT] The pipeline reads a directory through one abstraction,
-  `clear_record.cli.workspace.Workspace`, and a run's tapes arrive through
+  `clear_record.pipeline.workspace.Workspace`, and a run's tapes arrive through
   `PipelineOptions.audio_files`; the stage never learns where a path came from.
 - [FACT] Remote use has a hole in the middle: a self-hosted node can run the
   pipeline and serve the console, but the tapes are on the user's laptop and the

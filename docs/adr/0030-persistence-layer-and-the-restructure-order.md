@@ -83,9 +83,9 @@ behind an accepted recommendation is not a committed document.
   the service interface regrouping (`C10`) parked.** This is the spec's
   scheduling decision, reviewed by the owner when the spec was dispatched, not
   the owner's own wording. `C3` moves the pipeline whose stage wiring is
-  `clear_record.cli.stages` out of the CLI package into a module under the
-  command surface; it is the item that brings the layering revision with it
-  (ADR-0012's correction), and it is what lets
+  `clear_record.cli.stages` out of the CLI package into a layer of its own,
+  `clear_record.pipeline`; it is the item that brings the layering revision with
+  it (ADR-0012's correction), and it is what lets
   `service → clear_record.cli` stop being a deliberate edge.
   **`C3` landed 2026-09-24** — the Update at the end records it.
 
@@ -389,10 +389,10 @@ behind an accepted recommendation is not a committed document.
   of its own, the nine-layer DAG where eight stood, holding the stage wiring,
   the transcription knobs and chunking, the workspace layout, the backend and
   model resolution, and the decoder-knob evaluation. The provider bridges the
-  pipeline needs (`pipeline/tts.py`) live inside that layer, so the move added no
-  edge to the DAG, and the stages that followed it print nothing: they return
-  their results and report through the event sink they are handed, with the
-  command surface owning rendering and the failure-to-exit mapping
+  pipeline needs (`pipeline/tts.py`) live inside that layer, so `service` still
+  needs no edge into `providers`, and the stages that followed it print nothing:
+  they return their results and report through the event sink they are handed,
+  with the command surface owning rendering and the failure-to-exit mapping
   (`pipeline/**` carries no `print` call, no `SystemExit`).
 - [FACT] **The edge this ADR named as the one `C3` would retire is retired.**
   `packages/clear-record/tests/test_layering.py`'s `ALLOWED_INTERNAL["service"]`

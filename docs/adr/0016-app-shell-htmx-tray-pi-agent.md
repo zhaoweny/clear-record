@@ -114,5 +114,8 @@ Date: 2026-09-14
   proves reliable enough to test the shell.
 - The base install stays audio-only; `web`, `tray` and `agents` are extras (the
   MCP SDK landed behind its own extra, ADR-0017).
-- Layers may import the CLI's stage wiring but never the other way around; the
-  layering guard grows with the DAG (ADR-0012).
+- Layers may import the stage wiring (`clear_record.pipeline`) but never the
+  other way around; and since the pipeline left the CLI package on 2026-09-24,
+  no layer outside the command surface imports `clear_record.cli` at all — the
+  edge this ADR's date allowed is gone. The layering guard grows with the DAG
+  (ADR-0012).

@@ -48,7 +48,7 @@ Date: 2026-09-15
   **`windows-ai`**, distinct from the `whisper-cli` `apple` / `nvidia` / `amd`.
   The ids are defined **once**, in `clear_record.providers.base`
   (`APPLE_SPEECH_BACKEND_ID` / `WINDOWS_AI_BACKEND_ID`), and
-  `clear_record.cli.auto.BACKEND_PREFERENCE` consumes those constants, so the
+  `clear_record.pipeline.auto.BACKEND_PREFERENCE` consumes those constants, so the
   documented id and the preference order cannot drift.
 - [DESIGN] The native ids are **not registered** as backends until their
   adapters land (Apple ticket 02; Windows ticket 03). A registered-but-always-

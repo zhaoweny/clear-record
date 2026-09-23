@@ -210,7 +210,7 @@ guided path.
 - [DECISION] The **Transcription** step offers an explicit, user-triggered
   **Download the default model** action (`POST /ui/setup/download-model`) when
   `state == "model"`. It reuses the same pinned, checksum-verified downloader a
-  normal first use performs (`cli.stages.prepare_model` -> the provider's
+  normal first use performs (`pipeline.stages.prepare_model` -> the provider's
   `prepare`), then re-renders the step, so readiness becomes **ready** in place:
   **needs model -> Download model -> Transcription ready -> Try it**.
 - [DECISION] The download is **never implicit**: the hello-world acceptance check
@@ -236,7 +236,7 @@ previously read-only surface.
   (`POST /setup/restart`): it forgets the setup marker and returns to `/setup`,
   and writes no other key, so a returning user's harness and MCP client config
   survive it. A plain link to the wizard sits beside it.
-- [FACT] `MODEL_LADDER` is now public (`cli.auto`, re-exported by
+- [FACT] `MODEL_LADDER` is now public (`pipeline.auto`, re-exported by
   `service.auto`) so the console can list the sizes without importing `cli`.
 
 ## Update — 2026-09-17: the pipeline status page and a live header chip

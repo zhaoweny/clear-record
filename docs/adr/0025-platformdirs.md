@@ -23,8 +23,10 @@ Date: 2026-09-15
   paths — the exact alternative ADR-0007 *discarded* in order to have one layout.
 - [FACT] ADR-0007 left its macOS and Windows mapping **unresolved** (`[OPEN]`), and
   that is precisely why the codebase only implements the Linux/XDG form: three
-  modules hand-roll the same literals — `service/paths.py` (config/data/state),
-  `core/diagnostics.py` (state/logs) and a cache reference in `cli/workspace.py`.
+  modules hand-rolled the same literals — `service/paths.py` (config/data/state),
+  `core/diagnostics.py` (state/logs) and a cache reference in
+  `pipeline/workspace.py` — since folded into the one resolver in `core/paths.py`
+  (`service/paths.py`, a pass-through to it, was deleted on 2026-09-19).
 - [FACT] ADR-0007's tentative kind-split (`models`/`glossary` → data, chunk cache →
   cache, logs/resume → state) maps cleanly onto `platformdirs`' own categories, and
   so does the managed workspace root just decided (`data`).

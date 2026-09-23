@@ -5,8 +5,9 @@ The resolvers live in ``clear_record.pipeline.auto`` (``--auto`` picks a profile
 sits above ``service`` in the layering DAG and may not import ``pipeline``, so
 this module is the one place the console reaches them: ``service`` may import
 ``pipeline`` (it already drives the pipeline's stage wiring), and the resolver is
-**re-exported**, not reimplemented. The explanation the console shows is
-therefore byte-for-byte the one the CLI shows — the two surfaces cannot drift.
+**re-exported**, not reimplemented. The console therefore shows the same
+explanation the CLI shows, translated at its own boundary with its own ``tr``
+— the two surfaces cannot drift.
 
 Nothing here runs on the default path: :func:`resolve_run` returns the plain
 :func:`clear_record.core.resolve_options` result unless the caller explicitly

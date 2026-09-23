@@ -199,7 +199,7 @@ we'd expose the necessary tools"*.
 Scoped in the local tracker's `project-console` lane. The two `[OPEN]`s above
 are answered here.
 
-- [FACT] **The cache key is split.** `cli.workspace.chunk_cache_key` still
+- [FACT] **The cache key is split.** `pipeline.workspace.chunk_cache_key` still
   returns the same run-meta, but the cache reads it as two parts: the **plan**
   (backend, model, language, the chunk plan, decoder knobs) and the **glossary**.
   A plan change still makes a source's chunk bodies meaningless in place and

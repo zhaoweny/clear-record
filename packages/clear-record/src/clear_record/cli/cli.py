@@ -22,8 +22,8 @@ default — lives in one mechanism (:func:`clear_record.core.resolve_options`).
 That chain is a run knob's own, not ADR-0007's app-directory precedence, which
 has a config-file layer and no profile.
 The ``CR_*`` reads that live outside the CLI (``providers``, ``pipeline``,
-``service``, ``web``, ``tray``, ``mcp``, ``core.diagnostics``) are deliberately
-left where they are.
+``service``, ``web``, ``tray``, ``mcp``, ``core.diagnostics`` and
+``core.i18n``'s ``CR_LANG``) are deliberately left where they are.
 
 Recordings and model weights are environment-local data — never commit them.
 See docs/architecture.md §6 and ADR-0006.

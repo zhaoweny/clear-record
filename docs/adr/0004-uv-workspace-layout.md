@@ -101,9 +101,10 @@ them for the workspace layout.
   own `clear_record.pipeline` layer (the item `C3`, which landed —
   [ADR-0030](0030-persistence-layer-and-the-restructure-order.md)), so `cli` may
   import `pipeline`, `service` may import `core` and `pipeline` only, and the
-  `service → cli` edge this bullet recorded as deliberate is gone —
-  `ALLOWED_INTERNAL` no longer carries it and `test_no_layer_imports_the_cli`
-  checks `core`, `engine`, `providers` and `service`. `core` still
+  `service → cli` edge is gone — `ALLOWED_INTERNAL` no longer carries it and
+  `test_no_layer_imports_the_cli` checks `core`, `engine`, `providers` and
+  `service`. The deliberate-edge wording this bullet used to carry survives in
+  [ADR-0012](0012-single-distribution.md)'s 2026-09-19 Update. `core` still
   declares/uses no third-party dependency.
 - [DECISION] The `clear-record` **facade member is gone**: the single dist owns
   the `clear-record` command (`clear_record.cli.cli:main`) and the top-level

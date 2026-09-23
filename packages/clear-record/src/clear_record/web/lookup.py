@@ -1,10 +1,9 @@
 """Find the thing a request named — or answer that it is not here.
 
 The console is asked for a project, a meeting, a tape, a run, a term, an archive,
-an agent draft, an agent-task kind or one of its own settings sections — by a
-page, by a fragment or by the JSON API — and the answer to *"and if it is not
-there?"* is one rule. That rule lives here, once: a finder returns the value, or
-raises :class:`NotFound`.
+an agent draft or one of its own settings sections — by a page, by a fragment or
+by the JSON API — and the answer to *"and if it is not there?"* is one rule. That
+rule lives here, once: a finder returns the value, or raises :class:`NotFound`.
 
 The **two behaviours** the surfaces need are preserved exactly, and they are a
 difference in *answering*, never in *finding*:

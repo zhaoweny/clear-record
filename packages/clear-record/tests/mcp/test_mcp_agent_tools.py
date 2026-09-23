@@ -125,6 +125,7 @@ def test_write_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
             "project": "ops",
             "meeting": "kickoff",
             "draft_id": draft_id,
+            "version": written["version"],
             "author": "human:owner",
         },
     )
@@ -165,6 +166,7 @@ def test_accepting_minutes_registers_the_meeting_minutes(tmp_path: Path) -> None
             "project": "ops",
             "meeting": "kickoff",
             "draft_id": written["draft_id"],
+            "version": written["version"],
         },
     )
     assert accepted["promotion"]["kind"] == "minutes"
@@ -185,12 +187,38 @@ def test_rejecting_a_draft_keeps_it(tmp_path: Path) -> None:
             "project": "ops",
             "meeting": "kickoff",
             "draft_id": written["draft_id"],
+            "version": written["version"],
             "author": "human:owner",
         },
     )
     assert rejected["review_state"] == "rejected"
     assert rejected["promotion"] is None
     assert rejected["versions"][-1]["reviewed_by"] == "human:owner"
+
+
+def test_the_decision_tools_require_the_version_they_decide(tmp_path: Path) -> None:
+    """A decision names its version: no surface defaults to the newest.
+
+    The schema is the contract a harness reads, so the required field is what
+    stops a decision from being applied to a version nobody named — the caller
+    reads a draft, then decides *that* version.
+    """
+    server = _server(tmp_path)
+    written = _write(server, "minutes")
+
+    for tool in ("accept_agent_draft", "reject_agent_draft"):
+        message = _error(
+            server,
+            tool,
+            {"project": "ops", "meeting": "kickoff", "draft_id": written["draft_id"]},
+        )
+        assert "version" in message and "required" in message
+
+    # And the version it names is the one that gets decided.
+    listing = _payload(
+        server, "list_agent_drafts", {"project": "ops", "meeting": "kickoff"}
+    )
+    assert [draft["review_state"] for draft in listing["drafts"]] == ["draft"]
 
 
 def test_a_payload_that_cannot_be_its_kind_is_refused_over_mcp(

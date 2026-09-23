@@ -80,6 +80,23 @@ Date: 2026-09-23
   `<draft_id>/draft.json` and does **not** migrate those runs, so they are named
   on the meeting's page (`MeetingAgent.legacy_drafts`) rather than left silently
   invisible.
+- [DECISION] **One chain, one writer at a time.** The console and the MCP server
+  are two processes over one workspace, and a chain is one file written whole, so
+  a writer **holds the chain** while it reads it and writes it back: a
+  `draft.lock` in the chain's own directory (`fcntl.flock` on POSIX,
+  `msvcrt.locking` on Windows — advisory and local, which is what this store is),
+  and the file is replaced by rename from a temporary name, so a reader sees the
+  chain before the write or after it and never half of either. Nothing this app
+  writes can leave a chain unreadable; one a hand-edit or a crash leaves unusable
+  is **refused rather than written over**, on both reads that write a chain back —
+  an append (a harness's re-run) and a decision.
+- [DECISION] **A decision names the version it decides.** `accepted`/`rejected`
+  carry the version number the human read — required at the store and on every
+  surface that offers one (the console's form, the JSON API's query, the MCP tool
+  schema and `just agent-drive`'s own calls). There is no default to the newest
+  version, so a decision can never be applied to text nobody named; a version that
+  is no longer the newest when the decision arrives is refused rather than
+  recorded against it.
 - [DECISION] **The human's accept/reject survives, and it means something.** An
   acceptance promotes per kind: `glossary_collection` → **candidate** registry
   terms (never confirmed — confirming is the owner's per-term act);

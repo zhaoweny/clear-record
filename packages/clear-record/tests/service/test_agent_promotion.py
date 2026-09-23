@@ -24,6 +24,7 @@ import pytest
 
 from clear_record.service import (
     AGENT_DIRNAME,
+    DRAFT_FILENAME,
     PROMOTERS,
     TASK_KINDS,
     Draft,
@@ -31,11 +32,13 @@ from clear_record.service import (
     MeetingAgentError,
     PromotionError,
     Registry,
+    UnreadableChain,
     describe_draft,
     project_snapshot,
     promote_draft,
     start_draft,
 )
+from clear_record.service import agent_drafts as store
 
 _ANSWERS: dict[str, dict] = {
     "glossary_collection": {
@@ -85,6 +88,16 @@ def _write(agent: MeetingAgent, kind: str, value: dict | None = None) -> Draft:
     )
 
 
+def _promote(agent: MeetingAgent, draft: Draft) -> Draft:
+    """Accept the version this draft was read at — what a reviewer who read it does."""
+    return agent.promote(draft, version=draft.version)
+
+
+def _reject(agent: MeetingAgent, draft: Draft) -> Draft:
+    """Reject the version this draft was read at."""
+    return agent.reject(draft, version=draft.version)
+
+
 # --- the dispatch tables cover every declared kind -------------------------- #
 
 
@@ -121,7 +134,7 @@ def test_a_new_version_reopens_a_decided_draft(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
     first = _write(agent, "minutes")
-    accepted = agent.promote(first)
+    accepted = _promote(agent, first)
     assert accepted.review_state == "accepted"
 
     revised = _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"}
@@ -191,7 +204,7 @@ def test_promoting_glossary_candidates_adds_candidate_terms(tmp_path: Path) -> N
     draft = _write(agent, "glossary_collection")
     assert registry.list_terms("ops") == []  # a write alone changes nothing
 
-    promoted = agent.promote(draft)
+    promoted = _promote(agent, draft)
 
     terms = registry.list_terms("ops")
     assert [(term.term, term.status, term.added_by) for term in terms] == [
@@ -212,9 +225,9 @@ def test_promoting_glossary_candidates_adds_candidate_terms(tmp_path: Path) -> N
 def test_promoting_glossary_twice_is_idempotent(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
-    once = agent.promote(_write(agent, "glossary_collection"))
+    once = _promote(agent, _write(agent, "glossary_collection"))
 
-    twice = agent.promote(once)
+    twice = _promote(agent, once)
 
     assert len(registry.list_terms("ops")) == 1
     assert twice.promotion == once.promotion
@@ -225,7 +238,7 @@ def test_promoting_glossary_skips_an_existing_term(tmp_path: Path) -> None:
     registry.add_term("ops", "Falcon", status="confirmed", added_by="human")
     agent = _agent(registry, meeting)
 
-    promoted = agent.promote(_write(agent, "glossary_collection"))
+    promoted = _promote(agent, _write(agent, "glossary_collection"))
 
     assert promoted.promotion["summary"] == {
         "added": [],
@@ -247,7 +260,7 @@ def test_promoting_a_check_records_a_revision_without_overwriting_the_record(
     record_before = (workspace / "record.json").read_bytes()
     agent = _agent(registry, meeting)
 
-    promoted = agent.promote(_write(agent, "transcript_check"))
+    promoted = _promote(agent, _write(agent, "transcript_check"))
 
     summary = promoted.promotion["summary"]
     revision = Path(summary["revision_path"])
@@ -269,9 +282,9 @@ def test_promoting_a_check_records_a_revision_without_overwriting_the_record(
 def test_promoting_a_check_twice_registers_one_artifact(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
-    once = agent.promote(_write(agent, "transcript_check"))
+    once = _promote(agent, _write(agent, "transcript_check"))
 
-    agent.promote(once)
+    _promote(agent, once)
 
     assert len(registry.list_artifacts(meeting.id)) == 1
 
@@ -283,7 +296,7 @@ def test_promoting_minutes_records_the_meetings_minutes(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
 
-    promoted = agent.promote(_write(agent, "minutes"))
+    promoted = _promote(agent, _write(agent, "minutes"))
 
     artifact = registry.latest_artifact(meeting.id, "minutes")
     assert artifact is not None and artifact.kind == "minutes"
@@ -298,10 +311,10 @@ def test_promoting_minutes_records_the_meetings_minutes(tmp_path: Path) -> None:
 def test_a_second_accepted_minutes_draft_supersedes_the_first(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
-    agent.promote(_write(agent, "minutes"))
+    _promote(agent, _write(agent, "minutes"))
 
     revised = {"minutes": _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"}}
-    promoted = agent.promote(_write(agent, "minutes", revised["minutes"]))
+    promoted = _promote(agent, _write(agent, "minutes", revised["minutes"]))
 
     latest = registry.latest_artifact(meeting.id, "minutes")
     assert (
@@ -321,7 +334,7 @@ def test_a_re_accepted_version_leaves_a_row_that_describes_the_file(
     """
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
-    first = agent.promote(_write(agent, "minutes"))
+    first = _promote(agent, _write(agent, "minutes"))
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
@@ -339,6 +352,44 @@ def test_a_re_accepted_version_leaves_a_row_that_describes_the_file(
     assert latest.bytes == len(body)
 
 
+def test_a_version_that_returns_to_earlier_bytes_gets_its_own_row(
+    tmp_path: Path,
+) -> None:
+    """The newest row for a path always describes the file at that path.
+
+    A tuning loop returns to an earlier version's bytes by design. Reusing a row by
+    content alone would republish an *earlier* version's digest while the file
+    holds the newest — the digest the console, the API and MCP all read.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first_body = _ANSWERS["minutes"]["body"]
+    first = _write(agent, "minutes")
+    _promote(agent, first)
+
+    agent.write(
+        "minutes",
+        _ANSWERS["minutes"] | {"body": first_body + "\n\nAnd then some."},
+        author="another-agent",
+        draft_id=first.draft_id,
+    )
+    assert _promote(agent, agent.draft(first.draft_id)).accepted
+    agent.write(
+        "minutes",
+        _ANSWERS["minutes"] | {"body": first_body},
+        author="another-agent",
+        draft_id=first.draft_id,
+    )
+    assert _promote(agent, agent.draft(first.draft_id)).accepted
+
+    latest = registry.latest_artifact(meeting.id, "minutes")
+    assert latest is not None
+    body = Path(latest.path).read_bytes()
+    assert body.decode("utf-8").strip() == first_body
+    assert latest.sha256 == hashlib.sha256(body).hexdigest()
+    assert latest.bytes == len(body)
+
+
 # --- review ----------------------------------------------------------------- #
 
 
@@ -347,7 +398,7 @@ def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None
     agent = _agent(registry, meeting)
     draft = _write(agent, "glossary_collection")
 
-    rejected = agent.reject(draft)
+    rejected = _reject(agent, draft)
 
     assert rejected.review_state == "rejected"
     assert rejected.promotion is None
@@ -361,7 +412,7 @@ def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None
 def test_a_review_round_trips_the_promotion_record(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
-    promoted = agent.promote(_write(agent, "minutes"))
+    promoted = _promote(agent, _write(agent, "minutes"))
 
     reloaded = agent.draft(promoted.draft_id)
 
@@ -377,7 +428,8 @@ def test_a_value_that_cannot_be_its_kind_is_refused_at_the_write(
     """A payload the acceptance cannot read is refused where it is written.
 
     Without this, ``write_agent_draft(kind='minutes', value={})`` accepts and
-    registers a 1-byte minutes document as the meeting's final minutes.
+    registers an artifact no larger than its own newline as the meeting's final
+    minutes.
     """
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
@@ -385,8 +437,8 @@ def test_a_value_that_cannot_be_its_kind_is_refused_at_the_write(
     with pytest.raises(MeetingAgentError, match="'body' is missing"):
         agent.write("minutes", {}, author=_AUTHOR)
     # A blank string is the empty document the key rules out, not a value: without
-    # this an empty (or whitespace) minutes body accepts and registers a 1-byte
-    # minutes artifact as the meeting's final minutes.
+    # this an empty (or whitespace) minutes body accepts and registers an artifact
+    # no larger than its own newline as the meeting's final minutes.
     with pytest.raises(MeetingAgentError, match="'body' is empty"):
         agent.write("minutes", {"body": "  "}, author=_AUTHOR)
     with pytest.raises(MeetingAgentError, match="'revision' is empty"):
@@ -426,7 +478,7 @@ def test_a_chain_that_does_not_hold_its_kind_cannot_be_accepted(
     )
 
     with pytest.raises(PromotionError, match="'body' is missing"):
-        agent.promote(draft)
+        _promote(agent, draft)
 
     assert registry.list_artifacts(meeting.id) == []
     assert not (draft.run_dir / "minutes.md").exists()
@@ -443,7 +495,7 @@ def test_a_chain_that_does_not_hold_its_kind_cannot_be_accepted(
     )
 
     with pytest.raises(PromotionError, match="'body' is empty"):
-        agent.promote(blank)
+        _promote(agent, blank)
 
     assert registry.list_artifacts(meeting.id) == []
 
@@ -495,9 +547,10 @@ def test_a_decision_refuses_a_chain_that_gained_a_version_after_the_read(
 ) -> None:
     """A decision is written as the whole chain, so it must not drop a version.
 
-    The snapshot was read before the harness appended, and its version number
-    still matches the one decided — which is the case the named-version check
-    cannot see, and the one where a rewrite would erase the harness's text.
+    The snapshot was read before the harness appended, and the version it names is
+    checked against the chain **on disk** — the case a check against the caller's
+    own snapshot cannot see, and the one where a rewrite would erase the harness's
+    text.
     """
     registry, meeting, _ = _workspace(tmp_path)
     agent = _agent(registry, meeting)
@@ -519,6 +572,139 @@ def test_a_decision_refuses_a_chain_that_gained_a_version_after_the_read(
     assert stored.versions[1].value["body"] == "# Kickoff (revised)"
 
 
+def test_a_superseded_acceptance_promotes_nothing(tmp_path: Path) -> None:
+    """A refused acceptance leaves the meeting exactly as it was.
+
+    The decision is refused **and** nothing is promoted: no minutes artifact, no
+    ``minutes.md``. A refusal taken after the promoter ran would leave a final
+    minutes artifact for a decision the console told the user was not recorded.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = _write(agent, "minutes")
+    read = agent.draft(first.draft_id)
+    agent.write(
+        "minutes",
+        _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
+        author="another-agent",
+        draft_id=first.draft_id,
+    )
+
+    with pytest.raises(MeetingAgentError, match="not the newest"):
+        agent.promote(read, version=1)
+
+    assert registry.list_artifacts(meeting.id) == []
+    assert not (first.run_dir / "minutes.md").exists()
+    stored = agent.draft(first.draft_id)
+    assert [version.decision for version in stored.versions] == [None, None]
+
+
+def test_a_decision_already_recorded_is_returned_not_refused(tmp_path: Path) -> None:
+    """Deciding a version that already carries a decision is a no-op, not a ``StaleVersion``.
+
+    The second call's snapshot was read before the first decision landed, so it
+    still reads ``draft`` where the chain reads ``accepted``. That is the decision
+    recorded once (ADR-0031): the chain is returned as it stands, and a stale
+    snapshot's own answer does not overwrite it.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = _write(agent, "minutes")
+    read = agent.draft(first.draft_id)
+    accepted = _promote(agent, read)
+
+    again = _promote(agent, read)
+    still = _reject(agent, read)
+
+    assert again.review_state == "accepted"
+    assert again.promotion == accepted.promotion
+    assert still.review_state == "accepted"
+    assert len(registry.list_artifacts(meeting.id)) == 1
+
+
+def test_a_chain_that_cannot_be_read_is_refused_not_written_over(
+    tmp_path: Path,
+) -> None:
+    """A half-written ``draft.json`` is a refusal: the decision does not replace it.
+
+    Another writer's torn file used to read as "nothing to lose", so a decision
+    wrote over it. The refusal is the service's own sentence — the store raises
+    :class:`UnreadableChain` and the agent maps it — so every surface that can
+    reach it (a file damaged between its read and the store's hold) answers with
+    words rather than an unhandled error.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    read = agent.draft(_write(agent, "minutes").draft_id)
+    torn = read.path.read_text(encoding="utf-8")[:120]
+    read.path.write_text(torn, encoding="utf-8")
+
+    with pytest.raises(MeetingAgentError, match="cannot be read"):
+        agent.reject(read, version=1)
+
+    assert read.path.read_text(encoding="utf-8") == torn
+
+
+def test_appending_to_a_chain_that_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    """The append path reads under the same hold, and maps a damaged chain too.
+
+    A harness's re-run reaches the store's read exactly as a decision does, so it
+    is told what happened rather than handed the decoder's own error — and the
+    damaged file is left as it is.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = _write(agent, "minutes")
+    torn = first.path.read_text(encoding="utf-8")[:120]
+    first.path.write_text(torn, encoding="utf-8")
+
+    with pytest.raises(UnreadableChain):
+        store.append_version(
+            first.path,
+            value=_ANSWERS["minutes"] | {"body": "# Third"},
+            author="another-agent",
+        )
+
+    assert first.path.read_text(encoding="utf-8") == torn
+
+
+def test_the_append_surface_answers_over_a_chain_damaged_after_its_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A harness re-running into a damaged chain is told what happened.
+
+    The same sentence the decision path gives, and the same window is the only way
+    there: the chain is damaged *after* the agent's read (the lookup a surface
+    does) and before the store's read under the hold. The store-level test beside
+    this one stops at :class:`UnreadableChain`; this one pins the surface, so
+    dropping that mapping cannot pass the suite.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    first = _write(agent, "minutes")
+    real = MeetingAgent.draft
+    torn: dict[str, str] = {}
+
+    def damage_after_the_read(self, draft_id):
+        found = real(self, draft_id)
+        if found is not None:
+            torn["before"] = found.path.read_text(encoding="utf-8")
+            found.path.write_text(torn["before"][:120], encoding="utf-8")
+        return found
+
+    monkeypatch.setattr(MeetingAgent, "draft", damage_after_the_read)
+
+    with pytest.raises(MeetingAgentError, match="cannot be read"):
+        agent.write(
+            "minutes",
+            _ANSWERS["minutes"] | {"body": "# Third"},
+            author="another-agent",
+            draft_id=first.draft_id,
+        )
+
+    assert first.path.read_text(encoding="utf-8") == torn["before"][:120]
+
+
 def test_two_writes_in_one_second_open_two_chains(tmp_path: Path) -> None:
     """A second write is a new chain, never an append to a chain by accident.
 
@@ -536,6 +722,37 @@ def test_two_writes_in_one_second_open_two_chains(tmp_path: Path) -> None:
     assert first.draft_id != second.draft_id
     assert len(agent.drafts()) == 2
     assert all(len(draft.versions) == 1 for draft in agent.drafts())
+
+
+def test_a_chain_directory_that_has_not_been_written_yet_is_a_taken_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The create is the claim on an id, not the file's existence.
+
+    A writer that has created its chain's directory and not yet written its file
+    is mid-write — the console and the MCP server are two processes — so the next
+    writer inside the same clock second must take the next id rather than
+    replacing the chain being written.
+    """
+    registry, meeting, _ = _workspace(tmp_path)
+    agent = _agent(registry, meeting)
+    frozen = "2026-01-01T00:00:00+00:00"
+    clock = lambda: frozen  # noqa: E731 - one frozen instant for both writes
+
+    # The first writer stops between creating its directory and writing it.
+    real_write = store.write_draft
+    monkeypatch.setattr(store, "write_draft", lambda draft: draft.path)
+    first = agent.write("minutes", _ANSWERS["minutes"], author="one", clock=clock)
+    monkeypatch.setattr(store, "write_draft", real_write)
+
+    assert not (first.run_dir / DRAFT_FILENAME).exists()
+
+    second = agent.write("minutes", _ANSWERS["minutes"], author="two", clock=clock)
+
+    assert second.draft_id != first.draft_id
+    assert second.run_dir != first.run_dir
+    assert second.provenance.author == "two"
+    assert first.run_dir.is_dir()  # the mid-write chain's directory is left alone
 
 
 def test_legacy_0_2_runs_are_named_not_migrated(tmp_path: Path) -> None:
@@ -563,7 +780,9 @@ def test_promote_draft_is_the_same_function_the_agent_delegates_to(
     agent = _agent(registry, meeting)
     draft = _write(agent, "minutes")
 
-    promoted = promote_draft(draft, registry=registry, meeting=meeting)
+    promoted = promote_draft(
+        draft, registry=registry, meeting=meeting, version=draft.version
+    )
 
     assert promoted.review_state == "accepted"
     assert registry.latest_artifact(meeting.id, "minutes") is not None

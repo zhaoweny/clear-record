@@ -1128,7 +1128,7 @@ def create_app(
         meeting_id: int,
         draft_id: str,
         accept: bool,
-        version: int | None = None,
+        version: int,
     ):
         meeting = lookup.meeting(registry, meeting_id)
         agent = meeting_agent(meeting)
@@ -1159,12 +1159,13 @@ def create_app(
         request: Request,
         meeting_id: int,
         draft_id: str,
-        version: int | None = Form(None),
+        version: int = Form(...),
     ) -> HTMLResponse:
         """Accept a draft version: promote it into what its kind produces.
 
         ``version`` is the version the reviewer read, posted by the form beside
-        it; a stale one re-renders with the service's own refusal.
+        it and required — a decision names its version. A stale one re-renders
+        with the service's own refusal.
         """
         return review_draft(request, meeting_id, draft_id, accept=True, version=version)
 
@@ -1176,9 +1177,12 @@ def create_app(
         request: Request,
         meeting_id: int,
         draft_id: str,
-        version: int | None = Form(None),
+        version: int = Form(...),
     ) -> HTMLResponse:
-        """Reject a draft version, keeping the chain as history."""
+        """Reject a draft version, keeping the chain as history.
+
+        ``version`` is required, as on accept: a decision names its version.
+        """
         return review_draft(
             request, meeting_id, draft_id, accept=False, version=version
         )
@@ -1765,7 +1769,7 @@ def create_app(
         )
 
     def review_api(
-        meeting_id: int, draft_id: str, accept: bool, version: int | None = None
+        meeting_id: int, draft_id: str, accept: bool, version: int
     ) -> DraftView:
         meeting = lookup.meeting(registry, meeting_id)
         agent = meeting_agent(meeting)
@@ -1781,21 +1785,21 @@ def create_app(
         return describe_draft(reviewed)
 
     @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
-    def accept_agent_draft(
-        meeting_id: int, draft_id: str, version: int | None = None
-    ) -> DraftView:
+    def accept_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
         """Accept a draft version and return what its acceptance produced.
 
-        ``?version=N`` names the version the caller read (versions are numbered
-        from 1); a stale one is a 400 rather than a decision on unseen text.
+        ``?version=N`` is required and names the version the caller read
+        (versions are numbered from 1); a stale one is a 400 rather than a
+        decision on unseen text.
         """
         return review_api(meeting_id, draft_id, accept=True, version=version)
 
     @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
-    def reject_agent_draft(
-        meeting_id: int, draft_id: str, version: int | None = None
-    ) -> DraftView:
-        """Reject a draft version, keeping the chain on disk as history."""
+    def reject_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
+        """Reject a draft version, keeping the chain on disk as history.
+
+        ``?version=N`` is required, as on accept: a decision names its version.
+        """
         return review_api(meeting_id, draft_id, accept=False, version=version)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)

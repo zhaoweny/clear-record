@@ -26,11 +26,12 @@ Two halves:
     (``minutes.md``) and registered as the meeting's ``minutes`` artifact.
 
 **Promotion is explicit and idempotent.** The decision and its outcome are one
-write into the chain's newest version, and a version that already carries a
-decision is never decided again — so a repeated accept cannot run a side effect
-twice. The write helpers are independently idempotent too (a term already in the
-registry is skipped, an artifact whose bytes are already registered is reused), so
-a promotion interrupted between its side effect and its record is still safe to
+write into the chain's newest version, taken against the chain **on disk** and
+made under the store's hold on it, and a version that already carries a decision
+is never decided again — so a repeated accept cannot run a side effect twice. The
+write helpers are independently idempotent too (a term already in the registry is
+skipped, an artifact whose bytes are already registered is reused), so an accept
+that a crash interrupts between its side effect and its record is still safe to
 repeat. A **later** version accepted on the same chain registers its own artifact
 row rather than rewriting the earlier one's.
 
@@ -54,6 +55,7 @@ from clear_record.service.agent_drafts import (
     Draft,
     StaleVersion,
     TASK_KINDS,
+    UnreadableChain,
     append_version,
     list_drafts,
     record_review,
@@ -101,6 +103,20 @@ def _stale(exc: StaleVersion) -> MeetingAgentError:
         ),
         version=exc.version,
         newest=exc.newest,
+    )
+
+
+def _unreadable(draft: Draft) -> MeetingAgentError:
+    """A chain a surface can name but the store cannot read.
+
+    The only way here is a file damaged between the surface's read and the store's
+    read under the hold — a hand-edit, or a crash mid-write by something that is
+    not this store. Both paths that read a chain to write it back go through this
+    mapping: a decision (accept / reject) and an append (the harness's re-run).
+    """
+    return MeetingAgentError(
+        deferred("the draft {draft} cannot be read, so nothing was recorded"),
+        draft=draft.draft_id,
     )
 
 
@@ -172,7 +188,8 @@ class MeetingAgent:
         ``value`` is stored as it came — the app did not produce it and does not
         second-guess it. ``draft_id`` appends to an existing chain; without it a
         new chain is opened. The author identity is the writer's own declaration
-        and is recorded on the version.
+        and is recorded on the version. An append to a chain that cannot be read
+        is refused with the service's own sentence, and nothing is written.
         """
         directory = self.directory
         if draft_id is None:
@@ -212,7 +229,10 @@ class MeetingAgent:
                 kind=target.kind,
                 detail=problem,
             )
-        return append_version(target.path, value=value, author=author, clock=clock)
+        try:
+            return append_version(target.path, value=value, author=author, clock=clock)
+        except UnreadableChain as exc:
+            raise _unreadable(target) from exc
 
     # --- reviewing --------------------------------------------------------- #
     def promote(
@@ -220,7 +240,7 @@ class MeetingAgent:
         draft: Draft,
         *,
         author: str = "human",
-        version: int | None = None,
+        version: int,
         clock: Callable[[], str] = _now,
     ) -> Draft:
         """Accept ``draft``'s ``version``; produce what its acceptance means."""
@@ -235,13 +255,15 @@ class MeetingAgent:
             )
         except StaleVersion as exc:
             raise _stale(exc) from exc
+        except UnreadableChain as exc:
+            raise _unreadable(draft) from exc
 
     def reject(
         self,
         draft: Draft,
         *,
         author: str = "human",
-        version: int | None = None,
+        version: int,
         clock: Callable[[], str] = _now,
     ) -> Draft:
         """Reject a version, keeping the whole chain on disk as history."""
@@ -251,6 +273,8 @@ class MeetingAgent:
             )
         except StaleVersion as exc:
             raise _stale(exc) from exc
+        except UnreadableChain as exc:
+            raise _unreadable(draft) from exc
 
     def legacy_drafts(self) -> tuple[str, ...]:
         """The 0.2 agent runs still on disk under this meeting's agent directory.
@@ -367,23 +391,22 @@ def _register_file(
     *,
     kind: str,
 ):
-    """Record ``path`` as a final agent artifact, one row per content.
+    """Record ``path`` as a final agent artifact, for the content it holds **now**.
 
-    Idempotent by **content**: a row that already describes these bytes is
-    reused, so accepting one version twice registers nothing twice. A row for the
-    same path holding *different* bytes is an earlier accepted version of the same
-    chain, and is left as it is — the promotion registers its own row, which is
-    what makes :meth:`Registry.latest_artifact` the most recently accepted version
-    and keeps ``sha256``/``bytes`` describing the file they name (ADR-0030).
+    The row is reused only when the **latest** row for this path already describes
+    these bytes, so accepting one version twice registers nothing twice; a version
+    whose bytes differ from the latest row's — including one that returns to an
+    earlier version's bytes — gets its own row. ``latest_artifact`` is the highest
+    id, so what it publishes always describes the file it names (ADR-0030).
     """
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    latest = None
     for existing in registry.list_artifacts(meeting.id):
-        if (
-            existing.kind == kind
-            and existing.path == str(path)
-            and existing.sha256 == digest
-        ):
-            return existing
+        if existing.kind == kind and existing.path == str(path):
+            # Ordered by id, so the last match is the newest row for this path.
+            latest = existing
+    if latest is not None and latest.sha256 == digest:
+        return latest
     return registry.add_artifact(
         meeting.id,
         kind=kind,
@@ -502,24 +525,40 @@ def promote_draft(
     registry: Registry,
     meeting: Meeting,
     author: str = "human",
-    version: int | None = None,
+    version: int,
     clock: Callable[[], str] = _now,
 ) -> Draft:
     """Accept ``draft``'s ``version`` and promote it into what its kind produces.
 
-    ``version`` names the version the human read; a draft whose harness has since
-    appended another one is refused (:class:`~clear_record.service.StaleVersion`)
-    **before** any side effect runs, so a promotion can never apply text nobody
-    reviewed.
+    ``version`` is **required**: it names the version the human read, and there is
+    no default to the newest — a decision does not apply to text nobody named.
+    The decision is taken against the chain **on disk**, inside the store's hold
+    (:func:`~clear_record.service.agent_drafts.record_review`): a chain whose
+    harness has since appended another one is refused
+    (:class:`~clear_record.service.StaleVersion`) before the promoter runs, so a
+    refused acceptance leaves a meeting's artifacts exactly as they were, and no
+    other writer's chain write can land between the promotion and its record.
 
-    Idempotent: a version that already carries a decision is returned as-is, with
-    no second side effect. The decision and the promotion's outcome are one
-    write, so the accepted state and what it produced never disagree.
+    Idempotent: a version that already carries a decision is returned as it
+    stands, with no second side effect. The decision and the promotion's outcome
+    are one write, so the accepted state and what it produced never disagree.
     """
-    if version is not None and version != draft.version:
-        raise StaleVersion(version=version, newest=draft.version)
-    if not draft.current.pending:
-        return draft
+    return record_review(
+        draft,
+        "accepted",
+        author=author,
+        version=version,
+        clock=clock,
+        apply=lambda stored: _produce(stored, registry=registry, meeting=meeting),
+    )
+
+
+def _produce(draft: Draft, *, registry: Registry, meeting: Meeting) -> dict:
+    """What accepting one version produces, as the promotion's outcome summary.
+
+    Runs inside the store's hold on the chain, before the decision is recorded:
+    a value its kind cannot use is refused here, so nothing is registered for it.
+    """
     problem = require_shape(draft.kind, draft.value)
     if problem is not None:
         # A chain written before this check existed, or by hand: promoting it
@@ -535,16 +574,7 @@ def promote_draft(
             deferred("no promotion is defined for draft kind {kind}"), kind=draft.kind
         )
     _agent_dir(meeting)  # refuses a meeting with no workspace
-    summary = promoter(draft, registry=registry, meeting=meeting)
-    promotion = {"kind": draft.kind, "at": clock(), "summary": summary}
-    return record_review(
-        draft,
-        "accepted",
-        author=author,
-        promotion=promotion,
-        version=version,
-        clock=clock,
-    )
+    return promoter(draft, registry=registry, meeting=meeting)
 
 
 __all__ = [

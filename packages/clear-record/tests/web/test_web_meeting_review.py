@@ -161,7 +161,8 @@ def test_accepting_glossary_draft_adds_candidate_terms(tmp_path: Path) -> None:
     draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        data={"version": draft.version},
     )
 
     assert page.status_code == 200
@@ -178,7 +179,8 @@ def test_accepting_minutes_shows_them_per_meeting_and_across_the_project(
     draft = console.write("minutes")
 
     meeting_page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        data={"version": draft.version},
     )
     assert "We shipped it." in meeting_page.text
     assert "Minutes recorded for this meeting." in meeting_page.text
@@ -193,7 +195,8 @@ def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None
     draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/reject"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/reject",
+        data={"version": draft.version},
     )
 
     assert page.status_code == 200
@@ -257,7 +260,8 @@ def test_reviewing_an_unknown_draft_re_renders_with_the_service_message(
     console = _console(tmp_path)
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/nope/accept"
+        f"/ui/meetings/{console.meeting.id}/agent/drafts/nope/accept",
+        data={"version": 1},
     )
 
     assert page.status_code == 200
@@ -300,6 +304,7 @@ def test_the_api_lists_and_accepts_a_draft(tmp_path: Path) -> None:
 
     accepted = console.client.post(
         f"/api/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
+        f"?version={draft.version}"
     )
     assert accepted.status_code == 200
     body = accepted.json()
@@ -315,7 +320,7 @@ def test_an_unknown_draft_is_a_404(tmp_path: Path) -> None:
     console = _console(tmp_path)
     assert (
         console.client.post(
-            f"/api/meetings/{console.meeting.id}/agent/drafts/nope/accept"
+            f"/api/meetings/{console.meeting.id}/agent/drafts/nope/accept?version=1"
         ).status_code
         == 404
     )

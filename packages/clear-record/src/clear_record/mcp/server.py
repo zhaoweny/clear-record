@@ -616,16 +616,17 @@ class ServiceTools:
         project: str,
         meeting: str,
         draft_id: str,
+        version: int,
         author: str = "human",
-        version: int | None = None,
     ) -> DraftView:
         """Accept one version of a draft, promoting it into what its kind produces.
 
-        ``version`` is the version number you read (``read_agent_draft`` reports
-        it, and the chain's versions are numbered from 1). Naming an older one is
-        refused: a harness may append a version between your read and your
-        decision, and a decision must apply to text that was actually reviewed.
-        Omitting it decides the newest version.
+        ``version`` is **required**: it is the version number you read
+        (``read_agent_draft`` reports it, and the chain's versions are numbered
+        from 1). A decision is never applied to a version you did not name: one
+        that is no longer the newest when the decision arrives is refused, because
+        a harness may append a version between your read and your decision, and a
+        decision must apply to text that was actually reviewed.
 
         Promotion is type-specific and idempotent: ``glossary_collection`` adds the
         proposed terms as **candidate** registry terms, ``transcript_check`` writes
@@ -648,13 +649,14 @@ class ServiceTools:
         project: str,
         meeting: str,
         draft_id: str,
+        version: int,
         author: str = "human",
-        version: int | None = None,
     ) -> DraftView:
         """Reject one version of a draft, keeping the whole chain on disk as history.
 
-        ``version`` is the version number you read, as in ``accept_agent_draft``;
-        a stale one is refused rather than applied to a version you did not see.
+        ``version`` is **required**, as in ``accept_agent_draft``: it is the
+        version you read, and one that is no longer the newest is refused rather
+        than recording a decision on a version you did not see.
         """
         agent = self._agent(project, meeting)
         draft = self._draft(agent, draft_id)

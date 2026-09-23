@@ -32,18 +32,56 @@ Properties the design holds to:
   the decision and what it produced can never disagree on disk.
 - **A plain file, no database.** A draft can be read, copied and reviewed with no
   registry and no network, and an unreadable one is skipped by a listing rather
-  than failing it.
+  than failing it. One chain is one file written whole, so a writer **holds the
+  chain** while it reads it and writes it back: the console and the MCP server are
+  two processes over one workspace, and neither may drop the other's version
+  (ADR-0031: *one chain, one writer at a time*; *a decision names the version it
+  decides*).
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime as _dt
 import hashlib
 import json
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+
+if os.name == "nt":  # pragma: no cover - the Windows build's own branch
+    import msvcrt
+
+    def _lock(handle: Any) -> None:
+        """Take ``handle``'s lock, waiting for whoever holds it (Windows).
+
+        ``msvcrt`` locks a byte *range*, so the lock file is given a byte to hold
+        first; ``LK_LOCK`` retries for about ten seconds and then raises, which is
+        a bound rather than a hang.
+        """
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _unlock(handle: Any) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock(handle: Any) -> None:
+        """Take ``handle``'s lock, waiting for whoever holds it (POSIX)."""
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+    def _unlock(handle: Any) -> None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
 
 #: The three jobs a harness does for a meeting (ADR-0018's task kinds, now the
 #: draft kinds). Every kind's acceptance means something specific — see
@@ -57,6 +95,11 @@ REVIEW_DECISIONS: tuple[str, ...] = ("accepted", "rejected")
 
 #: The file one chain is stored in, inside its own directory.
 DRAFT_FILENAME = "draft.json"
+
+#: The file a writer holds while it reads a chain and writes it back. It lives in
+#: the chain's own directory, so it appears and goes with the chain, and a listing
+#: never mistakes it for one (a chain is a directory holding ``DRAFT_FILENAME``).
+LOCK_FILENAME = "draft.lock"
 
 #: What each kind's ``value`` must carry, and what type each key must be. The app
 #: does **not** grade a harness's prose — it refuses a payload that cannot be the
@@ -135,6 +178,17 @@ class StaleVersion(ValueError):
             f"version {version} is not the newest version ({newest}) and cannot be "
             "decided"
         )
+
+
+class UnreadableChain(ValueError):
+    """A chain that cannot be read, so it cannot be decided or written over.
+
+    Nothing this store writes can produce one: a chain is replaced whole, by
+    rename. What reaches it is a file a hand-edit or a crash left unusable —
+    which a listing skips, so the console and the MCP tools can only meet it if
+    the file is damaged between a surface's read and the store's read under the
+    hold. Both of those reads raise it: the append (a re-run) and the decision.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -267,23 +321,20 @@ class Draft:
         author: str,
         at: str,
         promotion: dict | None = None,
-        version: int | None = None,
     ) -> Draft:
         """A copy with ``decision`` recorded on the newest version.
 
-        ``version`` is the version the decision was made **on** — what a reader
-        saw. A caller that names an older one is refused
-        (:class:`StaleVersion`), because a harness may have appended a version in
-        between; ``None`` means "the newest", which is what a caller deciding what
-        it just read wants.
+        That the newest version is the one the human read is the caller's
+        question, asked against the chain **on disk** (:func:`record_review`,
+        :class:`StaleVersion`): this method records the decision it is handed.
 
-        A decision is written **once**: re-deciding the same version returns the
-        draft unchanged, so a repeated accept can never run a promotion twice.
+        A decision is written **once** — the guard is :func:`record_review`, which
+        returns the stored chain before its ``apply`` runs — so a repeated accept
+        can never run a promotion twice; this method only records the decision it
+        is handed.
         """
         if decision not in REVIEW_DECISIONS:
             raise ValueError(f"unknown draft decision {decision!r}")
-        if version is not None and version != self.version:
-            raise StaleVersion(version=version, newest=self.version)
         if not self.current.pending:
             return self
         current = dataclasses.replace(
@@ -351,20 +402,55 @@ def read_draft(path: str | Path) -> Draft:
     return Draft(path=source, created_at=created_at, versions=entries)
 
 
-def write_draft(draft: Draft) -> Path:
-    """Persist a chain, replacing the file wholesale (the chain is the document).
+@contextlib.contextmanager
+def _held(path: Path) -> Iterator[None]:
+    """Hold one chain while this writer reads it and writes it back.
 
-    Replacing the file is what makes the chain one document, so the write is only
-    safe against a chain nobody else moved: a decision write checks that first
-    (:func:`_refuse_if_superseded`), because the console and the MCP server are
-    two processes over one directory.
+    The lock is advisory and local, which is what this store is: the console and
+    the MCP server are two processes over one workspace, and a chain is one
+    document written whole — a writer that read it and writes it back has to keep
+    the other's **chain write** out of the middle, or one of the two versions is
+    silently gone. It is held by the writers that take it (``write_draft``,
+    ``start_draft``, ``append_version``, ``record_review``): a reader that takes
+    no lock is unaffected by it, and a hand-edit takes no lock and is held by
+    none.
     """
-    draft.path.parent.mkdir(parents=True, exist_ok=True)
-    draft.path.write_text(
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / LOCK_FILENAME, "a+b") as handle:
+        _lock(handle)
+        try:
+            yield
+        finally:
+            _unlock(handle)
+
+
+def _replace(draft: Draft) -> Path:
+    """Write ``draft`` over its chain's file, whole, from a temporary name.
+
+    The rename is what makes a torn ``draft.json`` impossible to produce: a reader
+    sees the chain before the write or after it, never half of either.
+    """
+    parent = draft.path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    temporary = parent / f"{DRAFT_FILENAME}.tmp"
+    temporary.write_text(
         json.dumps(draft.as_dict(), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    os.replace(temporary, draft.path)
     return draft.path
+
+
+def write_draft(draft: Draft) -> Path:
+    """Persist a chain, replacing the file wholesale (the chain is the document).
+
+    The chain is held for the write. A caller that *read* the chain and writes it
+    back must hold it across both halves — :func:`append_version` and
+    :func:`record_review` do; calling this directly is for a chain whose content
+    the caller owns.
+    """
+    with _held(draft.path):
+        return _replace(draft)
 
 
 def start_draft(
@@ -382,23 +468,31 @@ def start_draft(
     ``value`` is whatever the harness produced — the app stores it as it came.
     Only the ``kind`` is checked: the chain's kinds are the three jobs, and a
     typo has to fail at the write rather than at a later acceptance.
+
+    The directory **is** the claim on the id: it is created exclusively, so two
+    writers that collide inside one clock second — the console and the MCP server
+    are two processes — cannot both take the first candidate, and the loser takes
+    the next one instead of writing over the winner's chain.
     """
     if kind not in TASK_KINDS:
         raise ValueError(
             f"unknown draft kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
         )
     written_at = clock()
+    root = Path(directory)
     # The id is a digest of the facts plus a disambiguator, so two chains opened
-    # for one meeting inside the same clock second are still two chains: an
-    # existing directory is never appended to by accident, which would re-open a
-    # draft the human had already decided.
-    draft_id = _draft_id(kind, project, meeting, written_at)
-    path = Path(directory) / draft_id / DRAFT_FILENAME
-    disambiguator = 1
-    while path.exists():
-        draft_id = _draft_id(kind, project, meeting, f"{written_at}#{disambiguator}")
-        path = Path(directory) / draft_id / DRAFT_FILENAME
-        disambiguator += 1
+    # for one meeting inside the same clock second are still two chains.
+    disambiguator = 0
+    while True:
+        seed = written_at if disambiguator == 0 else f"{written_at}#{disambiguator}"
+        draft_id = _draft_id(kind, project, meeting, seed)
+        chain_dir = root / draft_id
+        try:
+            chain_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            disambiguator += 1
+            continue
+        break
     version = Version(
         provenance=Provenance(
             draft_id=draft_id,
@@ -410,9 +504,24 @@ def start_draft(
         ),
         value=value,
     )
-    draft = Draft(path=path, created_at=written_at, versions=(version,))
+    draft = Draft(
+        path=chain_dir / DRAFT_FILENAME, created_at=written_at, versions=(version,)
+    )
     write_draft(draft)
     return draft
+
+
+def _read_chain(path: Path) -> Draft:
+    """The chain at ``path``, or :class:`UnreadableChain` naming the file.
+
+    Every read of a chain a writer is about to write back goes through this: the
+    file is one document, and a writer that cannot parse it must not write over
+    what is there.
+    """
+    try:
+        return read_draft(path)
+    except (OSError, ValueError) as exc:
+        raise UnreadableChain(f"{path} cannot be read: {exc}") from exc
 
 
 def append_version(
@@ -424,46 +533,25 @@ def append_version(
 ) -> Draft:
     """Add a version to an existing chain (a re-run, or a human's edit).
 
-    The chain's kind and meeting are the ones it was opened with: a caller cannot
-    retarget a draft by appending to it.
+    Read, extended and written as one operation on the chain: a decision that
+    lands meanwhile waits for the lock instead of being overwritten, and a version
+    another appender wrote in between is appended **after**, never lost. The
+    chain's kind and meeting are the ones it was opened with — a caller cannot
+    retarget a draft by appending to it — and a chain that cannot be read raises
+    :class:`UnreadableChain` rather than being written over.
     """
-    draft = read_draft(path)
-    version = Version(
-        provenance=dataclasses.replace(
-            draft.provenance, author=author, written_at=clock()
-        ),
-        value=value,
-    )
-    updated = dataclasses.replace(draft, versions=(*draft.versions, version))
-    write_draft(updated)
+    source = Path(path)
+    with _held(source):
+        draft = _read_chain(source)
+        version = Version(
+            provenance=dataclasses.replace(
+                draft.provenance, author=author, written_at=clock()
+            ),
+            value=value,
+        )
+        updated = dataclasses.replace(draft, versions=(*draft.versions, version))
+        _replace(updated)
     return updated
-
-
-def _stored_versions(path: Path) -> tuple[Version, ...] | None:
-    """The chain ``path`` holds right now, or ``None`` when there is none to lose."""
-    try:
-        return read_draft(path).versions
-    except (OSError, ValueError):
-        return None
-
-
-def _refuse_if_superseded(draft: Draft) -> None:
-    """Refuse to write a chain over a version another writer added meanwhile.
-
-    A write replaces ``draft.json`` wholesale, so a version a harness appended
-    between the reader's read and this write would be **dropped** by it; the
-    stored chain has to be the one this draft holds or the write is refused
-    (:class:`StaleVersion`) and the reader decides on what is actually there. A
-    chain that is gone or unreadable is not a version to lose, and is written as
-    before.
-    """
-    stored = _stored_versions(draft.path)
-    if stored is None:
-        return
-    if [version.as_dict() for version in stored] != [
-        version.as_dict() for version in draft.versions
-    ]:
-        raise StaleVersion(version=draft.version, newest=len(stored))
 
 
 def record_review(
@@ -471,24 +559,49 @@ def record_review(
     decision: str,
     *,
     author: str,
-    promotion: dict | None = None,
-    version: int | None = None,
+    version: int,
     clock: Callable[[], str] = _now,
+    apply: Callable[[Draft], dict | None] | None = None,
 ) -> Draft:
-    """Record a human's accept/reject on the version they decided, and write it.
+    """Record a human's decision on a chain's **named** version, and write it.
 
-    The decision is written as the whole document, so it is refused
-    (:class:`StaleVersion`) when the chain on disk gained a version since
-    ``draft`` was read: that version is the harness's, and a decision must not
-    drop it.
+    One operation on the chain, decided on **what is stored**, not on the caller's
+    snapshot: the chain is read under its lock, ``version`` — the version the
+    human read, and there is no default — is checked against it, ``apply`` (an
+    acceptance's own work — :func:`~clear_record.service.agent_review.promote_draft`)
+    runs inside the same hold and its summary is recorded as the promotion, and
+    the decided chain is written back before the lock is released. So no other
+    writer's chain write can land between the decision and its record, and a
+    decision refused for naming a version that is not the newest one is refused
+    **before** ``apply`` runs.
+
+    A version that already carries a decision is **not** an error and not a second
+    write: the chain as it stands is returned, because a decision is recorded once
+    (ADR-0031). A chain that cannot be read at all — gone, or damaged by a
+    hand-edit or a crash — raises :class:`UnreadableChain` rather than being
+    written over; the console and the MCP tools reach that only if the file is
+    damaged between their read and this call.
     """
-    reviewed = draft.reviewed(
-        decision, author=author, at=clock(), promotion=promotion, version=version
-    )
-    if reviewed is not draft:
-        _refuse_if_superseded(draft)
-        write_draft(reviewed)
-    return reviewed
+    if decision not in REVIEW_DECISIONS:
+        raise ValueError(f"unknown draft decision {decision!r}")
+    source = Path(draft.path)
+    with _held(source):
+        stored = _read_chain(source)
+        if version != stored.version:
+            raise StaleVersion(version=version, newest=stored.version)
+        if not stored.current.pending:
+            return stored
+        summary = apply(stored) if apply is not None else None
+        promotion = (
+            None
+            if summary is None
+            else {"kind": stored.kind, "at": clock(), "summary": summary}
+        )
+        decided = stored.reviewed(
+            decision, author=author, at=clock(), promotion=promotion
+        )
+        _replace(decided)
+    return decided
 
 
 def list_drafts(directory: str | Path) -> list[Draft]:
@@ -526,6 +639,7 @@ __all__ = [
     "Draft",
     "Provenance",
     "StaleVersion",
+    "UnreadableChain",
     "Version",
     "append_version",
     "list_drafts",

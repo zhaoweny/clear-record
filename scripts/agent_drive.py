@@ -733,6 +733,20 @@ async def _story_scripted(
     return drafts
 
 
+async def _draft_version(session, project: str, meeting: str, draft_id: str) -> int:
+    """The newest version of ``draft_id`` — what a reviewer reads before deciding.
+
+    A decision names its version, so the drive reads the chain first: that is the
+    flow the tool documents, and the number it read is the one it decides.
+    """
+    result = await _call(
+        session,
+        "read_agent_draft",
+        {"project": project, "meeting": meeting, "draft_id": draft_id},
+    )
+    return int((_payload(result) or {}).get("version") or 0)
+
+
 async def _story_review(
     session, project: str, meeting: str, drafts: dict[str, str], report: Report
 ) -> tuple[bool, str]:
@@ -745,6 +759,7 @@ async def _story_review(
         report.add("3 accept", "FAIL", "no draft was produced to accept")
         return False, ""
     kind = "minutes" if "minutes" in drafts else "transcript_check"
+    version = await _draft_version(session, project, meeting, target)
     result = await _call(
         session,
         "accept_agent_draft",
@@ -752,6 +767,7 @@ async def _story_review(
             "project": project,
             "meeting": meeting,
             "draft_id": target,
+            "version": version,
             "author": HUMAN_AUTHOR,
         },
     )
@@ -783,6 +799,7 @@ async def _story_review(
 
     reject = drafts.get("transcript_check") if kind == "minutes" else None
     if reject:
+        version = await _draft_version(session, project, meeting, reject)
         result = await _call(
             session,
             "reject_agent_draft",
@@ -790,6 +807,7 @@ async def _story_review(
                 "project": project,
                 "meeting": meeting,
                 "draft_id": reject,
+                "version": version,
                 "author": HUMAN_AUTHOR,
             },
         )

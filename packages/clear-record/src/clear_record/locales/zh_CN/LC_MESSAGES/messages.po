@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-23 09:13+0800\n"
+"POT-Creation-Date: 2026-09-23 09:56+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -495,40 +495,45 @@ msgid ""
 " is below"
 msgstr "hello-world 录音已通过导入与转写；转写文本如下。"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:98
+#: packages/clear-record/src/clear_record/service/agent_review.py:101
 #, python-brace-format
 msgid ""
 "the version you read ({version}) is not the newest one ({newest}), so the"
 " decision was not recorded"
 msgstr "你读到的版本（{version}）已不是最新版本（{newest}），因此该决定未被记录。"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:110
+#: packages/clear-record/src/clear_record/service/agent_review.py:116
+#, python-brace-format
+msgid "the draft {draft} cannot be read, so nothing was recorded"
+msgstr "{draft} 草稿无法读取，因此未记录该决定。"
+
+#: packages/clear-record/src/clear_record/service/agent_review.py:125
 #, python-brace-format
 msgid "meeting {meeting} has no workspace; set one before writing an agent draft"
 msgstr "会议 {meeting} 没有工作区；请先设置后再写入智能体草稿"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:180
+#: packages/clear-record/src/clear_record/service/agent_review.py:195
 #, python-brace-format
 msgid "unknown draft kind {kind}; known kinds: {known}"
 msgstr "未知的草稿类型 {kind}；已知类型：{known}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:187
-#: packages/clear-record/src/clear_record/service/agent_review.py:210
+#: packages/clear-record/src/clear_record/service/agent_review.py:202
+#: packages/clear-record/src/clear_record/service/agent_review.py:225
 #, python-brace-format
 msgid "the {kind} draft cannot be written: {detail}"
 msgstr "无法写入 {kind} 草稿：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:203
+#: packages/clear-record/src/clear_record/service/agent_review.py:218
 #, python-brace-format
 msgid "no draft {draft} for {meeting}"
 msgstr "会议 {meeting} 没有草稿 {draft}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:515
+#: packages/clear-record/src/clear_record/service/agent_review.py:561
 #, python-brace-format
 msgid "the {kind} draft cannot be accepted: {detail}"
 msgstr "无法采纳 {kind} 草稿：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:522
+#: packages/clear-record/src/clear_record/service/agent_review.py:568
 #, python-brace-format
 msgid "no promotion is defined for draft kind {kind}"
 msgstr "草稿类型 {kind} 未定义采纳规则"
@@ -1118,12 +1123,12 @@ msgstr "没有名为 {name} 的设置分区。"
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1553
+#: packages/clear-record/src/clear_record/web/app.py:1557
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1585
+#: packages/clear-record/src/clear_record/web/app.py:1589
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"

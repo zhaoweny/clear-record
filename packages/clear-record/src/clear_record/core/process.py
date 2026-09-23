@@ -2,8 +2,8 @@
 
 Every layer that runs a child process launches it through this module — the
 transcribe pool's ``whisper-cli`` children, the console's foreground
-``tailscale serve``, the system TTS engines, the Apple speech helper, the
-agent-task command runner, ``ffmpeg``, and the one-shot probes around them.
+``tailscale serve``, the system TTS engines, the Apple speech helper,
+``ffmpeg``, and the one-shot probes around them.
 
 The seam lives in ``clear_record.core`` because that is the only depth every
 layer may import (``core`` is the one layer each other layer is allowed to

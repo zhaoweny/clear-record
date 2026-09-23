@@ -87,7 +87,7 @@ new or extended in this release.
   human's accept/reject decision (with who and when), and a new version re-opens
   a decided draft. Drafts are written through MCP like every other artifact. The
   store is not part of the removal below: drafts and the human's accept/reject
-  remain (`service/agent_review.py`).
+  remain (`service/agent_drafts.py`).
 
 ### Upgrading an existing install
 

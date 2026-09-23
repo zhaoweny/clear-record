@@ -131,7 +131,7 @@ released tags are on `public` today — `main`, `releases/v0.1.x`,
 ## The registry's schema history is compressed at a cut
 
 A release cut is also where the registry's **migration history** is compressed
-to the released baselines (ADR-0030's 2026-09-23 Update): the chain begins at the
+to the released baseline (ADR-0030's 2026-09-23 Update): the chain begins at the
 schema the released line shipped and carries only the changes made since, instead
 of replaying the retired hand-rolled ladder's steps one by one. Two things follow
 for whoever installs the release, and these are the two sentences to carry into

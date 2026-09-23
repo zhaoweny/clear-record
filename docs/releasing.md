@@ -23,6 +23,10 @@ publisher on 2026-09-13 (ADR-0011's Update "the bump is native `uv version`; the
 lockstep script is gone"): the version bump is native `uv version`, and the
 workflow files build the one dist and smoke-install the command.
 
+The notes kept for each release for users — what it adds, what an existing
+install does to move onto it, and what it removes — are in
+[`docs/release-notes.md`](release-notes.md).
+
 ## Three publishing tiers
 
 | Tier | Version | Trigger | Where it goes |

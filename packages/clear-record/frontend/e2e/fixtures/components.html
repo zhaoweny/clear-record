@@ -41,9 +41,37 @@
   </div>
   <h2 class="sidebar-title">Agent</h2>
   <div class="agent-setup">
-    <div class="row agent-setup-head"><span class="badge status-ok">agent ready</span><button class="btn btn-sm btn-ghost" type="button">Detect</button></div>
-    <p class="muted">Endpoint: http://127.0.0.1:11434/v1</p>
-    <p class="muted">Model: qwen3:8b</p>
+    <div class="row agent-setup-head"><span class="badge status-ok">agent ready</span></div>
+    <ol class="agent-flow">
+      <li class="agent-stage" id="agent-stage-harness">
+        <div class="agent-stage-head"><h3>Harness</h3></div>
+        <div class="mcp-harness">
+          <p class="muted">clear-record exposes its tools over MCP as the command <code>clear-record</code> with arguments <code>mcp serve</code>. Point an MCP-capable harness at it, then register it in that harness's client config.</p>
+          <div class="row"><code class="muted">pi-agent</code><button class="btn btn-sm" type="button">Point at this</button></div>
+          <p class="muted agent-setup-note">pi-agent is not bundled, and this setup will not download one for you: get it the way you get software yourself, then point at it above.</p>
+        </div>
+      </li>
+      <li class="agent-stage" id="agent-stage-mcp">
+        <div class="agent-stage-head"><h3>MCP config</h3></div>
+        <div class="mcp-config">
+          <p class="muted">Client config: /home/you/.config/pi-agent/mcp.json</p>
+          <p class="muted agent-setup-secret">Choose the path: clear-record cannot know where your client keeps its config. clear-record adds one entry to that file and leaves the rest of it alone.</p>
+        </div>
+      </li>
+      <li class="agent-stage" id="agent-stage-try">
+        <div class="agent-stage-head"><h3>Try it</h3></div>
+        <p class="muted">Run the whole chain once: a hello-world tape through transcription, read back as the transcript an MCP agent receives.</p>
+        <div id="hello-check" class="hello-check">
+          <div class="hello">
+            <div class="hello-result" data-leg="transcript">
+              <div class="row hello-result-head"><span class="badge status-ok">Transcription ready</span><span class="muted">2 segments</span></div>
+              <p class="muted hello-integration"><span class="badge status-ok">Agent integration configured</span> The MCP client config and the harness are both in place.</p>
+              <p class="muted hello-roundtrip"><span class="badge status-neutral">Agent round-trip</span> Not verified by this check.</p>
+            </div>
+          </div>
+        </div>
+      </li>
+    </ol>
   </div>
 </aside>
 

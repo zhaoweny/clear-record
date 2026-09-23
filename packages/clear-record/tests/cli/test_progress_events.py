@@ -24,14 +24,16 @@ def _write_tone(
     sf.write(str(path), (0.4 * np.sin(phase)).astype(np.float32), sr)
 
 
-def test_stages_emit_progress_and_keep_text_output(tmp_path, capsys) -> None:
+def test_stages_emit_progress_and_leave_stdout_to_the_command_surface(
+    tmp_path, capsys
+) -> None:
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav")
     _write_tone(wd / "b.wav")
 
     events: list[JobEvent] = []
-    sources = stages.ingest(str(wd), on_event=events.append)
+    sources = stages.ingest(str(wd), on_event=events.append).sources
     stages.align(str(wd), on_event=events.append)
 
     # `transcribe` is backend-gated, so seed segments by hand (as the CLI tests do).
@@ -59,11 +61,11 @@ def test_stages_emit_progress_and_keep_text_output(tmp_path, capsys) -> None:
     assert by_stage["ingest"][-1].total == 2
     assert by_stage["export"][-1].total == 4
 
-    # Attaching a sink must not change the command-line output.
-    out = capsys.readouterr().out
-    assert "[ingest]" in out
-    assert "[align]" in out
-    assert "[export]" in out
+    # The stages no longer write to stdout at all: what a command prints is the
+    # command surface's rendering of what they returned (pinned byte for byte by
+    # ``test_stage_stdout``), and the only mid-stage text is a line the stage
+    # reports on the sink.
+    assert capsys.readouterr().out == ""
 
 
 def test_run_threads_the_sink_to_every_stage(tmp_path, monkeypatch) -> None:

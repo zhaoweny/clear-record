@@ -167,7 +167,7 @@ def test_chunk_cache_key_splits_on_a_set_decoder_knob() -> None:
     )
 
 
-def test_the_stage_turns_an_unsupported_knob_into_a_systemexit(
+def test_the_stage_turns_an_unsupported_knob_into_a_pipeline_error(
     tmp_path, monkeypatch
 ) -> None:
     """The CLI must name the unsupported knob, not traceback out of the stage."""
@@ -177,7 +177,7 @@ def test_the_stage_turns_an_unsupported_knob_into_a_systemexit(
     stages.ingest(str(wd), split="mix")
     monkeypatch.setattr(stages, "get_backend", lambda _id: _NoKnobBackend())
 
-    with pytest.raises(SystemExit, match="cannot honour"):
+    with pytest.raises(stages.PipelineError, match="cannot honour"):
         stages.transcribe(str(wd), "noknob", beam_size=4)
 
 
@@ -192,7 +192,7 @@ def test_the_unsupported_knob_message_is_translated(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(stages, "get_backend", lambda _id: _NoKnobBackend())
 
     i18n.install("zh_CN")
-    with pytest.raises(SystemExit) as err:
+    with pytest.raises(stages.PipelineError) as err:
         stages.transcribe(str(wd), "noknob", beam_size=4)
 
     message = str(err.value)

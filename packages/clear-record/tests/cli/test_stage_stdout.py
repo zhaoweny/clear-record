@@ -11,8 +11,10 @@ actually types, and the ``synth`` development command.
 What makes it a stable pin rather than a flaky one:
 
 - ``CR_JOBS=1``: the chunk pool is then serial, so the lines the transcriber
-  prints through ``Workspace.log`` (stdout *and* ``transcribe.log``) keep one
-  order — the pool's interleaving is what would otherwise move;
+  reports keep one order — the pool's interleaving is what would otherwise
+  move. (Since 202 the stages print nothing at all: a line is reported on the
+  stage's sink, which the command surface renders to stdout and which
+  ``Workspace.log`` keeps in ``transcribe.log``.)
 - a **cold** chunk cache (``CR_CACHE_DIR`` under the test's ``tmp_path``, which
   does not exist yet), and one fresh workspace per block, so no command's
   output depends on what an earlier one left behind — the pending/cached/

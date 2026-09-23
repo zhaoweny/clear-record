@@ -23,6 +23,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import dataclasses
+import functools
 import glob
 import os
 import shutil
@@ -69,6 +70,7 @@ from clear_record.pipeline.workspace import (
     chunk_glossary,
     glossary_digest,
     plan_matches,
+    report_line,
 )
 
 
@@ -434,9 +436,7 @@ def _run_pending(
                 src_id, index, shifted = run_chunk(task)
                 plan_by_id[src_id].segments[index] = shifted
         except BaseException as exc:
-            if isinstance(
-                exc, (KeyboardInterrupt, SystemExit, RunCancelled, ProcessCancelled)
-            ):
+            if isinstance(exc, (KeyboardInterrupt, RunCancelled, ProcessCancelled)):
                 runner.cancel()
                 runner.terminate_all()
                 if isinstance(exc, ProcessCancelled):
@@ -456,9 +456,7 @@ def _run_pending(
             src_id, index, shifted = future.result()
             plan_by_id[src_id].segments[index] = shifted
     except BaseException as exc:
-        if isinstance(
-            exc, (KeyboardInterrupt, SystemExit, RunCancelled, ProcessCancelled)
-        ):
+        if isinstance(exc, (KeyboardInterrupt, RunCancelled, ProcessCancelled)):
             # Interruption: an operator's Ctrl-C, or a run's cancel arriving
             # while a chunk was decoding (RUN-04) — which the runner reports by
             # killing the child it launched. Stop queued work, kill what is still
@@ -856,7 +854,10 @@ def transcribe(
     chunk_seconds = options.chunk_seconds
     overlap_seconds = options.overlap_seconds
     scope = options.scope
-    log = workspace.log
+    # Every mid-stage line this stage reports: one structured event on the
+    # caller's sink, the workspace's durable ``transcribe.log``, and the command
+    # surface's copy of the text where it is produced (see ``report_line``).
+    log = functools.partial(report_line, workspace, on_event, "transcribe")
 
     # Decoder knobs are passed to the backend only when set. A backend that does
     # not advertise a requested knob must fail loudly here, not silently drop it.
@@ -903,6 +904,16 @@ def transcribe(
         if selected_n == 0:
             raise ScopeError(_empty_scope_message(scope, durations))
 
+    # One stage-level progress bar over **chunks across all sources**: cached
+    # chunks count as already done, pending ones advance as the pool finishes
+    # them (advance is thread-safe). It opens **before** the cache walk below so
+    # that every line this stage reports — the per-source plan included — can
+    # carry the one unit the console's bar reads, rather than a source's ordinal
+    # that would move the bar's "N / M" backwards mid-stage (see ``report_line``).
+    total_chunks = sum(len(chunks) for _src, _duration, chunks in planned)
+    progress = Progress("transcribe", total_chunks, on_event)
+    progress.start(f"{total_chunks} chunk(s) over {len(planned)} source(s)")
+
     # Then run the uncached chunks through one bounded pool so the GPU stays fed
     # across source boundaries too.
     plans: list[_SourcePlan] = []
@@ -942,7 +953,9 @@ def transcribe(
 
         log(
             f"[transcribe] {src.id}: {len(chunks)} chunk(s), {duration:.1f}s, "
-            f"{backend.info.description} ({chosen_model})"
+            f"{backend.info.description} ({chosen_model})",
+            source=src.id,
+            total=total_chunks,
         )
         segs: list[list[Segment] | None] = [None] * len(chunks)
         # The glossary digest every chunk will carry once this run finishes;
@@ -979,11 +992,17 @@ def transcribe(
                     final[i] = digests[i]
                     log(
                         f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} "
-                        "kept (decoded under an earlier glossary)"
+                        "kept (decoded under an earlier glossary)",
+                        source=src.id,
+                        total=total_chunks,
                     )
                 else:
                     final[i] = current_digest
-                    log(f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached")
+                    log(
+                        f"[transcribe]   {src.id} chunk {i + 1}/{len(chunks)} cached",
+                        source=src.id,
+                        total=total_chunks,
+                    )
             else:
                 pending.append(
                     _ChunkTask(src.id, i, src.path, start_s, end_s, cache, len(chunks))
@@ -1004,16 +1023,11 @@ def transcribe(
         guard_redecoded=guard_n,
     )
 
-    # One stage-level progress bar over **chunks across all sources**: cached
-    # chunks count as already done, pending ones advance as the pool finishes
-    # them (advance is thread-safe).
-    total_chunks = sum(len(plan.chunks) for plan in plans)
-    progress = Progress("transcribe", total_chunks, on_event)
-    progress.start(f"{total_chunks} chunk(s) over {len(plans)} source(s)")
+    # One stage-level progress bar, opened above. A cached chunk advances it here
+    # — counted as re-used, not decoded: the bar advances either way, but the
+    # stage's elapsed clock only paid for the chunks the decoder actually ran, and
+    # a live speed reading is derived from the two (RUN-03).
     for src_id in cached_hits:
-        # Counted as re-used, not decoded: the bar advances either way, but the
-        # stage's elapsed clock only paid for the chunks the decoder actually
-        # ran, and a live speed reading is derived from the two (RUN-03).
         progress.advance(source=src_id, message="cached", reused=True)
 
     plan_by_id = {plan.source.id: plan for plan in plans}
@@ -1021,9 +1035,15 @@ def transcribe(
         backend.info.parallelizable, len(pending), options.jobs, model=chosen_model
     )
     if pending:
+        # The bar is one advance further for every cached chunk, so the count it
+        # stands at is ``reused_n``: this line states it rather than a zero that
+        # would move the console's "N / M" backwards.
         log(
             f"[transcribe] {len(pending)} pending chunk(s), jobs={workers} "
-            f"({chosen_model})"
+            f"({chosen_model})",
+            index=reused_n,
+            total=total_chunks,
+            reused=reused_n,
         )
 
     # One explicit, pool-scoped runner: the backend launches every child
@@ -1058,13 +1078,19 @@ def transcribe(
             for s in res.segments
         ]
         task.cache.write_segments(task.index, shifted)
-        log(
-            f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
-            f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)"
-        )
-        progress.advance(
+        # The bar advances for this chunk, and the line is reported as a copy of
+        # that report: the console reads the newest event, so the line has to
+        # carry the counters — and the elapsed clock its rate divides by — that
+        # the bar just reported, not a pair of its own.
+        counted = progress.advance(
             source=task.source_id,
             message=f"chunk {task.index + 1}/{task.n_chunks}",
+        )
+        log(
+            f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
+            f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)",
+            source=task.source_id,
+            report=counted,
         )
         return task.source_id, task.index, shifted
 
@@ -1083,6 +1109,8 @@ def transcribe(
         progress.finish("no chunks to transcribe")
 
     # Report the cost, so the loop's economics are visible rather than inferred.
+    # This line speaks for the pass that just finished, so it carries the pass's
+    # own tally: a consumer reading the newest event keeps reading a real count.
     log(
         f"[transcribe] chunks: {report.redecoded} re-decoded, {report.reused} reused"
         + (
@@ -1094,12 +1122,18 @@ def transcribe(
             f", {report.guard_redecoded} pulled back by the near-match guard"
             if report.guard_redecoded
             else ""
-        )
+        ),
+        index=total_chunks,
+        total=total_chunks,
+        reused=reused_n,
     )
     if report.carried_over:
         log(
             f"[transcribe] note: {report.carried_over} reused chunk(s) still carry "
-            "an earlier glossary; re-run without a scope to apply the current one."
+            "an earlier glossary; re-run without a scope to apply the current one.",
+            index=total_chunks,
+            total=total_chunks,
+            reused=reused_n,
         )
 
     per_source: dict[str, list[Segment]] = {}

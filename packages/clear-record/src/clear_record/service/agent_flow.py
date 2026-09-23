@@ -263,6 +263,10 @@ def _run_pipeline(
     Imported lazily so a plain ``import clear_record.service`` stays light, and
     so the service reuses the **one** stage wiring ``scripts/agent_drive.py``
     uses rather than reimplementing ingest/transcribe.
+
+    A stage's actionable failure is the pipeline's own ``PipelineError``; it needs
+    no handling here — the caller turns whatever comes out of this into a
+    ``transcribe`` finding, with the stage's own words (``_transcribe_finding``).
     """
     from clear_record.pipeline import stages
 

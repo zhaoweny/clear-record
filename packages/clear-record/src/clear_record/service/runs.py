@@ -1527,6 +1527,9 @@ class RunManager:
             self._finish_stopped(run, meeting)
             return
         except Exception as exc:  # noqa: BLE001 - recorded for the console, not hidden
+            # ``PipelineError`` — the pipeline's own failure channel — is the
+            # ordinary member of this family: a stage that cannot do what it was
+            # asked refuses here, and the row records its message like any other.
             error = f"{type(exc).__name__}: {exc}"
             if self._signal_for(run.id).is_set():
                 # The run was cancelled while this was in flight, and whatever the

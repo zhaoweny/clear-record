@@ -5,14 +5,30 @@ reconcile / export); the conveniences that are not stage-derived (diarize /
 attribute / glossary); ``run``, which composes them; ``run_cancel_signal``, the
 cancel signal the transcribe pool takes off the caller's sink; the model
 provisioning (``prepare_model`` / ``download_ggml_model``) that ``service``
-reaches the providers through; and ``calibration_report``, whose numbers the
-`calibrate` command writes into ``export/calibration.json``.
+reaches the providers through; ``calibration_report``, whose numbers the
+`calibrate` command writes into ``export/calibration.json``; and
+``format_timestamp``, the one ``HH:MM:SS.mmm`` the export serializers and the
+command surface's transcript preview both render.
+
+A stage **returns** what it produced — the record, the artifact set, the report
+of what it did — and reports its progress through the sink it is handed; nothing
+here writes to stdout and nothing here exits the process. Two shapes carry that:
+
+- ``PipelineError``, the module's failure channel: a stage that cannot do what
+  it was asked raises it with the operator's message, and the caller decides
+  what a failure means (the command surface turns it into an exit, the run
+  queue records the run as failed, the hello check reports a finding);
+- the reports a stage hands back beside its result — ``IngestReport`` (the input
+  facts ``Source`` cannot carry: the basename and the channel split, one
+  ``DecodedInput`` per decode), ``TranscribeReport`` (the meta the stage writes
+  into ``segments.json``), ``AttributeReport``, ``GlossaryReport`` — because the
+  boundary dataclasses are frozen and are never widened to hold them (ADR-0030):
+  a gap closes as a report object in this layer instead.
 
 Left out on purpose: ``PipelineOptions``, a re-export of ``core``'s, and
 everything private — the ``_run_*`` body one per stage and ``_STAGE_RUNNERS``,
-the export serializers with ``_fmt_ts``, the ``_print_*`` renderers,
-``_load_glossary``, ``_source_id`` and the ``_eval`` alias. They are machinery
-the module runs on, not what a caller comes here for.
+the export serializers, ``_load_glossary``, ``_source_id`` and the ``_eval``
+alias. They are machinery the module runs on, not what a caller comes here for.
 
 Everything here is the thin wiring layer: it reads/writes the workspace files
 and delegates the real work to ``clear_record.core`` (domain),
@@ -31,6 +47,7 @@ from clear_record.core import (
     DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    Alignment,
     ChunkScope,
     EventSink,
     PipelineOptions,
@@ -63,7 +80,92 @@ from clear_record.providers import (
 
 from clear_record.pipeline import eval as _eval
 from clear_record.pipeline import transcription
-from clear_record.pipeline.workspace import Workspace, discover_audio
+from clear_record.pipeline.workspace import Workspace, discover_audio, report_line
+
+
+# --------------------------------------------------------------------------- #
+# the failure channel, and what a stage hands back beside its result
+# --------------------------------------------------------------------------- #
+class PipelineError(Exception):
+    """A stage cannot do what it was asked, carrying the operator's message.
+
+    The pipeline's own failure channel, and the only one: a stage used to end the
+    process itself for these, which took its fate out of its caller's hands.
+    ``str(exc)`` is the whole message, exactly as it reached the terminal before:
+    the command surface prints it and exits, a run records it as the failure, and
+    the hello check reports it as a finding.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class DecodedInput:
+    """One input file ``ingest`` normalized, and the source it became.
+
+    ``channel`` is the 1-based channel this decode took out of ``channels``, or
+    ``None`` when the whole file became one source — downmixed, or already mono.
+    ``Source`` cannot carry either fact: a source is a stream, its id is a
+    workspace slug derived from the path (several inputs can share one), and a
+    stream split out of a four-channel capture has no memory of which channel it
+    was.
+    """
+
+    path: Path
+    output: Path
+    channel: int | None = None
+    channels: int = 1
+
+
+@dataclasses.dataclass(frozen=True)
+class IngestReport:
+    """What one ``ingest`` pass produced: the sources, in file order."""
+
+    sources: tuple[Source, ...]
+    decodes: tuple[DecodedInput, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class TranscribeReport:
+    """What one ``transcribe`` pass produced.
+
+    ``meta`` is the mapping the stage writes into ``segments.json`` — the
+    backend and model that decoded, and per source its duration, segment count
+    and chunk count — returned so a caller renders what the stage did without
+    re-reading the file it just wrote. ``attribution`` is the
+    ``--attribute-energy`` pass ``run`` drives *inside* this stage (an
+    alternative to diarization, not a declared stage); it is ``None`` when that
+    pass did not run.
+    """
+
+    per_source: dict[str, list[Segment]]
+    meta: dict
+    attribution: AttributeReport | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class AttributeReport:
+    """What one ``attribute`` pass found, beside the segments it rewrote.
+
+    Each count is measured where the pass measured it: ``segments`` is the flat
+    pre-pass list it was handed, ``changed`` the before/after label diff over the
+    loaded segments, and ``speakers`` the distinct labels of the segments the
+    pass returned — so a reader never has to recompute any of the three from a
+    state that no longer exists.
+    """
+
+    per_source: dict[str, list[Segment]]
+    segments: int
+    speakers: int
+    changed: int
+    mixed_source: str | None = None
+    window_s: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class GlossaryReport:
+    """The glossary a workspace holds: where it lives and its terms, in order."""
+
+    path: Path
+    terms: tuple[str, ...]
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +185,7 @@ def ingest(
     split: str = "auto",
     *,
     on_event: EventSink | None = None,
-) -> list[Source]:
+) -> IngestReport:
     """Discover/declare sources and normalize them to 16 kHz mono WAV.
 
     ``split`` controls multi-channel handling:
@@ -93,12 +195,15 @@ def ingest(
     - ``"split"``: split every channel of any multichannel file into its own
       source — preserves per-speaker isolation ("closest mic wins").
     - ``"mix"``: always downmix to mono.
+
+    No audio to ingest is an actionable :class:`PipelineError`, not an empty
+    report: a run that discovered nothing has nothing to say.
     """
     w = Workspace.at(directory)
     d = w.root
     files = [Path(a) for a in audio_files] if audio_files else discover_audio(d)
     if not files:
-        raise SystemExit(f"[ingest] no audio files found in {d}")
+        raise PipelineError(f"[ingest] no audio files found in {d}")
     audio_dir = w.audio_dir
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,6 +215,7 @@ def ingest(
     # so every source gets a positional ``Speaker N`` (an explicit caller label
     # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
+    decodes: list[DecodedInput] = []
     for p in files:
         base = _source_id(p, d)
         nch = channel_count(p)
@@ -120,8 +226,8 @@ def ingest(
             for ch in range(nch):
                 sid = f"{base}__ch{ch + 1}"
                 norm = audio_dir / f"{sid}.wav"
-                print(f"[ingest] decode {p.name} ch{ch + 1}/{nch} -> {norm.name}")
                 prepare_16k_wav(p, norm, channel=ch)
+                decodes.append(DecodedInput(p, norm, channel=ch + 1, channels=nch))
                 sources.append(
                     Source(
                         id=sid,
@@ -132,8 +238,8 @@ def ingest(
                 )
         else:
             norm = audio_dir / f"{base}.wav"
-            print(f"[ingest] decode {p.name} -> {norm.name}")
             prepare_16k_wav(p, norm)
+            decodes.append(DecodedInput(p, norm, channels=nch))
             sources.append(
                 Source(
                     id=base,
@@ -144,14 +250,7 @@ def ingest(
             )
         progress.advance(source=base)
     w.write_manifest(sources)
-    _print_sources(sources, w)
-    return sources
-
-
-def _print_sources(sources: list[Source], w: Workspace) -> None:
-    print(f"[ingest] {len(sources)} source(s) -> {w.manifest_path}")
-    for s in sources:
-        print(f"  {s.id:24s} {s.path}")
+    return IngestReport(sources=tuple(sources), decodes=tuple(decodes))
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +261,7 @@ def align(
     reference: str | None = None,
     *,
     on_event: EventSink | None = None,
-):
+) -> Alignment:
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
     progress = Progress(Step.ALIGN.value, 1, on_event)
@@ -170,15 +269,6 @@ def align(
     alignment = align_sources(sources, reference_id=reference)
     progress.advance(message=f"reference={alignment.reference}")
     w.write_manifest(sources, alignment)
-    print(
-        f"[align] reference={alignment.reference} method={alignment.method} "
-        f"conf={alignment.confidence} unresolved={len(alignment.unresolved)}"
-    )
-    for sid, off in alignment.offsets.items():
-        marker = " (ref)" if sid == alignment.reference else ""
-        print(f"  {sid:24s} offset={off:+.4f}s{marker}")
-    for sid in alignment.unresolved:
-        print(f"  {sid:24s} UNRESOLVED (could not place this source)")
     return alignment
 
 
@@ -264,13 +354,15 @@ def transcribe(
     ``rerun_sources``/``rerun_range`` are an explicit **re-run scope**: only the
     chunks they select are re-decoded, and every other chunk is reused from the
     cache. A scope that names an unknown source, has an unreadable range, or
-    selects no chunk is an actionable ``SystemExit`` — never a silent full pass.
+    selects no chunk is an actionable :class:`PipelineError` — never a silent
+    full pass.
 
     This stage is only wiring: the resumable chunking, cache key/invalidation,
     worker pool, cancellation and chunk merge live in
     :mod:`clear_record.pipeline.transcription`. Here we load the manifest, gate on
     the backend and the opt-in plugin probe, resolve the model once
-    (single-threaded, before the pool), then persist and print the result.
+    (single-threaded, before the pool), then persist the result and return the
+    report the caller renders.
     """
     # Captured before any other local exists in this frame: exactly the
     # decoder-knob values this call received, keyed by the shared declaration
@@ -286,7 +378,7 @@ def transcribe(
     try:
         scope = ChunkScope.parse(rerun_sources, rerun_range)
     except ScopeError as exc:
-        raise SystemExit(f"[transcribe] {exc}") from exc
+        raise PipelineError(f"[transcribe] {exc}") from exc
     sources, _ = w.load_manifest()
     backend = get_backend(backend_id)
     status = backend.availability()
@@ -305,7 +397,7 @@ def transcribe(
             backend=backend_id,
             reason=str(status.reason),
         )
-        raise SystemExit(
+        raise PipelineError(
             f"[transcribe] backend '{backend_id}' is not available on this machine"
             f"{reason}.\n"
             f"  Install {hint}; runtime requirements are in docs/adr/0005."
@@ -315,9 +407,12 @@ def transcribe(
         # `--check-plugin` is a whisper-cli/ggml probe; a system-native backend
         # has no plugin to load, so the flag is a documented no-op rather than an
         # inconclusive result.
-        w.log(
+        report_line(
+            w,
+            on_event,
+            "transcribe",
             f"[transcribe] --check-plugin ignored: backend '{backend_id}' is a "
-            f"{backend.info.runtime} backend (it has no ggml plugin)"
+            f"{backend.info.runtime} backend (it has no ggml plugin)",
         )
     elif check_plugin:
         # Opt-in: `available()` proves the plugin *file* is present, not that the
@@ -325,7 +420,12 @@ def transcribe(
         # ABI/build mismatch that would otherwise fall back to CPU silently.
         probe = probe_ggml_plugin_load(backend)
         if probe.loaded is True:
-            w.log(f"[transcribe] plugin load probe OK: {probe.detail}")
+            report_line(
+                w,
+                on_event,
+                "transcribe",
+                f"[transcribe] plugin load probe OK: {probe.detail}",
+            )
         elif probe.loaded is False:
             log_event(
                 "error",
@@ -334,14 +434,19 @@ def transcribe(
                 backend=backend_id,
                 detail=probe.detail,
             )
-            raise SystemExit(
+            raise PipelineError(
                 f"[transcribe] backend '{backend_id}' ggml plugin did not load: "
                 f"{probe.detail}.\n  The plugin file is present but whisper-cli "
                 f"could not load it (often a ggml ABI/build mismatch); it would "
                 f"fall back to CPU."
             )
         else:
-            w.log(f"[transcribe] plugin load probe inconclusive: {probe.detail}")
+            report_line(
+                w,
+                on_event,
+                "transcribe",
+                f"[transcribe] plugin load probe inconclusive: {probe.detail}",
+            )
 
     # Resolve/download the model once, single-threaded, before the chunk pool:
     # ``apple`` is parallelizable, so workers must never race the first-use
@@ -358,7 +463,12 @@ def transcribe(
     )
     prompt, prompt_src = _load_glossary(w, glossary)
     if prompt:
-        w.log(f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}")
+        report_line(
+            w,
+            on_event,
+            "transcribe",
+            f"[transcribe] glossary: {len(prompt)} chars from {prompt_src}",
+        )
 
     try:
         result = transcription.transcribe(
@@ -383,12 +493,12 @@ def transcribe(
     except ScopeError as exc:
         # A scope that cannot be honoured is a usage problem, not a crash: name
         # it and stop, rather than falling back to an unscoped full pass.
-        raise SystemExit(str(exc)) from exc
+        raise PipelineError(str(exc)) from exc
     except transcription.UnsupportedDecoderKnob as exc:
         # A decoder knob this backend cannot honour (see
         # `transcription.transcribe`): a usage problem, so surface it as the CLI's
         # actionable error rather than a traceback.
-        raise SystemExit(str(exc)) from exc
+        raise PipelineError(str(exc)) from exc
 
     meta: dict = {
         "backend": backend_id,
@@ -428,46 +538,50 @@ def transcribe(
         model=result.model,
         sources=len(per_source),
     )
-    _print_transcription(per_source, meta)
-    return per_source
-
-
-def _print_transcription(per_source: dict[str, list[Segment]], meta: dict) -> None:
-    print(
-        f"[transcribe] {meta.get('model')!r} via {meta.get('backend')} -> segments.json"
-    )
-    for sid, segs in per_source.items():
-        info = meta.get("sources", {}).get(sid, {})
-        dur = info.get("duration")
-        print(
-            f"  {sid:24s} segments={len(segs):4d}  duration={dur if dur is not None else '?'}  "
-            f"chunks={info.get('chunks', '?')}"
-        )
+    return TranscribeReport(per_source=per_source, meta=meta)
 
 
 # --------------------------------------------------------------------------- #
 # diarize (multi-speaker attribution for a single mixed stream)
 # --------------------------------------------------------------------------- #
-def diarize(directory: str, speakers: int | None = None):
+def diarize(
+    directory: str,
+    speakers: int | None = None,
+    *,
+    on_event: EventSink | None = None,
+) -> dict[str, list[Segment]]:
     """Assign speaker labels to segments per source (baseline spectral clustering).
 
     For per-channel sources this is harmless (each channel is one speaker, so the
     labels collapse to one and are left as the source label). For a single mixed
     stream it is how you get `Speaker 1/2/…` in the record.
+
+    Each source's line is reported as it is decided, on the sink, one source at a
+    time: a long tape's diarization is minutes of work, and its count is worth
+    watching arrive.
     """
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
     per_source, meta = w.load_segments()
     src_by_id = {s.id: s for s in sources}
+    total = len(per_source)
     applied = False
-    for sid, segs in per_source.items():
+    for index, (sid, segs) in enumerate(per_source.items(), start=1):
         src = src_by_id.get(sid)
         if not segs or src is None:
             continue
         try:
             audio, sr = read_audio(src.path, 16000)
         except Exception as exc:  # decode failure is non-fatal
-            w.log(f"[diarize] {sid}: skipped ({exc})")
+            report_line(
+                w,
+                on_event,
+                "diarize",
+                f"[diarize] {sid}: skipped ({exc})",
+                source=sid,
+                index=index,
+                total=total,
+            )
             continue
         labels = diarize_segments(
             audio, sr, [(s.start, s.end) for s in segs], n_speakers=speakers
@@ -479,7 +593,15 @@ def diarize(directory: str, speakers: int | None = None):
                 for i, s in enumerate(segs)
             ]
             applied = True
-        w.log(f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)")
+        report_line(
+            w,
+            on_event,
+            "diarize",
+            f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)",
+            source=sid,
+            index=index,
+            total=total,
+        )
     if applied:
         w.write_segments(per_source, meta)
     return per_source
@@ -490,7 +612,7 @@ def diarize(directory: str, speakers: int | None = None):
 # --------------------------------------------------------------------------- #
 def attribute(
     directory: str, mixed_source: str | None = None, window_s: float | None = None
-):
+) -> AttributeReport:
     """Re-attribute each segment's speaker from the relative source energy.
 
     Cross-talk correction for close microphones: instead of trusting the source a
@@ -504,6 +626,9 @@ def attribute(
     causal rolling window of that many seconds (tracking drifting gain) and write
     a calibrated per-segment confidence. Without it, the static whole-recording
     correction is unchanged.
+
+    The counts the summary reports are computed from the pre-pass state, so they
+    come back with the segments rather than being recomputed by a reader.
     """
     w = Workspace.at(directory)
     sources, alignment = w.load_manifest()
@@ -512,15 +637,21 @@ def attribute(
     if mixed_source:
         mixed = next((s for s in sources if s.id == mixed_source), None)
         if mixed is None:
-            raise SystemExit(f"[attribute] no source '{mixed_source}' in manifest")
+            raise PipelineError(f"[attribute] no source '{mixed_source}' in manifest")
     offsets = dict(alignment.offsets) if alignment else {}
     # The room is a witness, never a speaker: keep it out of the candidate set.
     candidates = [s for s in sources if mixed is None or s.id != mixed.id]
 
     flat = [seg for segs in per_source.values() for seg in segs]
     if not flat:
-        print("[attribute] no segments to attribute")
-        return per_source
+        return AttributeReport(
+            per_source=per_source,
+            segments=0,
+            speakers=0,
+            changed=0,
+            mixed_source=mixed_source,
+            window_s=window_s,
+        )
 
     # Attribution owns the grouping: the result is keyed by each segment's own
     # `source`, so no positional reassembly over dict order is needed.
@@ -539,20 +670,20 @@ def attribute(
     if changed or window_s is not None:
         w.write_segments(per_source, meta)
     speakers = {seg.speaker for segs in attributed.values() for seg in segs}
-    suffix = f" (room reference: {mixed_source})" if mixed_source else ""
-    if window_s is not None:
-        suffix += f" (rolling window: {window_s:g}s)"
-    print(
-        f"[attribute] {len(flat)} segment(s), {len(speakers)} speaker(s), "
-        f"{changed} re-attributed{suffix}"
+    return AttributeReport(
+        per_source=per_source,
+        segments=len(flat),
+        speakers=len(speakers),
+        changed=changed,
+        mixed_source=mixed_source,
+        window_s=window_s,
     )
-    return per_source
 
 
 # --------------------------------------------------------------------------- #
 # glossary
 # --------------------------------------------------------------------------- #
-def glossary(directory: str, add: list[str] | None = None) -> Path:
+def glossary(directory: str, add: list[str] | None = None) -> GlossaryReport:
     """Show (and optionally append to) the workspace glossary.
 
     The glossary is one term/phrase per line; it becomes the ASR decoder's
@@ -564,11 +695,7 @@ def glossary(directory: str, add: list[str] | None = None) -> Path:
     path = w.glossary_path
     if add:
         w.append_glossary(add)
-    terms = w.glossary_terms()
-    print(f"[glossary] {path} ({len(terms)} term(s))")
-    for term in terms:
-        print(f"  {term}")
-    return path
+    return GlossaryReport(path=path, terms=tuple(w.glossary_terms()))
 
 
 # --------------------------------------------------------------------------- #
@@ -579,7 +706,7 @@ def reconcile(
     prefer: str | None = None,
     *,
     on_event: EventSink | None = None,
-):
+) -> RecordDocument:
     w = Workspace.at(directory)
     progress = Progress(Step.RECONCILE.value, 1, on_event)
     progress.start()
@@ -601,23 +728,10 @@ def reconcile(
         },
     )
     w.write_record(record)
-    speakers = {s.speaker for s in segments}
-    print(
-        f"[reconcile] {len(segments)} segment(s), {len(speakers)} attributed speaker(s)"
-        f" -> {w.record_path}"
-    )
-    _print_transcript_preview(segments)
     return record
 
 
-def _print_transcript_preview(segments: list[Segment], limit: int = 12) -> None:
-    for seg in segments[:limit]:
-        print(f"  {_fmt_ts(seg.start)} [{seg.speaker or seg.source}] {seg.text}")
-    if len(segments) > limit:
-        print(f"  … {len(segments) - limit} more")
-
-
-def _fmt_ts(seconds: float) -> str:
+def format_timestamp(seconds: float) -> str:
     m, s = divmod(max(0.0, seconds), 60.0)
     h, m = divmod(int(m), 60)
     return f"{h:02d}:{m:02d}:{s:06.3f}"
@@ -662,8 +776,6 @@ def export(
         written["json"] = p
         progress.advance(source="json")
 
-    for fmt, p in written.items():
-        print(f"[export] {fmt:4s} -> {p}")
     return written
 
 
@@ -677,7 +789,7 @@ def _render_markdown(record: RecordDocument) -> str:
     lines.append("")
     for seg in record.segments:
         lines.append(
-            f"**[{_fmt_ts(seg.start)}–{_fmt_ts(seg.end)}] {seg.speaker or seg.source}**"
+            f"**[{format_timestamp(seg.start)}–{format_timestamp(seg.end)}] {seg.speaker or seg.source}**"
         )
         lines.append(seg.text)
         lines.append("")
@@ -715,8 +827,8 @@ def _render_vtt(record: RecordDocument) -> str:
 # --------------------------------------------------------------------------- #
 def _run_ingest(
     directory: str, options: PipelineOptions, on_event: EventSink | None
-) -> None:
-    ingest(
+) -> IngestReport:
+    return ingest(
         directory,
         list(options.audio_files) if options.audio_files else None,
         split=options.split,
@@ -726,14 +838,14 @@ def _run_ingest(
 
 def _run_align(
     directory: str, options: PipelineOptions, on_event: EventSink | None
-) -> None:
-    align(directory, reference=options.reference, on_event=on_event)
+) -> Alignment:
+    return align(directory, reference=options.reference, on_event=on_event)
 
 
 def _run_transcribe(
     directory: str, options: PipelineOptions, on_event: EventSink | None
-) -> None:
-    transcribe(
+) -> TranscribeReport:
+    report = transcribe(
         directory,
         options.backend,
         model=options.model,
@@ -757,9 +869,13 @@ def _run_transcribe(
     # Energy attribution (close-mic cross-talk) is an opt-in alternative to
     # spectral diarization; when off, the default `diarize` path is unchanged.
     if options.attribute_energy and sources:
-        attribute(
+        # The attribution pass is part of what this stage produced, so its report
+        # rides with the transcribe report: `run` renders one stage, and this is
+        # the stage that ran it.
+        attribution = attribute(
             directory, mixed_source=options.mixed_source, window_s=options.window_s
         )
+        report = dataclasses.replace(report, attribution=attribution)
     else:
         # Per-channel capture already attributes per source, and a single voice
         # must not be split on weak evidence, so diarization is opt-in:
@@ -768,19 +884,20 @@ def _run_transcribe(
         if do_diarize is None:
             do_diarize = options.speakers is not None
         if do_diarize and sources:
-            diarize(directory, speakers=options.speakers)
+            diarize(directory, speakers=options.speakers, on_event=on_event)
+    return report
 
 
 def _run_reconcile(
     directory: str, options: PipelineOptions, on_event: EventSink | None
-) -> None:
-    reconcile(directory, prefer=options.reference, on_event=on_event)
+) -> RecordDocument:
+    return reconcile(directory, prefer=options.reference, on_event=on_event)
 
 
 def _run_export(
     directory: str, options: PipelineOptions, on_event: EventSink | None
-) -> None:
-    export(directory, on_event=on_event)
+) -> dict[str, Path]:
+    return export(directory, on_event=on_event)
 
 
 def run_cancel_signal(on_event: EventSink | None) -> threading.Event | None:
@@ -797,7 +914,10 @@ def run_cancel_signal(on_event: EventSink | None) -> threading.Event | None:
 
 
 # One runner per declared stage; the drift test checks the keys against the spec.
-_STAGE_RUNNERS: dict[Step, Callable[[str, PipelineOptions, EventSink | None], None]] = {
+# A runner returns what its stage produced, and ``run`` hands that value on.
+_STAGE_RUNNERS: dict[
+    Step, Callable[[str, PipelineOptions, EventSink | None], object]
+] = {
     Step.INGEST: _run_ingest,
     Step.ALIGN: _run_align,
     Step.TRANSCRIBE: _run_transcribe,
@@ -811,6 +931,7 @@ def run(
     options: PipelineOptions | None = None,
     *,
     on_event: EventSink | None = None,
+    on_result: Callable[[Step, object], None] | None = None,
 ) -> None:
     """Run every stage the spec declares, in the spec's order.
 
@@ -818,6 +939,12 @@ def run(
     :func:`clear_record.core.pipeline_spec`, the same spec the CLI builds its
     subcommands from, and each stage's wiring lives in :data:`_STAGE_RUNNERS`.
     ``on_event`` is threaded to every stage so a caller can follow progress.
+
+    ``on_result`` receives each stage's step and the value that stage returned,
+    **as that stage lands**. A caller that renders the stages needs them in the
+    order they ran — the command surface does, and a mapping collected and
+    returned at the end would put every block after the last stage's live lines.
+    A caller that only runs the pipeline (``service``) passes nothing.
     """
     options = options or PipelineOptions()
     log_event(
@@ -833,14 +960,16 @@ def run(
         for stage in pipeline_spec().stages:
             name = stage.step.value
             log_event("info", "stage", "stage.started", stage=name)
-            _STAGE_RUNNERS[stage.step](directory, options, on_event)
+            result = _STAGE_RUNNERS[stage.step](directory, options, on_event)
+            if on_result is not None:
+                on_result(stage.step, result)
             log_event("info", "stage", "stage.finished", stage=name)
     except RunCancelled:
         # A cancellation is an outcome, not a failure: the run queue records the
         # run as ``stopped``, so the log must not call it a failed pipeline.
         log_event("info", "cli", "cli.run.stopped")
         raise
-    except (Exception, SystemExit) as exc:  # the error path already raises
+    except Exception as exc:  # the failure path already raises
         log_event(
             "error",
             "cli",
@@ -904,13 +1033,20 @@ def calibration_report(directory: str, reference: str | None = None) -> dict:
 
 
 __all__ = [
+    "AttributeReport",
+    "DecodedInput",
+    "GlossaryReport",
+    "IngestReport",
+    "PipelineError",
     "PipelineOptions",
+    "TranscribeReport",
     "align",
     "attribute",
     "calibration_report",
     "diarize",
     "download_ggml_model",
     "export",
+    "format_timestamp",
     "glossary",
     "ingest",
     "prepare_model",

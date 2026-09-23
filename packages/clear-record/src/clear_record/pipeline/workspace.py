@@ -35,10 +35,13 @@ from pathlib import Path
 
 from clear_record.core import (
     Alignment,
+    EventSink,
+    JobEvent,
     RecordDocument,
     Segment,
     Source,
     alignment_from_dict,
+    emit,
     load_json,
     record_from_dict,
     segment_from_dict,
@@ -446,14 +449,99 @@ class Workspace:
 
     # --- log --------------------------------------------------------------- #
     def log(self, message: str) -> None:
-        """Print to stdout and append to the workspace's durable transcription log."""
+        """Append one line to the workspace's durable transcription log.
+
+        The log is an **artifact**: ``transcribe.log`` outlives the process, the
+        support bundle gathers it (``service.diagnostics``), and a person
+        watching a long run reads it. Resuming reads the chunk cache and
+        ``segments.json``, not this. *Showing* a line is not this method's job —
+        :func:`report_line` is the one that reports a line, and it calls this to
+        keep the durable copy.
+        """
         with _log_lock:
-            print(message)
             try:
                 with (self.root / TRANSCRIBE_LOG).open("a", encoding="utf-8") as fh:
                     fh.write(message + "\n")
             except OSError:
                 pass
+
+
+def report_line(
+    workspace: Workspace,
+    sink: EventSink | None,
+    stage: str,
+    message: str,
+    *,
+    level: str = "info",
+    source: str | None = None,
+    report: JobEvent | None = None,
+    index: int = 0,
+    total: int = 0,
+    reused: int = 0,
+) -> None:
+    """Report one mid-stage line: durable, structured, and shown where it happens.
+
+    A stage's own prose — a chunk finishing, a backend probed, a source skipped —
+    is produced *inside* the stage's loops, for the transcriber on its pool's
+    worker threads, so it cannot come back with the stage's return value without
+    being held until the stage ends. It travels on the stage's **sink** instead,
+    as one structured line on the event the console already listens to: a
+    :class:`~clear_record.core.JobEvent` carrying the line's stage and severity,
+    the source it is about, the line's text in ``message`` (byte for byte what the
+    command surface prints), and the counters described below.
+
+    **One unit base per stage.** The console draws its bar from the *newest*
+    event of a run's stream (``RunState.summary``, the "N / M" beside it, and the
+    rate ``_run_speed_so_far`` divides by), so a line that reported its own unit —
+    which source it is, which chunk of that source — would move that bar
+    backwards the moment it landed. A line therefore reports on the base its
+    stage already reports on:
+
+    - ``report`` — the progress report the line belongs to (the chunk it just
+      finished): the line goes out as a copy of that event, with the line's own
+      message and source, so every counter — and the elapsed clock the console's
+      rate divides by — agrees with the bar. A line the stage reports before its
+      bar opens carries none (0/0, the same 0% the opening report draws), and a
+      line that speaks for the pass rather than one chunk of it — the plan lines,
+      the final tally — states the counters it has (``index``/``total``/``reused``).
+    - the per-source facts are ``source`` and the line's own text ("a chunk 3/4
+      [4-7s] -> 1 segment(s)"), which is where a reader of one source's line
+      wants them. That is a deliberate narrowing of the payload this ticket's
+      census listed: ``index``/``total`` cannot carry both the console's bar and
+      a per-source ordinal.
+
+    The line's *kind*, and the window it covers where it has one, are part of
+    that text: ``JobEvent`` is one of the frozen boundary dataclasses of ADR-0030,
+    so no field is added to it for them.
+
+    Two copies beyond the event:
+
+    - the workspace's durable ``transcribe.log`` (``Workspace.log``), always;
+    - the text itself, offered to a sink that asks for it through the optional
+      ``line`` capability — the same optional-capability seam
+      ``run_cancel_signal`` reads a sink's ``signal`` through. That is how the
+      command surface prints the line when it happens; a sink without it (the
+      console's, a test's) still has the event.
+    """
+    workspace.log(message)
+    if report is None:
+        line = JobEvent(
+            stage=stage,
+            level=level,
+            source=source,
+            index=index,
+            total=total,
+            reused=reused,
+            message=message,
+        )
+    else:
+        line = dataclasses.replace(
+            report, stage=stage, level=level, source=source, message=message
+        )
+    emit(sink, line)
+    print_line = getattr(sink, "line", None)
+    if print_line is not None:
+        print_line(message)
 
 
 __all__ = [
@@ -468,4 +556,5 @@ __all__ = [
     "glossary_digest",
     "is_audio",
     "plan_matches",
+    "report_line",
 ]

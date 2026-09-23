@@ -556,6 +556,42 @@ def test_a_foreign_key_refusal_is_not_reported_as_a_run_in_flight(
     assert "FOREIGN KEY constraint failed" in str(refused.value)
 
 
+def test_a_pipeline_error_fails_the_run_with_the_stages_own_message(tmp_path) -> None:
+    """A stage's refusal reaches the queue's failure path, not a stranded row.
+
+    The pipeline raises its own error type for an actionable failure; the queue
+    records it exactly as it records any other exception out of a pipeline — the
+    run ends ``failed`` with the stage's own words, and the meeting is runnable
+    again — rather than leaving a row nothing will ever move.
+    """
+    from clear_record.pipeline import stages
+
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    # The refusal itself, before the queue is involved.
+    with pytest.raises(stages.PipelineError, match="no audio files"):
+        stages.ingest(str(meeting.workspace_path))
+
+    def pipeline(directory, options, on_event) -> None:
+        # The real stage, driven as `run` drives it, over a workspace with
+        # nothing to ingest.
+        stages.ingest(directory)
+
+    manager = RunManager(registry, pipeline=pipeline)
+    try:
+        run = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+    finally:
+        manager.shutdown(timeout=5)
+
+    assert run.status == "failed"
+    assert run.error is not None
+    assert run.error.startswith("PipelineError: ")
+    assert "[ingest] no audio files found in" in run.error
+
+
 def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
     """The index is partial — it constrains the active run, not the history.
 

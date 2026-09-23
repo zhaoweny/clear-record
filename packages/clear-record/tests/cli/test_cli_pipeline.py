@@ -183,6 +183,63 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     assert not mixed[0].id.endswith("ch1")
 
 
+def test_diarize_hands_back_what_each_source_yielded(tmp_path) -> None:
+    """`diarize` returns what the pass produced, per source: the segments it holds
+    with the labels it applied, and the counts each source's line states — the
+    speakers the clustering found, and the decode failure that skipped a source.
+
+    Only that last decision is missing from the segments: a skipped source keeps
+    its segments and its old labels, so nothing there tells it apart from a source
+    the pass found one speaker in. Two harmonic voices an octave apart over four
+    seeded segments are a split the engine decides deterministically (its own
+    diarize tests pin that).
+    """
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 16000
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(sr, dtype=np.float64) / sr
+        return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    voices = np.concatenate(seq)
+    voices /= np.max(np.abs(voices)) or 1.0
+    sf.write(str(wd / "mixed.wav"), voices.astype(np.float32), sr)
+    _write_tone(wd / "broken.wav", seconds=1.0)
+
+    ids = [s.id for s in stages.ingest(str(wd)).sources]
+    assert sorted(ids) == ["broken", "mixed"]
+    seeded = {
+        "mixed": [
+            Segment(start=float(i), end=i + 1.0, text="line", source="mixed")
+            for i in range(4)
+        ],
+        "broken": [Segment(start=0.0, end=1.0, text="line", source="broken")],
+    }
+    Workspace.at(wd).write_segments(seeded, {"backend": "none", "model": "none"})
+    # An unreadable source is non-fatal: it is skipped, not a failed pass.
+    (wd / "audio" / "broken.wav").unlink()
+
+    report = stages.diarize(str(wd), speakers=2)
+
+    facts = {fact.id: fact for fact in report.sources}
+    assert facts["mixed"].speakers == 2
+    assert facts["mixed"].segments == 4
+    assert facts["mixed"].skipped is None
+    assert facts["broken"].skipped, "the unreadable source came back with its reason"
+    # The relabelled segments ride beside the counts: each voice keeps one label,
+    # and the two voices do not share one (which number is which is the engine's).
+    labels = [seg.speaker for seg in report.per_source["mixed"]]
+    assert labels[0] == labels[2] and labels[1] == labels[3] and labels[0] != labels[1]
+    assert all(label and label.startswith("Speaker ") for label in labels)
+    # A source that could not be decoded keeps its segments and its old labels.
+    assert report.per_source["broken"] == seeded["broken"]
+
+
 def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -> None:
     """`attribute` re-labels bleed-dominated segments from relative energy, and
     `reconcile` keeps the corrected speaker (composability)."""

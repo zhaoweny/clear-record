@@ -21,7 +21,9 @@ here writes to stdout and nothing here exits the process. Two shapes carry that:
 - the reports a stage hands back beside its result — ``IngestReport`` (the input
   facts ``Source`` cannot carry: the basename and the channel split, one
   ``DecodedInput`` per decode), ``TranscribeReport`` (the meta the stage writes
-  into ``segments.json``), ``AttributeReport``, ``GlossaryReport`` — because the
+  into ``segments.json``), ``DiarizeReport`` (one ``DiarizedSource`` per source
+  the pass looked at: the counts each source's line states, and the decode failure
+  that skipped a source), ``AttributeReport``, ``GlossaryReport`` — because the
   boundary dataclasses are frozen and are never widened to hold them (ADR-0030):
   a gap closes as a report object in this layer instead.
 
@@ -139,6 +141,40 @@ class TranscribeReport:
     per_source: dict[str, list[Segment]]
     meta: dict
     attribution: AttributeReport | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class DiarizedSource:
+    """One source ``diarize`` looked at, and what its pass found there.
+
+    ``speakers`` is the distinct label count the clustering decided, ``segments``
+    how many segments it was handed, and ``skipped`` the decode failure that took
+    the source out of the pass (``None`` when it ran) — a skipped source decided
+    nothing, so its ``speakers`` stays 0. Only that decision is missing from the
+    returned segments: a skipped source keeps its segments and its old labels, so
+    nothing there tells it apart from a source the pass found one speaker in.
+    """
+
+    id: str
+    segments: int
+    speakers: int = 0
+    skipped: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class DiarizeReport:
+    """What one ``diarize`` pass produced: the segments it holds, by source.
+
+    ``per_source`` is the workspace's segment map with the speaker labels the
+    pass applied — a source it found one speaker in keeps the labels it had.
+    ``sources`` is one :class:`DiarizedSource` per source the pass looked at, in
+    the order the segment map holds them: what the pass decided about each one. A
+    source with no segments, or one the manifest does not hold, is not looked at
+    and has no entry.
+    """
+
+    per_source: dict[str, list[Segment]]
+    sources: tuple[DiarizedSource, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -549,16 +585,20 @@ def diarize(
     speakers: int | None = None,
     *,
     on_event: EventSink | None = None,
-) -> dict[str, list[Segment]]:
+) -> DiarizeReport:
     """Assign speaker labels to segments per source (baseline spectral clustering).
 
     For per-channel sources this is harmless (each channel is one speaker, so the
     labels collapse to one and are left as the source label). For a single mixed
     stream it is how you get `Speaker 1/2/…` in the record.
 
-    Each source's line is reported as it is decided, on the sink, one source at a
-    time: a long tape's diarization is minutes of work, and its count is worth
-    watching arrive.
+    What the pass produced comes back as a :class:`DiarizeReport`: the segments
+    with the labels it applied and, per source, the counts that source's line
+    states, plus the decode failure that took a source out of the pass — the one
+    fact the returned segments cannot carry (see :class:`DiarizedSource`). Each
+    source's line is reported as it is decided, on the sink, one source at a time:
+    a long tape's diarization is minutes of work, and its count is worth watching
+    arrive.
     """
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
@@ -566,6 +606,7 @@ def diarize(
     src_by_id = {s.id: s for s in sources}
     total = len(per_source)
     applied = False
+    facts: list[DiarizedSource] = []
     for index, (sid, segs) in enumerate(per_source.items(), start=1):
         src = src_by_id.get(sid)
         if not segs or src is None:
@@ -573,6 +614,7 @@ def diarize(
         try:
             audio, sr = read_audio(src.path, 16000)
         except Exception as exc:  # decode failure is non-fatal
+            facts.append(DiarizedSource(id=sid, segments=len(segs), skipped=str(exc)))
             report_line(
                 w,
                 on_event,
@@ -593,6 +635,7 @@ def diarize(
                 for i, s in enumerate(segs)
             ]
             applied = True
+        facts.append(DiarizedSource(id=sid, segments=len(segs), speakers=n_found))
         report_line(
             w,
             on_event,
@@ -604,7 +647,7 @@ def diarize(
         )
     if applied:
         w.write_segments(per_source, meta)
-    return per_source
+    return DiarizeReport(per_source=per_source, sources=tuple(facts))
 
 
 # --------------------------------------------------------------------------- #
@@ -627,8 +670,10 @@ def attribute(
     a calibrated per-segment confidence. Without it, the static whole-recording
     correction is unchanged.
 
-    The counts the summary reports are computed from the pre-pass state, so they
-    come back with the segments rather than being recomputed by a reader.
+    Each count the summary reports is measured where the pass measures it — the
+    pre-pass list, the before/after label diff, the labels it returned — and comes
+    back with the segments, so a reader recomputes none of them (see
+    :class:`AttributeReport`).
     """
     w = Workspace.at(directory)
     sources, alignment = w.load_manifest()
@@ -1035,6 +1080,8 @@ def calibration_report(directory: str, reference: str | None = None) -> dict:
 __all__ = [
     "AttributeReport",
     "DecodedInput",
+    "DiarizeReport",
+    "DiarizedSource",
     "GlossaryReport",
     "IngestReport",
     "PipelineError",

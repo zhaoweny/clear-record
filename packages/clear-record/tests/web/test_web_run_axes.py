@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import RecordDocument, Segment, Source
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app

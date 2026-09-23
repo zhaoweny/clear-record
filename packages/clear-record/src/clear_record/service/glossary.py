@@ -27,7 +27,7 @@ import os
 from collections.abc import Iterable
 from pathlib import Path
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service.models import GlossaryTerm
 from clear_record.service.store import Registry
 

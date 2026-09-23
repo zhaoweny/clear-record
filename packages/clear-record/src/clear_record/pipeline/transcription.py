@@ -11,7 +11,7 @@ which it re-decodes, and the tally that reports it. A
 near-match guard decide per chunk; see :func:`transcribe` and
 :class:`ChunkReport`.
 
-``clear_record.cli.stages.transcribe`` is only wiring: it loads the manifest,
+``clear_record.pipeline.stages.transcribe`` is only wiring: it loads the manifest,
 resolves the backend and model, then calls :func:`transcribe` here. Everything
 the tests need
 — job sizing and the merge rule — is public in this module, so no test reaches
@@ -62,7 +62,7 @@ from clear_record.engine import (
 )
 from clear_record.engine.audio import read_audio
 
-from clear_record.cli.workspace import (
+from clear_record.pipeline.workspace import (
     ChunkCache,
     Workspace,
     chunk_cache_key,

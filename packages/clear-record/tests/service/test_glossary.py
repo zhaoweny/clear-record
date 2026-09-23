@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import (
     GlossaryTerm,
     Registry,

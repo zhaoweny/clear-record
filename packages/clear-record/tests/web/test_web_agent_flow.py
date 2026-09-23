@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from clear_record.cli.auto import Message
+from clear_record.pipeline.auto import Message
 from clear_record.service import Registry
 from clear_record.service.agent_flow import (
     LEG_OK,

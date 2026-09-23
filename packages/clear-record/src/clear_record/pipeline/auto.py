@@ -8,7 +8,7 @@ returns a choice plus a one-line explanation naming the inputs behind it.
 
 ``--auto`` (this module's :func:`resolve_auto`) picks a **profile + model**: it
 reuses the existing sizing heuristics (``model_vram_gb`` / ``auto_jobs`` from
-:mod:`clear_record.cli.transcription`) rather than inventing a second one, never
+:mod:`clear_record.pipeline.transcription`) rather than inventing a second one, never
 triggers a download, and turns on per-speaker attribution for multi-channel
 tapes. It never chooses a *backend* — profiles tune decoder knobs only.
 
@@ -40,8 +40,8 @@ from clear_record.providers import (
     resolve_models_dir,
 )
 
-from clear_record.cli.transcription import auto_jobs, detect_vram_gb, model_vram_gb
-from clear_record.cli.workspace import discover_audio
+from clear_record.pipeline.transcription import auto_jobs, detect_vram_gb, model_vram_gb
+from clear_record.pipeline.workspace import discover_audio
 from clear_record.core.i18n import deferred
 from clear_record.core.message import Joined, Message, render_message
 

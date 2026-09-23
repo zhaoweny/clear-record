@@ -388,7 +388,7 @@ def _private_sections(
     """
     if not include_private or workspace is None:
         return {}
-    from clear_record.cli.workspace import GLOSSARY, TRANSCRIBE_LOG, Workspace
+    from clear_record.pipeline.workspace import GLOSSARY, TRANSCRIBE_LOG, Workspace
 
     ws = Workspace.at(workspace)
     sections: dict[str, str] = {}

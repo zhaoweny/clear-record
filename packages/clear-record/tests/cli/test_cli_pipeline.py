@@ -11,7 +11,8 @@ from __future__ import annotations
 import numpy as np
 import soundfile as sf
 
-from clear_record.cli import stages
+from clear_record.cli.calibrate import calibrate_report
+from clear_record.pipeline import stages
 from clear_record.providers import BackendBase
 
 
@@ -64,7 +65,7 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
             )
         ],
     }
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     Workspace.at(tmp_path / "rec").write_segments(
         per_source, {"backend": "none", "model": "none"}
@@ -76,7 +77,7 @@ def test_ingest_align_reconcile_export(tmp_path) -> None:
     written = stages.export(wd)
     assert "md" in written and written["md"].exists()
 
-    report = stages.calibrate_report(wd)
+    report = calibrate_report(wd)
     assert report["coverage"] is not None
 
 
@@ -101,7 +102,7 @@ def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
             )
         ],
     }
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     Workspace.at(tmp_path / "rec").write_segments(
         per_source, {"backend": "none", "model": "none"}
@@ -119,7 +120,7 @@ def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
     """Backward compatibility: a record written before titles were stored (no
     `title` metadata) still renders the bare `# Record`."""
     from clear_record.core import RecordDocument
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -165,7 +166,7 @@ def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -
     from clear_record.core import Segment
     from clear_record.engine import SYNTH_SR
     from clear_record.engine.synth import make_crosstalk_scene
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=16.0, n_speakers=2, bleed_db=-6.0, seed=7, non_overlapping=True
@@ -215,7 +216,7 @@ def test_attribute_stage_windowed_tracks_gain_and_writes_confidence(tmp_path) ->
     from clear_record.engine import SYNTH_SR
     from clear_record.engine.synth import make_crosstalk_scene
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     devices, events = make_crosstalk_scene(
         duration_s=20.0, n_speakers=2, bleed_db=-9.0, seed=5, non_overlapping=True
@@ -263,7 +264,7 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     from clear_record.engine import SYNTH_SR, mix_crosstalk
     from clear_record.engine.synth import make_speaker_stems
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     stems, events = make_speaker_stems(
         duration_s=16.0, n_speakers=3, seed=7, non_overlapping=True
@@ -305,7 +306,7 @@ def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""
     from clear_record.core import Segment
-    from clear_record.cli.transcription import merge_chunk_segments
+    from clear_record.pipeline.transcription import merge_chunk_segments
 
     def seg(start: float, end: float, text: str) -> Segment:
         return Segment(start=start, end=end, text=text, source="src")
@@ -336,7 +337,7 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
     recording a fake zero offset."""
     import dataclasses
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
 
     wd = _workspace(tmp_path)
     sources = stages.ingest(wd)
@@ -441,7 +442,7 @@ def test_transcribe_chunks_resume_and_glossary_invalidation(
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -524,7 +525,7 @@ def test_a_resumed_run_counts_reused_chunks_apart_from_decoded_ones(
     no machine sustained: the seed's own 112-of-120 reuse shape prints ~260x
     where the machine measures ~2.4x.
     """
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import JobEvent, Segment, TranscriptionResult
     from clear_record.engine.chunk import plan_chunks
     from clear_record.providers import BackendInfo
@@ -610,8 +611,8 @@ def test_transcription_module_is_a_single_seam(tmp_path) -> None:
     from clear_record.core import Segment, Source, TranscriptionResult
     from clear_record.providers import BackendInfo
 
-    from clear_record.cli.transcription import TranscriptionOptions, transcribe
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.transcription import TranscriptionOptions, transcribe
+    from clear_record.pipeline.workspace import Workspace
 
     wd = tmp_path / "rec"
     wd.mkdir()
@@ -670,7 +671,7 @@ def test_transcription_module_is_a_single_seam(tmp_path) -> None:
 
 
 def test_resolve_jobs_is_adaptive() -> None:
-    from clear_record.cli.transcription import resolve_jobs
+    from clear_record.pipeline.transcription import resolve_jobs
 
     assert resolve_jobs(False, 10, 4) == 1  # in-process -> serialized
     assert resolve_jobs(True, 1, 4) == 1  # no work to parallelize
@@ -684,7 +685,7 @@ def test_transcribe_runs_pending_chunks_concurrently(tmp_path, monkeypatch) -> N
     import threading
     import time
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
@@ -769,7 +770,7 @@ def test_transcribe_resolves_model_once_before_the_pool(tmp_path, monkeypatch) -
     import threading
     import time
 
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 
@@ -852,7 +853,7 @@ def test_auto_jobs_is_capped_by_model_and_vram_and_overridable(monkeypatch) -> N
     explicit `--jobs` / `CR_JOBS` still wins."""
     import os
 
-    from clear_record.cli.transcription import (
+    from clear_record.pipeline.transcription import (
         auto_jobs,
         detect_vram_gb,
         model_vram_gb,
@@ -906,7 +907,7 @@ def test_transcribe_interrupt_cancels_queue_and_kills_children(
 
     import pytest
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.engine import plan_chunks
     from clear_record.providers import BackendInfo
@@ -1111,7 +1112,7 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     scoped; both complete with independent caches."""
     import threading
 
-    from clear_record.cli.workspace import Workspace
+    from clear_record.pipeline.workspace import Workspace
     from clear_record.core import Segment, TranscriptionResult
     from clear_record.providers import BackendInfo
 

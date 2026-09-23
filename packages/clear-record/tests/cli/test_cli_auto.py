@@ -16,8 +16,8 @@ import pytest
 import soundfile as sf
 import numpy as np
 
-from clear_record.cli import auto
-from clear_record.cli.auto import (
+from clear_record.pipeline import auto
+from clear_record.pipeline.auto import (
     BACKEND_PREFERENCE,
     AutoProbe,
     NoBackendAvailable,

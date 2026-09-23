@@ -34,8 +34,8 @@ from pathlib import Path
 
 import click
 
-from clear_record.cli import stages
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core.i18n import deferred, tr
 from clear_record.core.paths import registry_path
 from clear_record.service.models import PipelineRun

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     Segment,
     load_json,

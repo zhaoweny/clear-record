@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import soundfile as sf
 
-from clear_record.cli.transcription import TranscriptionOptions, transcribe
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.transcription import TranscriptionOptions, transcribe
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import Segment, Source, TranscriptionResult
 from clear_record.providers import BackendInfo
 

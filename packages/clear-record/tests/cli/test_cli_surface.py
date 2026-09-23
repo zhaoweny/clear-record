@@ -8,8 +8,9 @@ import pytest
 from click.testing import CliRunner
 
 from clear_record.core import pipeline_spec
-from clear_record.cli import cli, stages
+from clear_record.cli import cli
 from clear_record.cli.cli import _build_group, _pipeline_options
+from clear_record.pipeline import stages
 
 
 def _parse(command: str, argv: list[str]) -> SimpleNamespace:
@@ -73,7 +74,7 @@ def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
 def test_backend_choices_come_from_the_catalog() -> None:
     """The `--backend` choices and default follow the provider catalog, so a new
     backend is offered without a CLI edit (no literal tuple)."""
-    from clear_record.cli.auto import BACKEND_AUTO
+    from clear_record.pipeline.auto import BACKEND_AUTO
     from clear_record.providers import BACKENDS
 
     command = _build_group().commands["transcribe"]
@@ -172,7 +173,7 @@ def test_diarize_flags_still_work_one_at_a_time() -> None:
 
 
 def test_eval_error_rates_perfect_and_bad() -> None:
-    from clear_record.cli.eval import error_rates
+    from clear_record.pipeline.eval import error_rates
 
     assert error_rates("hello world", "hello world")["wer"] == 0.0
     assert error_rates("hello world", "hello there")["wer"] > 0.0
@@ -182,7 +183,7 @@ def test_eval_error_rates_perfect_and_bad() -> None:
     "text", ["你好世界", "The quick brown fox", "Mixed 中文 and english"]
 )
 def test_eval_tokenizes_nonempty(text: str) -> None:
-    from clear_record.cli.eval import _tokenize
+    from clear_record.pipeline.eval import _tokenize
 
     assert len(_tokenize(text)) > 0
 

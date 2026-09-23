@@ -39,8 +39,8 @@ import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from clear_record.cli import auto as _auto
-from clear_record.cli.auto import Message
+from clear_record.pipeline import auto as _auto
+from clear_record.pipeline.auto import Message
 from clear_record.cli.tts import TtsError, TtsUnavailable
 from clear_record.core.i18n import current_locale, deferred
 from clear_record.core.paths import resolve_models_dir, resolve_state_dir
@@ -226,7 +226,7 @@ def download_transcription_model(
     model path, or the empty string when ``model`` is ``None`` and no backend
     can transcribe here.
     """
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
 
     if model is not None and model not in MODEL_LADDER:
         raise SetupError(
@@ -263,7 +263,7 @@ def _run_pipeline(
     so the service reuses the **one** stage wiring ``scripts/agent_drive.py``
     uses rather than reimplementing ingest/transcribe.
     """
-    from clear_record.cli import stages
+    from clear_record.pipeline import stages
 
     stages.ingest(str(workspace), [str(tape)])
     stages.transcribe(str(workspace), backend_id, model=model, language=language)

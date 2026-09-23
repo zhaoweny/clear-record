@@ -15,14 +15,14 @@ import pytest
 import soundfile as sf
 from click.testing import CliRunner
 
-from clear_record.cli import stages
+from clear_record.pipeline import stages
 from clear_record.cli.cli import _build_group, _pipeline_options
-from clear_record.cli.transcription import (
+from clear_record.pipeline.transcription import (
     ChunkReport,
     TranscriptionOptions,
     transcribe,
 )
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     ChunkScope,
     ScopeError,

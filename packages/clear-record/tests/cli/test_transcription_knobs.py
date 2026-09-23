@@ -13,9 +13,9 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from clear_record.cli import stages
-from clear_record.cli.transcription import TranscriptionOptions, transcribe
-from clear_record.cli.workspace import Workspace, chunk_cache_key
+from clear_record.pipeline import stages
+from clear_record.pipeline.transcription import TranscriptionOptions, transcribe
+from clear_record.pipeline.workspace import Workspace, chunk_cache_key
 from clear_record.core import (
     DECODER_KNOB_FIELDS,
     DECODER_KNOBS,

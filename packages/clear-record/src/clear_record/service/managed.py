@@ -54,7 +54,7 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-from clear_record.cli.workspace import (
+from clear_record.pipeline.workspace import (
     AUDIO_DIR,
     AUDIO_SUFFIXES,
     EXPORT_DIR,

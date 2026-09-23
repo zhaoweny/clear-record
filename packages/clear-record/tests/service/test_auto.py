@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from clear_record.cli import auto as cli_auto
-from clear_record.cli.auto import AutoProbe
+from clear_record.pipeline import auto as cli_auto
+from clear_record.pipeline.auto import AutoProbe
 from clear_record.core import PipelineOptions
 from clear_record.service import auto as service_auto
 

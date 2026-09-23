@@ -561,7 +561,7 @@ def drive_tape(
         return "seeded"
 
     try:
-        from clear_record.cli import stages
+        from clear_record.pipeline import stages
 
         stages.ingest(str(workspace), [str(tape)])
         stages.transcribe(str(workspace), backend_id, language=args.lang)

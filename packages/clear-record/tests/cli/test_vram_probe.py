@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.cli import transcription
-from clear_record.cli.transcription import (
+from clear_record.pipeline import transcription
+from clear_record.pipeline.transcription import (
     auto_jobs,
     detect_vram_gb,
     resolve_jobs,

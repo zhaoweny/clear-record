@@ -523,7 +523,7 @@ def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
     options produce the same key — a re-run is served from cache, no needless
     re-decode — while a glossary edit changes the key and re-decodes.
     """
-    from clear_record.cli.workspace import chunk_cache_key
+    from clear_record.pipeline.workspace import chunk_cache_key
 
     registry = _registry(tmp_path)
     registry.create_project("Ops")

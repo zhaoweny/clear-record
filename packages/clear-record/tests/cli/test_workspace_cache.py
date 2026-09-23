@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from clear_record.cli.workspace import (
+from clear_record.pipeline.workspace import (
     CHUNK_GLOSSARY,
     Workspace,
     cache_plan,

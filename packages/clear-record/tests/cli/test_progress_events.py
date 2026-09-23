@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from clear_record.cli import stages
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import JobEvent, RunCancelled, Segment, Step, log_path
 
 

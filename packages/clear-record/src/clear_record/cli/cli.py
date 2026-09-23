@@ -2,7 +2,7 @@
 
 One subcommand per pipeline stage (plus `run`/`calibrate` conveniences). The
 subcommand surface is derived from the pipeline spec so the CLI and domain cannot
-drift; the heavy per-stage logic lives in :mod:`clear_record.cli.stages`.
+drift; the heavy per-stage logic lives in :mod:`clear_record.pipeline.stages`.
 
 The parser is **Click** (ADR-0022). The two properties the port must keep are:
 
@@ -65,8 +65,10 @@ from clear_record.providers import (
     resolve_models_dir,
 )
 
-from clear_record.cli import auto
-from clear_record.cli import stages
+from clear_record.cli.calibrate import calibrate_report
+from clear_record.cli.synth import synth
+from clear_record.pipeline import auto
+from clear_record.pipeline import stages
 
 #: Entry-point group for optional subcommand providers. The bundled web console
 #: registers here (ADR-0013) so this module never imports it, keeping the
@@ -683,7 +685,7 @@ def _cmd_backends(**kwargs: Any) -> int:
 
 
 def _cmd_synth(**kwargs: Any) -> int:
-    stages.synth(
+    synth(
         kwargs["directory"],
         devices=kwargs["devices"],
         duration_s=kwargs["duration"],
@@ -775,9 +777,7 @@ def _cmd_run(**kwargs: Any) -> int:
 
 def _cmd_calibrate(**kwargs: Any) -> int:
     stages.run(kwargs["directory"], _options(kwargs))
-    stages.calibrate_report(
-        kwargs["directory"], reference=kwargs["reference_transcript"]
-    )
+    calibrate_report(kwargs["directory"], reference=kwargs["reference_transcript"])
     return 0
 
 

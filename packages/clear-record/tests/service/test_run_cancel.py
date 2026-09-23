@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from clear_record.cli import stages
+from clear_record.pipeline import stages
 from clear_record.core import (
     Progress,
     Segment,

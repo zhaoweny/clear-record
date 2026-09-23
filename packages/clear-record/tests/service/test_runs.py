@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import JobEvent, Progress, resolve_options
 from clear_record.service import (
     MalformedRunOptions,

@@ -18,7 +18,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from clear_record.cli import auto as _auto
+from clear_record.pipeline import auto as _auto
 from clear_record.core import PipelineOptions, resolve_options
 from clear_record.core.i18n import deferred
 

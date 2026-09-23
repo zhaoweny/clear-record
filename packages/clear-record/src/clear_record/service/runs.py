@@ -43,8 +43,8 @@ from typing import NoReturn
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from clear_record.cli import stages
-from clear_record.cli.workspace import Workspace
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import EventSink, JobEvent, PipelineOptions, RunCancelled
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred

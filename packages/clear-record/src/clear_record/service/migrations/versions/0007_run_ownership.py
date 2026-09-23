@@ -1,9 +1,11 @@
-"""Revision 0007 — run ownership (the ladder's v7).
+"""Revision 0007 — run ownership (a delta on the released baseline).
 
 Revision ID: 0007
 Revises: 0006
 
-Who a run belongs to: ``origin`` is the surface that started it;
+A delta on the released baseline: the retired ladder's step 7 as written, which
+no released line ever reached, so a registry at revision ``0006`` gains it when
+it opens. Who a run belongs to: ``origin`` is the surface that started it;
 ``owner`` the process that claimed it (the conditional transition that makes
 the queue cross-process); ``heartbeat_at`` the owner's last proof of life,
 refreshed while it executes. All three are NULL for a run recorded before

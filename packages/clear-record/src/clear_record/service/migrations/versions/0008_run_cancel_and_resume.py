@@ -1,11 +1,12 @@
-"""Revision 0008 — cancel and resume (the ladder's v8).
+"""Revision 0008 — cancel and resume (a delta on the released baseline).
 
 Revision ID: 0008
 Revises: 0007
 
-Cancel and resume: ``resumes_run_id`` links a run to the run it
-continues (the chunk cache is what actually makes it cheaper; this is what
-makes the link visible). ``cancel_requested_at`` is a *request* on a
+A delta on the released baseline: the retired ladder's step 8 as written, which
+no released line ever reached. Cancel and resume: ``resumes_run_id`` links a run
+to the run it continues (the chunk cache is what actually makes it cheaper; this
+is what makes the link visible). ``cancel_requested_at`` is a *request* on a
 ``running`` run: only its owner may end it, so the column records who asked
 and when, and the owner's next look at the row turns it into the terminal
 ``stopped``. Both are NULL for a run that neither resumes nor was asked to

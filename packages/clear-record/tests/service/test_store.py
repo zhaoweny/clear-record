@@ -2,11 +2,11 @@
 
 Projects and the multi-project glossary table, and the revisions a registry
 migrates through when it opens: the schema the Alembic revisions own, the
-mapping that mirrors it, the ladder's row that lets a build from before Alembic
-read what this one migrated, and the one-active-run index revision 0009 puts
-over a meeting. These exercise the service seam directly (external behaviour,
-temp DB — no web app, no network), so the store is trusted independently of any
-adapter.
+mapping that mirrors it, the released line's ladder row that lets that line's
+registry be placed at its own baseline, and the one-active-run index revision
+0009 puts over a meeting. These exercise the service seam directly (external
+behaviour, temp DB — no web app, no network), so the store is trusted
+independently of any adapter.
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ import sqlite3
 import subprocess
 import sys
 import types
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,7 @@ from sqlalchemy import URL, UniqueConstraint, create_engine, event
 from sqlalchemy.pool import NullPool
 
 from clear_record.core import PipelineOptions
+from clear_record.core.paths import registry_path
 from clear_record.service import (
     RUN_ORIGINS,
     RUN_STATUSES,
@@ -47,6 +49,14 @@ _REPO = Path(__file__).resolve().parents[4]
 #: Where the revisions are, for the tests that copy the chain to a temp tree.
 _MIGRATIONS = Path(store_module.__file__).resolve().parent / "migrations"
 
+#: The released baseline: the schema the released line (`v0.2.0`) shipped, which
+#: is the revision the chain begins at — and the number that line recorded its
+#: schema as. A fixture that manufactures an "old" registry pins **this**, never
+#: another ladder step: 6 is the one step a supported registry stands at, so a
+#: fixture pinned at any other would be testing a shape the shim refuses.
+_BASELINE = "0006"
+_BASELINE_LADDER = 6
+
 
 def _registry(tmp_path) -> Registry:
     return Registry.open(db_path=tmp_path / "registry.sqlite3")
@@ -55,8 +65,10 @@ def _registry(tmp_path) -> Registry:
 def _registry_at(db_path: Path, revision: str) -> None:
     """Build a registry at one revision of its schema's history.
 
-    The retired ladder's steps are the revisions now, so an older registry is
-    made the way this build makes one: by upgrading to that revision.
+    A registry an *older build* left is made the way this build makes one — the
+    chain is the schema's history — so ``revision`` is the released baseline for
+    every fixture that manufactures an old registry (see :data:`_BASELINE`), and
+    a delta's revision for the ones that need a registry without it.
     """
     command.upgrade(_alembic_config(db_path), revision)
 
@@ -65,7 +77,9 @@ def _ladder_left_it(db_path: Path, version: int) -> None:
     """Give a registry the shape the retired ladder left behind at one version.
 
     The ladder kept its version in ``schema_version`` and knew nothing of
-    Alembic, so a registry from a release before this build looks like this.
+    Alembic, so a registry from the released line before this build looks like
+    this — and a registry from a *development* build looks the same with any
+    other number in the row, which is the difference the shim reads.
     """
     with closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.execute("DROP TABLE alembic_version")
@@ -340,21 +354,15 @@ def test_run_and_artifact_rows(tmp_path) -> None:
         reg.set_meeting_status(meeting.id, "bogus")
 
 
-def test_a_registry_at_revision_one_gains_every_later_revision(tmp_path) -> None:
-    """An existing registry at the first revision gains the later ones on open."""
+def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None:
+    """An existing registry at the released baseline gains every delta on it.
+
+    The baseline is the schema a released install has, so this is the registry an
+    upgrading user arrives with, holding their projects and meetings; the deltas
+    on top of it must all answer, and the rows it already held must survive them.
+    """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0001")
-    _seed_project(db)
-
-    reg = Registry(db)
-    assert [p.slug for p in reg.list_projects()] == ["ops"]
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
-
-
-def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> None:
-    """An existing registry at revision three gains every later one on open."""
-    db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0003")
+    _registry_at(db, _BASELINE)
     _seed_project(db)
     with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(
@@ -363,14 +371,15 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
         )
 
     reg = Registry(db)
+    assert [p.slug for p in reg.list_projects()] == ["ops"]
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
-    # Revision 0005: an uploaded tape can be recorded and joins the meeting's tape set.
+    # The baseline's own shapes answer over the migrated registry: an uploaded
+    # tape joins the meeting's tape set, and a run carries its durable options.
     tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
-    # Revision 0006: a run carries its durable options and its persisted event stream.
     run = reg.create_run(
         meeting.id, run_options=dataclasses.asdict(PipelineOptions(backend="apple"))
     )
@@ -378,7 +387,7 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
         PipelineOptions(backend="apple")
     )
     assert reg.count_run_events(run.id) == 0
-    # Revision 0007: a run records where it came from, and the claim records its
+    # Delta 0007: a run records where it came from, and the claim records its
     # owner. The claim runs on a *second* meeting's run: one meeting has one
     # active run, which revision 0009's index enforces.
     assert reg.get_run(run.id).origin is None  # a seeded row has no origin
@@ -388,7 +397,7 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     assert claimed is not None
     assert (claimed.origin, claimed.owner) == ("console", "peer:1")
     assert claimed.heartbeat_at is not None
-    # Revision 0008: a run can be linked to the run it resumes, and carry a cancel request.
+    # Delta 0008: a run can be linked to the run it resumes, and carry a cancel request.
     assert claimed.resumes_run_id is None and claimed.cancel_requested_at is None
     with pytest.raises(KeyError):
         reg.create_run(meeting.id, resumes_run_id=999)  # no such run
@@ -399,39 +408,34 @@ def test_a_registry_at_revision_three_gains_every_later_revision(tmp_path) -> No
     assert stopped is not None and stopped.status == "stopped"
     # And a run that is not queued any more is left to its owner.
     assert reg.stop_run(claimed.id, ended_at="now", progress={}) is None
-    # Revision 0009: the meeting's run has ended, so the meeting runs again — and
+    # Delta 0009: the meeting's run has ended, so the meeting runs again — and
     # the new run continues the stopped one.
     resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
     assert resumed.resumes_run_id == run.id
 
 
-@pytest.mark.parametrize(("revision", "version"), [("0003", 3), ("0006", 6)])
-def test_a_registry_from_the_retired_ladder_migrates_on_open(
-    tmp_path, revision, version
-) -> None:
-    """A registry the ladder left behind opens, keeps its rows, and is current.
+def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
+    """A registry the released line left behind opens, keeps its rows, and is current.
 
-    This is the registry an upgrading user has: the ladder's tables with its
-    ``schema_version`` row and no revision recorded. Opening it must place it at
-    that version — not re-run the revisions it already has — and run the rest.
+    This is the registry an upgrading user has: the released line's tables with
+    its ``schema_version`` row and no revision recorded. Opening it must place it
+    at the baseline that row names — not re-run the schema it already carries —
+    and run the deltas on top.
 
-    Two versions are covered, and the second is why: **6** is where the
-    *released* line (`v0.2.x`) stopped, over the schema that line built (this
-    chain's ``0006``), so this is the shape a user of that release upgrades from
-    — and it exercises the guarded ``ALTER`` path for everything after it
-    (``0007``'s ownership columns, ``0008``'s cancel and resume, ``0009``'s
-    index). ``3`` is the older shape this test carried alone, whose ladder row
-    still has to place the registry without re-running what it holds.
+    The row carries the **released** line's number (``v0.2.x`` stopped at 6, the
+    schema this chain's ``0006`` is), which is the only number the placement
+    accepts; every other ladder step is a development build's and is refused —
+    see the test below.
     """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, revision)
-    _ladder_left_it(db, version)
+    _registry_at(db, _BASELINE)
+    _ladder_left_it(db, _BASELINE_LADDER)
     _seed_project(db)
 
     reg = Registry(db)
     assert [p.slug for p in reg.list_projects()] == ["ops"]
-    # Every later revision is in place: notes (0004), tapes (0005), a run's
-    # durable options (0006) and its ownership (0007) all answer.
+    # Every delta is in place: a run's ownership (0007), its cancel and resume
+    # columns (0008) and the one-active-run index (0009) all answer.
     meeting = reg.create_meeting("ops", "Kickoff")
     assert reg.update_meeting(meeting.id, notes="story").notes == "story"
     tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
@@ -439,10 +443,50 @@ def test_a_registry_from_the_retired_ladder_migrates_on_open(
     assert reg.create_run(meeting.id, origin="cli").origin == "cli"
 
 
+@pytest.mark.parametrize("version", [0, 3, 7, 8])
+def test_a_ladder_registry_from_a_development_build_is_not_carried(
+    tmp_path, version
+) -> None:
+    """A ladder step no released line stands at is refused, and the file is the repair.
+
+    The chain begins at the released baselines, so the ladder's *other* steps are
+    development builds' — a trunk build at the ladder's last step (8) as much as
+    one that stopped at 3, and 0 as much as either, which is a ladder run that was
+    killed before it recorded where it got to. None of them is a shape a released
+    install has, and the policy for a registry a tip install left behind is wipe
+    and reinstall (`docs/releasing.md`): the refusal names the file to delete, and
+    nothing was migrated or stamped.
+
+    The schema is built at the baseline and the row is the development build's,
+    because the placement reads the **row** and never the shape under it — which
+    is why the shape beneath does not enter into the refusal.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, _BASELINE)
+    _ladder_left_it(db, version)
+    _seed_project(db)
+
+    with pytest.raises(RuntimeError, match="unreleased development build") as raised:
+        Registry(db)
+
+    assert str(db) in str(raised.value)
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        # The refusal comes first: the row still reads what the ladder wrote.
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (
+            version,
+        )
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'alembic_version'"
+            ).fetchone()
+            is None
+        )
+
+
 def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
     """A revision this build does not carry is refused, not half-read."""
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0008")
+    _registry_at(db, _BASELINE)
     with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute("UPDATE alembic_version SET version_num = '9999'")
 
@@ -458,6 +502,35 @@ def test_a_registry_recording_a_newer_revision_fails_loudly(tmp_path) -> None:
         )
 
 
+@pytest.mark.parametrize("revision", ["0003", "0005"])
+def test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy(
+    tmp_path, revision
+) -> None:
+    """A stamp the compression folded away is not told to upgrade the build it is on.
+
+    The chain this release carries is ``0006``–``0009``; a sprint build stamped a
+    registry at ``0001``–``0005``, and those revisions are gone. *Upgrade
+    clear-record* is the sentence for a registry from a **newer** build and can
+    do nothing for someone already on this one, so a revision below the head that
+    this build does not carry meets the wipe sentence instead — and the refusal
+    comes first, leaving the registry exactly as it was.
+    """
+    db = tmp_path / "registry.sqlite3"
+    _registry_at(db, _BASELINE)
+    _seed_project(db)
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        conn.execute("UPDATE alembic_version SET version_num = ?", (revision,))
+
+    with pytest.raises(RuntimeError, match="unreleased development build") as raised:
+        Registry(db)
+
+    assert str(db) in str(raised.value)
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            (revision,)
+        ]
+
+
 @pytest.mark.parametrize("version", [99, 9])
 def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path, version) -> None:
     """The guard the retired ladder enforced survives: a newer version is refused.
@@ -470,7 +543,7 @@ def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path, version) 
     the bound honest.
     """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0008")
+    _registry_at(db, _BASELINE)
     _ladder_left_it(db, version)
 
     with pytest.raises(
@@ -506,6 +579,209 @@ def test_a_registry_path_with_a_query_character_opens(tmp_path) -> None:
     assert reg.create_project("Ops").slug == "ops"
     assert db.exists()
     assert not (tmp_path / "what").exists()  # the file the text form creates
+
+
+@contextmanager
+def _the_run_vocabulary_a_pre_lifecycle_build_declared_in_models() -> Iterator[None]:
+    """Lend ``models`` the run vocabulary a build from before ``lifecycle`` used.
+
+    Both helpers below exec a store module read out of the history against
+    today's tree, and both hit the same drift: that build asked
+    ``clear_record.service.models`` for the run states and origins, which today
+    belong to :mod:`clear_record.service.lifecycle` (the states and the moves
+    that use them are one declaration). The names are set for the length of the
+    exec and taken back afterwards, so the old build still runs as itself — what
+    is under test is its schema, not which module a status is declared in.
+    """
+    lent = {
+        name: value
+        for name, value in (
+            ("RUN_ORIGINS", RUN_ORIGINS),
+            ("RUN_STATUSES", RUN_STATUSES),
+        )
+        if not hasattr(models_module, name)
+    }
+    for name, value in lent.items():
+        setattr(models_module, name, value)
+    try:
+        yield
+    finally:
+        for name in lent:
+            delattr(models_module, name)
+
+
+#: The tag the released baseline comes from: the release whose schema revision
+#: ``0006`` claims to be. The line's release candidates carry the same schema, so
+#: the stable tag is the one that names it.
+_RELEASED_TAG = "v0.2.0"
+
+
+def _released_registry_store() -> types.ModuleType:
+    """The released build's own store module, read out of the tag that shipped it.
+
+    ``0006``'s DDL claims to be the schema `v0.2.0` shipped, and nothing else in
+    the suite can see the two disagree: every other fixture builds the baseline
+    with *this* build's chain, so a drift inside that revision would leave the
+    whole suite green. The released build is the only authority on what it
+    shipped, so its own module is read out of the history and run — the device
+    :func:`_retired_ladder_store` uses for the trunk's ladder — and the registry
+    it builds is what the test below opens with this build.
+
+    What a blob out of the history cannot bring with it is its **import list**:
+    it is exec'd against today's tree. ``clear_record.service.models`` and
+    ``clear_record.core.events`` still answer, but ``clear_record.service.paths``
+    does not — the resolver moved to :mod:`clear_record.core.paths` (ADR-0025) —
+    so that one module is stood up for the length of the exec and put back
+    afterwards. What is under test is the schema a released build wrote; where
+    today's tree keeps its path resolver is not what it is about.
+    """
+    path = "packages/clear-record/src/clear_record/service/store.py"
+    blob = subprocess.run(
+        ["git", "show", f"{_RELEASED_TAG}:{path}"],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+    if blob.returncode != 0 or not re.search(
+        r"^SCHEMA_VERSION\s*=\s*\d+", blob.stdout, re.MULTILINE
+    ):
+        # No history to read (an installed tree, a tarball), or a tag that does
+        # not carry the ladder at all.
+        pytest.skip(
+            f"no {_RELEASED_TAG} in this history to read the released store from"
+        )
+    module = types.ModuleType("released_registry_store")
+    lent = "clear_record.service.paths"
+    previous = sys.modules.get(lent)
+    shim = types.ModuleType(lent)
+    shim.registry_path = registry_path  # type: ignore[attr-defined]
+    sys.modules[lent] = shim
+    try:
+        with _the_run_vocabulary_a_pre_lifecycle_build_declared_in_models():
+            exec(
+                compile(blob.stdout, f"<{_RELEASED_TAG}:{path}>", "exec"),
+                module.__dict__,
+            )
+    finally:
+        if previous is None:
+            del sys.modules[lent]
+        else:
+            sys.modules[lent] = previous
+    return module
+
+
+def _schema_shape(db_path: Path) -> dict[str, object]:
+    """A registry's schema, as SQLite describes it — not as its DDL reads.
+
+    A `CREATE TABLE` statement is not comparable across builds: the released line
+    added two columns by ``ALTER TABLE``, so the text it stored for ``meeting``
+    and ``pipeline_run`` differs from a fresh table's while the schemas agree.
+    The shape is therefore built out of the pragmas that describe the schema
+    itself: every table's columns in declaration order with their types,
+    nullability and defaults, every index with its uniqueness, partiality,
+    columns and normalized DDL, and every foreign key with its target and
+    ``ON DELETE``.
+    """
+
+    def normalized(sql: str | None) -> str:
+        return " ".join((sql or "").split())
+
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
+        tables = sorted(
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                " AND name NOT IN ('alembic_version', 'schema_version',"
+                " 'sqlite_sequence')"
+            )
+        )
+        columns = {
+            name: [
+                (row[1], row[2], row[3], row[4], row[5])
+                for row in conn.execute(f'PRAGMA table_info("{name}")')
+            ]
+            for name in tables
+        }
+        indexes = {
+            name: sorted(
+                (row[1], row[2], row[3], row[4])
+                for row in conn.execute(f'PRAGMA index_list("{name}")')
+            )
+            for name in tables
+        }
+        index_columns = {
+            name: {
+                index[0]: [
+                    row[2] for row in conn.execute(f'PRAGMA index_info("{index[0]}")')
+                ]
+                for index in indexes[name]
+            }
+            for name in tables
+        }
+        index_ddl = {
+            row[0]: normalized(row[1])
+            for row in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        foreign_keys = {
+            name: sorted(
+                (row[3], row[2], row[6])
+                for row in conn.execute(f'PRAGMA foreign_key_list("{name}")')
+            )
+            for name in tables
+        }
+    return {
+        "columns": columns,
+        "indexes": indexes,
+        "index_columns": index_columns,
+        "index_ddl": index_ddl,
+        "foreign_keys": foreign_keys,
+    }
+
+
+def test_the_released_builds_own_registry_migrates_to_a_fresh_schema(tmp_path) -> None:
+    """The baseline **is** what a released install had, and the tree can see it.
+
+    ``0006`` is only a claim about `v0.2.0` until a released build's own registry
+    is put through it, so this builds one the way that build built it — its own
+    ladder scripts, its own ``schema_version`` row — and hands it to this build.
+    Two things are then checked. The row it kept is still readable, which is the
+    upgrading path. And the **shape** of the migrated registry equals a fresh
+    one's, table for table, column for column in declaration order, index for
+    index, key for key — which is what makes the claim checkable: the released
+    tables were created by the released DDL, so a drift in ``0006`` would leave
+    them as `v0.2.0` wrote them while a fresh registry took the drifted shape,
+    and the two would part company here.
+    """
+    released = _released_registry_store()
+    db = tmp_path / "released.sqlite3"
+    released.Registry(str(db))  # the released build's own ladder, at open
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (
+            _BASELINE_LADDER,
+        )
+        conn.execute(
+            "INSERT INTO project (slug, name, notes, created_at)"
+            " VALUES ('ops', 'Ops', '', 'now')"
+        )
+    shipped = _schema_shape(db)
+
+    reg = Registry(db)  # this build migrates it, in place
+
+    assert [p.slug for p in reg.list_projects()] == ["ops"]
+    fresh = tmp_path / "fresh.sqlite3"
+    Registry(fresh)
+    assert _schema_shape(db) == _schema_shape(fresh)
+    # The deltas really did run: what the released build left is not the head's
+    # shape (the run's ownership columns and the one-active-run index are not in
+    # it), so the equality above is not two copies of the same untouched schema.
+    assert _schema_shape(db) != shipped
+    with closing(sqlite3.connect(str(db))) as conn, conn:
+        # And the released line's own row was levelled for a `v0.2.x` build.
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (
+            _LADDER_VERSION,
+        )
 
 
 def _retired_ladder_store() -> types.ModuleType:
@@ -552,24 +828,11 @@ def _retired_ladder_store() -> types.ModuleType:
             r"^SCHEMA_VERSION\s*=\s*\d+", blob.stdout, re.MULTILINE
         ):
             module = types.ModuleType("retired_ladder_store")
-            lent = {
-                name: value
-                for name, value in (
-                    ("RUN_ORIGINS", RUN_ORIGINS),
-                    ("RUN_STATUSES", RUN_STATUSES),
-                )
-                if not hasattr(models_module, name)
-            }
-            for name, value in lent.items():
-                setattr(models_module, name, value)
-            try:
+            with _the_run_vocabulary_a_pre_lifecycle_build_declared_in_models():
                 exec(
                     compile(blob.stdout, f"<{commit}:{path}>", "exec"),
                     module.__dict__,
                 )
-            finally:
-                for name in lent:
-                    delattr(models_module, name)
             return module
     pytest.skip("no commit in this history carries the retired ladder")
 
@@ -591,8 +854,8 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
     """
     ladder = _retired_ladder_store()
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0005")
-    _ladder_left_it(db, 5)
+    _registry_at(db, _BASELINE)
+    _ladder_left_it(db, _BASELINE_LADDER)
     _seed_project(db)
 
     Registry(db)  # this build migrates it, and levels the ladder's row
@@ -786,17 +1049,18 @@ def test_the_mapping_describes_every_column_uniqueness_and_foreign_key_the_revis
 def test_the_active_run_index_arrives_with_revision_0009(tmp_path) -> None:
     """The database's one-active-run rule is a revision, and it refuses a row.
 
-    A registry at 0008 — every release before this one — carries no such index,
-    and opening it, which is what migrates it, is what gives it one: the same
-    index a registry created fresh carries, because both are the DDL revision
-    0009 ran. The rule is then exercised the way a second *writer* exercises it:
-    one connection, one bare INSERT, no service call in the way.
+    A registry at the released baseline — every release before this one —
+    carries no such index, and opening it, which is what migrates it, is what
+    gives it one: the same index a registry created fresh carries, because both
+    are the DDL revision 0009 ran. The rule is then exercised the way a second
+    *writer* exercises it: one connection, one bare INSERT, no service call in
+    the way.
     """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0008")
+    _registry_at(db, _BASELINE)
     assert _index_sql(db, "pipeline_run_active_meeting") is None
 
-    reg = Registry(db)  # migrates 0008 → 0009
+    reg = Registry(db)  # migrates the baseline's deltas, this index among them
     fresh = tmp_path / "fresh.sqlite3"
     Registry(fresh)
     assert (
@@ -846,6 +1110,14 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     not the stale one they resubmitted because it looked stuck. The rest end as
     ``interrupted``, with a reason that names the run that survived, and a meeting
     that holds one active run — or none — is left exactly as it was.
+    The fixture is the chain one revision short of the rule rather than a
+    released baseline, and that is the point: the rows that break the rule can
+    name an owner only where the run-ownership columns exist and the rule does
+    not (``0008``), which is the one shape that makes the keeper's **first**
+    branch — a ``running`` row that names an owner — expressible at all. A
+    released registry's racing rows all predate the ``owner`` column, so that
+    shape is this same statement with every owner ``NULL``, and the
+    two-queued-runs half below is exactly it.
     """
     db = tmp_path / "registry.sqlite3"
     _registry_at(db, "0008")
@@ -1018,12 +1290,15 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
 
     An open killed between Alembic's creation of ``alembic_version`` and its final
     stamp leaves that table present and empty over a schema built to *some* point.
-    Reading it as a registry with no history replays every revision from the base,
-    and the ladder's steps were not re-runnable: the replay died on ``duplicate
-    column name: notes``, and every later open died with it. The create-table
-    steps are ``IF NOT EXISTS``, each step that adds a column is guarded on that
-    column, and revision 0009 leaves the index it finds when that index is its
-    own — so the replay converges and the registry is current again.
+    Reading it as a registry with no history replays every revision from the base:
+    the baseline only creates (each table ``IF NOT EXISTS``), each delta that adds
+    a column is guarded on that column (``0007``, ``0008``), and revision 0009
+    leaves the index it finds when that index is its own — so the replay
+    converges and the registry is current again, which is what makes the repair
+    safe to rely on. (Replaying the *retired ladder's* steps was not: a second run
+    died on ``duplicate column name: notes``, and every later open died with it.
+    That is history now — the ladder's steps are not this chain's revisions — and
+    the guard that the replay needs is the one above.)
     """
     db = tmp_path / "registry.sqlite3"
     Registry(db)
@@ -1124,7 +1399,7 @@ def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
     these states is a different rule.
     """
     db = tmp_path / "registry.sqlite3"
-    _registry_at(db, "0008")
+    _registry_at(db, _BASELINE)
     _seed_project(db)
     with closing(sqlite3.connect(str(db))) as conn, conn:
         conn.execute(planted)
@@ -1135,9 +1410,10 @@ def test_an_index_of_this_name_that_is_not_the_declared_one_is_refused(
     assert "pipeline_run_active_meeting" in str(raised.value)
     assert _index_sql(db, "pipeline_run_active_meeting") == _normalized(planted)
     with closing(sqlite3.connect(str(db))) as conn, conn:
-        # Nothing was half-applied: the refused open left the registry at 0008.
+        # Nothing was half-applied: the refused open left the registry at the
+        # baseline the deltas were running from.
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0008",)
+            (_BASELINE,)
         ]
 
 

@@ -236,6 +236,9 @@ behind an accepted recommendation is not a committed document.
   `test_a_registry_from_the_retired_ladder_migrates_on_open` in
   `tests/service/test_store.py` covers both, and the 6 case is what exercises the
   guarded `ALTER` path for every revision after it (`0007`, `0008`, `0009`).
+  *Superseded at the 2026-09-23 cut (below): the test now covers the released
+  baseline alone, and the ladder row at 3 is a refusal —
+  `test_a_ladder_registry_from_a_development_build_is_not_carried`.*
 - [OPEN] **Whether the owner adopts this order as their own decision.** It is
   recorded here without their word because the shape had already shipped when the
   deviation was noticed. If they adopt it, this bullet becomes the dated decision
@@ -255,4 +258,123 @@ behind an accepted recommendation is not a committed document.
   that starts fresh, ids rewritten by hand): the placement of an existing registry
   and the levelling of the ladder's row both rest on that identity, and nothing
   else in the design does.
+
+## Update (2026-09-23) — the baseline lands at the release cut
+
+- [DECISION: owner, 2026-09-20] **The revision history is compressed at the
+  release cut, and a tip install is not carried across it.** The chain begins at
+  a **released baseline** — the schema a released install actually has — and
+  carries only the real deltas from it to the head; a registry the released line
+  left behind migrates forward in place, and a registry a development build left
+  behind is not carried: the user wipes it and reinstalls. Which states are
+  refused is the [FACT]s' to name, and they name two — a ladder row that is a
+  step other than the released line's 6, and a stamped revision the cut folded
+  away. The owner's own words
+  on the timing: *at the release branch cut*. This is the decision the two
+  [FACT]s about the ladder's own steps (2026-09-20, above) were waiting on, and
+  it settles the [OPEN] beside them in the direction of the single baseline the
+  2026-09-19 bullet names — not by rewriting either statement, which stand as
+  written, but by shifting where the chain *starts*.
+- [FACT] **What landed: four revisions where nine stood, and the ladder's history
+  no longer replays.** Revision `0006` is the released baseline, `0007` and
+  `0008` are the deltas the trunk added on top of it, and `0009` is the
+  per-meeting index the persistence work added. The ladder's steps 1–6 are not
+  revisions any more: their DDL *is* the baseline's, with the two
+  column-adding steps folded into the tables that carry the column (``notes``
+  ends ``meeting``, ``run_options`` ends ``pipeline_run``, each where ``ALTER
+  TABLE … ADD COLUMN`` had put it), so the baseline describes a shape rather
+  than replaying a history. The ladder's steps 7 and 8 survive as the revisions
+  they always were, read from a released registry's viewpoint as the deltas they
+  are. Every table, column, index and constraint a released registry has is
+  still what a registry this build creates holds, and the tree **checks** it
+  rather than asserting it: `test_the_released_builds_own_registry_migrates_to_a_fresh_schema`
+  in `tests/service/test_store.py` runs the `v0.2.0` tag's own store module out
+  of the history, lets it build the registry that release built, opens it with
+  this build, and compares the migrated schema with a fresh one's — tables,
+  columns in declaration order, indexes and foreign keys. A drift inside `0006`
+  would leave the released tables as `v0.2.0` wrote them while a fresh registry
+  took the drifted shape, and the two would part company there, where every other
+  fixture (which builds the baseline with this build's own chain) could see
+  nothing. `test_a_registry_at_the_released_baseline_gains_every_delta` covers
+  the upgrading path from the baseline, row by row.
+- [FACT] **The criterion the ticket carried is honoured literally now.** The
+  2026-09-20 Update recorded *"the revision history begins from the current
+  schema"* as honoured **in effect, not literally**, since nine revisions replayed
+  the ladder's eight DDL steps. The cut's compression closes that: the chain
+  begins at *one* revision describing a schema an install actually has, and the
+  revisions after it are the changes made **since** that schema — which is the
+  criterion's own subject, at the granularity the owner's decision names (the
+  released schema, not the tip's, because the tip's is the one the policy does
+  not carry).
+- [FACT] **What a released install does, and what a development install does.**
+  A `0.2.0` registry opens `0.3.0` and migrates in place — the deltas
+  (`0007`, `0008`, `0009`) run against the schema it already has, and its rows
+  are untouched.
+  `test_a_registry_from_the_retired_ladder_migrates_on_open` builds that
+  registry the way the released line left it (its tables at the baseline, its
+  ``schema_version`` row at 6, no revision recorded) and opens it: the projects
+  it holds survive, and every delta answers. A **development** registry is
+  refused in exactly two shapes, and which build wrote it is not one of them: a
+  ``schema_version`` row at a ladder step other than the released line's 6, and a
+  stamp at a revision the cut folded away (``0001``–``0005``).
+  `test_a_ladder_registry_from_a_development_build_is_not_carried` pins the
+  first for the ladder's steps 0, 3, 7 and 8, and
+  `test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy`
+  the second. A registry the *pre-compression trunk itself* left — stamped at
+  ``0006``, ``0007``, ``0008`` or ``0009``, with no ladder row at all — is
+  **carried**, because the compression changed no table; that is what makes the
+  refusal a statement about where a registry stands rather than about which build
+  wrote it, and it is why `docs/releasing.md` says so in those words.
+- [FACT] **The placement is the released line's own number, and nothing else.**
+  The baseline's id is the number the released line recorded its schema as — one
+  identity, not a coincidence: a released registry's ``schema_version`` row is
+  read once and the registry is stamped at the revision of that number
+  (``service/store.py``'s ``_RELEASED_BASELINES``, ``_pending_stamp``), so the
+  deltas on top are the only revisions that run. Every other ladder number at or
+  below the ladder's last version is a development build's and is refused with
+  the file to delete in the sentence; a number *above* it is a build newer than
+  this one, and its sentence says to upgrade instead.
+  The accident is gone with it: with steps 1–5 no longer revisions, a registry a
+  sprint build stamped at one of them is refused rather than silently placed —
+  which is the policy, not a gap.
+- [FACT] **`0.2.0` is the released line carried, and `0.1.x` is not carried.**
+  ``v0.2.0`` and its release candidates (`rc1`, `rc4`) shipped the registry and
+  recorded version 6, which is the baseline; ``v0.1.x`` (``v0.1.0``, ``v0.1.1``,
+  ``v0.1.1rc2``) predates the registry entirely — it ships no ``service``
+  package and no registry file — so it has no version to place and nothing to
+  carry. That is the whole of the supported set at this cut.
+- [FACT] **The levelling shim's role for released versions, stated.** The
+  ladder's row is now read for one purpose — placing a registry the **released
+  line** left behind — and written for one: the write levels the row at the
+  retired ladder's last version (8), above every released line's, so a `v0.2.x`
+  build meeting a migrated registry refuses it with its own sentence instead of
+  reading a schema that is not its own. The second audience that write had, a
+  pre-Alembic *trunk* build, is a property of the development tree now: no
+  released build ever reached 8. What the shim has lost is its breadth: a row at
+  any ladder number used to place a registry, and today only a released
+  baseline's number does.
+- [FACT] **The tip refusal is stated where a user meets it.**
+  ``docs/releasing.md`` carries the two sentences the 0.3.0 release notes will
+  quote — *a registry the released line left behind is carried forward* and *a
+  registry the tip left behind is not carried — wipe it and reinstall* — and it
+  names the two shapes the refusal meets, because "the tip" is not the same thing
+  as "a development build" any more: a registry the trunk itself stamped inside
+  the compressed chain is carried. The shim's refusals name the file to delete, so
+  the remedy travels with the failure.
+- [FACT] **The stamped branch tells its two cases apart.** A registry stamped at
+  a revision this build does not carry meets one of two sentences: *upgrade
+  clear-record* when the revision's number is above the head's (a build newer
+  than this one, which is the case that sentence was written for), and the wipe
+  sentence when it is below — a revision this release's cut folded away
+  (``0001``–``0005``), where advising an upgrade cannot work for someone already
+  on this build. `test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy`
+  pins the second. The ids being decimal is a decision (``migrations/env.py``),
+  and it is what makes the comparison available.
+- [FACT] **The revisit condition above is answered, not merely avoided.** The
+  chain still begins at a ladder number (``0006``), so the identity the placement
+  uses survives *for the one number that matters*, and the numbers above it
+  being the ladder's is now a record of where the deltas came from rather than
+  something anything rests on. A later cut adds the next released line's
+  baseline to ``_RELEASED_BASELINES`` and folds the deltas below it into that
+  baseline's DDL; the shape does not otherwise change.
 

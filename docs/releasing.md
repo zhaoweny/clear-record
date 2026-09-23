@@ -124,6 +124,38 @@ released tags are on `public` today — `main`, `releases/v0.1.x`,
 
 `main` is the **0.3.x trunk**; the dev / rc / stable tiers below are unchanged.
 
+## The registry's schema history is compressed at a cut
+
+A release cut is also where the registry's **migration history** is compressed
+to the released baselines (ADR-0030's 2026-09-23 Update): the chain begins at the
+schema the released line shipped and carries only the changes made since, instead
+of replaying the retired hand-rolled ladder's steps one by one. Two things follow
+for whoever installs the release, and these are the two sentences to carry into
+the release notes:
+
+**A registry the released line left behind is carried forward.** `0.2.0` (and its
+release candidates) is the released line here — it is the only release that ever
+shipped a registry; `0.1.x` predates it and has no registry file at all. The
+first `0.3.0` start on such a registry migrates it in place: the projects,
+meetings, runs, tapes and glossary terms it holds stay, and the schema's history
+begins at the released baseline rather than replaying the retired ladder.
+
+**A registry the tip left behind is not carried — wipe it and reinstall.** The
+release carries the released baseline and the revisions the compressed chain
+still holds; no other `main` state is promised a migration. The refusal is about
+**where a registry stands, not which build wrote it**, so it meets exactly two
+shapes: a `schema_version` row that is a ladder step other than the released
+line's 6, and a stamped revision the cut folded away (`0001`–`0005`). A registry
+stamped anywhere inside the compressed chain — `0006` to `0009`, which is what
+the trunk itself wrote before the cut — opens and migrates like the released one
+above; it is the *ladder* row, and the stamps the cut dropped, that are refused.
+For those, delete the registry file and start clear-record again: it is rebuilt
+empty. On Linux the file is `~/.local/share/clear-record/registry.sqlite3` where
+`paths.data_dir` in the configuration has not moved the data directory. Nothing
+else is touched — recordings, workspaces, archives and models stay where they
+are, because the registry is one SQLite file of metadata in the app data
+directory beside them (ADR-0007, ADR-0013).
+
 ## Versioning: one dev snapshot on `main`
 
 The root and the single member carry one **static** version (ADR-0011) —

@@ -1,0 +1,306 @@
+# ADR-0032 — The node and its clients: one API server at the centre, the surfaces as backends-for-frontends
+
+Status: active
+Date: 2026-09-24
+
+The direction is in force and is being built in batches; its **first batch** — the
+pipeline leaving the command surface — landed on 2026-09-24 (ADR-0030's `C3`;
+ADR-0004's text of 2026-09-24, an inline restatement inside its 2026-09-13
+Update; and ADR-0012's matching Update). The spec, its batches and its remaining
+tickets are in the tracker's `architecture` lane; per ADR-0029 nothing here cites it
+by address. The owner's words this ADR rests on are carried verbatim by
+[`docs/vox/records/2026-09-21-node-and-clients.md`](../vox/records/2026-09-21-node-and-clients.md).
+
+Provenance of the decisions below: each is labelled with **who decided** — the
+owner's own words of 2026-09-21; a reading the owner's answers confirm (the spec
+author's, adopted here so the answer is a decision rather than drift); a shape this
+ADR **reaches for itself**, labelled `[DESIGN]`; or the direction as it landed. The
+owner's wording is tentative in form (*"I think …"*), which by the voice record's
+own rule leaves it waiting for an ADR; **this ADR is that firmer word**, and it
+promotes nothing the owner did not say beyond the label each clause carries.
+
+## Context
+
+- [VOICE: owner, 2026-09-21] The direction, verbatim: *"I think we do a server
+  centric move and CLI become a facade of the server, which is reasonable at this
+  stage and very much suited."*
+- [VOICE: owner, 2026-09-21] Asked to choose between the facade and a smaller
+  client arm, the answer was *"I think option C?"* — the spec records that as the
+  owner taking the facade; asked to hold the scope, *"I think we can wait"*.
+- [VOICE: owner, 2026-09-21] The shape: *"we reverse the order of things and move to
+  a 'api-server centric, then all kinds of facades and adapters on top'
+  architecture. essentially we have a bunch of BFFs - MCP CLI and WEB"*.
+- [VOICE: owner, 2026-09-21] One app, several prefixes: *"yes, we can certainly
+  share a FastAPI endpoint and do e.g. /web /mcp /api/v1 etc"*.
+- [VOICE: owner, 2026-09-21] The preliminaries, verbatim — lifecycle: *"do a state
+  of pid file or a named pipe or a note of http server endpoint, or just set it in a
+  config file so everyone (CLI MCP API WEB etc) agree where to call the server"*;
+  authority: *"I think CLI joins the queue"*; auth and the backchannel: *"a
+  backchannel is a option here; and I think the CLI is currently mainly serving the
+  local host, not really the remote host. but one day the CLI would be another
+  endpoint to call a remote host, I guess."*
+- [VOICE: owner, 2026-09-21] The precedent the owner named: *"we can learn from
+  opencode2 by have a opencode service subcommand and have all backend operations
+  there"*.
+- [FACT] **The server already exists** and is not a new component: uvicorn +
+  FastAPI, started by `clear-record web`, `clear-record serve` or the tray;
+  loopback by default, with **no authentication by decision** (ADR-0021: remote
+  access is the operator's reverse proxy). Its run API is
+  `POST /api/meetings/{id}/runs` → 202, `GET /api/runs/{id}`, and
+  `GET /api/runs/{id}/events?after=<cursor>` — cursor-paged progress events.
+- [FACT] **A client is already written.** `tray/service.py` supervises the server,
+  health-probes it and speaks HTTP with the **stdlib `urllib`** — so a client needs
+  no new third-party dependency, and that property is a fact rather than a hope.
+- [FACT] **The registry is the authority.** SQLite, the single owner of run state,
+  because "two writers (console, MCP) meet at the same table" (ADR-0030), with runs
+  claimed from a shared, cross-process queue.
+- [FACT] **The documented intent was already this shape, applied to the other
+  surfaces.** ADR-0016: the JSON API exists for "scripts, the MCP server, and any
+  future client", with `clear_record.service`'s operations underneath both.
+  ADR-0017: MCP is a thin adapter over `clear_record.service`. ADR-0013: "headless
+  service first". What was missing is the command line's membership.
+- [FACT] **The gap that makes the direction concrete**: a run started from the
+  command line **writes no run row** — `clear_record/service/runs.py` says so in
+  `RunManager`'s own docstring ("the CLI is not a third writer: it runs the pipeline
+  in-process … and writes no run row") — so the console cannot see it; while `cli`
+  is already a declared run **origin** in `clear_record/service/lifecycle.py`
+  (`ENQUEUE`, whose origins are `console`, `api`, `mcp`, `cli`) with **no surface
+  that enqueues it**. The design expects a CLI-shaped surface to go *through* the
+  service. Nothing implements one.
+- [FACT] **What is missing, measured** — the spec's own census rather than this
+  ADR's:
+  - **Per-stage operations do not exist server-side.** `ingest`, `align`,
+    `transcribe`, `reconcile`, `export`, `diarize` and `attribute` have no route:
+    the server can run a **whole run**, and only over a *meeting* (a registry
+    object), never over the command line's *local directory*.
+  - **The knobs**: `RunCreate` accepts 8 of the command line's ~20+
+    (`chunk_seconds`, `overlap_seconds`, `glossary`, rerun scope and the decoder
+    knobs generated from `core.RUN_KNOBS` are absent).
+  - **The channel carries progress, not words**: the events are `JobEvent`s, and 16
+    data items the stages print reach no event.
+  - **Addressing is the structural problem.** The command line's argument is a
+    **local directory**; the server's are **registry ids**. A client that sends a
+    path sends a path *on the server's filesystem*; the only upload route is for
+    tapes, with no resume, and none exists for reference transcripts or glossaries; a
+    model must already be on the node.
+  - **Machine-local verbs cannot be facades**: `synth` (it generates fixtures where
+    the pipeline runs), `backends` (it probes *the client's* machine — under a
+    facade its subject silently becomes the node's), `bench`, `diagnose`.
+  - **Two surfaces invert**: the tray supervises a server it starts, and `mcp` is a
+    stdio adapter over the service in process; both would become clients of a node
+    they may no longer start.
+  - **Lifecycle: nothing decides it.** No discovery of any kind (no pidfile, no
+    socket, no port environment variable — the default port `8765` is written in
+    four places), no behaviour for "no node answers", no `serve --supervise` (a
+    docstring promise, not a flag), and the Tailscale console URL is printed but
+    never recorded for another process to find.
+- [FACT] **The precedent the owner named**, read from OpenCode v2's own
+  documentation: a backend subcommand owns every backend operation and publishes an
+  **OpenAPI 3.1 spec** at `/doc`, from which its **client SDK is generated**; the
+  default invocation starts a backend and **attaches** a client to it; `attach
+  [url]` does the same against a remote backend; the remote case carries its own
+  auth (`OPENCODE_SERVER_PASSWORD`, `--cors`) while the local case does not; events
+  are SSE (`GET /event`). What **transfers** is the recorded-endpoint idea
+  (preliminary 1 below), the default invocation starting a node and attaching to it
+  (preliminary 5's residue), and a **schema-derived** client — which is how the wire
+  shapes stop being hand-copied above `cli`. What **diverges** is the in-process
+  surfaces: OpenCode's server is its only implementation, while clear-record keeps
+  the console and MCP as in-process adapters. The SSE-versus-polling difference is
+  an input to the channel work, not a requirement: clear-record already serves a
+  cursor-paged events endpoint and polls it, and adopting SSE is a separate
+  decision.
+- [FACT] **The prerequisite landed.** A node cannot own execution by importing
+  `clear_record.cli`, so the pipeline left the command surface for its own
+  `clear_record.pipeline` layer (2026-09-24, ADR-0030's `C3`); the guard's
+  `ALLOWED_INTERNAL` no longer carries `service → cli`, and
+  `test_no_layer_imports_the_cli` now covers `core`, `engine`, `providers` **and
+  `service`** (ADR-0004's restatement of 2026-09-24, inside its 2026-09-13 Update,
+  and ADR-0012's matching Update).
+
+## Decision
+
+- [DECISION: owner, 2026-09-21] **One API server is the centre, and the surfaces
+  are backends-for-frontends over it** — MCP, the command line and the browser
+  console. This is the direction ADR-0016 already describes ("two surfaces over one
+  service adapter … neither contains domain logic") and ADR-0017 already applies to
+  MCP; the change is that **the command line joins them**, and the server stops
+  being *one of* the surfaces.
+- [DECISION: owner, 2026-09-21] **The command line becomes a facade of a node**:
+  for the operations a node owns, `clear-record` speaks the node's protocol instead
+  of executing in process. It is the surface this direction changes; the console and
+  MCP already sit over the service.
+- [DECISION: spec author, 2026-09-21] **BFF is about the architecture, not about
+  every surface becoming a network client.** The console **stays an in-process
+  backend-for-frontend**: it calls `clear_record.service` in process, one lifecycle,
+  no internal hop. Only the command line speaks a wire protocol. The owner's one-app
+  answer below is what confirms this reading; the spec asked the question so the
+  answer is a decision rather than drift. A console that becomes a **channel
+  client** is **deferred, not rejected** — worth revisiting only when the console
+  must run elsewhere.
+- [DECISION: owner, 2026-09-21] **The node is one FastAPI app with its surfaces
+  mounted at prefixes**, not several processes:
+
+  | prefix | surface | today |
+  |---|---|---|
+  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the console as it does now, the MCP server as it chooses) | spec'd, unbuilt: the `/api/v1` re-root belongs to the tracker's `console-ia` lane; today the routes are unversioned under `/api/…` |
+  | `/web` | the console BFF — pages and htmx fragments | served today at `/` and `/ui/*` |
+  | `/mcp` | the agent surface | today **stdio only** (`clear-record mcp`) |
+
+- **The five preliminaries**, each labelled for itself — four resting on the
+  owner's words (three of them directly, and offline/rescue through the requirement
+  ADR-0013 already carries from the owner's 2026-09-14 voice), and the fifth left as
+  the residue of the one question the shape did not answer:
+  1. [DECISION: owner, 2026-09-21] **Lifecycle and discovery.** The node's endpoint
+     is **recorded** — in the app state/config area the path ADR-0025 resolves — and
+     every surface **reads** it instead of scanning. Whether the recorded channel is
+     a loopback HTTP endpoint or a **unix socket / named pipe** is the backchannel
+     question in (4).
+  2. [DECISION: spec author, 2026-09-21] **Offline and rescue — narrower than the
+     direction first stated.** *Offline* is about the cloud, not about a server:
+     ADR-0013's requirement is that the console works after one install step,
+     offline, and the repo's framing is that processing runs offline once models are
+     provisioned (`docs/architecture.md` §1, `CONTEXT.md`). A local node is not a
+     network dependency — same machine, same workspace, same models — so requiring
+     one does not break offline. *Rescue*'s **recorded** reading is that the
+     **browser** path is unusable (the tracker's `console-ia` lane: the web path is
+     the primary wizard, the command line is for rescue operations — scripted or
+     headless bootstrap, a broken session), and a command line that is a client of a
+     local node satisfies it completely once auth ships. An earlier draft read
+     rescue as "the node is unusable"; that is an **inference**, not the owner's
+     words, and is recorded as such. The residual is therefore only **what happens
+     when no node process exists** — and for the one case neither reading covers, a
+     machine where a node **cannot** run, the honest answer is that **the node *is*
+     the tool**: the command line's job is to say so clearly rather than to fall
+     back into a second implementation.
+  3. [DECISION: owner, 2026-09-21] **Authority.** A command-line-started run is a
+     **node run**: it writes a run row and joins the one-run-per-node queue. This
+     closes the gap that made the direction concrete — a run the console cannot see.
+  4. [DECISION: owner, 2026-09-21] **Auth, and the backchannel.** The design target
+     is **the local host**: a backchannel the local user is already trusted over
+     (unix socket or loopback) rather than a credential story. A remote client is a
+     **future** case whose auth belongs with the deferred in-app-auth work and
+     ADR-0021's "the operator's reverse proxy is the ingress" posture.
+  5. [OPEN: owner, 2026-09-21] **Packaging — the one residue.** If an invocation
+     must be able to **bring a node up**, the node's stack stops being an optional
+     extra (today FastAPI and uvicorn sit behind the `web` extra, ADR-0013). The
+     owner's fifth answer was the **shape** (the table above), not the packaging
+     question the spec also asked: **does an invocation ensure a local node** — the
+     precedent's "start a backend and attach" — **or does it require one already
+     running?** The answer decides whether the base install carries the node's
+     stack.
+- [DECISION: spec author, 2026-09-21] **The layer edges that follow are the ones
+  already enforced, unchanged.** A command line that is a **wire** client imports
+  nothing from `service`, `web` or `tray`: the guard's `cli` row stays as it is
+  (`cli → {core, engine, providers, pipeline}`), and `test_no_layer_imports_the_cli`
+  continues to hold with `service` inside it. **No new layer edge is introduced by
+  this direction**, and the shapes a client speaks come from the API's own schema —
+  the precedent's generated client — not from hand-copied Python models above
+  `cli`.
+- [DESIGN] **`/mcp` is a reserved prefix, unimplemented, and mounting it is
+  ADR-0017's own trigger firing** — not a reversal. Its discarded alternative said a
+  network transport "would add a listening socket and an auth story to a local-first
+  tool that already has a JSON API for remote needs", and it ends "Revisit if a
+  client needs a network transport, or if the extra proves to be friction." This
+  direction supplies precisely the two things that objection named — a recorded
+  endpoint every surface can find, and clients that are not the local user — so the
+  mount belongs to the **auth** change, which restates ADR-0017 and ADR-0021
+  together.
+- [DECISION: spec author, 2026-09-21] **The `serve` subcommand's name does not
+  change.** What transfers from the precedent is *ownership* — one subcommand
+  holding every backend operation — not the word: `clear-record serve` already is
+  that subcommand (headless; `web` is its interactive posture). A rename to
+  `service` would ride along with help-text and catalog churn for no structural
+  gain, and is recorded here as a separate, cosmetic decision the owner has not
+  asked for.
+- [DECISION: spec author, 2026-09-21] **The command line's workspace contract
+  changes, and the two statements that carry it today understate it.** `README.md`
+  says *"A `--dir` workspace and a meeting's user-chosen `workspace_path` are
+  unchanged"*, and `docs/service-deployment.md` says *"a `--dir` workspace and a
+  meeting's user-chosen `workspace_path` stay user documents"*. Both stay true about
+  **where the files live**, and neither is the whole story about a **run** once this
+  direction lands: a run that joins the queue **writes a registry row**, and a client
+  needs a node to talk to. That is the real contract change this direction makes, and
+  it is stated rather than discovered; the two statements (and the hand-over) need
+  the qualifier when the facade lands.
+
+## Rationale
+
+- **One queue, one authority, every surface.** The console already sees everything
+  the node owns; the command line is the last surface that is not a client, and its
+  runs are invisible to the console precisely because they bypass the registry that
+  ADR-0030 made the single owner of run state.
+- **The promise ADR-0016 already made is what this pays.** Its JSON API was
+  documented for "scripts, the MCP server, and any future client"; the command line
+  was the client that never arrived, and nothing about the API is new for the
+  purpose.
+- **A client costs no new dependency.** `tray/service.py` is the proof: HTTP over
+  the stdlib `urllib` is enough to be a client, so the facade puts no *third-party*
+  client library or SDK into the base install.
+- **Keeping the console in process keeps the change honest.** "Reverse the order of
+  things" is about **who owns the operations**, not about inserting an HTTP hop and
+  a second lifecycle inside one process; an internal hop would buy nothing the
+  in-process call does not already have, and would make one process's failure modes
+  two.
+- **The schema is the contract, so it cannot be hand-copied.** A client whose shapes
+  are derived from the API's own schema cannot drift from the server the way a
+  second set of Python models would — which is the precedent's reason for publishing
+  a spec at all.
+
+## Discarded alternatives
+
+- **The command line keeps a local path and gains a read-only client arm** — what
+  the 2026-09-14 record actually deferred, and the smallest option: it preserves the
+  self-sufficient-directory contract and the rescue path. Not taken: the pipeline
+  would still have two callers, and the console still could not see a
+  command-line-started run. Recorded so the alternative is considered rather than
+  silent.
+- **A client with an in-process fallback** — both worlds, two code paths forever,
+  and it needs discovery anyway.
+- **The command line enqueues through the service while still executing itself**
+  (using the unused `cli` run origin) — fixes console visibility without requiring a
+  node, but it needs the **opposite** layer edge, `cli → service`, which the guard
+  asserts against today. That is a second deliberate layering revision, recorded in
+  ADR-0004/ADR-0012 beside the pipeline move's — not a freebie riding on it.
+- **The console becomes a channel client** — the other answer to the BFF question;
+  deferred rather than rejected, and the revision to revisit if the console must run
+  somewhere other than the node.
+- **SSE now** — the precedent uses event streams, but clear-record already serves a
+  cursor-paged events endpoint; adopting SSE is a separate decision about the
+  channel, not part of the direction.
+- **Renaming `serve` to `service`** — cosmetic, and it renames the one subcommand
+  that already owns the backend operations.
+
+## Consequences / review hook
+
+- **The layering guard is unchanged by this direction.** The `cli` row stays
+  `→ {core, engine, providers, pipeline}`, and `test_no_layer_imports_the_cli` keeps
+  covering `service`. A facade that reached for `service`, `web` or `tray` would be
+  a deliberate layering revision — update the DAG and ADR-0004/ADR-0012 together, in
+  one landing, exactly as the pipeline move's correction did (ADR-0030's pattern:
+  the guard and the ADRs restated together).
+- **What the node owes a client is batch work, not this ADR's** — per-stage routes,
+  the knobs `RunCreate` is missing, the words on the channel beside the progress
+  events, and addressing (the next bullet). Each is a ticket in the tracker's
+  `architecture` lane.
+- [OPEN] **How a client addresses a workspace.** The command line's subject is a
+  local directory; a node's subjects are registry ids, and a path a client sends is
+  a path *on the node's filesystem*. The upload route that exists covers tapes only
+  and has no resume; reference transcripts, glossaries and models have none. This is
+  the direction's central unsolved design problem, named here so a ticket takes it
+  deliberately rather than by accident.
+- **The machine-local verbs stay the client's own.** `synth`, `backends`, `bench`
+  and `diagnose` have the client's machine as their subject — under a facade that
+  subject would silently become the node's — so they are not part of the facade's
+  surface. What each becomes is a ticket decision, not this ADR's.
+- **ADR-0016 is extended, not superseded**: its "two surfaces over one service
+  adapter" becomes three named surfaces on one app. ADR-0013's "headless service
+  first" is what makes the node the centre rather than a second implementation.
+  ADR-0017 is unchanged; its revisit trigger is what mounts `/mcp`, together with
+  the auth change.
+- **The release notes and the hand-over owe the contract change** in the Decision
+  above: a command-line run now writes a registry row and needs a node to talk to,
+  so "a workspace is a self-sufficient directory" is no longer the whole truth.
+- **Revisit** if the console must run elsewhere (the BFF question reopens then), if
+  an invocation must be able to bring a node up (the packaging residue, [OPEN]
+  above), or if the node's stack behind an extra proves to be friction the other
+  way.

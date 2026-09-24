@@ -1,8 +1,8 @@
 # Dictation as an input mode — owner-voice record (2026-09-21)
 
 Status: **Open requirement, deferred to 0.4** (no release date; no ADR yet). The verbatim testimony behind
-this record is personal-context material and is kept in the **private tracker** (`vox-private-records`,
-ticket #213) rather than reproduced here; this file carries what the repo needs from it, stated from that
+this record is personal-context material and is kept in the **private tracker** (`vox-private-records`)
+rather than reproduced here; this file carries what the repo needs from it, stated from that
 testimony's words. Date per the source export's own stamp — an export lags the moment the words were spoken
 (see the entry's *How to read this file*).
 

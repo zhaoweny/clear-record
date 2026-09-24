@@ -42,7 +42,7 @@ from clear_record.cli import cli
 from clear_record.core import node, paths
 from clear_record.mcp.server import node_line
 from clear_record.service import Registry
-from clear_record.tray.service import ServiceController
+from clear_record.tray.service import ServiceController, ServiceState
 from clear_record.web import app as web
 from clear_record.web.app import create_app
 
@@ -283,18 +283,17 @@ def test_a_node_that_cannot_record_its_address_still_serves(
         assert controller.stop(timeout=_READY_TIMEOUT), "the node did not stop"
 
 
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
-def test_a_controller_that_never_bound_is_not_another_nodes_node(tmp_path) -> None:
-    """A server that never bound is no node, whatever the record names.
+def test_the_tray_joins_the_node_that_answers_instead_of_starting_a_second(
+    tmp_path,
+) -> None:
+    """A node already listening is the node the tray serves, whatever its own port says.
 
-    The requested port is held by something that is not this node, so the server
-    this controller starts dies without binding — uvicorn logs the refusal and
-    exits that thread, which is the case :meth:`wait_until_ready` documents, and
-    the one warning this test silences is pytest noticing it. The record meanwhile
-    names a live node elsewhere on the machine: a controller that read it would
-    report *that* node as its own — ready, healthy, running — while the node it
-    supervises never came up. Its own request is the answer, and nothing answers
-    there.
+    The tray **attaches first**: the recorded address is resolved and proved by one
+    request, exactly as the command line and the MCP adapter do it — so a
+    controller asked to start with a port of its own, here one something else
+    already holds, binds nothing and runs no server. The node it joined is the one
+    its address, its URL and its health are about; no second node is started; and
+    the node it joined is not its to stop.
     """
     port, holder = _not_http_listener()
     other = ServiceController(port=0, data_dir=str(tmp_path / "other"))
@@ -305,10 +304,13 @@ def test_a_controller_that_never_bound_is_not_another_nodes_node(tmp_path) -> No
         controller = ServiceController(port=port, data_dir=str(tmp_path / "data"))
         controller.start()
 
-        assert controller.address == node.NodeAddress(controller.host, port)
-        assert controller.address != elsewhere
-        assert not controller.healthy()
-        assert not controller.wait_until_ready(timeout=_READY_TIMEOUT)
+        assert controller.address == elsewhere, "the tray joined the answering node"
+        assert controller.url == elsewhere.url
+        assert controller.supervises is False
+        assert controller.running is False, "and started no node of its own"
+        assert controller.state() is ServiceState.RUNNING
+        assert controller.stop(timeout=_READY_TIMEOUT) is True  # nothing of ours
+        assert node.ask() == elsewhere, "the node it joined is still running"
     finally:
         holder.close()
         assert other.stop(timeout=_READY_TIMEOUT), "the node did not stop"

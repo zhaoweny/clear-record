@@ -369,7 +369,9 @@ runnable, and the **project console** is built on top of it:
   and the injected adapters (ADR-0030).
 - `clear_record.tray` — a **PySide6** system-tray supervisor / desktop entry
   point (open / status / quit) over a Qt-free `ServiceController` (extra:
-  `tray`) (ADR-0016).
+  `tray`) (ADR-0016). It is a **client of a node that may already exist**: the
+  recorded one is joined, and a node is started (on the tray's own thread) only
+  when nothing answers.
 - `clear_record.mcp` — the **agent boundary**: the service exposed as stdio MCP
   tools (projects, glossary, meetings, runs, artifacts, drafts), holding no
   credential of its own, with no harness entering the core (extra: `agents`)
@@ -382,13 +384,16 @@ runnable, and the **project console** is built on top of it:
 `clear-record web` or the tray — writes the address it actually *bound* into
 the app-owned state directory (`core.paths.node_address_path`, ADR-0025) as soon
 as its socket is listening, and clears it when it stops. The surfaces — the
-command line, the console and the MCP adapter — resolve that one file through
-`clear_record.core.node`: the command line and the MCP adapter complete a request
-against the address it names, and the console answers with it in process. The tray
-resolves nothing: it starts a node, writes the record like any other posture, and
-probes the socket that node bound, through the same client. Nothing scans a port
-range, and a port the node did not choose itself (`--port 0`) is recorded as the
-port its socket holds. An absent record, and a record nothing answers, are the
+command line, the console, the MCP adapter and the tray — resolve that one file
+through `clear_record.core.node`: the command line, the MCP adapter and the tray
+complete a request against the address it names, and the console answers with it
+in process. The tray therefore **attaches**: a node already up is the node it
+becomes a client of, and only when nothing answers does it start one — on its own
+thread, publishing the record like any other posture and probing the socket that
+node bound. A node the tray only joined is not its to stop or restart, and its
+status line is that node's health either way. Nothing scans a port range, and a
+port the node did not choose itself (`--port 0`) is recorded as the port its
+socket holds. An absent record, and a record nothing answers, are the
 **same** one sentence from the command line, the console and the MCP adapter
 (`node.NO_NODE_MESSAGE`) — never a hang, and never a different error per surface.
 `DEFAULT_HOST`/`DEFAULT_PORT` are declared once, there.
@@ -397,8 +402,8 @@ port its socket holds. An absent record, and a record nothing answers, are the
 |---|---|---|
 | command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
 | console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
-| tray | the socket it bound, for the health probe it already runs | starts a node, so it records like any other posture |
-| MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017) |
+| tray | the record, proved by one request — the attach path the command line takes | a client of the node it found; it starts one only when none answers, and stops or restarts only that one |
+| MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017), with no path that starts a node |
 
 The console stays an **in-process backend-for-frontend** rather than becoming a
 channel client (ADR-0032): which process owns the operations is the question, and

@@ -1,8 +1,11 @@
 """The tray supervisor: a native entry point for the whole console.
 
-`clear-record tray` runs the local console as a managed background service and
-puts a **system-tray icon** in the menu bar for supervising it: open the
-console, see where it is listening, and quit cleanly.
+`clear-record tray` serves the local console under a **system-tray icon** for a
+menu bar, with the console's node where it belongs: a node that is already
+listening is **joined** rather than started a second time, and one is started (in
+this process) only when nothing answers. The icon's jobs are to open the console,
+show whether its node is answering, restart a node this tray started, and quit
+cleanly.
 
 Importing this package is **light** (like :mod:`clear_record.web`): the CLI
 discovers the ``tray`` subcommand through an entry point while building the
@@ -47,16 +50,22 @@ def register(group: click.Group) -> None:
     """Add the ``tray`` subcommand (called by the CLI's entry-point discovery)."""
 
     @group.command(
-        name="tray", help="run the console in the background with a system-tray icon"
+        name="tray",
+        help="serve the console behind a system-tray icon, joining a node",
     )
     @click.option(
-        "--host", default=DEFAULT_HOST, help="bind address (default localhost)"
+        "--host",
+        default=DEFAULT_HOST,
+        help="bind address for a node this tray starts (default localhost)",
     )
     @click.option(
         "--port",
         type=int,
         default=DEFAULT_PORT,
-        help=f"port (default {DEFAULT_PORT})",
+        help=(
+            f"port for a node this tray starts (default {DEFAULT_PORT}); "
+            "a node already listening is joined instead"
+        ),
     )
     @click.option("--no-browser", is_flag=True, help="do not open a browser on start")
     @click.option(

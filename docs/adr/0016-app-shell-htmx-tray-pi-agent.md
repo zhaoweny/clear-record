@@ -119,3 +119,16 @@ Date: 2026-09-14
   no layer outside the command surface imports `clear_record.cli` at all — the
   edge this ADR's date allowed is gone. The layering guard grows with the DAG
   (ADR-0012).
+
+## Update (2026-09-25) — the tray serves a node it may not have started
+
+- [FACT] The Decision's "it supervises the console from a system-tray icon" is
+  narrowed by the node direction: `clear-record tray` **attaches first** — the
+  recorded node that answers is joined, as the command line and the MCP adapter
+  reach it, and only when nothing answers does the tray start one, in its
+  own process, as this ADR always had it. So the icon's *restart* and *quit* act
+  on the node this tray started, and a node it only joined is left running. The
+  supervision logic this ADR names is still the Qt-free `ServiceController`, whose
+  live state is that node's health rather than this process's thread. The
+  direction, and the consequences recorded where they live, are in
+  [ADR-0032](0032-the-node-and-its-clients.md)'s 2026-09-25 Update.

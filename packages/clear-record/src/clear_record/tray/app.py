@@ -1,13 +1,17 @@
 """The PySide6 system-tray app: the desktop entry point of the console.
 
 A thin shell over :class:`clear_record.tray.service.ServiceController`. The
-icon has four jobs: open the console in a browser, show whether the server is
-running **right now**, restart it, and quit (stopping the background server).
-No icon asset ships — a standard style icon is used so the build carries no
-binary art.
+icon has four jobs: open the console in a browser, show whether the node is
+running **right now**, restart it, and quit. The tray **joins** a node that is
+already up rather than starting a second one, so "restart" and "quit" are about
+the node this tray started: a node it only joined is left running
+(:meth:`~clear_record.tray.service.ServiceController.supervises` is what the
+menu offers restart from). No icon asset ships — a standard style icon is used
+so the build carries no binary art.
 
-The tray holds no credential: it supervises the process and opens the console
-URL; with auth enabled the **browser** is what asks for the password.
+The tray holds no credential: it supervises the node it starts, joins one it
+finds, and opens the console URL; with auth enabled the **browser** is what asks
+for the password.
 
 Requires the `tray` extra (PySide6) — imported inside :func:`main`, so this
 module stays importable without Qt. The Qt shell itself is not covered by the
@@ -30,7 +34,12 @@ STATE_POLL_MS = 2000
 
 
 def status_text(controller: ServiceController) -> str:
-    """The live status line for a fresh state read — never a cached snapshot."""
+    """The live status line for a fresh state read — never a cached snapshot.
+
+    The state is the node's own health (:meth:`ServiceController.state`), which
+    is the same question whether this tray started that node or joined one that
+    was already up.
+    """
     state = controller.state()
     if state is ServiceState.RUNNING:
         return tr("Running at {url}", url=controller.url)
@@ -64,6 +73,8 @@ def main(
         )
 
     controller = ServiceController(host=host, port=port, data_dir=data_dir)
+    # A node already up is joined rather than started a second time; only when
+    # none answers does the tray start one of its own.
     controller.start()
     ready = controller.wait_until_ready()
 
@@ -84,6 +95,10 @@ def main(
 
     restart_action = QAction(tr("Restart server"), menu)
     restart_action.triggered.connect(lambda: controller.restart())
+    # Only a node this tray started is its to restart: the action is offered
+    # greyed out for a node it only joined, because `restart` answers `False`
+    # for a node this process does not own.
+    restart_action.setEnabled(controller.supervises)
     menu.addAction(restart_action)
 
     menu.addSeparator()

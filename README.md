@@ -494,7 +494,7 @@ console into a double-clickable app with **PyInstaller** (see
 
 | Artifact | What it is |
 |---|---|
-| `clear-record-tray` / `clear-record.app` | double-click opens the menu-bar tray, which supervises the console |
+| `clear-record-tray` / `clear-record.app` | double-click opens the menu-bar tray, which serves the console (joining the node already up, or starting one) |
 | `clear-record` | the full console CLI |
 
 The `build-app` CI workflow produces macOS and Windows artifacts. The builds are
@@ -504,10 +504,12 @@ is a documented future step. No model weights or
 keys are bundled — the app drives the machine's own `whisper-cli` and downloads a
 ggml model on first use, exactly like the CLI.
 
-For a menu-bar app instead of a browser launch, `clear-record tray` runs the
-console in the background under a **system-tray icon** (open / status / quit).
-It is an optional extra — `pip install 'clear-record[tray]'` — so the base
-install stays small.
+For a menu-bar app instead of a browser launch, `clear-record tray` serves the
+console under a **system-tray icon** (open / status / quit): a node that is
+already up (say one a `run` left behind, or a supervised `serve`) is **joined**
+rather than started a second time, and the tray starts one only when nothing
+answers. It is an optional extra — `pip install 'clear-record[tray]'` — so the
+base install stays small.
 
 ## Diagnostics (not telemetry)
 

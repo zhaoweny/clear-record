@@ -473,3 +473,27 @@ promotes nothing the owner did not say beyond the label each clause carries.
   a body field nobody declares is **refused** rather than dropped. A path-valued
   `glossary` follows the rule above: 403 with the same sentence on either run
   edge, while a client that names none gets the node's own glossary.
+
+## Update (2026-09-25) — the two surfaces that invert
+
+- [FACT] **The tray attaches before it starts anything.** The Context's "the tray
+  and `mcp` invert" bullet is half closed: `ServiceController.start` resolves the
+  recorded address and completes one request against it — the attach path
+  `cli.ensure_node` already takes — so a node that is already up is the node the
+  tray becomes a client of and **no second node is started**; only when nothing
+  answers does it start one, embedded in its own process as before, publishing the
+  record exactly as every other posture does. Preliminary 1's "it starts a node,
+  publishes the record, and probes the socket it bound" therefore describes the
+  case where none answered, not the tray's first act. Two consequences are
+  recorded where they live: the live state is the **node's** health rather than
+  this process's thread (a node the tray joined has no thread here at all), and a
+  node the tray only joined is not its to stop or restart — `stop`/`restart` act
+  on the node this process started, and the menu offers restart only for that one.
+- [FACT] **The MCP adapter's posture is stated for both cases.** The other half of
+  that bullet: the adapter stays an in-process adapter over
+  `clear_record.service` — the Decision's "dials the recorded address only to ask
+  whether the node is there" — and what it hands the agent now says so: the tools
+  are the same service the node serves, in this process (one registry, one run
+  queue), they answer with or without a node, and the adapter starts none. Which
+  case holds follows as the one sentence, a node listening (at its address) or
+  none at all, so an absent node no longer reads as "these tools cannot work".

@@ -126,8 +126,7 @@ class TranscribeReport:
     backend and model that decoded, and per source its duration, segment count
     and chunk count — returned so a caller that wants the typed result holds
     what the stage did without re-reading the file it just wrote. ``attribution``
-    is the
-    ``--attribute-energy`` pass ``run`` drives *inside* this stage (an
+    is the ``--attribute-energy`` pass ``run`` drives *inside* this stage (an
     alternative to diarization, not a declared stage); it is ``None`` when that
     pass did not run.
     """

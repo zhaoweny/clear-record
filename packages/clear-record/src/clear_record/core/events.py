@@ -9,7 +9,7 @@ A stage reports everything it has to say through an optional **sink**, and a
   ``ingest``, chunks for ``transcribe``) so a consumer renders one bar without
   knowing each stage's internals;
 - the **words** — ``message``, exactly the text the stage wants read: a
-  mid-stage line (``report_line``), a summary block, or a data item the pass
+  mid-stage line (``report_line``), a summary line, or a data item the pass
   produced. A pure progress report carries none, so a client that prints every
   non-empty message prints every word once, in the one order the stream has.
 

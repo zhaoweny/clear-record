@@ -124,8 +124,9 @@ class TranscribeReport:
 
     ``meta`` is the mapping the stage writes into ``segments.json`` — the
     backend and model that decoded, and per source its duration, segment count
-    and chunk count — returned so a caller renders what the stage did without
-    re-reading the file it just wrote. ``attribution`` is the
+    and chunk count — returned so a caller that wants the typed result holds
+    what the stage did without re-reading the file it just wrote. ``attribution``
+    is the
     ``--attribute-energy`` pass ``run`` drives *inside* this stage (an
     alternative to diarization, not a declared stage); it is ``None`` when that
     pass did not run.
@@ -504,7 +505,7 @@ def transcribe(
     :mod:`clear_record.pipeline.transcription`. Here we load the manifest, gate on
     the backend and the opt-in plugin probe, resolve the model once
     (single-threaded, before the pool), then persist the result and return the
-    report the caller renders.
+    typed report.
     """
     # Captured before any other local exists in this frame: exactly the
     # decoder-knob values this call received, keyed by the shared declaration

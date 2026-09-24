@@ -204,8 +204,8 @@ $ clear-record synth
 
 #: The stage-bearing commands, in the order one workspace meets them. The
 #: glossary is filled first so the transcribe stage's prompt line is part of
-#: the pin; `diarize`, `attribute` and `glossary` are driven because they print
-#: through the same two channels as the five declared stages.
+#: the pin; `diarize`, `attribute` and `glossary` are driven because they report
+#: and print the same way the five declared stages do.
 _STAGE_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("glossary", "--add", "Clear Record", "--add", "Oh My Pi"),
     ("ingest",),

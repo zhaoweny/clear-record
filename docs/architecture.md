@@ -381,15 +381,16 @@ runnable, and the **project console** is built on top of it:
 **The surfaces share one recorded address.** A node — `clear-record serve`,
 `clear-record web` or the tray — writes the address it actually *bound* into
 the app-owned state directory (`core.paths.node_address_path`, ADR-0025) as soon
-as its socket is listening, and clears it when it stops. Every surface resolves
-that one file through `clear_record.core.node`: the command line and the MCP
-adapter complete a request against the address it names, the console answers with
-it, and the tray probes the node it started through the same client, at the socket
-that node bound. Nothing scans a port range, and a port the node did not choose
-itself (`--port 0`) is recorded as the port its socket holds. An absent record,
-and a record nothing answers, are the **same** one sentence from the command
-line, the console and the MCP adapter (`node.NO_NODE_MESSAGE`) — never a hang, and
-never a different error per surface.
+as its socket is listening, and clears it when it stops. The surfaces — the
+command line, the console and the MCP adapter — resolve that one file through
+`clear_record.core.node`: the command line and the MCP adapter complete a request
+against the address it names, and the console answers with it in process. The tray
+resolves nothing: it starts a node, writes the record like any other posture, and
+probes the socket that node bound, through the same client. Nothing scans a port
+range, and a port the node did not choose itself (`--port 0`) is recorded as the
+port its socket holds. An absent record, and a record nothing answers, are the
+**same** one sentence from the command line, the console and the MCP adapter
+(`node.NO_NODE_MESSAGE`) — never a hang, and never a different error per surface.
 `DEFAULT_HOST`/`DEFAULT_PORT` are declared once, there.
 
 | Surface | How it asks where the node is | Where it stands |

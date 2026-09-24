@@ -548,8 +548,8 @@ class NodeServer(uvicorn.Server):
     what a node owes its *clients* — not what makes the node run. That failure is
     therefore stated once, in the node's own log, and the node serves on: the
     direction lists an unwritable state directory among its machines where a node
-    cannot run, and **this batch decides that it is not one** — the node runs
-    there; it is only unfindable.
+    cannot run, and **the address batch decides that it is not one** — the node
+    runs there; it is only unfindable.
     """
 
     async def startup(self, sockets=None) -> None:

@@ -986,7 +986,8 @@ _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
 #: pipeline's conveniences that are not stage-derived (diarize / attribute /
 #: glossary) with the argparse-era help text, the development and diagnostic
 #: commands (synth / backends), and `node`, the verb that reaches the recorded
-#: address, whose help is a `deferred(...)` message ID like this tuple's others.
+#: address, whose help is a `deferred(...)` message ID like the other `deferred`
+#: entries in this tuple.
 _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "run",

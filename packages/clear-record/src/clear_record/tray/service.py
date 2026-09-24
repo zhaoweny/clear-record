@@ -7,12 +7,12 @@ testable without a display — and reusable by a future
 
 Starting the server here is starting a **node**: the server records the address
 it bound where the surfaces resolve it (:mod:`clear_record.core.node`), and the
-health probe below asks the node through the same one client, on the same path,
-that the command line and the MCP adapter reach it by — "healthy" says the node
-answered as a surface's request reaches it, not that the two agree about where it
-is. The probe dials the socket this controller bound rather than the record, so a
-node on an ephemeral port is probed where it really is, and another node's record
-cannot answer for it.
+health probe below asks the node through the same one client the command line and
+the MCP adapter use, on the same path they reach it by — "healthy" says the node
+answered as a surface's request reaches it, not that the probe and that surface
+agree about where the node is. The probe dials the socket this controller bound
+rather than the record, so a node on an ephemeral port is probed where it really
+is, and another node's record cannot answer for it.
 """
 
 from __future__ import annotations

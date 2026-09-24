@@ -157,7 +157,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
   the residue of the one question the shape did not answer:
   1. [DECISION: owner, 2026-09-21] **Lifecycle and discovery.** The node's endpoint
      is **recorded** — in the app state/config area the path ADR-0025 resolves — and
-     the surfaces **read** it instead of scanning: the command line and the MCP
+     the surfaces **find** it instead of scanning: the command line and the MCP
      adapter dial it, the console answers with it in process, and the tray probes
      the socket it bound. Whether the recorded channel is a loopback HTTP endpoint
      or a **unix socket / named pipe** is the backchannel question in (4).

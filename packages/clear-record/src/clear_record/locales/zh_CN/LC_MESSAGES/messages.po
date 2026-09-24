@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-24 23:39+0800\n"
+"POT-Creation-Date: 2026-09-24 23:53+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -78,39 +78,39 @@ msgid ""
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1001
+#: packages/clear-record/src/clear_record/cli/cli.py:1002
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1016
+#: packages/clear-record/src/clear_record/cli/cli.py:1017
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1023
+#: packages/clear-record/src/clear_record/cli/cli.py:1024
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1030
+#: packages/clear-record/src/clear_record/cli/cli.py:1031
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1037
+#: packages/clear-record/src/clear_record/cli/cli.py:1038
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1044
+#: packages/clear-record/src/clear_record/cli/cli.py:1045
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1050
+#: packages/clear-record/src/clear_record/cli/cli.py:1051
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 
-#: packages/clear-record/src/clear_record/core/node.py:79
+#: packages/clear-record/src/clear_record/core/node.py:80
 msgid "no clear-record node is listening; start one with `clear-record serve`"
 msgstr "没有 clear-record 节点在监听；请用 `clear-record serve` 启动一个"
 

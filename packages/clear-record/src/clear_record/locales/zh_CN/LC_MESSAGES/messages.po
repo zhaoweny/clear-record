@@ -5,15 +5,18 @@
 # speaker's sign-off.
 # Translated: the web console's user-facing text (buttons, headings, empty
 # states, status words, inline help), user-facing CLI errors and usage
-# errors, and the tailscale status lines.
-# Deliberately left English (empty msgstr): per-option `--help` text; the
+# errors, the tailscale status lines, and the machine-local boundary note
+# the group appends to `synth`/`backends`/`bench`/`diagnose`.
+# Deliberately left English (empty msgstr): per-option `--help` text, and
+# the `mcp`/`tray` subcommand help and `diagnose`'s own help line (they
+# live outside this surface, so they carry no catalog entry at all); the
 # terminal is not the interface (owner, 2026-09-15). Message IDs are the
 # English source strings, so an empty msgstr falls back to English.
 msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-25 05:27+0800\n"
+"POT-Creation-Date: 2026-09-25 06:47+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -25,36 +28,47 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:101
+#: packages/clear-record/src/clear_record/cli/cli.py:102
 msgid "clear-record: from many recordings to one clear record."
 msgstr "clear-record：从众多录音到一份清晰的记录。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#: packages/clear-record/src/clear_record/cli/cli.py:104
+#: packages/clear-record/src/clear_record/cli/cli.py:105
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/cli/cli.py:260
+#: packages/clear-record/src/clear_record/cli/cli.py:234
+msgid ""
+"Machine-local verb: `synth`, `backends`, `bench` and `diagnose` take the "
+"machine you are running them on as their subject, never the node, and are"
+" deliberately not facades — routed through a node, `backends` would "
+"silently answer about the node's machine instead of yours."
+msgstr ""
+"本机命令：`synth`、`backends`、`bench` 和 `diagnose` "
+"的主题是你运行它们的这台机器，而不是节点；它们刻意不做成门面 —— 若经由节点转发，`backends` "
+"会悄悄回答节点所在的那台机器，而不是你的。"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:299
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:276
+#: packages/clear-record/src/clear_record/cli/cli.py:315
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
 msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:296
+#: packages/clear-record/src/clear_record/cli/cli.py:335
 #, python-brace-format
 msgid ""
 "{path} is a file, not a directory: this command expects a directory of "
 "audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:641
+#: packages/clear-record/src/clear_record/cli/cli.py:680
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -66,7 +80,7 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:772
+#: packages/clear-record/src/clear_record/cli/cli.py:823
 msgid ""
 "clear-record's work needs a node, and this command could not start one; "
 "start one with `clear-record serve`, or from the tray app — `serve` "
@@ -75,61 +89,61 @@ msgstr ""
 "clear-record 的工作需要节点，而本命令无法启动节点；请用 `clear-record serve` 启动一个，或从托盘应用启动 —— "
 "`serve` 会把日志写入诊断接收器"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:786
+#: packages/clear-record/src/clear_record/cli/cli.py:837
 #, python-brace-format
 msgid ""
 "a node started as pid {pid} but this command cannot reach it; it is left "
 "running, and its log is in the diagnostics sink"
 msgstr "节点已以进程 {pid} 启动，但本命令无法访问它；该进程保持运行，其日志位于诊断接收器"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:901
+#: packages/clear-record/src/clear_record/cli/cli.py:952
 #, python-brace-format
 msgid "the node is listening at {url}"
 msgstr "节点正在监听 {url}"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1077
+#: packages/clear-record/src/clear_record/cli/cli.py:1128
 #, python-brace-format
 msgid ""
 "a node run cannot set {flags} yet: it runs with what the node's run API "
 "declares, and nothing is dropped"
 msgstr "节点运行尚不能设置 {flags}：它只按节点运行 API 声明的参数执行，不会丢弃任何选项"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1199
+#: packages/clear-record/src/clear_record/cli/cli.py:1250
 #, python-brace-format
 msgid ""
 "[next] the record is in {directory}/export; review it and accept the "
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1283
+#: packages/clear-record/src/clear_record/cli/cli.py:1334
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1298
+#: packages/clear-record/src/clear_record/cli/cli.py:1349
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1305
+#: packages/clear-record/src/clear_record/cli/cli.py:1356
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1312
+#: packages/clear-record/src/clear_record/cli/cli.py:1363
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1319
+#: packages/clear-record/src/clear_record/cli/cli.py:1370
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1326
+#: packages/clear-record/src/clear_record/cli/cli.py:1377
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1332
+#: packages/clear-record/src/clear_record/cli/cli.py:1383
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 

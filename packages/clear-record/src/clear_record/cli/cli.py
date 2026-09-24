@@ -41,6 +41,7 @@ See docs/architecture.md §6 and ADR-0006.
 from __future__ import annotations
 
 import dataclasses
+import platform
 import subprocess
 import sys
 import time
@@ -216,13 +217,50 @@ def _ensure_verbose(command: click.Command) -> None:
     )
 
 
+#: The verbs whose **subject is the machine this command runs on**: the fixture
+#: generator, the backend probe, the benchmark and the diagnostics. ADR-0032 makes
+#: the command line a facade of a node *for the operations a node owns*, and these
+#: four are not among them — under a facade `backends` would silently answer about
+#: the node's machine instead of yours, which is a change to what its answer is
+#: *about* rather than a refactor. The set is named here, once, and the boundary
+#: below is what a reader meets at each of them.
+MACHINE_LOCAL_VERBS = frozenset({"synth", "backends", "bench", "diagnose"})
+
+#: The boundary statement itself, appended to each of the four verbs' help by
+#: :func:`_state_the_machine_local_boundary`. One message ID for all four: the
+#: boundary is one rule, and a translated sentence that drifted between the verbs
+#: would be four rules.
+MACHINE_LOCAL_NOTE = deferred(
+    "Machine-local verb: `synth`, `backends`, `bench` and `diagnose` take the "
+    "machine you are running them on as their subject, never the node, and are "
+    "deliberately not facades — routed through a node, `backends` would silently "
+    "answer about the node's machine instead of yours."
+)
+
+
+def _state_the_machine_local_boundary(command: click.Command, name: str | None) -> None:
+    """Append the machine-local boundary to a machine-local verb's help.
+
+    Where a reader meets a verb is its ``--help``, so the boundary is stated
+    there and not only in a document. Appending it here — in the group that also
+    owns the ``-v`` contract — is what lets a verb contributed through an entry
+    point (``bench``, ``diagnose``) state it without its own module knowing the
+    sentence. Click shows only the first paragraph of a help text in the group
+    listing, so the added paragraph is where the verb is read, not in the list.
+    """
+    if name in MACHINE_LOCAL_VERBS:
+        command.help = f"{command.help or ''}\n\n{tr(MACHINE_LOCAL_NOTE)}"
+
+
 class _Group(click.Group):
     """A group that owns the CLI-wide verbosity contract.
 
     ``invoke`` runs after the group's own options are parsed but before the
     subcommand's are, so it normalizes the level from the group flag and any
     subcommand ``-v`` still gets the last word. ``add_command`` gives every
-    command — built-in or contributed through an entry point — the same ``-v``.
+    command — built-in or contributed through an entry point — the same ``-v``,
+    and states the machine-local boundary in the help of any verb that is one
+    (:data:`MACHINE_LOCAL_VERBS`).
     """
 
     def invoke(self, ctx: click.Context) -> Any:
@@ -231,6 +269,7 @@ class _Group(click.Group):
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
         _ensure_verbose(cmd)
+        _state_the_machine_local_boundary(cmd, name or cmd.name)
         super().add_command(cmd, name=name)
 
 
@@ -735,7 +774,19 @@ def _run_pipeline(directory: str, options: PipelineOptions) -> None:
 # command bodies
 # --------------------------------------------------------------------------- #
 def _cmd_backends(**kwargs: Any) -> int:
-    for bid, status in backend_availability().items():
+    """List each backend's availability, saying **which machine** was probed.
+
+    ADR-0032: this verb is machine-local (``MACHINE_LOCAL_VERBS``) — its subject
+    is the machine this command runs on, never a node. The report therefore opens
+    by naming that machine, so the answer can never be read as a node's, and it
+    is printed exactly when there is a report to qualify (an empty catalog has
+    none). ``platform.node()`` is the hostname the run record's own host field
+    quotes; it is the platform's name for the machine, not a fingerprint.
+    """
+    statuses = backend_availability()
+    if statuses:
+        print(f"[backends] this machine: {platform.node() or 'unknown host'}")
+    for bid, status in statuses.items():
         if not kwargs["all_backends"] and not status.available:
             continue
         state = "available" if status.available else "unavailable"

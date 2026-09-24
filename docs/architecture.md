@@ -404,6 +404,18 @@ The console stays an **in-process backend-for-frontend** rather than becoming a
 channel client (ADR-0032): which process owns the operations is the question, and
 answering it does not mean inserting an HTTP hop inside one process.
 
+**Four verbs are not facades: their subject is the machine you run them on.**
+`synth` (it generates, on your machine, the fixture the pipeline consumes),
+`backends` (it probes *this* machine's backends), `bench` and `diagnose` are
+**machine-local** — under a facade the backend probe would silently answer about
+the node's machine instead of yours, which is a change to what its answer is
+*about* rather than a refactor. So the boundary is stated where a reader meets
+each verb: the group appends `cli.MACHINE_LOCAL_NOTE` to every verb in
+`cli.MACHINE_LOCAL_VERBS`, so a verb contributed through an entry point states it
+too, and the probe's report opens by naming the machine it ran on.
+`tests/cli/test_machine_local_verbs.py` fails if any of the four gains a path
+through the node.
+
 **A client names what it wants by a path or by a registry id, and only the first
 is local.** A **path** — a run's workspace directory, a meeting's
 `workspace_path`, a tape's files, an archive root (one a call hands over, or one

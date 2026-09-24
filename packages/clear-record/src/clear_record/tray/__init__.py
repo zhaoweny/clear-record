@@ -18,8 +18,7 @@ import importlib.util
 
 import click
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
+from clear_record.core.node import DEFAULT_HOST, DEFAULT_PORT
 
 _TRAY_STACK = ("PySide6",)
 
@@ -53,7 +52,12 @@ def register(group: click.Group) -> None:
     @click.option(
         "--host", default=DEFAULT_HOST, help="bind address (default localhost)"
     )
-    @click.option("--port", type=int, default=DEFAULT_PORT, help="port (default 8765)")
+    @click.option(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"port (default {DEFAULT_PORT})",
+    )
     @click.option("--no-browser", is_flag=True, help="do not open a browser on start")
     @click.option(
         "--data-dir",
@@ -84,4 +88,4 @@ def _run(
     )
 
 
-__all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "register"]
+__all__ = ["register"]

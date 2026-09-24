@@ -4,17 +4,22 @@ Deliberately **Qt-free**: the tray icon is a thin shell over this, so the
 supervision logic (start, wait-until-ready, live state, stop, restart) is
 testable without a display — and reusable by a future
 `clear-record serve --supervise` on a headless node.
+
+Starting the server here is starting a **node**: the server records the address
+it bound where every surface resolves it (:mod:`clear_record.core.node`), and
+the health probe below reaches it through the same one client the command line,
+the console and the MCP adapter use — so the tray's liveness signal and their
+"where is the node" answer cannot drift.
 """
 
 from __future__ import annotations
 
 import enum
 import threading
-import urllib.error
-import urllib.request
 
+from clear_record.core import node
 from clear_record.service import Registry
-from clear_record.web.app import create_app
+from clear_record.web.app import NodeServer, create_app
 
 
 class ServiceState(enum.StrEnum):
@@ -31,34 +36,14 @@ class ServiceState(enum.StrEnum):
     UNREACHABLE = "unreachable"
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Answer with the 3xx response instead of following it.
-
-    ``urlopen`` follows redirects by default, so a health route that answered
-    307 to the setup page would read as a healthy console.
-    """
-
-    def http_error_301(self, req, fp, code, msg, headers):
-        return fp
-
-    http_error_302 = http_error_301
-    http_error_303 = http_error_301
-    http_error_307 = http_error_301
-    http_error_308 = http_error_301
-
-
-#: One opener per process for the health probe — never a redirect follower.
-_OPENER = urllib.request.build_opener(_NoRedirect)
-
-
 class ServiceController:
     """Runs the console on a background thread and can stop it cleanly."""
 
     def __init__(
         self,
         *,
-        host: str = "127.0.0.1",
-        port: int = 8765,
+        host: str = node.DEFAULT_HOST,
+        port: int = node.DEFAULT_PORT,
         data_dir: str | None = None,
     ) -> None:
         self.host = host
@@ -68,8 +53,26 @@ class ServiceController:
         self._thread: threading.Thread | None = None
 
     @property
+    def address(self) -> node.NodeAddress:
+        """Where the node this controller started answers — the record, once bound.
+
+        The record is the address every surface resolves, and the only one that
+        names a node started on an ephemeral port (``--port 0``), so the health
+        probe dials what the node actually holds rather than the port it asked
+        for. Until the server this controller started has finished binding there
+        is no record of ours to read and the requested ``host:port`` stands —
+        which is also the honest answer for a port we never bound (the server
+        died, e.g. the port was taken: nothing answers there).
+        """
+        bound = self._server is not None and bool(
+            getattr(self._server, "started", False)
+        )
+        recorded = node.recorded() if bound else None
+        return recorded or node.NodeAddress(self.host, self.port)
+
+    @property
     def url(self) -> str:
-        return f"http://{self.host}:{self.port}/"
+        return self.address.url
 
     @property
     def running(self) -> bool:
@@ -84,7 +87,9 @@ class ServiceController:
         config = uvicorn.Config(
             app, host=self.host, port=self.port, log_level="warning"
         )
-        self._server = uvicorn.Server(config)
+        # NodeServer records the bound address while it listens, so this posture
+        # publishes its address exactly as `clear-record serve` does.
+        self._server = NodeServer(config)
         app.state.server = self._server
         self._thread = threading.Thread(
             target=self._server.run, name="cr-console", daemon=True
@@ -107,16 +112,19 @@ class ServiceController:
     def healthy(self) -> bool:
         """Does the console's health URL answer exactly 200, right now?
 
-        Redirects are **not** followed: a 3xx (e.g. a redirect to the setup
-        page) is not a healthy server. The path stays the current one — B3
-        replaces it with a dedicated credential-free ``GET /health``
-        (AUTH-06/AUTH-07), whose response must not carry the registry path.
+        Reached through the one node client (:func:`clear_record.core.node.reach`),
+        so the tray probes the node exactly as every other surface reaches it.
+        Only a 200 counts and redirects are **not** followed: a 3xx (e.g. a
+        redirect to the setup page) is not a healthy server. The path stays the
+        current one — B3 replaces it with a dedicated credential-free
+        ``GET /health`` (AUTH-06/AUTH-07), whose response must not carry the
+        registry path.
         """
         try:
-            with _OPENER.open(f"{self.url}api/health", timeout=1.0) as response:
-                return response.status == 200
-        except (urllib.error.URLError, OSError):
+            node.reach(self.address)
+        except node.NoNodeError:
             return False
+        return True
 
     def state(self) -> ServiceState:
         """The live state, probed now — never a start-time snapshot.

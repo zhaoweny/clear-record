@@ -40,6 +40,7 @@ import webbrowser
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -50,6 +51,7 @@ from starlette.datastructures import UploadFile
 
 from clear_record.core import PROFILE_CUSTOM
 from clear_record.core import i18n
+from clear_record.core import node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
     BUNDLE_FILENAME,
@@ -403,6 +405,16 @@ class HealthOut(Shape):
     registry: str
 
 
+class NodeOut(Shape):
+    """`/api/node`: where this node is, as every surface resolves it."""
+
+    status: str
+    url: str
+    host: str
+    port: int
+    pid: int | None
+
+
 class ShutdownOut(Shape):
     """`/api/shutdown`: the managed server has been asked to stop."""
 
@@ -513,6 +525,57 @@ async def _receive_tape(
         declared_bytes=declared,
         upload_id=upload_id,
     )
+
+
+class NodeServer(uvicorn.Server):
+    """A uvicorn server that records the node's address while it listens.
+
+    Both node postures start their server through this class — ``serve`` for the
+    console and the tray's supervisor — so the address is published and cleared
+    in one place, the same way, wherever a node runs.
+
+    :meth:`startup` records **after** ``super().startup()``: uvicorn binds its
+    sockets there (0.53 runs the app's lifespan startup first), so that is the
+    earliest moment the bound port exists. Recording after the bind, not before,
+    is what makes ``--port 0`` publish the port the node really holds instead of
+    the 0 it asked for. :meth:`shutdown` clears the record; a node that died
+    without shutting down leaves a **stale** address, which every surface answers
+    exactly as an absent one (:data:`clear_record.core.node.NO_NODE_MESSAGE`).
+    """
+
+    async def startup(self, sockets=None) -> None:
+        await super().startup(sockets)
+        address = self.bound()
+        if address is not None:
+            node.record(address)
+
+    async def shutdown(self, sockets=None) -> None:
+        await super().shutdown(sockets)
+        node.forget()
+
+    def bound(self) -> node.NodeAddress | None:
+        """The TCP address this server bound, or ``None`` (e.g. a unix socket).
+
+        Two callers ask: :meth:`startup`, which records it, and
+        ``GET /api/node``, which answers with a record only when it is this.
+        """
+        for listener in getattr(self, "servers", ()):
+            for sock in listener.sockets or ():
+                name = sock.getsockname()
+                if isinstance(name, tuple) and len(name) >= 2:
+                    return node.NodeAddress.of(self.config.host, int(name[1]))
+        return None
+
+
+def _served_by(app: FastAPI) -> node.NodeAddress | None:
+    """The address this app is listening on, when a managed node is serving it.
+
+    ``serve`` and the tray's supervisor both put the ``NodeServer`` they run on
+    ``app.state.server``, so the console can vouch for an address **in process**:
+    no probe of its own, and no address it cannot answer for.
+    """
+    server = getattr(app.state, "server", None)
+    return server.bound() if isinstance(server, NodeServer) else None
 
 
 def create_app(
@@ -1625,6 +1688,28 @@ def create_app(
     def health() -> HealthOut:
         return HealthOut(status="ok", registry=str(registry.db_path))
 
+    @app.get("/api/node")
+    def node_address() -> NodeOut:
+        """Where the node is — the record, vouched for by the socket this app holds.
+
+        The answer is the recorded address, read **in process**: it is the one
+        every surface resolves, and it is given only when it is the address this
+        app is itself listening on (:func:`_served_by`), so a stale record — one
+        nothing answers — is refused here exactly as the command line refuses it,
+        and no second HTTP leg is spent proving what the request in hand already
+        proves. Nothing is scanned.
+
+        An app with no bound socket of its own — a test client, an embedder —
+        vouches for nothing, which is the same answer as no record at all.
+
+        The refusal is the English `detail` (``docs/i18n.md``): a machine reads
+        it, and it is the sentence every surface states when nothing answers.
+        """
+        recorded, serving = node.recorded(), _served_by(app)
+        if recorded is None or recorded != serving:
+            raise HTTPException(status_code=503, detail=node.NO_NODE_MESSAGE)
+        return NodeOut.of(recorded, status="ok")
+
     @app.get("/api/webhooks")
     def webhooks_status(request: Request) -> views.WebhookStatusOut:
         """Webhook endpoint health as JSON; see :func:`views.webhook_status_view`.
@@ -2002,6 +2087,17 @@ def create_app(
     return app
 
 
+def _open_console(server: NodeServer, requested: node.NodeAddress) -> None:
+    """Open the console at the address the server is **serving**.
+
+    The bound socket is the truth, and the record is not: this timer fires while
+    the node is starting, and a record left by a node that has since died would
+    open a dead endpoint. A node on an ephemeral port knows its port only once it
+    has bound, so ``requested`` is the fallback for a server that has not.
+    """
+    webbrowser.open((server.bound() or requested).url)
+
+
 def serve(
     *,
     host: str,
@@ -2024,18 +2120,17 @@ def serve(
     ``None`` keeps uvicorn's own (stderr) logging, which is right for the
     interactive console.
     """
-    import uvicorn
-
     app = create_app(Registry.open(data_dir=data_dir), trusted_hosts=trusted_hosts)
     extra = {} if log_config is None else {"log_config": log_config}
     config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
-    server = uvicorn.Server(config)
+    server = NodeServer(config)
     # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
     # build has no terminal to interrupt.
     app.state.server = server
     if open_browser:
-        url = f"http://{host}:{port}/"
-        threading.Timer(0.8, webbrowser.open, args=(url,)).start()
+        threading.Timer(
+            0.8, _open_console, args=(server, node.NodeAddress.of(host, port))
+        ).start()
     try:
         server.run()
     finally:
@@ -2045,4 +2140,4 @@ def serve(
     return 0
 
 
-__all__ = ["create_app", "serve"]
+__all__ = ["NodeOut", "NodeServer", "create_app", "serve"]

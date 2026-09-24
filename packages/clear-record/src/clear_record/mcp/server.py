@@ -57,7 +57,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from clear_record.core import PipelineOptions
+from clear_record.core import PipelineOptions, node
 from clear_record.service import (
     TASK_KINDS,
     AgentDraftsOut,
@@ -113,6 +113,23 @@ INSTRUCTIONS = (
     "↔ transcript tuning loop you orchestrate: read the transcript, write "
     "candidate terms as a draft, then re-run with intent."
 )
+
+
+def node_line() -> str:
+    """Where the node is, for the agent — or the one answer that none is.
+
+    The adapter asks through the one node client
+    (:func:`clear_record.core.node.ask`): the recorded address, proved by one
+    request against it, or the sentence every surface states when nothing
+    answers. English on purpose — the MCP surface is machine-read and is never
+    translated (``docs/i18n.md``), so a person's locale cannot leak into an
+    agent's instructions.
+    """
+    try:
+        address = node.ask()
+    except node.NoNodeError:
+        return node.NO_NODE_MESSAGE
+    return f"The clear-record node is listening at {address.url}"
 
 
 def _a_refused_row_is_a_tool_error(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -700,10 +717,21 @@ def build_server(
     manager: RunManager | None = None,
     *,
     name: str = SERVER_NAME,
+    node_note: str | None = None,
 ) -> MCPServer:
-    """Build the MCP server over an opened registry (inject a temp one in tests)."""
+    """Build the MCP server over an opened registry (inject a temp one in tests).
+
+    ``node_note`` is the line the instructions state about the node — where it
+    answers, or that none answers (:func:`node_line`; ``main`` passes it).
+    Omitted, the instructions are the adapter's own text alone, which is what a
+    test that constructs the server directly wants: this adapter works over the
+    service in process, with a node or without one.
+    """
     tools = ServiceTools(registry, manager)
-    server: MCPServer = MCPServer(name=name, instructions=INSTRUCTIONS)
+    instructions = (
+        INSTRUCTIONS if node_note is None else f"{INSTRUCTIONS}\n\n{node_note}"
+    )
+    server: MCPServer = MCPServer(name=name, instructions=instructions)
     for tool_name in TOOL_NAMES:
         server.add_tool(getattr(tools, tool_name))
     return server
@@ -711,7 +739,7 @@ def build_server(
 
 def main(*, data_dir: str | None = None) -> int:
     """Open the registry and serve over stdio until the client disconnects."""
-    server = build_server(Registry.open(data_dir=data_dir))
+    server = build_server(Registry.open(data_dir=data_dir), node_note=node_line())
     server.run(transport="stdio")
     return 0
 
@@ -726,4 +754,5 @@ __all__ = [
     "ServiceTools",
     "build_server",
     "main",
+    "node_line",
 ]

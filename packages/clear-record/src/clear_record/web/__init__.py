@@ -21,12 +21,10 @@ from typing import TYPE_CHECKING
 import click
 
 from clear_record.core.i18n import deferred, tr
+from clear_record.core.node import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
     from clear_record.web.tailscale import ServeSession
-
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
 
 #: Everything the console needs at run time. `clear_record.web` itself is always
 #: importable (it ships in the one wheel); these are the optional `web` extra.
@@ -55,7 +53,10 @@ _COMMON_CONSOLE_OPTIONS = (
         help=tr("bind address (default localhost)"),
     ),
     click.option(
-        "--port", type=int, default=DEFAULT_PORT, help=tr("port (default 8765)")
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=tr("port (default {port})", port=DEFAULT_PORT),
     ),
     click.option(
         "--data-dir",
@@ -395,4 +396,4 @@ def _tailscale_setup(
     return sorted(guard.trusted_extra_hosts() | {name}), session
 
 
-__all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "register"]
+__all__ = ["register"]

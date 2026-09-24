@@ -20,6 +20,7 @@ import sys
 import webbrowser
 
 from clear_record.core.i18n import tr
+from clear_record.core.node import DEFAULT_HOST, DEFAULT_PORT
 from clear_record.tray.service import ServiceController, ServiceState
 
 #: How often the tray re-reads the live state. Each read is one local health
@@ -40,8 +41,8 @@ def status_text(controller: ServiceController) -> str:
 
 def main(
     *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     data_dir: str | None = None,
     open_browser: bool = True,
 ) -> int:

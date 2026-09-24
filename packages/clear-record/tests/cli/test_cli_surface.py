@@ -44,6 +44,7 @@ def test_subcommands_match_pipeline(monkeypatch) -> None:
         "diarize",
         "attribute",
         "glossary",
+        "node",
     }
     choices = set(group.commands)
     assert builtin <= choices

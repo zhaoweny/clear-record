@@ -118,9 +118,9 @@ def test_adr_0027_sitemap_lists_the_project_subroutes() -> None:
 def test_readme_documents_the_bind_and_the_layers() -> None:
     readme = _text("README.md")
     assert "server binds **localhost only**" not in readme
-    source = _text("packages/clear-record/src/clear_record/web/__init__.py")
+    source = _text("packages/clear-record/src/clear_record/core/node.py")
     default = re.search(r'DEFAULT_HOST = "([^"]+)"', source)
-    assert default is not None, "web/__init__.py no longer defines DEFAULT_HOST"
+    assert default is not None, "core/node.py no longer declares DEFAULT_HOST"
     assert f"binds `{default.group(1)}` by default" in readme
     for layer in ("service", "tray", "mcp"):
         assert f"src/clear_record/{layer}" in readme, f"{layer} missing from the layout"

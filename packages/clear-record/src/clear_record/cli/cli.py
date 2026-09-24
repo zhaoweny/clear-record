@@ -53,6 +53,7 @@ from clear_record.core import (
     Segment,
     Step,
     log_event,
+    node,
     parse_time_range,
     pipeline_spec,
     resolve_options,
@@ -843,6 +844,17 @@ def _cmd_backends(**kwargs: Any) -> int:
     return 0
 
 
+def _cmd_node(**kwargs: Any) -> int:
+    """Print where the node is and prove it answers — never a port scan."""
+    try:
+        address = node.ask()
+    except node.NoNodeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(tr("the node is listening at {url}", url=address.url))
+    return 0
+
+
 def _cmd_synth(**kwargs: Any) -> int:
     synth(
         kwargs["directory"],
@@ -1030,6 +1042,12 @@ _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
         _cmd_backends,
         deferred("list which ASR backends are currently available"),
         (_BACKEND_ALL,),
+    ),
+    (
+        "node",
+        _cmd_node,
+        deferred("print where the running node is listening, and whether it answers"),
+        (),
     ),
 )
 

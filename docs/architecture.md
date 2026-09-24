@@ -414,8 +414,9 @@ section above records and every surface dials). A client that reached the node
 through a name an operator published for it is a client elsewhere, and is answered
 with **one sentence** naming the rule and, per case, the registry-addressed or
 node-decided shape that replaces it (`POST /api/meetings/{id}/runs`, an upload
-into a managed workspace, `managed: true`, or simply omitting the root) rather
-than having a path of its own — or a same-named file on the node — acted on.
+into a managed workspace, `managed: true`, or simply omitting the root or the
+glossary) rather than having a path of its own — or a same-named file on the
+node — acted on.
 Everything the registry owns is named by its id, and that is the route a remote
 client uses. The **console is not that edge**: its `/ui/*` forms are the node's
 own in-process face, so a visitor reaching the console through a proxy may still

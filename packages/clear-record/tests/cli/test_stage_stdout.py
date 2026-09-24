@@ -108,35 +108,12 @@ $ clear-record export
 [export] vtt  -> $FIXTURE/tape/export/record.vtt
 [export] json -> $FIXTURE/tape/export/record.json
 $ clear-record run
-[ingest] decode a.wav -> a.wav
-[ingest] decode b.wav -> b.wav
-[ingest] decode c.wav -> c.wav
-[ingest] 3 source(s) -> $FIXTURE/run/manifest.json
-  a                        $FIXTURE/run/audio/a.wav
-  b                        $FIXTURE/run/audio/b.wav
-  c                        $FIXTURE/run/audio/c.wav
-[align] reference=a method=windowed-cross-correlation conf=1.0 unresolved=1
-  a                        offset=+0.0000s (ref)
-  b                        offset=+0.0000s
-  c                        UNRESOLVED (could not place this source)
-[transcribe] a: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] b: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] c: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] 3 pending chunk(s), jobs=1 (fake-model)
-[transcribe]   a chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe]   b chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe]   c chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe] chunks: 3 re-decoded, 0 reused
-[transcribe] 'fake-model' via apple -> segments.json
-  a                        segments=   1  duration=6.0  chunks=1
-  b                        segments=   1  duration=6.0  chunks=1
-  c                        segments=   1  duration=6.0  chunks=1
-[reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/record.json
-  00:00:00.000 [Speaker 1] chunk
-[export] md   -> $FIXTURE/run/export/record.md
-[export] srt  -> $FIXTURE/run/export/record.srt
-[export] vtt  -> $FIXTURE/run/export/record.vtt
-[export] json -> $FIXTURE/run/export/record.json
+[ingest] 3 / 3
+[align] 1 / 1
+[transcribe] 3 / 3
+[reconcile] 1 / 1
+[export] 4 / 4
+[run] 1 done
 [next] the record is in $FIXTURE/run/export; review it and accept the minutes in the console: `clear-record web`
 $ clear-record calibrate
 [ingest] decode a.wav -> a.wav
@@ -301,10 +278,16 @@ def _fixture(workspace: Path) -> Path:
     return workspace
 
 
-def _capture(root: Path) -> str:
+def _capture(root: Path, bring_up) -> str:
     """Run the stage commands over a fresh workspace under ``root``.
 
     Returns their stdout with the fixture root replaced by ``$FIXTURE``.
+
+    A node is up for the whole capture: ``run``'s stages execute on it (ADR-0032,
+    a command-line run is the node's run), and this is the only block that needs
+    one. It is brought up the way a posture brings one up — the app on an
+    ephemeral port, its address recorded — and it is the same app object, so the
+    block's bytes are the surface's, not a stub's.
     """
     monkey = pytest.MonkeyPatch()
     try:
@@ -331,16 +314,17 @@ def _capture(root: Path) -> str:
         runner = CliRunner()
         group = cli._build_group()
         captured = ""
-        for name, commands in _BLOCKS:
-            workspace = _fixture(root / name)
-            for command in commands:
-                result = runner.invoke(group, [*command, str(workspace)])
-                assert result.exit_code == 0, (
-                    command,
-                    result.output,
-                    result.exception,
-                )
-                captured += f"$ clear-record {' '.join(command)}\n{result.output}"
+        with bring_up(root=root):
+            for name, commands in _BLOCKS:
+                workspace = _fixture(root / name)
+                for command in commands:
+                    result = runner.invoke(group, [*command, str(workspace)])
+                    assert result.exit_code == 0, (
+                        command,
+                        result.output,
+                        result.exception,
+                    )
+                    captured += f"$ clear-record {' '.join(command)}\n{result.output}"
         for form in (str(root), str(root.resolve())):
             captured = captured.replace(form, "$FIXTURE")
         return captured
@@ -348,6 +332,6 @@ def _capture(root: Path) -> str:
         monkey.undo()
 
 
-def test_commands_print_the_pinned_bytes(tmp_path: Path) -> None:
+def test_commands_print_the_pinned_bytes(tmp_path: Path, node_in_this_process) -> None:
     """Every command's default stdout, byte for byte, over one capture."""
-    assert _capture(tmp_path) == _GOLDEN
+    assert _capture(tmp_path, node_in_this_process) == _GOLDEN

@@ -13,6 +13,12 @@ The parser is **Click** (ADR-0022). The two properties the port must keep are:
   and this module renders every word of what they returned and reported, pinned
   command by command in ``tests/cli/test_stage_stdout.py``.
 
+`run` is the one command that does not run a stage here: a run started from the
+command line is a **node run** (ADR-0032), so it names its workspace in one
+request to the recorded node and follows the row the node owns
+(:mod:`clear_record.cli.runs`). The stage commands and `calibrate` keep the
+in-process path above, which is why the byte pin still covers them.
+
 A run knob — its flag spelling, its ``CR_*`` binding, its type and its ``--help``
 text — is declared once, in ``core.options.RUN_KNOBS``; the options for
 ``transcribe``/``run``/``calibrate`` are generated from those rows. Each generated
@@ -74,6 +80,9 @@ from clear_record.providers import (
 )
 
 from clear_record.cli.calibrate import calibrate_report
+from clear_record.cli.runs import CLI_ORIGIN, Refused
+from clear_record.cli.runs import follow as follow_run
+from clear_record.cli.runs import start as start_run
 from clear_record.cli.synth import synth
 from clear_record.pipeline import auto
 from clear_record.pipeline import stages
@@ -800,7 +809,9 @@ def _render_export(written: dict[str, Path], _workspace: Workspace) -> None:
 
 
 #: One renderer per declared stage: the single-stage commands call these
-#: directly, and ``run`` renders each stage through the same table.
+#: directly, and ``calibrate``'s run renders each stage through the same table.
+#: ``run`` does not: its stages run on the node, which streams their progress
+#: rather than their words (see ``clear_record.cli.runs``).
 _RENDERERS: dict[Step, Callable[[Any, Workspace], None]] = {
     Step.INGEST: _render_ingest,
     Step.ALIGN: _render_align,
@@ -816,9 +827,14 @@ def _render_stage(workspace: Workspace, step: Step, result: Any) -> None:
 
 
 def _run_pipeline(directory: str, options: PipelineOptions) -> None:
-    """Run the whole pipeline, rendering each stage's block as it lands.
+    """Run the whole pipeline in this process, rendering each stage as it lands.
 
-    ``on_result`` is what keeps a run's stdout in one order: a stage's own lines
+    ``run`` does **not** come through here any more: a command-line run is the
+    node's run (ADR-0032, :func:`_cmd_run`). What is left is ``calibrate``, whose
+    subject is this machine's own measurement of a workspace — it runs the
+    pipeline and then reports the numbers it reads from that workspace.
+
+    ``on_result`` is what keeps the run's stdout in one order: a stage's own lines
     are printed through the sink while it works, so its summary has to be
     rendered the moment that stage finishes rather than after the last one.
     """
@@ -947,16 +963,163 @@ def _cmd_export(**kwargs: Any) -> int:
     return 0
 
 
-def _cmd_run(**kwargs: Any) -> int:
-    _run_pipeline(kwargs["directory"], _options(kwargs))
-    print(
-        tr(
-            "[next] the record is in {directory}/export; review it and accept "
-            "the minutes in the console: `clear-record web`",
-            directory=kwargs["directory"],
-        )
+# --------------------------------------------------------------------------- #
+# `run`: the one command whose stages execute on the node
+# --------------------------------------------------------------------------- #
+def _asked(name: str, value: Any) -> bool:
+    """Whether option *name* was set rather than left at the parser's default.
+
+    An unset knob or flag is ``None`` (the knob table's own sentinel), ``False``
+    or empty. ``--models-dir`` is the one exception: its parser default is a
+    *value* — the directory this machine resolves (``resolve_models_dir``, a
+    click default callable) — so it counts as asked only when the parsed value
+    differs from that. ``0`` counts as asked: a false-y value the user typed is
+    still a value (``--window-s 0``).
+    """
+    if name == "models_dir":
+        return value != resolve_models_dir()
+    return value is not None and value is not False and value != () and value != ""
+
+
+#: The run knobs a node run cannot carry yet, from the knob declaration itself:
+#: the rows whose value the node's run request has no field for (``jobs`` is one
+#: it does), by the parsed argument each lands in and the flag a refusal names.
+_NODE_RUN_UNSETTABLE = tuple(
+    (knob.name, knob.cli[0]) for knob in RUN_KNOBS if knob.name != "jobs"
+) + (
+    ("models_dir", "--models-dir"),
+    ("glossary", "--glossary"),
+    ("check_plugin", "--check-plugin"),
+    ("diarize", "--diarize"),
+    ("no_diarize", "--no-diarize"),
+    ("speakers", "--speakers"),
+    ("attribute_energy", "--attribute-energy"),
+    ("mixed_source", "--mixed-source"),
+    ("window_s", "--window-s"),
+    ("reference", "--reference"),
+    ("rerun_sources", "--rerun-source"),
+    ("rerun_range", "--rerun-range"),
+)
+
+#: The parsed `run` arguments the node's run request **does** carry, so a check
+#: that every flag of `run` is accounted for can tell the two sets apart.
+_NODE_RUN_CARRIED = frozenset(
+    {
+        "backend",
+        "model",
+        "language",
+        "resume",
+        "jobs",
+        "profile",
+        "auto",
+        # One value between them (`--split-channels` / `--mix-down` → `split`).
+        "split_channels",
+        "mix_down",
+    }
+)
+
+
+def _node_run_refusal(args: Any) -> str | None:
+    """The sentence refusing the flags a node run cannot carry, or ``None``.
+
+    A run on the node executes with the node's own run request, so a knob the
+    request does not declare can neither be passed nor honoured. Dropping it
+    silently is what this refuses: the user asked for it, and a run that ignored
+    the request while reporting success would be a lie about what ran — the same
+    rule the chunk scope already states ("the scope is never quietly dropped").
+    Every flag the user set is named in one sentence, so one edit fixes them all.
+    """
+    asked = [
+        flag
+        for name, flag in _NODE_RUN_UNSETTABLE
+        if _asked(name, getattr(args, name, None))
+    ]
+    if not asked:
+        return None
+    return tr(
+        "a node run cannot set {flags} yet: it runs with what the node's run API "
+        "declares, and nothing is dropped",
+        flags=", ".join(asked),
     )
-    return 0
+
+
+def _node_run_body(args: Any, *, split: str) -> dict:
+    """The node's own run request, filled from the parsed flags.
+
+    Only the fields the node's run API declares are named here, with its names
+    and its spellings for the shared ones; the flags it does not declare are
+    refused by :func:`_node_run_refusal` before this is reached. The origin is the
+    command line's own (``cli``), which is what puts this run in the console's
+    list as one a person started.
+
+    ``split`` is the value the shared channel mapper produced
+    (:func:`_split_value`), passed in by the caller that already ran it — the
+    mapping is stated once, for both the validation and the request.
+    """
+    return {
+        "backend": args.backend,
+        "model": args.model,
+        "language": args.language,
+        "split": split,
+        "resume": args.resume,
+        "jobs": args.jobs or 0,
+        "profile": args.profile or PROFILE_CUSTOM,
+        "auto": bool(args.auto),
+        "origin": CLI_ORIGIN,
+    }
+
+
+def _cmd_run(**kwargs: Any) -> int:
+    """Run the workspace on the node, and follow the run the node owns.
+
+    ADR-0032: a run started here is a **node run** — it joins the one run per node
+    queue, is recorded with the ``cli`` origin, and is followed from the node. So
+    this needs a node: with none recorded (or a recorded one that does not
+    answer) that is one sentence, never a local fallback.
+
+    Everything the flags alone can decide is decided **before** the node is
+    touched — a usage error neither needs a node nor brings one up — and every
+    refusal raises rather than returning a code, because a code this command
+    returns would be swallowed by Click's standalone mode (the group is what the
+    tests drive; ``main`` is what turns a return into an exit code).
+    """
+    args = SimpleNamespace(**kwargs)
+    split = _split_value(args.split_channels, args.mix_down)
+    _do_diarize(args.diarize, args.no_diarize)
+    refusal = _node_run_refusal(args)
+    if refusal is not None:
+        raise click.UsageError(refusal)
+    try:
+        address = node.ask()
+    except node.NoNodeError as exc:
+        raise SystemExit(str(exc)) from exc
+    directory = str(Path(kwargs["directory"]).resolve())
+    try:
+        started = start_run(address, directory, _node_run_body(args, split=split))
+    except Refused as exc:
+        # The node's own sentence (its ``detail``), rendered here because this is
+        # the surface a person reads it on.
+        raise SystemExit(tr(str(exc))) from exc
+    state = follow_run(address, started.run_id)
+    # The run's own end, in the node's own words: the status value (machine-read
+    # by design, printed verbatim like the console's badge) and, when the run
+    # wrote one, its stored reason — a message ID the service composed, rendered
+    # here because this is where a person reads it.
+    end = f"[run] {started.run_id} {state.status}"
+    if state.succeeded:
+        print(end)
+        print(
+            tr(
+                "[next] the record is in {directory}/export; review it and accept "
+                "the minutes in the console: `clear-record web`",
+                directory=directory,
+            )
+        )
+        return 0
+    print(end, file=sys.stderr)
+    if state.error:
+        print(tr(state.error), file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _cmd_calibrate(**kwargs: Any) -> int:

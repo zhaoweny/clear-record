@@ -381,7 +381,10 @@ workspace exactly as it would over a `--dir` one — an uploaded tape is added t
 the meeting's tape set like a path is, so runs, archiving and the MCP surface
 need no new plumbing ([ADR-0024](adr/0024-managed-workspace-tape-upload.md)).
 ADR-0007 is amended only here: a `--dir` workspace and a meeting's user-chosen
-`workspace_path` stay user documents.
+`workspace_path` stay user documents — about **where the files live**. Since
+[ADR-0032](adr/0032-the-node-and-its-clients.md) that is not the whole story
+about a **run**: `clear-record run` starts a run the node owns and records, so a
+run over a workspace writes a registry row and a client needs a node to talk to.
 
 ### The managed root
 
@@ -479,13 +482,15 @@ console process's memory:
 - **The active-run guard is read from the registry**, so a stale `running` row
   can no longer be silently doubled by a second start.
 
-[FACT, repo] Every writer shares **one queue**. The console and the agent's MCP
-server both enqueue into the same registry FIFO, and the move from `queued` to
-`running` is **one conditional update**, so exactly one of them executes a run:
-a second claimant loses cleanly and goes back to waiting, and a run the node is
-already busy with is not claimable at all. Each run records the **origin** it was
-started from — `console`, `api`, `mcp` or `cli` — so the row itself says where
-the work came from.
+[FACT, repo] Every writer shares **one queue**. The console, the agent's MCP
+server and the command line all enqueue into the same registry FIFO — `clear-record
+run` is a client of the node (ADR-0032), so it starts its run there instead of
+running the pipeline in its own process — and the move from `queued` to `running`
+is **one conditional update**, so exactly one of them executes a run: a second
+claimant loses cleanly and goes back to waiting, and a run the node is already
+busy with is not claimable at all. Each run records the **origin** it was started
+from — `console`, `api`, `mcp` or `cli` — so the row itself says where the work
+came from.
 
 [DESIGN] The node runs **one pipeline run at a time** — a persisted FIFO queue
 in the registry. Starting a run while another is executing **enqueues** it and

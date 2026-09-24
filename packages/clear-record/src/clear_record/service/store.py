@@ -433,6 +433,17 @@ def _slugify(name: str) -> str:
     return slug or "project"
 
 
+def _resolved_workspace(path: str) -> str:
+    """A workspace path in the one spelling the registry compares by.
+
+    A command-line run names a *directory*, and the same directory can be named
+    relatively, with a trailing separator, or through a symlink. Resolving is
+    what makes those one meeting rather than a new one per spelling
+    (:meth:`Registry.workspace_meeting`).
+    """
+    return str(Path(path).expanduser().resolve())
+
+
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 
 
@@ -1014,6 +1025,35 @@ class Registry:
         with self._session() as session:
             latest = tapestore.latest_set(session, meeting_id)
             return self._recording_set(latest) if latest is not None else None
+
+    # --- a workspace directory's meeting ----------------------------------- #
+    def meeting_for_workspace(self, directory: str) -> Meeting:
+        """The meeting this node runs *directory* as — found, or registered here.
+
+        The command line's subject is a workspace **directory** (``--dir``) and
+        this node's subjects are meetings, so this method is that one
+        translation, in one place (ADR-0032): the meeting whose
+        ``workspace_path`` *is* the directory — compared by resolved path, so a
+        relative, trailing-separator or symlinked spelling is the same
+        workspace — or, when the node has none, a meeting registered under the
+        project its directory names and titled after it.
+
+        A meeting registered here carries ``recorded_at=None`` and status
+        ``new``, exactly as the console's own create does: what a directory holds
+        is not a date, and the run that follows is what moves the meeting on. Its
+        **tapes are set by the run path**, not here: the registry stores metadata
+        and never walks a workspace, so ``runs.workspace_run_meeting`` is what
+        reads the directory's audio into the meeting's tape set.
+        """
+        resolved = _resolved_workspace(directory)
+        for meeting in self.list_meetings():
+            if meeting.workspace_path and (
+                _resolved_workspace(meeting.workspace_path) == resolved
+            ):
+                return meeting
+        name = Path(resolved).name or resolved
+        project = self.get_project(_slugify(name)) or self.create_project(name)
+        return self.create_meeting(project.slug, name, workspace_path=resolved)
 
     # --- uploaded tapes ---------------------------------------------------- #
     def register_tape(

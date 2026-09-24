@@ -2,8 +2,11 @@
 
 Deliberately **Qt-free**: the tray icon is a thin shell over this, so the
 supervision logic (start, wait-until-ready, live state, stop, restart) is
-testable without a display — and reusable by a future
-`clear-record serve --supervise` on a headless node.
+testable without a display. What it supervises is a node **embedded in this
+process** — that is the tray's posture, and it is why the controller owns the
+thread. A node that *is* its own process needs no such controller: the headless
+node's supervisor is ``clear-record serve --supervise``, which restarts the
+server inside the node's own process (:func:`clear_record.web.app.serve`).
 
 Starting the server here is starting a **node**: the server records the address
 it bound where the surfaces resolve it (:mod:`clear_record.core.node`), and the

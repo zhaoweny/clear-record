@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import webbrowser
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -2105,6 +2106,13 @@ def create_app(
     return app
 
 
+#: How long a supervised node waits before starting a server that crashed again.
+#: A fault that repeats should not be restarted in a tight loop; this is the floor
+#: a systemd ``RestartSec`` would give, kept here so ``serve --supervise`` needs no
+#: unit file to be safe.
+_RESTART_PAUSE = 1.0
+
+
 def _open_console(server: NodeServer, requested: node.NodeAddress) -> None:
     """Open the console at the address the server is **serving**.
 
@@ -2124,6 +2132,7 @@ def serve(
     data_dir: str | None = None,
     trusted_hosts: Sequence[str] | None = None,
     log_config: dict | None = None,
+    supervise: bool = False,
 ) -> int:
     """Run the console; called by the ``clear-record web`` and ``serve`` handlers.
 
@@ -2137,25 +2146,52 @@ def serve(
     config so a headless node's logs land beside every other clear-record record;
     ``None`` keeps uvicorn's own (stderr) logging, which is right for the
     interactive console.
+
+    ``supervise`` keeps **this process** owning a node: a server that stops
+    without being asked — a crash, or a return no stop requested — is started
+    again over the same registry, after :data:`_RESTART_PAUSE` so a fault that
+    repeats cannot spin. A stop that *was* asked for ends the process as it does
+    an unsupervised node: ``POST /api/shutdown`` and the signals uvicorn handles
+    (Ctrl-C, ``SIGTERM``) both set ``should_exit``. This is the headless stand-in
+    for a systemd/launchd unit, and what ``serve --supervise`` passes.
     """
-    app = create_app(Registry.open(data_dir=data_dir), trusted_hosts=trusted_hosts)
-    extra = {} if log_config is None else {"log_config": log_config}
-    config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
-    server = NodeServer(config)
-    # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
-    # build has no terminal to interrupt.
-    app.state.server = server
-    if open_browser:
-        threading.Timer(
-            0.8, _open_console, args=(server, node.NodeAddress.of(host, port))
-        ).start()
-    try:
-        server.run()
-    finally:
-        # A clean SIGTERM/stop stops the queue draining; a run still executing
-        # is left for startup reconciliation on the next boot (one run per node).
-        app.state.runs.shutdown()
-    return 0
+    registry = Registry.open(data_dir=data_dir)
+    while True:
+        app = create_app(registry, trusted_hosts=trusted_hosts)
+        extra = {} if log_config is None else {"log_config": log_config}
+        config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
+        server = NodeServer(config)
+        # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
+        # build has no terminal to interrupt.
+        app.state.server = server
+        if open_browser:
+            threading.Timer(
+                0.8, _open_console, args=(server, node.NodeAddress.of(host, port))
+            ).start()
+        try:
+            server.run()
+        except Exception:
+            # Only a supervised node survives its server crashing: without the
+            # flag the exception ends the process exactly as it always has. The
+            # traceback is logged (into the sink, for ``serve``) rather than
+            # swallowed, and ``SystemExit``/``KeyboardInterrupt`` are not caught
+            # here — a port the node cannot take is not a fault to retry.
+            if not supervise:
+                raise
+            logging.getLogger("uvicorn.error").exception(
+                "clear-record: the node stopped with an error; starting it again"
+            )
+        finally:
+            # A clean SIGTERM/stop stops the queue draining; a run still executing
+            # is left for startup reconciliation on the next boot (one run per
+            # node).
+            app.state.runs.shutdown()
+        if not supervise or server.should_exit:
+            return 0
+        # Supervised, and no stop was asked for: the node is started again, over
+        # the same registry, with a new ``NodeServer`` recording the address
+        # afresh.
+        time.sleep(_RESTART_PAUSE)
 
 
 __all__ = ["NodeOut", "NodeServer", "create_app", "serve"]

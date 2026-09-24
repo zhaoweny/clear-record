@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-24 23:53+0800\n"
+"POT-Creation-Date: 2026-09-25 00:24+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -25,36 +25,36 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:97
+#: packages/clear-record/src/clear_record/cli/cli.py:99
 msgid "clear-record: from many recordings to one clear record."
 msgstr "clear-record：从众多录音到一份清晰的记录。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#: packages/clear-record/src/clear_record/cli/cli.py:100
+#: packages/clear-record/src/clear_record/cli/cli.py:102
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/cli/cli.py:256
+#: packages/clear-record/src/clear_record/cli/cli.py:258
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:272
+#: packages/clear-record/src/clear_record/cli/cli.py:274
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
 msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:292
+#: packages/clear-record/src/clear_record/cli/cli.py:294
 #, python-brace-format
 msgid ""
 "{path} is a file, not a directory: this command expects a directory of "
 "audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:637
+#: packages/clear-record/src/clear_record/cli/cli.py:639
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -66,47 +66,53 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:854
+#: packages/clear-record/src/clear_record/cli/cli.py:868
+msgid ""
+"clear-record's work happens on a node, and no node can start on this "
+"machine; run `clear-record serve` to see why it cannot"
+msgstr "clear-record 的工作在节点上进行，而本机无法启动节点；请运行 `clear-record serve` 查看原因"
+
+#: packages/clear-record/src/clear_record/cli/cli.py:954
 #, python-brace-format
 msgid "the node is listening at {url}"
 msgstr "节点正在监听 {url}"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:954
+#: packages/clear-record/src/clear_record/cli/cli.py:1061
 #, python-brace-format
 msgid ""
 "[next] the record is in {directory}/export; review it and accept the "
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1002
+#: packages/clear-record/src/clear_record/cli/cli.py:1109
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1017
+#: packages/clear-record/src/clear_record/cli/cli.py:1124
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1024
+#: packages/clear-record/src/clear_record/cli/cli.py:1131
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1031
+#: packages/clear-record/src/clear_record/cli/cli.py:1138
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1038
+#: packages/clear-record/src/clear_record/cli/cli.py:1145
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1045
+#: packages/clear-record/src/clear_record/cli/cli.py:1152
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1051
+#: packages/clear-record/src/clear_record/cli/cli.py:1158
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 
@@ -1036,7 +1042,14 @@ msgid ""
 "the diagnostics sink, one run per node"
 msgstr "为服务管理器运行无界面控制台：不打开浏览器，日志写入诊断接收器，每个节点一个运行实例"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:211
+#: packages/clear-record/src/clear_record/web/__init__.py:180
+msgid ""
+"keep this process owning the node: a server that stops without being "
+"asked is started again, while a stop request or a signal ends it as it "
+"does an unsupervised node"
+msgstr ""
+
+#: packages/clear-record/src/clear_record/web/__init__.py:224
 msgid ""
 "--tailscale-host / --tailscale-port configure Serve; pass --tailscale too"
 " (or set CR_TRUSTED_HOSTS to trust a hostname without Serve)."
@@ -1044,12 +1057,12 @@ msgstr ""
 "--tailscale-host / --tailscale-port 用于配置 Serve；请同时传入 --tailscale（或设置 "
 "CR_TRUSTED_HOSTS 以在不使用 Serve 的情况下信任某个主机名）。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:219
+#: packages/clear-record/src/clear_record/web/__init__.py:232
 #, python-brace-format
 msgid "--tailscale-port {port} is not a port number (1-65535)."
 msgstr "--tailscale-port {port} 不是有效的端口号（1–65535）。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:321
+#: packages/clear-record/src/clear_record/web/__init__.py:338
 #, python-brace-format
 msgid ""
 "--tailscale sets up Tailscale Serve against http://127.0.0.1:<port>, but "
@@ -1064,7 +1077,7 @@ msgstr ""
 "  请去掉 --host（控制台默认绑定 127.0.0.1），或去掉 "
 "--tailscale，改用自己的代理置于回环控制台之前（ADR-0021）。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:352
+#: packages/clear-record/src/clear_record/web/__init__.py:369
 #, python-brace-format
 msgid ""
 "--tailscale-host {override!r} is not a bare hostname.\n"
@@ -1073,7 +1086,7 @@ msgstr ""
 "--tailscale-host {override!r} 不是裸主机名。\n"
 "    修正：传入 Tailscale 分配给你的名称，例如 machine.tailnet.ts.net。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:366
+#: packages/clear-record/src/clear_record/web/__init__.py:383
 #, python-brace-format
 msgid ""
 "[tailscale] {error}\n"
@@ -1083,7 +1096,7 @@ msgstr ""
 "[tailscale] {error}\n"
 "    控制台仍会启动，但无法通过 tailnet 访问。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:378
+#: packages/clear-record/src/clear_record/web/__init__.py:395
 #, python-brace-format
 msgid ""
 "[tailscale] port {port} is already served by Tailscale; leaving that "
@@ -1094,7 +1107,7 @@ msgstr ""
 "[tailscale] 端口 {port} 已由 Tailscale 提供服务；保留该映射不变。\n"
 "    如果它并未指向此控制台，请传入 --tailscale-port <port> 以暴露另一个 tailnet 端口。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:388
+#: packages/clear-record/src/clear_record/web/__init__.py:405
 #, python-brace-format
 msgid ""
 "[tailscale] console is now shared on your tailnet:\n"
@@ -1108,41 +1121,41 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:513
+#: packages/clear-record/src/clear_record/web/app.py:514
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:518
+#: packages/clear-record/src/clear_record/web/app.py:519
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:906
+#: packages/clear-record/src/clear_record/web/app.py:907
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:956
+#: packages/clear-record/src/clear_record/web/app.py:957
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1004
+#: packages/clear-record/src/clear_record/web/app.py:1005
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1222
+#: packages/clear-record/src/clear_record/web/app.py:1223
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1638
+#: packages/clear-record/src/clear_record/web/app.py:1639
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1670
+#: packages/clear-record/src/clear_record/web/app.py:1671
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"

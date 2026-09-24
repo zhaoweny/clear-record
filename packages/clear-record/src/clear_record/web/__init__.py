@@ -172,7 +172,17 @@ def register(group: click.Group) -> None:
             "logs to the diagnostics sink, one run per node"
         ),
     )
-    @_console_options()
+    @_console_options(
+        click.option(
+            "--supervise",
+            is_flag=True,
+            help=tr(
+                "keep this process owning the node: a server that stops without "
+                "being asked is started again, while a stop request or a signal "
+                "ends it as it does an unsupervised node"
+            ),
+        ),
+    )
     def _serve(
         host: str,
         port: int,
@@ -180,6 +190,7 @@ def register(group: click.Group) -> None:
         tailscale: bool,
         tailscale_host: str | None,
         tailscale_port: int | None,
+        supervise: bool,
     ) -> int:
         return _run(
             host=host,
@@ -190,6 +201,7 @@ def register(group: click.Group) -> None:
             tailscale_host=tailscale_host,
             tailscale_port=tailscale_port,
             service=True,
+            supervise=supervise,
         )
 
 
@@ -203,6 +215,7 @@ def _run(
     tailscale_host: str | None = None,
     tailscale_port: int | None = None,
     service: bool = False,
+    supervise: bool = False,
 ) -> int:
     _require_web_stack()
     if (tailscale_host is not None or tailscale_port is not None) and not tailscale:
@@ -250,6 +263,10 @@ def _run(
             port=port,
             data_dir=data_dir or "",
         )
+    # Only `serve --supervise` supervises; the unflagged callers keep calling
+    # `serve` with exactly the arguments they always have.
+    if supervise:
+        serve_kwargs["supervise"] = True
     try:
         return serve(
             host=host,

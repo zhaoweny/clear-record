@@ -49,6 +49,7 @@ from click.testing import CliRunner
 
 from clear_record.cli import cli
 from clear_record.core import Segment, TranscriptionResult
+from clear_record.core import node as node_address
 from clear_record.core.process import ProcessRunner
 from clear_record.pipeline import stages
 from clear_record.providers import BackendBase, BackendInfo
@@ -323,6 +324,17 @@ def _capture(root: Path) -> str:
         # id they print is therefore the catalog's default, which keeps that
         # line tied to the declaration rather than to a literal in this file.
         monkey.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+        # The `run` aggregate now ensures a node before it does its work. The node
+        # is a process of its own (`clear-record serve`), and starting one is not
+        # what this pin measures — the pin is the bytes the command prints — so the
+        # ensure is stubbed rather than left to start a real node on this machine.
+        monkey.setattr(
+            cli,
+            "ensure_node",
+            lambda **kwargs: node_address.NodeAddress.of(
+                node_address.DEFAULT_HOST, node_address.DEFAULT_PORT
+            ),
+        )
 
         # Cold: a warm chunk cache prints cached/kept lines instead, and the pin
         # would then describe the cache's state rather than the stages' output.

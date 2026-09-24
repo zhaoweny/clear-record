@@ -464,6 +464,9 @@ UNTRANSLATED_IDS = frozenset(
     {
         "bind address (default localhost)",
         "do not open a browser window",
+        "keep this process owning the node: a server that stops without being "
+        "asked is started again, while a stop request or a signal ends it as it "
+        "does an unsupervised node",
         "override the app data directory (default: CR_DATA_DIR / the platform "
         "data directory)",
         "port (default {port})",

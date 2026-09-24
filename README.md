@@ -356,6 +356,13 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 ```
 
 Running `clear-record web` without the extra prints the exact install command.
+`clear-record serve`, from the same install, is the same console **headless** —
+no browser, and its logs go to the app-owned diagnostics sink instead of the
+terminal; `clear-record serve --supervise` keeps it up by itself: a server that
+stops without being asked is started again, while an asked-for stop or a signal
+ends it as it does an unsupervised node. That is the stand-in when there is no
+systemd/launchd unit — see the
+[deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
 `--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
 server binds `127.0.0.1` by default and needs no account — leave `--host` on
 loopback and let your proxy be the ingress

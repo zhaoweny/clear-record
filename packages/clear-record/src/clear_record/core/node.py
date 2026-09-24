@@ -239,6 +239,40 @@ def address() -> NodeAddress:
     return current
 
 
+def _send(
+    target: NodeAddress,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    timeout: float,
+) -> tuple[int, bytes]:
+    """One request to the node: its status line and its body's bytes.
+
+    The transport both readers share. Every failure that means *nothing answered*
+    — a refused connection, a timeout, a listener that does not speak HTTP — is
+    :class:`NoNodeError`; an **HTTP** answer is never one of them, whatever its
+    status, because that is the node talking and its words are the caller's to
+    render.
+    """
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    sent = urllib.request.Request(target.url_for(path), data=data, method=method)
+    if data is not None:
+        sent.add_header("Content-Type", "application/json")
+    try:
+        with _OPENER.open(sent, timeout=timeout) as response:
+            return int(response.status), response.read()
+    except urllib.error.HTTPError as exc:  # an answer, not a transport failure
+        with exc:
+            return int(exc.code), exc.read()
+    except (
+        urllib.error.URLError,
+        http.client.HTTPException,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise NoNodeError() from exc
+
+
 def reach(
     target: NodeAddress,
     path: str = HEALTH_PATH,
@@ -253,20 +287,78 @@ def reach(
     answer as no record at all. Returning the body keeps the one client useful to
     a caller that wants the node's own answer rather than only its existence.
     """
-    try:
-        with _OPENER.open(target.url_for(path), timeout=timeout) as response:
-            if response.status != HTTPStatus.OK:
-                raise NoNodeError()
-            return response.read()
-    except NoNodeError:
-        raise
-    except (
-        urllib.error.URLError,
-        http.client.HTTPException,
-        OSError,
-        ValueError,
-    ) as exc:
-        raise NoNodeError() from exc
+    status, body = _send(target, "GET", path, None, timeout)
+    if status != HTTPStatus.OK:
+        raise NoNodeError()
+    return body
+
+
+@dataclass(frozen=True)
+class Answer:
+    """One answer from the node: its status and its decoded JSON body.
+
+    What a caller needs when it is not asking whether the node exists but doing
+    something with it: ``status`` is the HTTP status (``202`` for work accepted,
+    a ``4xx`` for the node's own refusal) and ``body`` is the decoded JSON — the
+    shape the API's own schema declares, or ``None`` for an empty body.
+    """
+
+    status: int
+    body: Any
+
+    @property
+    def ok(self) -> bool:
+        """Whether the node accepted the request (any 2xx)."""
+        return 200 <= self.status < 300
+
+    def detail(self) -> str:
+        """The node's own sentence for a refusal, if its body carries one.
+
+        The JSON API answers a refusal with ``{"detail": ...}``: a string for the
+        refusals it raises deliberately, a list for a request that does not match
+        its declared shape. Anything else is rendered verbatim rather than guessed
+        at, so a caller always has *something* of the node's to show.
+        """
+        if isinstance(self.body, Mapping):
+            detail = self.body.get("detail")
+            if isinstance(detail, str):
+                return detail
+            if detail is not None:
+                return json.dumps(detail)
+            return json.dumps(self.body)
+        return "" if self.body is None else str(self.body)
+
+
+def request(
+    target: NodeAddress,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None = None,
+    *,
+    timeout: float = 30.0,
+) -> Answer:
+    """Send one JSON ``method`` request to ``target`` and return its answer.
+
+    The client a **writing** surface needs, beside :func:`reach`: the health read
+    asks only whether 200 came back, while a submission has to be told *what* the
+    node answered — accepted, or refused in its own words — so the status and the
+    decoded body come back to the caller. A transport that never answered is still
+    :class:`NoNodeError`, so every surface reports the one sentence for a node
+    that is not there.
+
+    The timeout defaults to the generous end: a request that resolves a model or
+    reads a workspace before it answers is doing real work, unlike the probe.
+    """
+    status, payload = _send(target, method, path, body, timeout)
+    parsed: Any = None
+    if payload:
+        try:
+            parsed = json.loads(payload)
+        except ValueError:
+            # A body that is not JSON is still an answer: keep its text under the
+            # API's own refusal key, so one reader covers both.
+            parsed = {"detail": payload.decode("utf-8", "replace").strip()}
+    return Answer(status=status, body=parsed)
 
 
 def ask(path: str = HEALTH_PATH, *, timeout: float = 1.0) -> NodeAddress:
@@ -288,6 +380,7 @@ __all__ = [
     "DEFAULT_PORT",
     "HEALTH_PATH",
     "NO_NODE_MESSAGE",
+    "Answer",
     "NoNodeError",
     "NodeAddress",
     "address",
@@ -296,4 +389,5 @@ __all__ = [
     "reach",
     "record",
     "recorded",
+    "request",
 ]

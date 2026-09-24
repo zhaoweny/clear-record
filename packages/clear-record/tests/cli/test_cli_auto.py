@@ -4,7 +4,12 @@ The resolvers are pure over injected probes, so these drive them across whole
 machines — 8 vs 24 GB VRAM, 4 vs 16 cores, model present/absent, mono vs
 4-channel, long vs short tape — and assert both the choice and the explanation.
 The CLI wiring is asserted separately, with the real probes monkeypatched, so
-the default (no-flag) path is proved to run neither probe.
+the default (no-flag) path is proved to run neither probe. Those assertions drive
+``_pipeline_options`` — the wiring the stage verbs still resolve through — and
+the ``run`` argv among the rest, because ``run`` parses through the same table;
+what a command-line ``run`` no longer does is resolve its own options, since the
+**node** resolves them now (ADR-0032). That path, and what it prints back, lives
+in ``tests/cli/test_node_run.py``.
 """
 
 from __future__ import annotations

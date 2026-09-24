@@ -96,6 +96,7 @@ from clear_record.service import (
     resolve_run,
     run_hello_check,
     verify_archive,
+    workspace_run_meeting,
 )
 from clear_record.service.agent_flow import (
     download_transcription_model,
@@ -355,6 +356,28 @@ class RunCreate(BaseModel):
     #: machine and the tape, and record the resolver's explanation with the run.
     #: Never the default — a run is unchanged unless the caller asks.
     auto: bool = False
+    #: The surface that started this run, one of
+    #: :data:`~clear_record.service.lifecycle.RUN_ORIGINS`. ``api`` is the right
+    #: default for this edge: a caller that does not name itself is a script or an
+    #: integration. The command line names itself (``cli``) — the value the
+    #: service already declares for it — and the service refuses a value it does
+    #: not know, so the recorded origin is never an unknown value. (Which surface
+    #: may claim which name is not pinned per edge: a local client may send any
+    #: name the service declares.)
+    origin: str = "api"
+
+
+class WorkspaceRunCreate(RunCreate):
+    """A run a client starts over a workspace **directory** (ADR-0032).
+
+    The command line's subject is a directory (``--dir``), not a registry id, and
+    ``directory`` names it **on this node's filesystem** — a client and a node on
+    the same machine is what a local run means. Everything else is the meeting
+    route's own body, inherited rather than restated, so the two edges cannot
+    come to set different knobs.
+    """
+
+    directory: str
 
 
 class ArchiveCreate(BaseModel):
@@ -869,6 +892,65 @@ def create_app(
             "409.html",
             views.unreadable_row_context(locale(request), exc),
             status_code=409,
+        )
+
+    # --- the app's run submission: resolve a body on a meeting, enqueue it -- #
+    def enqueue_run(meeting: Meeting, body: RunCreate) -> RunSnapshotOut:
+        """Resolve one run body on *meeting* and enqueue it: the one submission.
+
+        The **two JSON edges** that start a run — ``POST /api/meetings/{id}/runs``
+        and ``POST /api/runs`` — come through here, so the resolver, the
+        in-flight guard, the refusal mapping and the recorded ``origin`` cannot
+        come to differ between them. (The console's own form edge,
+        ``POST /ui/meetings/{id}/runs``, is not one of them: it answers with a run
+        fragment rather than a snapshot, and pins ``origin='console'`` as it
+        resolves the picker's fields itself.)
+
+        The pre-check reads the live run before anything is written; a submission
+        that *raced* another client reads nothing there and is refused by
+        ``runs.start`` instead — the same condition for the same user, so the
+        re-read below is what tells that refusal (409) apart from the bad
+        requests (no workspace, no tape set), which stay 400.
+        """
+        if runs.active_state(meeting.id) is not None:
+            # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
+            # not a copy: the guard and the index must read the same to this
+            # client.
+            raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
+        options = PipelineOptions(
+            backend=body.backend,
+            model=body.model,
+            language=body.language,
+            split=body.split,
+            resume=body.resume,
+            jobs=body.jobs,
+        )
+        try:
+            resolved = resolve_run(
+                options,
+                profile=None if body.profile == PROFILE_CUSTOM else body.profile,
+                auto=body.auto,
+                directory=meeting.workspace_path,
+            )
+        except ModelNotOnDisk as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NoBackendAvailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            run = runs.start(
+                meeting, resolved.options, auto=resolved.meta, origin=body.origin
+            )
+        except ValueError as exc:
+            # A refusal the start path made (see the docstring above), or an
+            # ``origin`` the service does not know.
+            if runs.active_state(meeting.id) is not None:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RunSnapshotOut(
+            run=RunOut.model_validate(run),
+            state=runs.require_state(run.id).summary(),
         )
 
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
@@ -1988,50 +2070,20 @@ def create_app(
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
     def start_run(meeting_id: int, body: RunCreate) -> RunSnapshotOut:
         meeting = lookup.meeting(registry, meeting_id)
-        if runs.active_state(meeting_id) is not None:
-            # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
-            # not a copy: the guard and the index must read the same to this
-            # client.
-            raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
-        options = PipelineOptions(
-            backend=body.backend,
-            model=body.model,
-            language=body.language,
-            split=body.split,
-            resume=body.resume,
-            jobs=body.jobs,
-        )
-        try:
-            resolved = resolve_run(
-                options,
-                profile=None if body.profile == PROFILE_CUSTOM else body.profile,
-                auto=body.auto,
-                directory=meeting.workspace_path,
-            )
-        except ModelNotOnDisk as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except NoBackendAvailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin="api"
-            )
-        except ValueError as exc:
-            # A refusal the start path made. The pre-check above reads the live
-            # run before anything is written, so a submission that *raced* another
-            # client reads nothing there and is refused here instead — the same
-            # condition for the same user, and it answers the same 409. The
-            # re-read is what tells that apart from the bad requests (no
-            # workspace, no tape set), which stay 400.
-            if runs.active_state(meeting_id) is not None:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return RunSnapshotOut(
-            run=RunOut.model_validate(run),
-            state=runs.require_state(run.id).summary(),
-        )
+        return enqueue_run(meeting, body)
+
+    @app.post("/api/runs", status_code=202)
+    def start_workspace_run(body: WorkspaceRunCreate) -> RunSnapshotOut:
+        """Start a run over a workspace directory on **this node** (ADR-0032).
+
+        Where the command line's ``run`` reaches the node. The directory is
+        resolved to the meeting this node runs it as, with the audio the
+        directory holds as its tapes (``service.runs.workspace_run_meeting``),
+        and the run then takes the same path the meeting route takes: one queue,
+        one claim, one row, with ``origin`` naming the surface that asked.
+        """
+        meeting = workspace_run_meeting(registry, body.directory)
+        return enqueue_run(meeting, body)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: int) -> RunSnapshotOut:

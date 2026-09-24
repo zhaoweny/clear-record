@@ -1,12 +1,15 @@
 """The commands' default stdout, pinned byte for byte.
 
 ``cli/cli.py`` states the contract — the stages print nothing and the command
-surface renders every word of what they returned and reported, so the commands'
-default stdout is byte-identical — and nothing enforced it: the suite's only
-exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
+surface renders every word of what they returned and reported, so a stage
+command's default stdout is byte-identical — and nothing enforced it: the suite's
+only exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
 every other stage assertion is a substring check. This module is the pin: the
 eight stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
-actually types, and the ``synth`` development command.
+actually types, and the ``synth`` development command. ``run`` is the one block
+whose lines are not this surface's rendering: a command-line run is the node's
+(ADR-0032), so they are the node's own progress, read back by the follower
+(``cli/runs.py``) and pinned here as it comes over.
 
 What makes it a stable pin rather than a flaky one:
 
@@ -22,6 +25,12 @@ What makes it a stable pin rather than a flaky one:
   lines of a second pass;
 - ``CR_LANG=en``, and every other ``CR_*`` variable cleared, so the machine's
   own environment cannot reach a knob or swap the catalog;
+- the ``run`` block carries no ``[queued]`` line, and does not here: the follower
+  prints a run's queue place only from a **poll** (``cli.runs.follow`` — the
+  read after the one it starts with), and this node has one run and nothing
+  gating it, so the run is claimed within milliseconds while that poll is a
+  second away. A run that is *still* queued a full poll after the node accepted
+  it is the only thing that adds a line there;
 - the fixture directory is normalised out of the captured text, because every
   printed path is absolute;
 - nothing machine- or clock-derived is printed at all: the fake backend sizes
@@ -56,8 +65,10 @@ from clear_record.providers import BackendBase, BackendInfo
 
 #: The whole capture, in the order it was taken. Regenerate by running
 #: :func:`_capture` once and pasting its text here; a mismatch is a byte-level
-#: diff. The bytes are the **pre-move** ones — every block was captured against
-#: 1277852 — so the pin doubles as the move's equivalence check.
+#: diff. Every block but ``run`` is the **pre-move** one — captured against
+#: 1277852 — so those double as the move's equivalence check. ``run`` is not one
+#: of them: a command-line run is the node's now (ADR-0032), so its lines are the
+#: node-side progress the follower reads back, re-pinned by 244 when that landed.
 _GOLDEN = """\
 $ clear-record glossary --add Clear Record --add Oh My Pi
 [glossary] $FIXTURE/tape/glossary.txt (2 term(s))
@@ -109,35 +120,12 @@ $ clear-record export
 [export] vtt  -> $FIXTURE/tape/export/record.vtt
 [export] json -> $FIXTURE/tape/export/record.json
 $ clear-record run
-[ingest] decode a.wav -> a.wav
-[ingest] decode b.wav -> b.wav
-[ingest] decode c.wav -> c.wav
-[ingest] 3 source(s) -> $FIXTURE/run/manifest.json
-  a                        $FIXTURE/run/audio/a.wav
-  b                        $FIXTURE/run/audio/b.wav
-  c                        $FIXTURE/run/audio/c.wav
-[align] reference=a method=windowed-cross-correlation conf=1.0 unresolved=1
-  a                        offset=+0.0000s (ref)
-  b                        offset=+0.0000s
-  c                        UNRESOLVED (could not place this source)
-[transcribe] a: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] b: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] c: 1 chunk(s), 6.0s, fake decoder (fake-model)
-[transcribe] 3 pending chunk(s), jobs=1 (fake-model)
-[transcribe]   a chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe]   b chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe]   c chunk 1/1 [0-6s] -> 1 segment(s)
-[transcribe] chunks: 3 re-decoded, 0 reused
-[transcribe] 'fake-model' via apple -> segments.json
-  a                        segments=   1  duration=6.0  chunks=1
-  b                        segments=   1  duration=6.0  chunks=1
-  c                        segments=   1  duration=6.0  chunks=1
-[reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/record.json
-  00:00:00.000 [Speaker 1] chunk
-[export] md   -> $FIXTURE/run/export/record.md
-[export] srt  -> $FIXTURE/run/export/record.srt
-[export] vtt  -> $FIXTURE/run/export/record.vtt
-[export] json -> $FIXTURE/run/export/record.json
+[ingest] 3 / 3
+[align] 1 / 1
+[transcribe] 3 / 3
+[reconcile] 1 / 1
+[export] 4 / 4
+[run] #1 done
 [next] the record is in $FIXTURE/run/export; review it and accept the minutes in the console: `clear-record web`
 $ clear-record calibrate
 [ingest] decode a.wav -> a.wav
@@ -302,10 +290,16 @@ def _fixture(workspace: Path) -> Path:
     return workspace
 
 
-def _capture(root: Path) -> str:
+def _capture(root: Path, bring_up) -> str:
     """Run the stage commands over a fresh workspace under ``root``.
 
     Returns their stdout with the fixture root replaced by ``$FIXTURE``.
+
+    A node is up for the whole capture: ``run``'s stages execute on it (ADR-0032,
+    a command-line run is the node's run), and this is the only block that needs
+    one. It is brought up the way a posture brings one up — the app on an
+    ephemeral port, its address recorded — and it is the same app object, so the
+    block's bytes are the surface's, not a stub's.
     """
     monkey = pytest.MonkeyPatch()
     try:
@@ -343,16 +337,17 @@ def _capture(root: Path) -> str:
         runner = CliRunner()
         group = cli._build_group()
         captured = ""
-        for name, commands in _BLOCKS:
-            workspace = _fixture(root / name)
-            for command in commands:
-                result = runner.invoke(group, [*command, str(workspace)])
-                assert result.exit_code == 0, (
-                    command,
-                    result.output,
-                    result.exception,
-                )
-                captured += f"$ clear-record {' '.join(command)}\n{result.output}"
+        with bring_up(root=root):
+            for name, commands in _BLOCKS:
+                workspace = _fixture(root / name)
+                for command in commands:
+                    result = runner.invoke(group, [*command, str(workspace)])
+                    assert result.exit_code == 0, (
+                        command,
+                        result.output,
+                        result.exception,
+                    )
+                    captured += f"$ clear-record {' '.join(command)}\n{result.output}"
         for form in (str(root), str(root.resolve())):
             captured = captured.replace(form, "$FIXTURE")
         return captured
@@ -360,6 +355,6 @@ def _capture(root: Path) -> str:
         monkey.undo()
 
 
-def test_commands_print_the_pinned_bytes(tmp_path: Path) -> None:
+def test_commands_print_the_pinned_bytes(tmp_path: Path, node_in_this_process) -> None:
     """Every command's default stdout, byte for byte, over one capture."""
-    assert _capture(tmp_path) == _GOLDEN
+    assert _capture(tmp_path, node_in_this_process) == _GOLDEN

@@ -169,7 +169,8 @@ uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clear-record calibrate recordings \
     --backend apple --model small --reference-transcript recordings/ref.txt
 
-# or run and just get the report:
+# or run and just get the report (a `run` is a node run: it needs a node —
+# see "Running a real meeting tape" below)
 uv run --all-packages --extra apple clear-record run recordings --backend apple --model medium
 ```
 
@@ -211,6 +212,32 @@ uv sync --all-packages --extra apple
 uv run --all-packages --extra apple clear-record run recordings \
     --backend apple --model medium --language zh   # zh/en; omit --language to auto-detect
 ```
+
+**A `run` is a node run.** `clear-record run` starts the run **on the node** — the
+recorded one ([ADR-0032](docs/adr/0032-the-node-and-its-clients.md)) — instead of
+running the pipeline inside itself. Two consequences to know before you type it:
+
+- **It needs a node.** With none recorded, the command says so in one sentence and
+  stops (`clear-record serve` starts one — that verb, and the node it runs, come
+  with the `web` extra — and `clear-record node` prints where it is). There is
+  deliberately no local fallback: the node *is* the tool.
+- **The run writes a registry row.** It joins the node's one-run-at-a-time queue,
+  the console's Activity list shows it with `cli` as its **origin** while it runs
+  and after it finishes, and its progress is read back from the node. The
+  workspace keeps every file it kept before — `manifest.json`, `audio/`,
+  `segments.json`, `record.json`, `export/` — and the node's registry only
+  records that the run happened.
+
+What a run may set today is what the node's run API declares: `--backend`,
+`--model`, `--language`, `--split-channels`/`--mix-down`, `--no-resume`, `--jobs`,
+`--profile` and `--auto` (the group's `-v/--verbose` is accepted too — it raises
+the command line's own log detail). Anything else the command accepts —
+`--diarize`, `--speakers`, `--glossary`, `--rerun-source`/`--rerun-range`,
+`--chunk-seconds`, and the other stage and decoder knobs — is **refused with one
+sentence**, never dropped: silently ignoring what you asked for would misreport
+what ran, and that sentence names every flag you set. The stage commands
+(`clear-record diarize`, `transcribe`, `reconcile`, …) and `calibrate` still run
+in this process, over the workspace.
 
 Notes for a real meeting tape:
 
@@ -306,11 +333,14 @@ split on weak evidence, so diarization is **opt-in**: enable it explicitly, or
 pass a known count, and it otherwise reports one speaker per source.
 
 ```sh
-clear-record run <dir> --backend apple --diarize         # enable auto diarization
-clear-record run <dir> --backend apple --speakers 2      # known count
-clear-record diarize <dir> --speakers 3                  # re-diarize existing segments
-clear-record diarize <dir> --no-diarize                  # off
+clear-record diarize <dir> --speakers 2      # re-cluster this workspace's segments
+clear-record diarize <dir> --speakers 3      # (the count is optional: omit it to estimate)
 ```
+
+`run` itself does not carry `--diarize`/`--speakers` yet — a node run refuses them
+rather than dropping them (see "Running a real meeting tape") — so the way to a
+diarized workspace is a run followed by the stage verb above, and `--auto` may
+choose diarization for the run on its own.
 
 **Glossary (initial prompt).** Put names/terms one per line in
 `<dir>/glossary.txt` (or pass `--glossary FILE`); they become the decoder's
@@ -405,7 +435,11 @@ upload streams to a `.part` file, is `fsync`-ed and atomically renamed, and is
 recorded with its sha256 and size. Upload is a single streaming POST — a dropped
 multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 `--dir` workspace and a meeting's user-chosen `workspace_path` are unchanged
-([deployment guide §4](docs/service-deployment.md)).
+**in where the files live** ([deployment guide §4](docs/service-deployment.md)) —
+which is all this paragraph claims. A **run** over one is no longer only the
+client's: `clear-record run` starts a run the node owns and records
+([ADR-0032](docs/adr/0032-the-node-and-its-clients.md), see "Running a real
+meeting tape").
 
 > **Status:** the console is the page information architecture of ADR-0027 —
 > Projects, a project's Overview/Meetings/Glossary/Media, Activity, Settings,

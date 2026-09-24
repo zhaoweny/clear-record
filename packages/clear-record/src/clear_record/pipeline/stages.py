@@ -237,21 +237,16 @@ def _report_pass(
     ``rows`` are ``(line text, source id)`` pairs: the source a line is about
     travels in the event's ``source``, the way a mid-stage line's does.
     """
-    report_line(
-        w, sink, stage, summary, report=report, index=index, total=total, reused=reused
+    # ``report_line``'s two branches are exclusive: with a ``report`` the line is
+    # a copy of that event and its counters come from there, so the counters this
+    # call holds go out only when there is no report to copy them from — never
+    # beside one, where they would be dropped without a word.
+    counters: dict[str, int] = (
+        {} if report is not None else {"index": index, "total": total, "reused": reused}
     )
+    report_line(w, sink, stage, summary, report=report, **counters)
     for text, source in rows:
-        report_line(
-            w,
-            sink,
-            stage,
-            text,
-            source=source,
-            report=report,
-            index=index,
-            total=total,
-            reused=reused,
-        )
+        report_line(w, sink, stage, text, source=source, report=report, **counters)
 
 
 # --------------------------------------------------------------------------- #

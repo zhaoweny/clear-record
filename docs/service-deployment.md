@@ -101,6 +101,12 @@ environment at delivery time — put it in an `EnvironmentFile=` with mode
 store (research note §1.4). Readiness can be polled from `ExecStartPost=` at
 `GET /api/health`.
 
+No service manager? `clear-record serve --supervise` is the stand-in: the node
+keeps **itself** up — a server that stops without being asked is started again
+over the same registry, after a short pause — while an asked-for stop
+(`POST /api/shutdown`) or a signal ends it exactly as it does an unsupervised
+node. No unit file and no root: just the command.
+
 ### macOS (launchd agent)
 
 [FACT] Launch**Agents** run in the user's GUI session and stop on logout; a

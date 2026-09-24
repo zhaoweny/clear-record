@@ -120,7 +120,7 @@ def test_the_queue_stops_even_when_the_server_errors(monkeypatch, tmp_path) -> N
     assert calls == [1]
 
 
-def test_serve_supervise_is_a_real_flag(monkeypatch) -> None:
+def test_serve_carries_supervise_and_no_other_verb_carries_it(monkeypatch) -> None:
     """`--supervise` is a flag on `serve`, and on nothing else."""
     captured: dict = {}
 

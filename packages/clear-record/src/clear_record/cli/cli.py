@@ -38,7 +38,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, NoReturn, Sequence
 
 import click
 
@@ -861,24 +861,48 @@ _NODE_START_TIMEOUT = 20.0
 _NODE_RACE_GRACE = 2.0
 
 #: The one sentence a command states when no node can start on this machine. It
-#: is the answer the direction records — the node is the tool, and there is no
+#: is the answer the direction records — the work needs a node, and there is no
 #: in-process implementation to fall back into — and it names the command that
 #: says *why* no node starts rather than guessing at a cause.
 _NODE_IS_THE_TOOL = deferred(
-    "clear-record's work happens on a node, and no node can start on this machine; "
-    "run `clear-record serve` to see why it cannot"
+    "clear-record's work needs a node, and no node can start on this machine; "
+    "run `clear-record serve` to see why"
 )
+
+#: The sentence for a node that **did** start and is still alive, but that this
+#: command cannot reach — the case a machine whose state directory cannot be
+#: written produces: the node serves on and is only unfindable (the record
+#: decision in :class:`clear_record.web.app.NodeServer`). That node is left
+#: running, and the sentence states what this command knows — it started, its pid,
+#: where its log went — rather than a cause it cannot know.
+_NODE_STARTED_BUT_UNFINDABLE = deferred(
+    "a node started as pid {pid} but nothing answers at its address; it is left "
+    "running, and its log is in the diagnostics sink"
+)
+
+
+def _no_node() -> NoReturn:
+    """State the one no-node sentence and exit non-zero — the whole answer."""
+    click.echo(tr(_NODE_IS_THE_TOOL), err=True)
+    raise SystemExit(1)
 
 
 def _node_argv() -> list[str]:
     """The argv that starts a node: this CLI's own ``serve``.
 
-    ``python -m`` of this module, so the child is the interpreter running the
-    command rather than whichever ``clear-record`` happens to be on ``PATH``. The
-    bind stays unstated on purpose: ``serve`` reads the node's default from
+    From an installed ``clear-record`` that is ``python -m`` of this module, so
+    the child is the interpreter running the command rather than whichever
+    ``clear-record`` happens to be on ``PATH``. A **frozen** build (PyInstaller,
+    ADR-0014) has neither an interpreter to name nor a module to run: its
+    executable *is* the CLI — the bundle's launchers feed ``sys.argv[1:]``
+    straight to :func:`main` — so the child is ``<bundle> serve``.
+
+    The bind stays unstated on purpose: ``serve`` reads the node's default from
     :mod:`clear_record.core.node`, the one declaration of it, so the address the
     node records is the one every surface resolves.
     """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "serve"]
     return [sys.executable, "-m", "clear_record.cli.cli", "serve"]
 
 
@@ -912,14 +936,26 @@ def ensure_node(*, timeout: float = _NODE_START_TIMEOUT) -> node.NodeAddress:
 
     A machine where no node can start is not a machine where the command does the
     work itself: :data:`_NODE_IS_THE_TOOL` is stated and the command exits
-    non-zero. The node is the tool; there is no second implementation to fall back
-    into.
+    non-zero — there is no second implementation to fall back into. A node that
+    started and is *alive* is a different case and gets its own sentence: it is
+    left running, because a node that runs is a node, and this command cannot know
+    why it cannot be reached.
+
+    What the returned address is used *for* is the caller's, and at this round the
+    ``run`` command still runs the work in process after this returns (the address
+    is discarded); the composition that moves the work onto the node drops that
+    in-process call.
     """
     try:
         return node.ask()
     except node.NoNodeError:
         pass
-    child = _start_node()
+    try:
+        child = _start_node()
+    except OSError:
+        # No interpreter, or no room for one more process: a node that cannot
+        # even be started is the no-node case, sentence and exit.
+        _no_node()
     deadline = time.monotonic() + timeout
     stopped_at: float | None = None
     while True:
@@ -939,9 +975,12 @@ def ensure_node(*, timeout: float = _NODE_START_TIMEOUT) -> node.NodeAddress:
             break
         time.sleep(0.1)
     if child.poll() is None:
-        child.terminate()  # a node this command cannot reach is not left behind
-    click.echo(tr(_NODE_IS_THE_TOOL), err=True)
-    raise SystemExit(1)
+        # A node that did start is not the no-node case, and it is not debris: it
+        # is alive and unfindable — the node that serves on where the state
+        # directory cannot be written. It is left running.
+        click.echo(tr(_NODE_STARTED_BUT_UNFINDABLE, pid=child.pid), err=True)
+        raise SystemExit(1)
+    _no_node()
 
 
 def _cmd_node(**kwargs: Any) -> int:
@@ -1050,9 +1089,11 @@ def _cmd_export(**kwargs: Any) -> int:
 def _cmd_run(**kwargs: Any) -> int:
     # The command's own arguments are settled first: a usage error (contradictory
     # flags) must never reach the point of starting a node. Then the invocation a
-    # person types ensures a node before it does its work — a node that is up is
-    # attached to, and a machine where one cannot run is stated (one sentence)
-    # rather than served by a second implementation.
+    # person types ensures a node before it does its work: a node that is up is
+    # attached to, and a machine where one cannot start is stated in one sentence
+    # and the command exits — never a fallback into a second implementation. The
+    # work itself still runs here, in process, until the composition that makes
+    # the node serve the run drops this call.
     options = _options(kwargs)
     ensure_node()
     _run_pipeline(kwargs["directory"], options)

@@ -2151,9 +2151,12 @@ def serve(
     without being asked — a crash, or a return no stop requested — is started
     again over the same registry, after :data:`_RESTART_PAUSE` so a fault that
     repeats cannot spin. A stop that *was* asked for ends the process as it does
-    an unsupervised node: ``POST /api/shutdown`` and the signals uvicorn handles
-    (Ctrl-C, ``SIGTERM``) both set ``should_exit``. This is the headless stand-in
-    for a systemd/launchd unit, and what ``serve --supervise`` passes.
+    an unsupervised node: ``POST /api/shutdown`` asks the server to stop
+    (``should_exit``), and a signal ends it because uvicorn's ``capture_signals``
+    restores the handlers it replaced and then re-raises what it caught — so
+    Ctrl-C and ``SIGTERM`` finish the process by signal, not through the loop's
+    ``return 0``. This is the headless stand-in for a systemd/launchd unit, and
+    what ``serve --supervise`` passes.
     """
     registry = Registry.open(data_dir=data_dir)
     while True:

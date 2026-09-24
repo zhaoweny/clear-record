@@ -13,12 +13,15 @@ from __future__ import annotations
 import os
 import signal
 import socket
+import subprocess
+import sys
 import time
 
 import pytest
 
 from clear_record.cli import cli
 from clear_record.core import node
+from clear_record.core.diagnostics import log_path
 
 
 def _free_port() -> int:
@@ -84,6 +87,20 @@ def _recorded_work(monkeypatch) -> list[str]:
     return calls
 
 
+def _started_nodes(monkeypatch) -> list[subprocess.Popen]:
+    """The node processes the command starts, keeping `_start_node`'s own start."""
+    started: list[subprocess.Popen] = []
+    real_start = cli._start_node
+
+    def start() -> subprocess.Popen:
+        child = real_start()
+        started.append(child)
+        return child
+
+    monkeypatch.setattr(cli, "_start_node", start)
+    return started
+
+
 def _workspace(tmp_path):
     directory = tmp_path / "meeting"
     directory.mkdir()
@@ -131,6 +148,7 @@ def test_a_machine_where_no_node_can_start_states_one_sentence_and_runs_no_work(
 ) -> None:
     """The node is the tool: no node means one sentence, never an in-process run."""
     work = _recorded_work(monkeypatch)
+    started = _started_nodes(monkeypatch)
     directory = _workspace(tmp_path)
     # A listener that is not a node holds the port the node would bind, so no node
     # can start here — the machine the direction's one honest sentence is for.
@@ -146,3 +164,82 @@ def test_a_machine_where_no_node_can_start_states_one_sentence_and_runs_no_work(
     assert captured.err.strip() == cli._NODE_IS_THE_TOOL
     assert "\n" not in captured.err.strip(), "one sentence, not a paragraph"
     assert work == [], "there is no second implementation to fall back into"
+    # The child died of the *bind conflict*, not of a broken `serve`: uvicorn's
+    # startup failure is its own exit, and the node's sink names the port it could
+    # not take. Without this the same assertions would pass for a `serve` that
+    # never ran at all.
+    assert len(started) == 1, "one node was started"
+    child = started[0]
+    assert child.returncode == 3, (
+        "the node exited on uvicorn's bind refusal (STARTUP_FAILURE), not on a "
+        f"usage error: {child.returncode}"
+    )
+    sink = log_path().read_text(encoding="utf-8")
+    assert "address already in use" in sink, sink
+    assert f"('127.0.0.1', {node_port})" in sink, sink
+
+
+def test_a_node_that_started_but_cannot_be_found_is_left_running_and_stated(
+    node_port, monkeypatch, capsys
+) -> None:
+    """A live node this command cannot reach is not the no-node case.
+
+    A machine whose state directory cannot be written serves on and is only
+    unfindable (the record decision in :class:`clear_record.web.app.NodeServer`),
+    so the node that *did* start is alive and unreachable. It is a node, not
+    debris: it is left running, and the sentence is the one this command can
+    honestly state — that it started, and its pid.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    monkeypatch.setattr(cli, "_start_node", lambda: child)
+    try:
+        with pytest.raises(SystemExit) as exit:
+            cli.ensure_node(timeout=0.3)
+        # A `terminate()` would land within a signal's delivery, and `poll()`
+        # reaps it, so a short grace is what makes "it was not killed" an
+        # observation rather than a race.
+        time.sleep(0.5)
+        left_running = child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+    assert exit.value.code == 1
+    assert left_running, "a node that started is not killed for being unfindable"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    sentence = cli._NODE_STARTED_BUT_UNFINDABLE.format(pid=child.pid)
+    assert captured.err.strip() == sentence
+    assert "\n" not in captured.err.strip(), "one sentence, not a paragraph"
+    assert captured.err.strip() != cli._NODE_IS_THE_TOOL, "not the no-node sentence"
+
+
+def test_a_node_that_cannot_even_be_started_is_the_same_one_sentence(
+    node_port, monkeypatch, tmp_path, capsys
+) -> None:
+    """`Popen` failing (no interpreter, no room for a process) is still one sentence.
+
+    `_start_node` runs outside the command's own error channel, so an `OSError`
+    from it must take the no-node exit rather than reaching the top as a
+    traceback.
+    """
+    directory = _workspace(tmp_path)
+
+    def no_process() -> subprocess.Popen:
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(cli, "_start_node", no_process)
+
+    with pytest.raises(SystemExit) as exit:
+        cli.main(["run", str(directory)])
+
+    assert exit.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == cli._NODE_IS_THE_TOOL

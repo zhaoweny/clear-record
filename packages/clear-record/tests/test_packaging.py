@@ -38,6 +38,7 @@ PACKAGE_DIRS = [path.parent for path in MEMBER_PYPROJECTS]
 JUSTFILE = REPO_ROOT / "justfile"
 PYINSTALLER_SPEC = REPO_ROOT / "packaging" / "pyinstaller" / "clear-record.spec"
 TRAY_LAUNCHER = PYINSTALLER_SPEC.parent / "tray_launch.py"
+CLI_LAUNCHER = PYINSTALLER_SPEC.parent / "cli_launch.py"
 
 # The version shapes the manifests carry: stable X.Y.Z, a pre-release
 # X.Y.Z{a|b|rc}N (a/b accepted but unused), and the in-development X.Y.Z.devN
@@ -543,6 +544,34 @@ def test_desktop_app_bundle_ships_the_tray_as_its_entry_point() -> None:
     # CLI must remain in the bundle.
     assert 'name="clear-record-web"' in spec
     assert 'name="clear-record"' in spec
+
+
+def test_a_frozen_cli_starts_its_node_with_its_own_executable(monkeypatch) -> None:
+    """The node argv names this process's own `serve`, interpreter or bundle alike.
+
+    The installed CLI starts its node as ``python -m clear_record.cli.cli serve``.
+    The PyInstaller build (ADR-0014) has neither an interpreter to name nor a
+    module to run: ``sys.executable`` *is* the CLI, and the bundle's launcher —
+    the same file the spec builds the `clear-record` binary from — feeds
+    ``sys.argv[1:]`` straight to :func:`clear_record.cli.cli.main`, so the node
+    child is ``<bundle> serve``. A ``-m`` there is a usage error the node dies of.
+    Every shape is pinned statically; no frozen build is launched.
+    """
+    from clear_record.cli import cli
+
+    assert cli._node_argv() == [sys.executable, "-m", "clear_record.cli.cli", "serve"]
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert cli._node_argv() == [sys.executable, "serve"]
+
+    # The reason the frozen shape is `<exe> <subcommand>`: the launcher's whole
+    # argv contract, and the spec building the CLI from that launcher.
+    launcher = CLI_LAUNCHER.read_text()
+    assert "sys.argv[1:]" in launcher, "the frozen launcher does not take raw argv"
+    assert "main(argv" in launcher, "the frozen launcher does not call main(argv)"
+    assert 'scripts["cli_launch"]' in PYINSTALLER_SPEC.read_text(), (
+        "the spec no longer builds the CLI binary from cli_launch.py"
+    )
 
 
 def test_declares_the_clear_record_script() -> None:

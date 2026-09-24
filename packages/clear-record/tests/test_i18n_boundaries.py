@@ -464,11 +464,11 @@ UNTRANSLATED_IDS = frozenset(
     {
         "bind address (default localhost)",
         "do not open a browser window",
-        "override the app data directory (default: CR_DATA_DIR / the platform "
-        "data directory)",
         "keep this process owning the node: a server that stops without being "
         "asked is started again, while a stop request or a signal ends it as it "
         "does an unsupervised node",
+        "override the app data directory (default: CR_DATA_DIR / the platform "
+        "data directory)",
         "port (default {port})",
         "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
         "log is written to the app state directory, never to stdout",

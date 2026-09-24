@@ -25,12 +25,12 @@ What makes it a stable pin rather than a flaky one:
   lines of a second pass;
 - ``CR_LANG=en``, and every other ``CR_*`` variable cleared, so the machine's
   own environment cannot reach a knob or swap the catalog;
-- the ``run`` block carries no ``[queued]`` line, and cannot here: the follower
+- the ``run`` block carries no ``[queued]`` line, and does not here: the follower
   prints a run's queue place only from a **poll** (``cli.runs.follow`` — the
   read after the one it starts with), and this node has one run and nothing
-  gating it, so the run is claimed long before the follower's second read. A run
-  that is *still* queued a full poll after the node accepted it is the only thing
-  that adds a line there;
+  gating it, so the run is claimed within milliseconds while that poll is a
+  second away. A run that is *still* queued a full poll after the node accepted
+  it is the only thing that adds a line there;
 - the fixture directory is normalised out of the captured text, because every
   printed path is absolute;
 - nothing machine- or clock-derived is printed at all: the fake backend sizes

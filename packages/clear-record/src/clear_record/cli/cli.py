@@ -9,9 +9,10 @@ The parser is **Click** (ADR-0022). The two properties the port must keep are:
 - the subcommand surface is **derived from** :func:`pipeline_spec` — the built-in
   stage commands are added in a loop over ``pipeline_spec().stages``, exactly as
   the ``run`` dispatch is, so the CLI and the domain still read one declaration;
-- the commands' **default stdout is byte-identical**: the stages print nothing
-  and this module renders every word of what they returned and reported, pinned
-  command by command in ``tests/cli/test_stage_stdout.py``.
+- the **stage commands'** default stdout is byte-identical: the stages print
+  nothing and this module renders every word of what they returned and reported
+  — ``run``'s is the node's own stream, read back (below) — pinned command by
+  command in ``tests/cli/test_stage_stdout.py``.
 
 `run` is the one command that does not run a stage here: a run started from the
 command line is a **node run** (ADR-0032), so it names its workspace in one

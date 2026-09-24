@@ -224,9 +224,8 @@ def follow(
 
     A run that has not started yet says where it is waiting — ``[queued]`` and its
     FIFO place — instead of reading as a hang. That line is printed from a **poll**
-    (a read the loop makes after the one it starts with), because a run the node
-    claims in the instant after accepting it never waited: reporting a wait that
-    did not happen would be as wrong as hiding one that did.
+    (a read the loop makes after the one it starts with): a wait that ends within
+    that first poll is not reported; one that lasts past it is.
 
     The event page and the run's row are two reads, and the run can close its last
     stage between them, so the end is returned only once the stream has been

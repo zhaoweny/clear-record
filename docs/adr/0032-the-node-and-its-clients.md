@@ -348,7 +348,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   they are visible in `--help` without the extra; running one explains how to
   install it), and what the `web` extra supplies is the **stack**, not the verb:
   without it `serve` exits non-zero with the install hint, and the ensure path's
-  child dies on that exit, so `run` there ends on the one sentence. The desktop
-  bundle carries the stack; whether the base install should carry it too, so `run`
-  works without the extra, is the release decision this leaves open rather than
-  decides.
+  child dies on that exit — its streams are on `DEVNULL`, so the hint never
+  reaches the user. `run` there ends on the one sentence, and the two remedies
+  that sentence names are the paths that speak. The desktop bundle carries the
+  stack; whether the base install should carry it too, so `run` works without the
+  extra, is the release decision this leaves open rather than decides.

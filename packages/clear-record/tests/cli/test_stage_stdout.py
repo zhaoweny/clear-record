@@ -193,13 +193,14 @@ _STAGE_COMMANDS: tuple[tuple[str, ...], ...] = (
 )
 
 #: The remaining blocks, each on its own cold workspace (``(workspace name,
-#: commands)``): `run` is every stage plus the command surface's ``[next]``
-#: line — the line whose ``tr`` is why ``CR_LANG`` is pinned — `calibrate` is
-#: that run plus the report it writes and prints, and `synth` is the development
-#: command that builds the fixture a `calibrate` run is scored on. `run` and
-#: `calibrate` are what a user actually types and the aggregates the stages'
-#: return change rewires; `calibrate`'s report and `synth` are the two helpers
-#: the pipeline package hands back to the command surface.
+#: commands)``): `run` is every stage plus the command surface's two lines —
+#: ``[run] #<id> <status>`` and ``[next]``, the latter the one whose ``tr`` is
+#: why ``CR_LANG`` is pinned. `calibrate` is that run plus the report it writes
+#: and prints, and `synth` is the development command that builds the fixture a
+#: `calibrate` run is scored on. `run` and `calibrate` are what a user actually
+#: types and the aggregates the stages' return change rewires; `calibrate`'s
+#: report and `synth` are the two helpers the pipeline package hands back to the
+#: command surface.
 _BLOCKS: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
     ("tape", _STAGE_COMMANDS),
     ("run", (("run",),)),

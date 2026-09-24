@@ -5,10 +5,12 @@ Date: 2026-09-24
 
 The direction is in force and is being built in batches; its **first batch** — the
 pipeline leaving the command surface — landed on 2026-09-24 (ADR-0030's `C3`;
-ADR-0004's text of 2026-09-24, an inline restatement inside its 2026-09-13
-Update; and ADR-0012's matching Update). The spec, its batches and its remaining
-tickets are in the tracker's `architecture` lane; per ADR-0029 nothing here cites it
-by address. The owner's words this ADR rests on are carried verbatim by
+ADR-0004's text of 2026-09-24, an inline restatement inside its 2026-09-13 Update;
+and ADR-0012's matching Update), and **the facade itself landed 2026-09-25** — a
+command-line run is a node run, carried by the Update at the end of this file. The
+spec, its batches and its remaining tickets are in the tracker's `architecture`
+lane; per ADR-0029 nothing here cites it by address. The owner's words this ADR
+rests on are carried verbatim by
 [`docs/vox/records/2026-09-21-node-and-clients.md`](../vox/records/2026-09-21-node-and-clients.md).
 
 Provenance of the decisions below: each is labelled with **who decided** — the
@@ -59,7 +61,9 @@ promotes nothing the owner did not say beyond the label each clause carries.
   future client", with `clear_record.service`'s operations underneath both.
   ADR-0017: MCP is a thin adapter over `clear_record.service`. ADR-0013: "headless
   service first". What was missing is the command line's membership.
-- [FACT] **The gap that makes the direction concrete**: a run started from the
+- [FACT] **The gap that makes the direction concrete** (measured 2026-09-21, and
+  **closed 2026-09-25** — see the Update at the end; quoted here as it stood when
+  the gap was measured): a run started from the
   command line **writes no run row** — `clear_record/service/runs.py` says so in
   `RunManager`'s own docstring ("the CLI is not a third writer: it runs the pipeline
   in-process … and writes no run row") — so the console cannot see it; while `cli`
@@ -95,8 +99,9 @@ promotes nothing the owner did not say beyond the label each clause carries.
     behaviour for "no node answers", no `serve --supervise` (a docstring promise,
     not a flag), and the Tailscale console URL was printed but never recorded for
     another process to find. **The address batch (2026-09-24) has since landed the
-    record, the one answer and the one declaration** — this bullet is the gap as
-    it stood when the direction was written, not as it stands now.
+    record, the one answer and the one declaration, and the supervision batch
+    (2026-09-25) has landed `serve --supervise`** — this bullet is the gap as it
+    stood when the direction was written, not as it stands now.
 - [FACT] **The precedent the owner named**, read from OpenCode v2's own
   documentation: a backend subcommand owns every backend operation and publishes an
   **OpenAPI 3.1 spec** at `/doc`, from which its **client SDK is generated**; the
@@ -311,3 +316,35 @@ promotes nothing the owner did not say beyond the label each clause carries.
   an invocation must be able to bring a node up (the packaging residue, [OPEN]
   above), or if the node's stack behind an extra proves to be friction the other
   way.
+
+## Update (2026-09-25) — the facade landed: a command-line run is a node run
+
+- [FACT] **The Context's first gap is closed, and the docstring it quoted is
+  gone.** `clear-record run` is the CLI-shaped surface that goes *through* the node
+  — the Decision's third preliminary, landed: the command **ensures** a node
+  (attaching to the recorded one, or starting one and leaving it running),
+  submits the run over the node's run API with the `cli` origin, follows the row
+  the node owns and prints the run's own stream (`cli/runs.py`); a flag the node's
+  run API does not carry is refused rather than dropped. So a run started from the
+  command line **writes a registry row**, and the console's Activity list shows it
+  while it runs and after. `RunManager`'s docstring quoted in the Context has been
+  replaced; both that bullet and the quotation above are kept as they stood when
+  the gap was measured. One consequence is recorded where the pin lives: `run`'s
+  default stdout is now the node's own stream, so ADR-0022's byte-identical clause
+  is scoped to the stage commands (that ADR's own Update).
+- [FACT] **`serve --supervise` is a flag now**, not the docstring promise the
+  Context's census listed among the gaps: it is declared on `serve` alone, and an
+  unasked stop restarts the server while an asked-for stop or a signal ends it.
+- [FACT] **The two statements the Decision flagged carry their qualifier.** README's
+  "A `run` is a node run" passage says a run is the node's and that the command
+  ensures one, and `docs/service-deployment.md` says a run over a workspace writes a
+  registry row and a client needs a node to talk to — so "a workspace is a
+  self-sufficient directory" is qualified where a reader meets it.
+- [FACT] **Preliminary 5 is answered, and it has an edge the base install does not
+  cover.** The question was whether an invocation must be able to **bring a node
+  up**; it must, so the node's stack has to be present for `run` to work at all:
+  `serve` — the command the ensure path starts — is declared by the `web` provider
+  (ADR-0013's extra), and a base-only install has no such subcommand, so `run`
+  there ends on the one sentence. The desktop bundle carries the stack, and the
+  README's `run` passage names the extra; whether the base install should carry it
+  too is the release decision this leaves open rather than decides.

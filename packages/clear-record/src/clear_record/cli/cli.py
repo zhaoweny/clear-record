@@ -879,11 +879,14 @@ _NODE_RACE_GRACE = 2.0
 
 #: The one sentence a command states when no node can start on this machine. It
 #: is the answer the direction records — the work needs a node, and there is no
-#: in-process implementation to fall back into — and it names the command that
-#: says *why* no node starts rather than guessing at a cause.
+#: in-process fallback — and it names the command that says *why* no node starts
+#: rather than guessing at a cause. The ways it names to start one are the same
+#: ones :data:`clear_record.core.node.NO_NODE_MESSAGE` names, and they are both
+#: real for a bundle user whose CLI is not on ``PATH``: ``serve`` from a terminal,
+#: the tray app (the double-click target) for the desktop.
 _NODE_IS_THE_TOOL = deferred(
     "clear-record's work needs a node, and no node can start on this machine; "
-    "run `clear-record serve` to see why"
+    "start one with `clear-record serve`, or from the tray app — `serve` says why"
 )
 
 #: The sentence for a node that **did** start and is still alive, but that this
@@ -891,9 +894,11 @@ _NODE_IS_THE_TOOL = deferred(
 #: written produces: the node serves on and is only unfindable (the record
 #: decision in :class:`clear_record.web.app.NodeServer`). That node is left
 #: running, and the sentence states what this command knows — it started, its pid,
-#: where its log went — rather than a cause it cannot know.
+#: where its log went — rather than a cause it cannot know. In the case its own
+#: comment names the node recorded **no** address, so the sentence may not presume
+#: one: what this command knows is that *it* cannot reach the node.
 _NODE_STARTED_BUT_UNFINDABLE = deferred(
-    "a node started as pid {pid} but nothing answers at its address; it is left "
+    "a node started as pid {pid} but this command cannot reach it; it is left "
     "running, and its log is in the diagnostics sink"
 )
 
@@ -911,8 +916,10 @@ def _node_argv() -> list[str]:
     the child is the interpreter running the command rather than whichever
     ``clear-record`` happens to be on ``PATH``. A **frozen** build (PyInstaller,
     ADR-0014) has neither an interpreter to name nor a module to run: its
-    executable *is* the CLI — the bundle's launchers feed ``sys.argv[1:]``
-    straight to :func:`main` — so the child is ``<bundle> serve``.
+    executable *is* the CLI — the CLI launcher (``cli_launch.py``, the file the
+    spec builds ``clear-record`` from) feeds ``sys.argv[1:]`` straight to
+    :func:`main`, where the ``web`` and ``tray`` launchers prepend their verb —
+    so the child is ``<bundle> serve``.
 
     The bind stays unstated on purpose: ``serve`` reads the node's default from
     :mod:`clear_record.core.node`, the one declaration of it, so the address the
@@ -953,15 +960,14 @@ def ensure_node(*, timeout: float = _NODE_START_TIMEOUT) -> node.NodeAddress:
 
     A machine where no node can start is not a machine where the command does the
     work itself: :data:`_NODE_IS_THE_TOOL` is stated and the command exits
-    non-zero — there is no second implementation to fall back into. A node that
-    started and is *alive* is a different case and gets its own sentence: it is
-    left running, because a node that runs is a node, and this command cannot know
-    why it cannot be reached.
+    non-zero — there is no in-process fallback. A node that started and is
+    *alive* is a different case and gets its own sentence: it is left running,
+    because a node that runs is a node, and this command cannot know why it cannot
+    be reached.
 
-    What the returned address is used *for* is the caller's, and at this round the
-    ``run`` command still runs the work in process after this returns (the address
-    is discarded); the composition that moves the work onto the node drops that
-    in-process call.
+    The address is the caller's to use, and ``run`` uses it: the run it starts is
+    submitted to the node this ensured (:func:`_cmd_run`), so the work happens
+    where the node is rather than in this process.
     """
     try:
         return node.ask()
@@ -1215,13 +1221,14 @@ _T = TypeVar("_T")
 def _node_step(step: Callable[[], _T]) -> _T:
     """Run one step of this client's path to the node, or end on its answer.
 
-    Every step — the address, the submission, and each read that follows it — can
-    find the node gone: it stopped, or the address it recorded went stale. The
-    sentence for that is ``node.NoNodeError``'s, the one every surface reports,
-    and a person reads it from here rather than as a traceback. A **refusal** the
-    node answered with (an HTTP answer, not a lost transport: the node's own
-    ``detail``) ends the command the same way, and it reads the same in the middle
-    of a run as at its submission.
+    Every step that can still lose the node — the submission, and each read that
+    follows it; the address itself is :func:`ensure_node`'s and never raises
+    ``NoNodeError`` — can find the node gone: it stopped, or the address it
+    recorded went stale. The sentence for that is ``node.NoNodeError``'s, the one
+    every surface reports, and a person reads it from here rather than as a
+    traceback. A **refusal** the node answered with (an HTTP answer, not a lost
+    transport: the node's own ``detail``) ends the command the same way, and it
+    reads the same in the middle of a run as at its submission.
     """
     try:
         return step()
@@ -1238,10 +1245,12 @@ def _cmd_run(**kwargs: Any) -> int:
 
     ADR-0032: a run started here is a **node run** — it joins the one run per node
     queue, is recorded with the ``cli`` origin, and is followed from the node. So
-    this needs a node: with none recorded (or a recorded one that does not
-    answer) that is one sentence, never a local fallback — and if the node goes
-    away while the run it accepted is still being followed, the same one sentence
-    stands, at whatever step of the run it happened.
+    this **ensures** a node: a recorded one that answers is attached to, and one is
+    started when none does. A machine where no node can start is one sentence,
+    never a local fallback — the node *is* the tool (:func:`ensure_node`) — and if
+    the node goes away while the run it accepted is still being followed, the same
+    one sentence stands, at whatever step of the run it happened
+    (:func:`_node_step`).
 
     What ``--auto`` chose is explained here, in the resolver's own words: the
     resolution ran **on the node**, so its account comes back on the run the node
@@ -1260,7 +1269,12 @@ def _cmd_run(**kwargs: Any) -> int:
     if refusal is not None:
         raise click.UsageError(refusal)
     directory = str(Path(kwargs["directory"]).resolve())
-    address = _node_step(node.ask)
+    # The flags are settled — a usage error above never reaches a node. Every step
+    # from here on needs one, and can find it gone: `ensure_node` answers the
+    # absent case itself (it starts a node or states the one sentence), while the
+    # submission and each read that follows it go through `_node_step` so a node
+    # lost mid-run reads as that same sentence rather than as a traceback.
+    address = ensure_node()
     started = _node_step(
         lambda: start_run(address, directory, _node_run_body(args, split=split))
     )
@@ -1319,14 +1333,17 @@ def _run_help() -> str:
     (:meth:`~clear_record.core.pipeline.PipelineSpec.run_help`); the node clause
     is this surface's, because ADR-0032 makes a command-line run the **node's** —
     it joins the node's queue, and a flag the node's run API does not carry is
-    refused rather than dropped, which a user should know before typing it.
+    refused rather than dropped, which a user should know before typing it. The
+    command ensures that node (it attaches to a recorded one, or starts one), so
+    the clause says *ensures* rather than *needs*.
     """
     return (
         pipeline_spec().run_help()
         + " — on the node, which runs it: the run joins its one-run-at-a-time "
-        "queue and shows in the console's Activity list (needs a node; "
-        "`clear-record node` prints it). A flag the node's run API does not "
-        "carry is refused, never dropped."
+        "queue and shows in the console's Activity list (this command ensures a "
+        "node — attaching to the recorded one or starting one; `clear-record "
+        "node` prints where it is). A flag the node's run API does not carry is "
+        "refused, never dropped."
     )
 
 

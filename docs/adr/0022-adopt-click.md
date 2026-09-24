@@ -84,3 +84,15 @@ Date: 2026-09-15
 - [OPEN] Whether to keep a compatibility shim for the old `argparse` contract (do
   not — nothing external uses it).
 - Revisit if Click's help formatting or its dependency proves unwelcome.
+
+## Update (2026-09-25) — the byte pin's scope, after the command line became a node client
+
+- [FACT] The Decision's *"the commands' default stdout stays byte-identical"* is
+  scoped to the **stage commands** (and `calibrate`). ADR-0032's facade landed
+  `run` as a **node run**: `clear-record run` submits to the node and prints the
+  run's own stream, read back by `cli/runs.py`, so `run`'s default stdout is no
+  longer this module's rendering of what the stages returned and reported.
+  `cli.py`'s contract bullet and `tests/cli/test_stage_stdout.py` were qualified in
+  the same landing; the pin still covers every stage command byte for byte, and
+  `run`'s block is pinned too — as its own shape, re-pinned by that landing rather
+  than as the pre-move equivalence check.

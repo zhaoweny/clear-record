@@ -76,8 +76,14 @@ def _is_int(value: object) -> bool:
 #: The one answer when no address is recorded, or nothing answers the one that
 #: is. The English source is the message ID: ``tr`` renders it for a person, and
 #: the machine surfaces (the JSON API, the MCP adapter) state it as it stands.
+#: The two ways it names to start a node are the ones both audiences can act on:
+#: ``serve`` is a command a terminal user has, and the tray app is the
+#: double-click target of the desktop bundle, whose CLI is **not** on ``PATH``
+#: (``packaging/pyinstaller/README.md``) — so ``serve`` alone would be a sentence
+#: that audience cannot follow.
 NO_NODE_MESSAGE = deferred(
-    "no clear-record node is listening; start one with `clear-record serve`"
+    "no clear-record node is listening; start one with `clear-record serve`, or "
+    "from the tray app"
 )
 
 

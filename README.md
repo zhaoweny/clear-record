@@ -169,7 +169,7 @@ uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clear-record calibrate recordings \
     --backend apple --model small --reference-transcript recordings/ref.txt
 
-# or run and just get the report (a `run` is a node run: it needs a node —
+# or run and just get the report (a `run` is a node run: it ensures a node —
 # see "Running a real meeting tape" below)
 uv run --all-packages --extra apple clear-record run recordings --backend apple --model medium
 ```
@@ -214,13 +214,15 @@ uv run --all-packages --extra apple clear-record run recordings \
 ```
 
 **A `run` is a node run.** `clear-record run` starts the run **on the node** — the
-recorded one ([ADR-0032](docs/adr/0032-the-node-and-its-clients.md)) — instead of
-running the pipeline inside itself. Two consequences to know before you type it:
+recorded one, or one it starts ([ADR-0032](docs/adr/0032-the-node-and-its-clients.md))
+— instead of running the pipeline inside itself. Two consequences to know before
+you type it:
 
-- **It needs a node.** With none recorded, the command says so in one sentence and
-  stops (`clear-record serve` starts one — that verb, and the node it runs, come
-  with the `web` extra — and `clear-record node` prints where it is). There is
-  deliberately no local fallback: the node *is* the tool.
+- **It ensures a node.** It attaches to the recorded one, and starts one when none
+  answers (`clear-record serve` starts one too — that verb, and the node it runs,
+  come with the `web` extra — and `clear-record node` prints where it is). A
+  machine where no node can start is one sentence and no run at all: there is
+  deliberately no local fallback, because the node *is* the tool.
 - **The run writes a registry row.** It joins the node's one-run-at-a-time queue,
   the console's Activity list shows it with `cli` as its **origin** while it runs
   and after it finishes, and its progress is read back from the node. The
@@ -393,9 +395,9 @@ stops without being asked is started again, while an asked-for stop or a signal
 ends it as it does an unsupervised node. That is the stand-in when there is no
 systemd/launchd unit — see the
 [deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
-`--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
-server binds `127.0.0.1` by default and needs no account — leave `--host` on
-loopback and let your proxy be the ingress
+`--no-browser` is `web`'s only; `--port`, `--host` and `--data-dir` control either
+launch; the server binds `127.0.0.1` by default and needs no account — leave
+`--host` on loopback and let your proxy be the ingress
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md)). The UI language comes from
 `--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the

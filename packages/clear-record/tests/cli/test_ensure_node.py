@@ -6,6 +6,11 @@ diagnostics sink — goes through ``CR_*``, so a test's node is invisible to the
 machine's own; only its port has to be chosen here, because the node's default
 bind is one declaration (:mod:`clear_record.core.node`) and one machine-wide port
 is not a thing a test may hold. Each test stops the node it started, by pid.
+
+What a test replaces, where it says so, is the node's **run**: whether a run
+executes is not what these tests measure (``tests/cli/test_node_run.py`` drives
+that against a node in the test process), while the node the command ensures —
+attached to, or started and left behind — is.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ import time
 
 import pytest
 
-from clear_record.cli import cli
+from clear_record.cli import cli, runs
 from clear_record.core import node
 from clear_record.core.diagnostics import log_path
 
@@ -76,15 +81,44 @@ def node_port(tmp_path, monkeypatch) -> int:
             _wait_for_exit(address.pid)
 
 
-def _recorded_work(monkeypatch) -> list[str]:
-    """Record what `run` was asked to do, in place of the pipeline itself."""
-    calls: list[str] = []
+def _submitted_runs(monkeypatch) -> list[str]:
+    """Record the runs the command hands the node, in place of the run's work.
 
-    def fake(directory: str, options) -> None:
-        calls.append(directory)
+    These tests are about the node ``run`` **ensures** — attach, or bring one up
+    — so the two calls that would need the node to *execute* a run are replaced by
+    their answers (``tests/cli/test_node_run.py`` drives the real submit/follow
+    against a node in the test process). The address the command hands the
+    submission is not stubbed away: each fake completes a real request against it
+    first, which is the composition's own claim — the address ``ensure_node()``
+    returned is the live node, and it is used rather than discarded.
 
-    monkeypatch.setattr(cli, "_run_pipeline", fake)
-    return calls
+    The run is answered as a finished, successful one, so a test reads the
+    command's end (a non-zero code, or the one sentence) without needing a
+    pipeline behind the node.
+    """
+    submitted: list[str] = []
+
+    def start(address, directory, body):
+        node.reach(address, timeout=10.0)
+        submitted.append(directory)
+        return runs.Started(run_id=1, meeting_id=1)
+
+    def follow(address, run_id):
+        return runs.Progress(
+            status="done",
+            stage=None,
+            index=1,
+            total=1,
+            error=None,
+            terminal=True,
+            succeeded=True,
+            events=0,
+            position=0,
+        )
+
+    monkeypatch.setattr(cli, "start_run", start)
+    monkeypatch.setattr(cli, "follow_run", follow)
+    return submitted
 
 
 def _started_nodes(monkeypatch) -> list[subprocess.Popen]:
@@ -107,17 +141,17 @@ def _workspace(tmp_path):
     return directory
 
 
-def test_from_a_cold_start_the_command_leaves_a_node_running_and_the_work_done(
+def test_from_a_cold_start_the_command_leaves_a_node_running_and_the_run_on_it(
     node_port, monkeypatch, tmp_path
 ) -> None:
-    """One command: a node is up afterwards, and the work it was asked for is done."""
-    work = _recorded_work(monkeypatch)
+    """One command: a node is up afterwards, and the run went to it."""
+    submitted = _submitted_runs(monkeypatch)
     directory = _workspace(tmp_path)
 
     assert node.recorded() is None, "the test starts from a cold machine"
     assert cli.main(["run", str(directory)]) == 0
 
-    assert work == [str(directory)], "the work the command was asked for is done"
+    assert submitted == [str(directory)], "the run the command was asked for went on"
     address = node.recorded()
     assert address is not None, "the command left a node behind"
     assert address.pid != os.getpid(), "the node is a process of its own"
@@ -128,7 +162,7 @@ def test_with_a_node_already_up_the_command_attaches_instead_of_starting_a_secon
     node_port, monkeypatch, tmp_path
 ) -> None:
     """The same command twice starts a node once; the second attaches."""
-    work = _recorded_work(monkeypatch)
+    submitted = _submitted_runs(monkeypatch)
     directory = _workspace(tmp_path)
     started: list[int] = []
     real_start = cli._start_node
@@ -139,7 +173,7 @@ def test_with_a_node_already_up_the_command_attaches_instead_of_starting_a_secon
     assert cli.main(["run", str(directory)]) == 0
 
     assert started == [1], "the second command started no node"
-    assert work == [str(directory)] * 2, "and both commands did their work"
+    assert submitted == [str(directory)] * 2, "and both commands ran on the one node"
     assert node.ask() == first, "the node it attached to is the one already up"
 
 
@@ -147,7 +181,7 @@ def test_a_machine_where_no_node_can_start_states_one_sentence_and_runs_no_work(
     node_port, monkeypatch, tmp_path, capsys
 ) -> None:
     """The node is the tool: no node means one sentence, never an in-process run."""
-    work = _recorded_work(monkeypatch)
+    submitted = _submitted_runs(monkeypatch)
     started = _started_nodes(monkeypatch)
     directory = _workspace(tmp_path)
     # A listener that is not a node holds the port the node would bind, so no node
@@ -163,7 +197,7 @@ def test_a_machine_where_no_node_can_start_states_one_sentence_and_runs_no_work(
     assert captured.out == ""
     assert captured.err.strip() == cli._NODE_IS_THE_TOOL
     assert "\n" not in captured.err.strip(), "one sentence, not a paragraph"
-    assert work == [], "there is no second implementation to fall back into"
+    assert submitted == [], "there is no second implementation to fall back into"
     # The child died of the *bind conflict*, not of a broken `serve`: uvicorn's
     # startup failure is its own exit, and the node's sink names the port it could
     # not take. Without this the same assertions would pass for a `serve` that

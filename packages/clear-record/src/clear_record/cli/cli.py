@@ -246,7 +246,8 @@ def _state_the_machine_local_boundary(command: click.Command, name: str | None) 
     owns the ``-v`` contract — is what lets a verb contributed through an entry
     point (``bench``, ``diagnose``) state it without its own module knowing the
     sentence. Click shows only the first paragraph of a help text in the group
-    listing, so the added paragraph is where the verb is read, not in the list.
+    listing, so the note is read where the verb is read — in its own help, not in
+    the listing.
     """
     if name in MACHINE_LOCAL_VERBS:
         command.help = f"{command.help or ''}\n\n{tr(MACHINE_LOCAL_NOTE)}"
@@ -779,9 +780,10 @@ def _cmd_backends(**kwargs: Any) -> int:
     ADR-0032: this verb is machine-local (``MACHINE_LOCAL_VERBS``) — its subject
     is the machine this command runs on, never a node. The report therefore opens
     by naming that machine, so the answer can never be read as a node's, and it
-    is printed exactly when there is a report to qualify (an empty catalog has
-    none). ``platform.node()`` is the hostname the run record's own host field
-    quotes; it is the platform's name for the machine, not a fingerprint.
+    is printed whenever the probe found any backend at all: it qualifies the
+    rows below, and stands alone when the default view shows none.
+    ``platform.node()`` is the hostname the run record's own host field quotes;
+    it is the platform's name for the machine, not a fingerprint.
     """
     statuses = backend_availability()
     if statuses:

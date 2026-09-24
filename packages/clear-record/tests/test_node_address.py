@@ -525,3 +525,30 @@ def test_with_a_node_running_the_surfaces_name_the_same_address(
     cli_status, cli_text = _command_line_answer(capsys)
     assert cli_status == 0, cli_text
     assert serve_node.url in cli_text
+
+
+def test_a_record_naming_the_served_socket_is_vouched_for_without_a_pid(
+    serve_node,
+) -> None:
+    """``GET /api/node`` compares the **address**, not the process that wrote it.
+
+    ``NodeAddress.from_dict`` accepts a record with no ``pid`` by design — a
+    truncated, hand-edited or foreign file is still an address — and the route's
+    rule is "only when it is the address this app is itself listening on". A
+    record that names exactly this socket therefore answers 200 even without a
+    pid; comparing the writer's pid instead would call a node listening right
+    there "no node".
+    """
+    paths.node_address_path().write_text(
+        json.dumps(
+            {"host": serve_node.host, "port": serve_node.port, "url": serve_node.url}
+        ),
+        encoding="utf-8",
+    )
+
+    status, body = _get(serve_node, "/api/node")
+
+    assert status == 200, body
+    assert json.loads(body)["url"] == serve_node.url
+    assert json.loads(body)["port"] == serve_node.port
+    assert json.loads(body)["pid"] is None

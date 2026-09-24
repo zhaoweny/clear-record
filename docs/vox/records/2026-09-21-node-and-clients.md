@@ -62,7 +62,9 @@ instead.
 - [OPEN: owner, 2026-09-21] **Packaging** is the fifth, and the owner's answer to it was
   the *shape* above, not the packaging question: whether an invocation must be able to
   bring a node up (which would stop the node's stack being an optional extra) is left
-  open.
+  open. *(Answered 2026-09-25: an invocation must — the command line ensures a node;
+  [ADR-0032](../../adr/0032-the-node-and-its-clients.md)'s Update, *the facade landed:
+  a command-line run is a node run*.)*
 
 ## What kind of position this is
 

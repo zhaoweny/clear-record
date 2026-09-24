@@ -307,3 +307,30 @@ def test_a_node_the_tray_only_joined_is_not_stopped_or_restarted_here(
     finally:
         assert controller.stop(timeout=15) is True
     assert node.ask() == answering_node.address, "quitting left it running"
+
+
+def test_a_tray_that_joined_a_node_that_stopped_can_start_one_again(
+    tmp_path, answering_node
+) -> None:
+    """The way back for a tray whose joined node went away is a **click**, not the tick.
+
+    Once the node the tray joined stops, the tray is a client of nothing, and
+    ``restart`` — the owner's act — still answers ``False``. So the item it offers
+    has to be able to start a node of its own, exactly as ``start`` does,
+    re-reading the record; otherwise the tray is a dead handle until relaunched.
+    The item is offered in that state and takes the user's click as the ask: the
+    poll tick only reads, so nothing starts on its own.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
+    controller.start()
+    try:
+        assert controller.supervises is False, "the tray joined that node"
+        answering_node.stop()
+        assert controller.state() is ServiceState.UNREACHABLE
+        assert controller.restart() is False, "restart stays the owner's act"
+        assert controller.offers_restart is True, "but the item must be offered"
+        assert controller.restart_or_start(timeout=15), "the click did not start one"
+        assert controller.supervises is True, "the tray now owns a node"
+        assert controller.state() is ServiceState.RUNNING
+    finally:
+        assert controller.stop(timeout=15) is True

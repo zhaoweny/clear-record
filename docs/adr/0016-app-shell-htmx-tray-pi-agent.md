@@ -131,4 +131,5 @@ Date: 2026-09-14
   supervision logic this ADR names is still the Qt-free `ServiceController`, whose
   live state is that node's health rather than this process's thread. The
   direction, and the consequences recorded where they live, are in
-  [ADR-0032](0032-the-node-and-its-clients.md)'s 2026-09-25 Update.
+  [ADR-0032](0032-the-node-and-its-clients.md)'s 2026-09-25 Update *the two
+  surfaces that invert*.

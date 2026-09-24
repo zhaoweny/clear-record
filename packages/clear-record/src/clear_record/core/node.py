@@ -1,11 +1,13 @@
 """Where the running node is: one record, one resolver, one answer.
 
 The API server — the **node** — is the centre of the v0.4.0 direction: the
-surfaces — the command line, the console, the MCP adapter and the tray — reach
-*it* rather than running the pipeline in their own process, and the tray
-**attaches first**: the node that answers the recorded address is the node it
-becomes a client of, and only when nothing answers does it start one of its own.
-Reaching a node means knowing where it is, and this module is the one place that knows.
+surfaces reach *it* rather than running the pipeline in their own process — the
+command line and the tray complete a request against the address it names, the
+console answers with it in process, and the MCP adapter dials it only to ask
+whether it is there — and the tray **attaches first**: the node that answers the
+recorded address is the node it becomes a client of, and only when nothing
+answers does it start one of its own. Reaching a node means knowing where it is,
+and this module is the one place that knows.
 
 The address is **recorded, never discovered**. A node writes it where the app's
 own path resolution already keeps state

@@ -160,6 +160,25 @@ def test_a_local_client_names_a_glossary_and_the_node_decodes_with_it(
     assert (run.options or {}).get("glossary_sha256")
 
 
+def test_a_blank_directory_is_refused_not_run(local) -> None:
+    """A ``directory`` that names nothing is refused, never taken as a path.
+
+    An empty or spaces-only value is what an unset shell variable produces, and a
+    blank path resolves against the **node's** own cwd — so taking it as a
+    directory would run a workspace the client never named (or crash the registry
+    on a blank name). The edge refuses it before anything is resolved, so a
+    refused request registers no meeting.
+    """
+    local.registry.create_project("Ops")
+
+    for blank in ("", "   "):
+        refused = local.client.post("/api/runs", json={"directory": blank})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["detail"] == web_app.BLANK_DIRECTORY
+
+    assert local.registry.list_meetings() == []
+
+
 # --- a client elsewhere is refused, with one sentence --------------------- #
 def test_a_non_local_client_naming_a_directory_is_refused_with_one_sentence(
     remote, tmp_path
@@ -271,14 +290,17 @@ def test_a_request_that_names_no_path_is_answered_for_any_client(
     )
     assert managed.status_code == 201, managed.text
 
-    # An empty tape set names nothing: clearing it is a registry write.
+    # An empty tape set names nothing, so it is not refused for where it came
+    # from — the registry refuses it for having no tapes, which is not this
+    # rule's 403.
     emptied = remote.client.put(
         f"/api/meetings/{managed.json()['id']}/tapes", json={"paths": []}
     )
     assert emptied.status_code != 403, emptied.text
 
-    # No archive root: the service's own default stands, so the refusal is about
-    # the meeting's tapes rather than about where the client is.
+    # No archive root names no path: the project has no ``default_archive_root``
+    # of its own, so the call is refused for having no root, not for where the
+    # client is.
     unrooted = remote.client.post(
         f"/api/meetings/{managed.json()['id']}/archives", json={}
     )

@@ -223,10 +223,9 @@ _STAGE_COMMANDS: tuple[tuple[str, ...], ...] = (
 #: ``[run] #<id> <status>`` and ``[next]``, the latter the one whose ``tr`` is
 #: why ``CR_LANG`` is pinned. `calibrate` is that run plus the report it writes
 #: and prints, and `synth` is the development command that builds the fixture a
-#: `calibrate` run is scored on. `run` and `calibrate` are what a user actually
-#: types and the aggregates the stages' return change rewires; `calibrate`'s
-#: report and `synth` are the two helpers the pipeline package hands back to the
-#: command surface.
+#: `calibrate` run is scored on. `run` and `calibrate` are the two aggregates a
+#: user actually types; `calibrate`'s report and `synth` are the two helpers the
+#: pipeline package hands back to the command surface.
 _BLOCKS: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
     ("tape", _STAGE_COMMANDS),
     ("run", (("run",),)),

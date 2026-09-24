@@ -6,8 +6,10 @@ running **right now**, restart it, and quit. The tray **joins** a node that is
 already up rather than starting a second one, so "restart" and "quit" are about
 the node this tray started: a node it only joined is left running
 (:meth:`~clear_record.tray.service.ServiceController.supervises` is what the
-menu offers restart from). No icon asset ships — a standard style icon is used
-so the build carries no binary art.
+menu offers restart from — and when the tray owns no node and the one it joined
+has stopped, the item offers a **start** instead,
+:meth:`~clear_record.tray.service.ServiceController.restart_or_start`). No icon
+asset ships — a standard style icon is used so the build carries no binary art.
 
 The tray holds no credential: it supervises the node it starts, joins one it
 finds, and opens the console URL; with auth enabled the **browser** is what asks
@@ -94,7 +96,7 @@ def main(
     menu.addSeparator()
 
     restart_action = QAction(tr("Restart server"), menu)
-    restart_action.triggered.connect(lambda: controller.restart())
+    restart_action.triggered.connect(lambda: controller.restart_or_start())
     menu.addAction(restart_action)
 
     menu.addSeparator()
@@ -111,14 +113,16 @@ def main(
     def refresh() -> None:
         """Repaint the live state; called once now, then on every poll tick.
 
-        Restart is offered for the node this tray started and greyed out for one
-        it only joined — ``restart`` answers ``False`` for a node this process
-        does not own — so it is decided here, with the rest of the live state: a
-        restart that joins a node already up leaves this tray none of its own.
+        Restart is offered for the node this tray started, and for the node it
+        only joined once that node has stopped — a click then **starts** one of
+        its own, which is the only way back for a tray whose joined node went
+        away. It stays greyed out for a joined node that still answers, which is
+        not this tray's to restart, so the tick only reads: no surface starts a
+        node the user did not ask for.
         """
         status = status_text(controller)
         status_action.setText(status)
-        restart_action.setEnabled(controller.supervises)
+        restart_action.setEnabled(controller.offers_restart)
         tray.setToolTip(tr("clear-record console — {status}", status=status))
 
     tray.setContextMenu(menu)

@@ -372,8 +372,9 @@ class TapesUpdate(BaseModel):
     from a request that addressed the node by its own address; a client elsewhere
     sends the tape's bytes to the managed workspace instead
     (``POST /api/meetings/{id}/tapes``). An empty list names no path and is
-    therefore not refused for where it came from — clearing the set is a registry
-    write under any client.
+    therefore not refused for where it came from — but it does **not** clear the
+    set: the registry refuses a recording set with no tapes, so a meeting is
+    emptied one tape at a time (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
     """
 
     paths: list[str]
@@ -405,7 +406,7 @@ class RunCreate(BaseModel):
     still explicit (``"jobs": 0``, the documented "auto"). The glossary and the
     re-run scope are knobs too, and neither is a decoder's: the glossary is a
     **file on this node** (a local client's noun, like a run's directory) and the
-    scope is ``core.ChunkScope``'s two raw inputs, which the service parses when
+    scope is ``core.ChunkScope``'s two raw inputs, which the pipeline parses when
     the run executes.
 
     A field this shape does not declare is **refused**, never ignored
@@ -495,7 +496,9 @@ class ArchiveCreate(BaseModel):
 
     ``root`` is a local client's noun: the route takes it only from a request
     that addressed the node by its own address. Omitting it names no path, so the
-    service's own default root stands for any client.
+    *project's* own ``default_archive_root`` stands when it is set, for any
+    client; when it is not, the call is refused — there is deliberately no
+    service-owned default root.
     """
 
     root: str | None = None
@@ -635,8 +638,9 @@ PATH_IS_LOCAL = (
     "you want the way the registry addresses it instead: a run by its meeting's "
     "id (POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
     "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
-    "node (`managed: true`); an archive location by omitting it, so the node's "
-    "own root stands; a glossary by omitting it, so the node's own stands."
+    "node (`managed: true`); an archive location by omitting it, so the "
+    "*project's* own root stands when it has one; a glossary by omitting it, so "
+    "the node's own stands."
 )
 
 #: The one sentence a run request gets when its model is a path rather than a
@@ -646,6 +650,14 @@ MODEL_IS_THE_NODES = (
     "work, so it is named the way the node names it — a bare name its models "
     "directory resolves, e.g. 'small' or 'ggml-small.bin' — never a path: a path "
     "names a file on whatever machine the client is on."
+)
+
+#: The one sentence a run-by-path request gets when its ``directory`` names
+#: nothing. An empty or blank value is what an unset shell variable produces, and
+#: it must not be taken as "run the node's own working directory".
+BLANK_DIRECTORY = (
+    "request refused: a workspace run needs the directory it runs, so "
+    "`directory` has to name one — it was empty or blank."
 )
 
 #: What makes a string a *path* rather than a name: a separator, in either
@@ -2154,11 +2166,19 @@ def create_app(
         An app with no bound socket of its own — a test client, an embedder —
         vouches for nothing, which is the same answer as no record at all.
 
+        What the record is compared on is the **address** it names, not the
+        process that wrote it: ``pid`` belongs to the writer, and a record that
+        names this socket is this node's whether or not it also carries one.
+
         The refusal is the English `detail` (``docs/i18n.md``): a machine reads
         it, and it is the sentence every surface states when nothing answers.
         """
         recorded, serving = node.recorded(), _served_by(app)
-        if recorded is None or recorded != serving:
+        if (
+            recorded is None
+            or serving is None
+            or (recorded.host, recorded.port) != (serving.host, serving.port)
+        ):
             raise HTTPException(status_code=503, detail=node.NO_NODE_MESSAGE)
         return NodeOut.of(recorded, status="ok")
 
@@ -2188,7 +2208,9 @@ def create_app(
         A named root is a directory on this node's filesystem, where this
         project's archives are later written — so it is taken only from a request
         that addressed the node by its own address, exactly as the archives route
-        guards a ``root`` it is handed. Omitted, the node's own default stands.
+        guards a ``root`` it is handed. Omitted, the project has no archive root
+        of its own, and an archive call that names none is refused — there is no
+        service-owned default to fall back to.
         """
         if body.default_archive_root:
             _require_local_client(request)
@@ -2371,7 +2393,10 @@ def create_app(
 
         A non-empty ``paths`` names files on this node's filesystem, so it is
         taken only from a request that addressed the node by its own address. An
-        empty list names nothing and clears the set for any client.
+        empty list names nothing and is answered for any client, but it does not
+        clear the set — the registry refuses a recording set with no tapes, and a
+        tape is removed one at a time
+        (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
         """
         lookup.meeting(registry, meeting_id)
         if body.paths:
@@ -2497,10 +2522,13 @@ def create_app(
 
         The body's ``model`` is refused if it is a path *before* the directory is
         resolved, so a refused request registers no meeting (see
-        :func:`_require_model_name`).
+        :func:`_require_model_name`); a blank ``directory`` is refused beside it,
+        for the same reason — a request that names nothing runs nothing.
         """
         _require_local_client(request)
         _require_model_name(body.model)
+        if not body.directory.strip():
+            raise HTTPException(status_code=400, detail=BLANK_DIRECTORY)
         meeting = workspace_run_meeting(registry, body.directory)
         return enqueue_run(meeting, body)
 
@@ -2526,9 +2554,10 @@ def create_app(
     ) -> ArchiveOut:
         """Archive a meeting; a named ``root`` is a local client's noun.
 
-        An omitted ``root`` names no path — the service's own default stands, for
-        any client. A named one is a directory on this node's filesystem, so it is
-        taken only from a request that addressed the node by its own address.
+        An omitted ``root`` names no path — the **project's** own root stands when
+        it is set, for any client, and the call is refused when it is not. A named
+        one is a directory on this node's filesystem, so it is taken only from a
+        request that addressed the node by its own address.
         """
         meeting = lookup.meeting(registry, meeting_id)
         root = body.root if body else None

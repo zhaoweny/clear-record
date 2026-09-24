@@ -1057,11 +1057,15 @@ def _asked(name: str, value: Any) -> bool:
     or empty. ``--models-dir`` is the one exception: its parser default is a
     *value* — the directory this machine resolves (``resolve_models_dir``, a
     click default callable) — so it counts as asked only when the parsed value
-    differs from that. ``0`` counts as asked: a false-y value the user typed is
-    still a value (``--window-s 0``).
+    names a **different directory**, compared as a path: a ``CR_MODELS_DIR`` of
+    ``~/models`` or ``models/`` is that same directory, not a flag the user
+    typed. ``0`` counts as asked: a false-y value the user typed is still a value
+    (``--window-s 0``).
     """
     if name == "models_dir":
-        return value != resolve_models_dir()
+        return value is not None and Path(value).expanduser() != Path(
+            resolve_models_dir()
+        )
     return value is not None and value is not False and value != () and value != ""
 
 
@@ -1165,7 +1169,10 @@ def _node_run_body(args: Any, *, split: str) -> dict:
         "profile": args.profile or PROFILE_CUSTOM,
         "auto": bool(args.auto),
         "origin": CLI_ORIGIN,
-        "glossary": args.glossary,
+        # A path like the run's ``<directory>`` (resolved by :func:`_cmd_run`):
+        # resolved **here**, where the client stands, so the node opens the file
+        # this machine named rather than a same-named file against its own cwd.
+        "glossary": str(Path(args.glossary).resolve()) if args.glossary else None,
         "rerun_sources": list(args.rerun_sources) or None,
         "rerun_range": args.rerun_range,
         # The knobs are the declaration's: read them off the parsed arguments by

@@ -23,6 +23,7 @@ where a test gates the queue, the pipeline itself.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -422,6 +423,52 @@ def test_a_run_over_a_local_directory_works_when_client_and_node_agree(
     assert f"{workspace.resolve()}/export" in printed
 
 
+def test_a_relative_glossary_is_the_clients_file_not_the_nodes_cwd(
+    node_in_this_process, tmp_path, monkeypatch
+) -> None:
+    """``--glossary`` is resolved where the client stands, exactly like ``<directory>``.
+
+    The node resolves a relative path against **its own** cwd, so a relative flag
+    names a different file depending on who reads it. The command line resolves
+    the directory it sends; the glossary has to travel the same way, or the node
+    decodes with another directory's file (or none) and still reports done. The
+    two parties are made to stand in different directories inside one run: the
+    client posts from one, the node's pipeline reads in the other, and what it
+    opens is the client's file.
+    """
+    client_dir = tmp_path / "client"
+    node_dir = tmp_path / "node"
+    client_dir.mkdir()
+    node_dir.mkdir()
+    (client_dir / "terms.txt").write_text("CLIENTTERM\n", encoding="utf-8")
+    (node_dir / "terms.txt").write_text("DECOYTERM\n", encoding="utf-8")
+
+    entered = threading.Event()
+    release = threading.Event()
+    read: list[str] = []
+
+    def pipeline(directory, options, on_event) -> None:
+        # The node's own read of the glossary it was handed — what transcribe's
+        # ``_load_glossary`` opens — against the cwd the node runs in.
+        entered.set()
+        assert release.wait(_RUN_TIMEOUT)
+        read.append(Path(options.glossary).read_text(encoding="utf-8"))
+
+    workspace = _workspace(tmp_path, "glossary-cwd", tapes=1)
+    monkeypatch.chdir(client_dir)
+    with node_in_this_process(pipeline=pipeline):
+        thread, out = _in_thread(lambda: _cli_run(workspace, "--glossary", "terms.txt"))
+        assert entered.wait(_RUN_TIMEOUT), "the run never reached the node"
+        # The client has posted; the node runs where *it* stands.
+        monkeypatch.chdir(node_dir)
+        release.set()
+        thread.join(_RUN_TIMEOUT)
+
+    assert not thread.is_alive()
+    assert out == [0], out
+    assert read == ["CLIENTTERM\n"], "the node read another directory's glossary"
+
+
 # --- what `--auto` chose, in the node's own words -------------------------- #
 def test_an_auto_run_prints_the_explanation_the_node_recorded(
     node_in_this_process, tmp_path, monkeypatch, capsys
@@ -587,6 +634,23 @@ def test_a_flag_a_node_run_cannot_carry_is_refused(
         assert "--diarize" in captured.err and "--speakers" in captured.err
         assert "a node run cannot set" in captured.err
         assert node_here.registry.list_meetings() == []
+
+
+def test_a_normalized_models_dir_is_not_a_flag_the_user_typed(
+    node_in_this_process, tmp_path, monkeypatch
+) -> None:
+    """``CR_MODELS_DIR`` in a normalized form is still *unset*, not a typed flag.
+
+    ``--models-dir`` is the node's own, so a node run refuses it — but only when
+    the user **asked**. The comparison is between directories, not their spelling:
+    a value like ``…/models/`` names the directory the resolver names, so ``run``
+    proceeds rather than refusing a flag nobody typed.
+    """
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models") + os.sep)
+    workspace = _workspace(tmp_path, "normalized-models", tapes=1)
+    with node_in_this_process():
+        assert _cli_run(workspace) == 0
 
 
 def test_every_flag_run_exposes_is_carried_or_refused() -> None:

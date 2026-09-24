@@ -120,6 +120,20 @@ class ServiceController:
             self._server is not None or self._thread is not None
         )
 
+    @property
+    def offers_restart(self) -> bool:
+        """Whether the menu's Restart item can act right now.
+
+        True for the node this tray started — restart is its act — and for the one
+        case where the tray owns no node and the node it **joined** has stopped:
+        then a click *starts* a node of its own (:meth:`restart_or_start`), the
+        only way back for a tray whose joined node went away. A joined node that
+        still answers is not this tray's to restart, so nothing is offered there.
+        """
+        if self.supervises:
+            return True
+        return self.state() is ServiceState.UNREACHABLE
+
     def start(self) -> None:
         """Become a client of a node: join the one that answers, or start one.
 
@@ -252,6 +266,21 @@ class ServiceController:
             return False
         if not self.stop(timeout):
             return False
+        self.start()
+        return self.wait_until_ready(timeout=timeout)
+
+    def restart_or_start(self, timeout: float = 15.0) -> bool:
+        """What the menu's Restart item does for the node this tray is a client of.
+
+        The node this tray **started** is restarted (:meth:`restart`). A tray that
+        owns no node starts one exactly as :meth:`start` does — the record is
+        re-read and the node that answers is joined, or one is started when none
+        answers — which is the way back after the node a tray joined has stopped.
+        It happens because the user **clicked**, never on the poll tick that saw
+        the node gone (:meth:`offers_restart` is what enables the item).
+        """
+        if self.supervises:
+            return self.restart(timeout)
         self.start()
         return self.wait_until_ready(timeout=timeout)
 

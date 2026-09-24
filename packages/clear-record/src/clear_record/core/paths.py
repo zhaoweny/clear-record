@@ -303,8 +303,8 @@ def resolve_state_dir(explicit: str | os.PathLike | None = None) -> Path:
 def node_address_path() -> Path:
     """The file where a running node records its address (may not exist).
 
-    One path for the writer and the readers — the command line, the console and
-    the MCP adapter — so no surface guesses a port.
+    One path for the writer and the readers — the command line, the console, the
+    MCP adapter and the tray — so no surface guesses a port.
     """
     return resolve_state_dir() / NODE_FILENAME
 

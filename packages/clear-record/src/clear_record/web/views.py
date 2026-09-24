@@ -269,12 +269,16 @@ CONSOLE_KNOB_WORDS: dict[str, tuple[str, str]] = {
         ),
     ),
     "jobs": (
-        # The console's own word for this knob, and the one the run fragment
-        # already shows (``tr("jobs")`` beside the auto facts): one knob, one
-        # word in one interface — not the command line's "workers".
+        # The console's own word for this knob's **label** — the box, and a
+        # refusal naming it, say "jobs", the one word the run fragment already
+        # shows (``tr("jobs")`` beside the auto facts), not the command line's
+        # "workers". The tooltip is the one place the console explains the knob in
+        # a sentence, and it names "workers" there because that is what it counts.
         deferred("jobs"),
         deferred(
-            "how many transcription workers may run at once; 0 lets the node choose"
+            "how many transcription workers may run at once; 0 lets the node "
+            "choose — process-isolated backends only, so the native `apple-speech` "
+            "path always runs one"
         ),
     ),
 }

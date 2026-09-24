@@ -7,7 +7,8 @@ The direction is in force and is being built in batches; its **first batch** —
 pipeline leaving the command surface — landed on 2026-09-24 (ADR-0030's `C3`;
 ADR-0004's text of 2026-09-24, an inline restatement inside its 2026-09-13 Update;
 and ADR-0012's matching Update), and **the facade itself landed 2026-09-25** — a
-command-line run is a node run, carried by the Update at the end of this file. The
+command-line run is a node run, carried by the Update *the facade landed: a
+command-line run is a node run* below. The
 spec, its batches and its remaining tickets are in the tracker's `architecture`
 lane; per ADR-0029 nothing here cites it by address. The owner's words this ADR
 rests on are carried verbatim by
@@ -62,7 +63,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   ADR-0017: MCP is a thin adapter over `clear_record.service`. ADR-0013: "headless
   service first". What was missing is the command line's membership.
 - [FACT] **The gap that makes the direction concrete** (measured 2026-09-21, and
-  **closed 2026-09-25** — see the Update at the end; quoted here as it stood when
+  **closed 2026-09-25** — see the Update *the facade landed: a command-line run
+  is a node run*; quoted here as it stood when
   the gap was measured): a run started from the
   command line **writes no run row** — `clear_record/service/runs.py` says so in
   `RunManager`'s own docstring ("the CLI is not a third writer: it runs the pipeline
@@ -192,7 +194,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
      (unix socket or loopback) rather than a credential story. A remote client is a
      **future** case whose auth belongs with the deferred in-app-auth work and
      ADR-0021's "the operator's reverse proxy is the ingress" posture.
-  5. [OPEN: owner, 2026-09-21] **Packaging — the one residue.** If an invocation
+  5. [OPEN → **answered 2026-09-25**] **Packaging — the one residue.** If an invocation
      must be able to **bring a node up**, the node's stack stops being an optional
      extra (today FastAPI and uvicorn sit behind the `web` extra, ADR-0013). The
      owner's fifth answer was the **shape** (the table above), not the packaging
@@ -296,7 +298,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   `architecture` lane.
 - [OPEN → **decided 2026-09-25**] **How a client addresses a workspace.** (The
   question this bullet names is **settled**; the text below is kept as it stood
-  when it was open, and the settlement is the Update at the end of this file.)
+  when it was open, and the settlement is the Update *how a client names what it
+  wants, settled*.)
   The command line's subject is a
   local directory; a node's subjects are registry ids, and a path a client sends is
   a path *on the node's filesystem*. The upload route that exists covers tapes only
@@ -448,12 +451,14 @@ promotes nothing the owner did not say beyond the label each clause carries.
   visitor is unchanged by this batch.
 - [OPEN] **A reference transcript has no way to reach the node** — not by upload
   and not as a registry object. Tapes alone have an upload route (ADR-0024), and
-  the census line that named this stands; a run's `--reference` is not carryable
-  through the node's run API, so that noun remains to be named by whichever
-  ticket gives it a route. The **glossary** half of this bullet is closed by the
-  fact below: a run's glossary is carryable now, as a path a *local* client
-  names. What stays open for it is a client **elsewhere**, which still has no way
-  to send the file itself (neither an upload route nor a registry object).
+  the census line that named this stands; the reference transcript's carriers on
+  the command line are the machine-local `calibrate --reference-transcript` and
+  `bench --reference`, neither of which has a node route (a run's `--reference` is
+  an **alignment source id**, not a transcript), so that noun remains to be named
+  by whichever ticket gives it a route. The **glossary** half of this bullet is
+  closed by the fact below: a run's glossary is carryable now, as a path a *local*
+  client names. What stays open for it is a client **elsewhere**, which still has
+  no way to send the file itself (neither an upload route nor a registry object).
 - [FACT] **The knobs a client may set are the command line's, and the run record
   keeps them.** The census's second bullet is closed: `RunCreate` declares one
   field per row of `core.RUN_KNOBS` — the decoder block included — plus the

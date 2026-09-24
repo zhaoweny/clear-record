@@ -143,8 +143,8 @@ def node_line() -> str:
 
     The adapter asks through the one node client
     (:func:`clear_record.core.node.ask`): the recorded address, proved by one
-    request against it, or the sentence every surface states when nothing
-    answers. So this line answers *where* the node is; what that means for these
+    request against it, or the sentence the surfaces state when nothing answers.
+    So this line answers *where* the node is; what that means for these
     tools — that they answer either way, and that this adapter starts no node — is
     :data:`NODE_POSTURE`, which the instructions carry whatever this line says.
     English on purpose — the MCP surface is machine-read and is never translated

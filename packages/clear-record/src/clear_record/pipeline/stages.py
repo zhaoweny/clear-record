@@ -222,8 +222,8 @@ def _report_pass(
     command line prints these messages, and a client reading a run's stream
     reads the same lines, with the same text and in the same order.
 
-    Each line carries the pass's counters, so the console's bar and the rate it
-    derives keep reading a real count off the newest event:
+    Each line carries the pass's counters, so the console's bar keeps reading a
+    real count off the newest event:
 
     - ``report`` — the pass's own closing progress event, for a pass that draws
       a bar: the lines copy its counters, its elapsed clock and its ``done``,

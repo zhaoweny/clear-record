@@ -56,10 +56,10 @@ def test_subcommands_match_pipeline(monkeypatch) -> None:
 
 
 def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
-    """The spec covers all four consumers: itself, the CLI subcommands, the
-    `run` dispatch table, and the command surface's renderer table. Order is
-    asserted for the CLI (Click's command mapping preserves insertion order);
-    `run`'s execution order is pinned in test_cli_pipeline."""
+    """The spec covers its consumers: itself, the CLI subcommands, and the
+    `run` dispatch table. Order is asserted for the CLI (Click's command mapping
+    preserves insertion order); `run`'s execution order is pinned in
+    test_cli_pipeline."""
     spec = pipeline_spec()
     group = _build_group()
 
@@ -68,13 +68,10 @@ def test_pipeline_spec_is_the_one_source_of_stage_truth() -> None:
     ordered = [name for name in group.commands if name in declared]
     assert ordered == list(spec.cli_commands())
 
-    # run: the dispatch table covers exactly the spec's stages.
+    # run: the dispatch table covers exactly the spec's stages. It is also what
+    # reporting goes through — a stage reports its own words on the sink — so a
+    # stage added to the spec with no runner fails here rather than at run time.
     assert set(stages._STAGE_RUNNERS) == set(spec.steps)
-
-    # ...and so does the renderer `run` feeds each stage's result to: a stage
-    # added to the spec with no renderer would otherwise raise a `KeyError`
-    # inside `run`, past a green dispatch-table assertion.
-    assert set(cli._RENDERERS) == set(spec.steps)
 
 
 def test_backend_choices_come_from_the_catalog() -> None:

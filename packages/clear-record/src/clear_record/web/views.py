@@ -500,6 +500,12 @@ def run_row(registry: Registry, run: PipelineRun, projects: Mapping[str, str]) -
         "index": event.index if event else 0,
         "total": event.total if event else 0,
         "eta_s": eta_s,
+        # The newest event's own text — the line the run last reported — read off
+        # the same event the stage and the counters above came from. A report
+        # that carries counters only has no words, and the row then shows none;
+        # what it does show is the one channel the command line prints from,
+        # never a second source of its own.
+        "message": event.message if event else "",
         # Two different quantities, kept apart: the speed a finished run's
         # cost record measured, and the rate a running run is sustaining so
         # far. A row has at most one of them.

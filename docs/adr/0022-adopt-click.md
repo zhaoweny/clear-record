@@ -93,6 +93,13 @@ Date: 2026-09-15
   run's own stream, read back by `cli/runs.py`, so `run`'s default stdout is no
   longer this module's rendering of what the stages returned and reported.
   `cli.py`'s contract bullet and `tests/cli/test_stage_stdout.py` were qualified in
-  the same landing; the pin still covers every stage command byte for byte, and
-  `run`'s block is pinned too — as its own shape, re-pinned by that landing rather
-  than as the pre-move equivalence check.
+  that landing.
+- [FACT] **`run`'s block is the pre-move equivalence check again**, since the
+  channel learned to carry the words (the same date, ADR-0032's matching Update):
+  the run's stream reports every line and data item a stage produces, so the
+  follower prints the very bytes the stage commands print, and `run`'s block is
+  the pre-move block with the surface's end line inserted before `[next]`. Every
+  **stage's** word this module prints is a report read off that one channel —
+  `_cmd_run`'s own `[run] #<id> <status>` and `[next]` lines are the surface's,
+  as they were before; what a stage *returns* is for a caller that wants the
+  typed value.

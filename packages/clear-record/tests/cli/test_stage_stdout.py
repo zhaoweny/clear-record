@@ -1,15 +1,16 @@
 """The commands' default stdout, pinned byte for byte.
 
 ``cli/cli.py`` states the contract — the stages print nothing and the command
-surface renders every word of what they returned and reported, so a stage
-command's default stdout is byte-identical — and nothing enforced it: the suite's
-only exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
-every other stage assertion is a substring check. This module is the pin: the
-eight stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
-actually types, and the ``synth`` development command. ``run`` is the one block
-whose **stage** lines are not this surface's rendering: a command-line run is the
-node's (ADR-0032), so they are the node's own progress, read back by the follower
-(``cli/runs.py``) and pinned here as it comes over. That block's other two lines
+surface prints every word they report, so a stage command's default stdout is
+byte-identical — and nothing enforced it: the suite's only exact-stdout assertion
+was an *empty* output (``test_diagnostics_cli``), and every other stage assertion
+is a substring check. This module is the pin: the eight stage-bearing commands,
+the ``run`` and ``calibrate`` aggregates a user actually types, and the ``synth``
+development command. ``run`` is the one block whose stage lines this surface does
+not print itself: a command-line run is the node's (ADR-0032), so the follower
+reads them back off the run's own stream (``cli/runs.py``) — the same text the
+stage commands print, because the stages report it as events on that one channel
+and the follower prints every message it carries. That block's other two lines
 are the surface's own — ``[run] #<id> <status>`` and the ``[next]`` pointer
 (``_cmd_run``) — where every other block's lines are all its own.
 
@@ -59,7 +60,7 @@ import soundfile as sf
 from click.testing import CliRunner
 
 from clear_record.cli import cli
-from clear_record.core import Segment, TranscriptionResult
+from clear_record.core import JobEvent, Segment, TranscriptionResult
 from clear_record.core.process import ProcessRunner
 from clear_record.pipeline import stages
 from clear_record.providers import BackendBase, BackendInfo
@@ -67,9 +68,10 @@ from clear_record.providers import BackendBase, BackendInfo
 #: The whole capture, in the order it was taken. Regenerate by running
 #: :func:`_capture` once and pasting its text here; a mismatch is a byte-level
 #: diff. Every block but ``run`` is the **pre-move** one — captured against
-#: 1277852 — so those double as the move's equivalence check. ``run`` is not one
-#: of them: a command-line run is the node's now (ADR-0032), so its lines are the
-#: node-side progress the follower reads back, re-pinned by 244 when that landed.
+#: 1277852 — so those double as the move's equivalence check; ``run``'s stage
+#: lines are those same bytes, read back from the node the run executes on (the
+#: stage commands' own text, printed by the follower from the run's stream),
+#: with the surface's end line before ``[next]``.
 _GOLDEN = """\
 $ clear-record glossary --add Clear Record --add Oh My Pi
 [glossary] $FIXTURE/tape/glossary.txt (2 term(s))
@@ -121,11 +123,35 @@ $ clear-record export
 [export] vtt  -> $FIXTURE/tape/export/record.vtt
 [export] json -> $FIXTURE/tape/export/record.json
 $ clear-record run
-[ingest] 3 / 3
-[align] 1 / 1
-[transcribe] 3 / 3
-[reconcile] 1 / 1
-[export] 4 / 4
+[ingest] decode a.wav -> a.wav
+[ingest] decode b.wav -> b.wav
+[ingest] decode c.wav -> c.wav
+[ingest] 3 source(s) -> $FIXTURE/run/manifest.json
+  a                        $FIXTURE/run/audio/a.wav
+  b                        $FIXTURE/run/audio/b.wav
+  c                        $FIXTURE/run/audio/c.wav
+[align] reference=a method=windowed-cross-correlation conf=1.0 unresolved=1
+  a                        offset=+0.0000s (ref)
+  b                        offset=+0.0000s
+  c                        UNRESOLVED (could not place this source)
+[transcribe] a: 1 chunk(s), 6.0s, fake decoder (fake-model)
+[transcribe] b: 1 chunk(s), 6.0s, fake decoder (fake-model)
+[transcribe] c: 1 chunk(s), 6.0s, fake decoder (fake-model)
+[transcribe] 3 pending chunk(s), jobs=1 (fake-model)
+[transcribe]   a chunk 1/1 [0-6s] -> 1 segment(s)
+[transcribe]   b chunk 1/1 [0-6s] -> 1 segment(s)
+[transcribe]   c chunk 1/1 [0-6s] -> 1 segment(s)
+[transcribe] chunks: 3 re-decoded, 0 reused
+[transcribe] 'fake-model' via apple -> segments.json
+  a                        segments=   1  duration=6.0  chunks=1
+  b                        segments=   1  duration=6.0  chunks=1
+  c                        segments=   1  duration=6.0  chunks=1
+[reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/record.json
+  00:00:00.000 [Speaker 1] chunk
+[export] md   -> $FIXTURE/run/export/record.md
+[export] srt  -> $FIXTURE/run/export/record.srt
+[export] vtt  -> $FIXTURE/run/export/record.vtt
+[export] json -> $FIXTURE/run/export/record.json
 [run] #1 done
 [next] the record is in $FIXTURE/run/export; review it and accept the minutes in the console: `clear-record web`
 $ clear-record calibrate
@@ -354,3 +380,21 @@ def _capture(root: Path, bring_up) -> str:
 def test_commands_print_the_pinned_bytes(tmp_path: Path, node_in_this_process) -> None:
     """Every command's default stdout, byte for byte, over one capture."""
     assert _capture(tmp_path, node_in_this_process) == _GOLDEN
+
+
+def test_the_surface_prints_only_the_words_the_channel_carries(capsys) -> None:
+    """Nothing is printed that no event carries.
+
+    The command surface's whole rendering is the sink: a progress report — the
+    counters the console's bar and rate read — prints nothing at all, and an
+    event that carries a line prints its ``message``. So every byte a stage
+    command writes is a byte the run's stream carries for every other client.
+    """
+    sink = cli._StageLines()
+    sink(JobEvent(stage="transcribe", index=1, total=2, elapsed_s=1.0, source="a"))
+    sink(JobEvent(stage="transcribe", index=2, total=2, elapsed_s=2.0, done=True))
+
+    assert capsys.readouterr().out == ""
+
+    sink(JobEvent(stage="transcribe", index=2, total=2, message="[transcribe] done"))
+    assert capsys.readouterr().out == "[transcribe] done\n"

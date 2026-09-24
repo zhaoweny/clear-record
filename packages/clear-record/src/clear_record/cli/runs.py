@@ -9,9 +9,9 @@ stays where the node runs it.
 
 What this deliberately leaves alone, because it is the node's own work:
 
-* the stage's **words** — the run's stream carries *progress* for a client today
-  (the stage, and the counters its closing event reported), so the follow loop
-  prints progress and invents no prose;
+* the stage's **words** — the run's stream carries them: a stage's mid-stage
+  lines, each pass's summary and the data items it produced are events whose
+  ``message`` is the text, so the follow loop prints them and invents no prose;
 * what a client may **set** — a run request carries only the fields the node's
   run API declares, and ``cli.cli`` refuses a flag it cannot carry rather than
   dropping it;
@@ -190,15 +190,21 @@ def events(
     return list(answer.body["events"]), int(answer.body["next"])
 
 
-def _print_stages(
-    page: list[dict[str, Any]], reported: set[str], out: Callable[[str], None]
-) -> None:
-    """Print each stage *page* closes, once per stage."""
+def _print_words(page: list[dict[str, Any]], out: Callable[[str], None]) -> None:
+    """Print every word the page carries, in the page's own order.
+
+    The run's stream is one channel: a stage reports its mid-stage lines, its
+    summary and the data items its pass produced as events whose ``message`` is
+    the text, and a pure progress report carries none. So the follower prints
+    ``message`` and nothing else — the same lines the stage commands print, from
+    the same payload. Nothing is deduped here: the cursor is what makes an event
+    arrive once, and two events carrying the same words are two things the run
+    said.
+    """
     for event in page:
-        stage = str(event["stage"])
-        if event.get("done") and stage not in reported:
-            reported.add(stage)
-            out(f"[{stage}] {event['index']} / {event['total']}")
+        message = event.get("message")
+        if message:
+            out(str(message))
 
 
 def follow(
@@ -209,18 +215,14 @@ def follow(
     poll: float = POLL_S,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Progress:
-    """Follow a run on the node, printing each stage as the run closes it.
+    """Follow a run on the node, printing every word the run reports.
 
-    What is printed is what the run's own stream carries for a client today: one
-    line per stage the run finished — the stage, and the counters its **closing**
-    event reported — which is progress, the same material the console's run row
-    draws from the same stream. The stage's own words and the data items it
-    returns are the channel's own work; nothing here invents them.
-
-    A stage is printed once, when its first closing event lands: a stage's line
-    that belongs to a chunk copies that chunk's event wholesale (``report_line``
-    with ``report=``), so the last chunk's line carries ``done`` as well and would
-    otherwise repeat the stage's own line.
+    The node's stream is the whole material: a stage's mid-stage lines, each
+    pass's summary, and the data items that pass produced all arrive as events
+    whose ``message`` is the text — so this loop prints exactly what the stage
+    commands print for the same work, in the order the run produced it, and
+    invents nothing. Progress reports (the counters the console's bar reads)
+    carry no message and print nothing here.
 
     A run that has not started yet says where it is waiting — ``[queued]`` and its
     FIFO place — instead of reading as a hang. That line is printed from a **poll**
@@ -235,7 +237,6 @@ def follow(
     where the record went.
     """
     cursor = 0
-    reported: set[str] = set()
     #: The loop has read once already (the read that follows the submission), so
     #: only a later read can report a queue place — see the docstring.
     polled = False
@@ -243,7 +244,7 @@ def follow(
     placed = False
     while True:
         page, cursor = events(target, run_id, cursor)
-        _print_stages(page, reported, out)
+        _print_words(page, out)
         state = read(target, run_id)
         if state.terminal:
             while cursor < state.events:
@@ -252,7 +253,7 @@ def follow(
                     # The node cannot hand over what its row counted (its state
                     # moved under us, e.g. a restart): stop rather than spin.
                     break
-                _print_stages(page, reported, out)
+                _print_words(page, out)
             return state
         if polled and not placed and state.position:
             placed = True

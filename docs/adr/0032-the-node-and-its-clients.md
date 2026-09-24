@@ -332,6 +332,20 @@ promotes nothing the owner did not say beyond the label each clause carries.
   the gap was measured. One consequence is recorded where the pin lives: `run`'s
   default stdout is now the node's own stream, so ADR-0022's byte-identical clause
   is scoped to the stage commands (that ADR's own Update).
+- [FACT] **The Context's channel gap is closed: the events carry the words.** The
+  census's third bullet — the events are `JobEvent`s carrying progress, and the
+  data items the stages print reach no event — is what the channel batch landed:
+  a stage's mid-stage lines, each pass's summary, and the rows its own report
+  holds are all reported as events whose `message` is the text, with the source
+  they are about where they have one and in the order the pass produced them. So
+  one payload serves every consumer — the command line prints it, a client
+  reading the run's stream reads it, and the console's activity row and run
+  fragment show it — and a progress report carries no words at all, which is what
+  lets a client print every message and nothing else. Two consequences recorded
+  where they live: `run`'s block is the stage commands' own bytes read back, with
+  the surface's end line before `[next]` (ADR-0022's Update, again), and the
+  stages' returns are now for a caller that wants the typed value rather than for
+  rendering.
 - [FACT] **`serve --supervise` is a flag now**, not the docstring promise the
   Context's census listed among the gaps: it is declared on `serve` alone, and an
   unasked stop restarts the server while an asked-for stop or a signal ends it.

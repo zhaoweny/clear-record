@@ -12,8 +12,9 @@ with the command surface's transcript preview — the SRT/VTT renderers go throu
 ``_srt_tc``, which writes the comma form.
 
 A stage **returns** what it produced — the record, the artifact set, the report
-of what it did — and reports its progress through the sink it is handed; nothing
-here writes to stdout and nothing here exits the process. Two shapes carry that:
+of what it did — and reports everything it has to say through the sink it is
+handed; nothing here writes to stdout and nothing here exits the process. Two
+shapes carry that:
 
 - ``PipelineError``, the module's failure channel: a stage that cannot do what
   it was asked raises it with the operator's message, and the caller decides
@@ -27,9 +28,19 @@ here writes to stdout and nothing here exits the process. Two shapes carry that:
   boundary dataclasses are frozen and are never widened to hold them (ADR-0030):
   a gap closes as a report object in this layer instead.
 
+**What a stage says, it says on the sink.** A mid-stage line is reported where
+it happens (:func:`~clear_record.pipeline.workspace.report_line`), and what a
+pass knows only when it is over — its summary and the table its report holds —
+is reported on the same channel through :func:`_report_pass`, in the order the
+command surface prints it. The event's ``message`` *is* the line, so one payload
+serves the console, a client reading a run's stream, and the command line's own
+stdout; the returns above are for a caller that wants the typed result, not for
+rendering it.
+
 Left out on purpose: ``PipelineOptions``, a re-export of ``core``'s, and
 everything private — the ``_run_*`` body one per stage and ``_STAGE_RUNNERS``,
-the export serializers, ``_load_glossary``, ``_source_id`` and the ``_eval``
+``_report_pass`` / ``_report_written`` (the pass's own words on the channel), the
+export serializers, ``_load_glossary``, ``_source_id`` and the ``_eval``
 alias. They are machinery the module runs on, not what a caller comes here for.
 
 Everything here is the thin wiring layer: it reads/writes the workspace files
@@ -42,7 +53,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from clear_record.core import (
@@ -52,6 +63,7 @@ from clear_record.core import (
     Alignment,
     ChunkScope,
     EventSink,
+    JobEvent,
     PipelineOptions,
     Progress,
     RecordDocument,
@@ -186,6 +198,62 @@ class GlossaryReport:
 
 
 # --------------------------------------------------------------------------- #
+# the pass's own words, on the one channel
+# --------------------------------------------------------------------------- #
+def _report_pass(
+    w: Workspace,
+    sink: EventSink | None,
+    stage: str,
+    summary: str,
+    rows: Sequence[tuple[str, str | None]] = (),
+    *,
+    report: JobEvent | None = None,
+    index: int = 0,
+    total: int = 0,
+    reused: int = 0,
+) -> None:
+    """Report one pass's words: its summary line, then a line per row.
+
+    A stage's mid-stage lines are reported where they happen
+    (:func:`~clear_record.pipeline.workspace.report_line`); what a pass knows
+    only when it is over — the summary and the table the returned report holds —
+    is reported here, on the **same** channel, in the same order the command
+    surface prints it. That is what makes one payload serve every consumer: the
+    command line prints these messages, and a client reading a run's stream
+    reads the same lines, with the same text and in the same order.
+
+    Each line carries the pass's counters, so the console's bar and the rate it
+    derives keep reading a real count off the newest event:
+
+    - ``report`` — the pass's own closing progress event, for a pass that draws
+      a bar: the lines copy its counters, its elapsed clock and its ``done``,
+      exactly as a line that belongs to a chunk does, so the run's cost record
+      reads the same stage wall-clock back;
+    - ``index``/``total``/``reused`` — the counters themselves, for a pass whose
+      closing report is not in reach (``transcribe`` reports its tally on the
+      chunk pool's own events).
+
+    ``rows`` are ``(line text, source id)`` pairs: the source a line is about
+    travels in the event's ``source``, the way a mid-stage line's does.
+    """
+    report_line(
+        w, sink, stage, summary, report=report, index=index, total=total, reused=reused
+    )
+    for text, source in rows:
+        report_line(
+            w,
+            sink,
+            stage,
+            text,
+            source=source,
+            report=report,
+            index=index,
+            total=total,
+            reused=reused,
+        )
+
+
+# --------------------------------------------------------------------------- #
 # ingest
 # --------------------------------------------------------------------------- #
 def _source_id(path: Path, directory: Path) -> str:
@@ -230,7 +298,7 @@ def ingest(
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     progress = Progress(Step.INGEST.value, len(files), on_event)
-    progress.start(f"decoding {len(files)} file(s)")
+    progress.start()
     # A source's ``label`` is the speaker name ``reconcile``/``attribute`` fall
     # back to. Never derive it from the file name: a tape's name is not a person,
     # and the minutes must not list one as an attendee. Channels are speaker-like,
@@ -287,8 +355,20 @@ def ingest(
                     clock_domain="wall",
                 )
             )
-        progress.advance(source=base)
+        closing = progress.advance(source=base)
     w.write_manifest(sources)
+    # The pass as a whole: the summary and the source table, reported on the same
+    # channel as the decode lines above and carrying the pass's closing
+    # counters — so the command surface prints them and a client reading the
+    # run's stream reads the same text.
+    _report_pass(
+        w,
+        on_event,
+        Step.INGEST.value,
+        f"[ingest] {len(sources)} source(s) -> {w.manifest_path}",
+        [(f"  {source.id:24s} {source.path}", source.id) for source in sources],
+        report=closing,
+    )
     return IngestReport(sources=tuple(sources))
 
 
@@ -304,10 +384,33 @@ def align(
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
     progress = Progress(Step.ALIGN.value, 1, on_event)
-    progress.start(f"aligning {len(sources)} source(s)")
+    progress.start()
     alignment = align_sources(sources, reference_id=reference)
-    progress.advance(message=f"reference={alignment.reference}")
+    closing = progress.advance()
     w.write_manifest(sources, alignment)
+    # The alignment as a whole: where every source landed, and the ones that
+    # could not be placed — the same words the command surface prints, on the
+    # run's one channel.
+    rows = [
+        (
+            f"  {sid:24s} offset={offset:+.4f}s"
+            + (" (ref)" if sid == alignment.reference else ""),
+            sid,
+        )
+        for sid, offset in alignment.offsets.items()
+    ] + [
+        (f"  {sid:24s} UNRESOLVED (could not place this source)", sid)
+        for sid in alignment.unresolved
+    ]
+    _report_pass(
+        w,
+        on_event,
+        Step.ALIGN.value,
+        f"[align] reference={alignment.reference} method={alignment.method} "
+        f"conf={alignment.confidence} unresolved={len(alignment.unresolved)}",
+        rows,
+        report=closing,
+    )
     return alignment
 
 
@@ -569,6 +672,34 @@ def transcribe(
         for sid, segs in result.per_source.items()
     }
     w.write_segments(per_source, meta)
+    # The pass as a whole, on the run's one channel: what decoded and where the
+    # transcript went, then one line per source. Transcribe's own closing report
+    # belongs to the chunk pool (its tally line above), so the counters the pass
+    # stands at are the ones it recorded — the chunks that source set held.
+    chunked = sum(int(info.get("chunks") or 0) for info in meta["sources"].values())
+    reused = int(meta["chunk_report"].get("reused") or 0)
+    rows: list[tuple[str, str | None]] = []
+    for sid, segs in per_source.items():
+        info = meta["sources"].get(sid, {})
+        duration = info.get("duration")
+        rows.append(
+            (
+                f"  {sid:24s} segments={len(segs):4d}  "
+                f"duration={duration if duration is not None else '?'}  "
+                f"chunks={info.get('chunks', '?')}",
+                sid,
+            )
+        )
+    _report_pass(
+        w,
+        on_event,
+        Step.TRANSCRIBE.value,
+        f"[transcribe] {meta['model']!r} via {meta['backend']} -> segments.json",
+        rows,
+        index=chunked,
+        total=chunked,
+        reused=reused,
+    )
     log_event(
         "info",
         "transcribe",
@@ -657,7 +788,11 @@ def diarize(
 # attribute (cross-talk-aware attribution by relative source energy)
 # --------------------------------------------------------------------------- #
 def attribute(
-    directory: str, mixed_source: str | None = None, window_s: float | None = None
+    directory: str,
+    mixed_source: str | None = None,
+    window_s: float | None = None,
+    *,
+    on_event: EventSink | None = None,
 ) -> AttributeReport:
     """Re-attribute each segment's speaker from the relative source energy.
 
@@ -692,7 +827,7 @@ def attribute(
 
     flat = [seg for segs in per_source.values() for seg in segs]
     if not flat:
-        return AttributeReport(
+        report = AttributeReport(
             per_source=per_source,
             segments=0,
             speakers=0,
@@ -700,55 +835,94 @@ def attribute(
             mixed_source=mixed_source,
             window_s=window_s,
         )
-
-    # Attribution owns the grouping: the result is keyed by each segment's own
-    # `source`, so no positional reassembly over dict order is needed.
-    attributed = attribute_by_source(
-        flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
-    )
-    changed = 0
-    for sid, segs in per_source.items():
-        updated = attributed.get(sid, [])
-        for before, after in zip(segs, updated):
-            if before.speaker != after.speaker:
-                changed += 1
-        per_source[sid] = updated
-    # The windowed path also writes a confidence, so persist even if no label
-    # changed (otherwise the new confidence would be lost to reconcile).
-    if changed or window_s is not None:
-        w.write_segments(per_source, meta)
-    speakers = {seg.speaker for segs in attributed.values() for seg in segs}
-    return AttributeReport(
-        per_source=per_source,
-        segments=len(flat),
-        speakers=len(speakers),
-        changed=changed,
-        mixed_source=mixed_source,
-        window_s=window_s,
-    )
+    else:
+        # Attribution owns the grouping: the result is keyed by each segment's own
+        # `source`, so no positional reassembly over dict order is needed.
+        attributed = attribute_by_source(
+            flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
+        )
+        changed = 0
+        for sid, segs in per_source.items():
+            updated = attributed.get(sid, [])
+            for before, after in zip(segs, updated):
+                if before.speaker != after.speaker:
+                    changed += 1
+            per_source[sid] = updated
+        # The windowed path also writes a confidence, so persist even if no label
+        # changed (otherwise the new confidence would be lost to reconcile).
+        if changed or window_s is not None:
+            w.write_segments(per_source, meta)
+        speakers = {seg.speaker for segs in attributed.values() for seg in segs}
+        report = AttributeReport(
+            per_source=per_source,
+            segments=len(flat),
+            speakers=len(speakers),
+            changed=changed,
+            mixed_source=mixed_source,
+            window_s=window_s,
+        )
+    # What the pass did, as one line on the run's own channel: the same words
+    # the command surface prints, and the counts it measured rather than guessed.
+    if not report.segments:
+        line = "[attribute] no segments to attribute"
+    else:
+        suffix = (
+            f" (room reference: {report.mixed_source})" if report.mixed_source else ""
+        )
+        if report.window_s is not None:
+            suffix += f" (rolling window: {report.window_s:g}s)"
+        line = (
+            f"[attribute] {report.segments} segment(s), {report.speakers} speaker(s), "
+            f"{report.changed} re-attributed{suffix}"
+        )
+    report_line(w, on_event, "attribute", line)
+    return report
 
 
 # --------------------------------------------------------------------------- #
 # glossary
 # --------------------------------------------------------------------------- #
-def glossary(directory: str, add: list[str] | None = None) -> GlossaryReport:
+def glossary(
+    directory: str,
+    add: list[str] | None = None,
+    *,
+    on_event: EventSink | None = None,
+) -> GlossaryReport:
     """Show (and optionally append to) the workspace glossary.
 
     The glossary is one term/phrase per line; it becomes the ASR decoder's
     initial prompt. Edit it while a first transcription pass runs in the
     background, then re-run `transcribe`: the chunk cache is keyed on the
     glossary, so the finished terms are applied.
+
+    What the workspace holds — where the file is, and its terms in order — is
+    reported as the pass's own lines, on the same channel as every other line,
+    so the command surface prints them and a client reads them off the stream.
     """
     w = Workspace.at(directory)
     path = w.glossary_path
     if add:
         w.append_glossary(add)
-    return GlossaryReport(path=path, terms=tuple(w.glossary_terms()))
+    report = GlossaryReport(path=path, terms=tuple(w.glossary_terms()))
+    _report_pass(
+        w,
+        on_event,
+        "glossary",
+        f"[glossary] {report.path} ({len(report.terms)} term(s))",
+        [(f"  {term}", None) for term in report.terms],
+    )
+    return report
 
 
 # --------------------------------------------------------------------------- #
 # reconcile
 # --------------------------------------------------------------------------- #
+#: How many of the record's opening segments the preview reports. A record can
+#: hold thousands; the command surface's preview is a look, and a client reading
+#: the channel gets the same window.
+_PREVIEW_LINES = 12
+
+
 def reconcile(
     directory: str,
     prefer: str | None = None,
@@ -761,7 +935,7 @@ def reconcile(
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
     segments = reconcile_segments(per_source, alignment, sources)
-    progress.advance(message=f"{len(segments)} segment(s)")
+    closing = progress.advance()
 
     record = RecordDocument(
         sources=tuple(sources),
@@ -776,6 +950,35 @@ def reconcile(
         },
     )
     w.write_record(record)
+    # The record and its opening lines, on the run's one channel. The preview is
+    # the record's own first segments — what the command surface shows, and all
+    # of it: a client reads the same window, not a summary of it.
+    speakers = {seg.speaker for seg in record.segments}
+    _report_pass(
+        w,
+        on_event,
+        Step.RECONCILE.value,
+        f"[reconcile] {len(record.segments)} segment(s), {len(speakers)} attributed "
+        f"speaker(s) -> {w.record_path}",
+        report=closing,
+    )
+    for seg in record.segments[:_PREVIEW_LINES]:
+        report_line(
+            w,
+            on_event,
+            Step.RECONCILE.value,
+            f"  {format_timestamp(seg.start)} [{seg.speaker or seg.source}] {seg.text}",
+            source=seg.source,
+            report=closing,
+        )
+    if len(record.segments) > _PREVIEW_LINES:
+        report_line(
+            w,
+            on_event,
+            Step.RECONCILE.value,
+            f"  … {len(record.segments) - _PREVIEW_LINES} more",
+            report=closing,
+        )
     return record
 
 
@@ -807,24 +1010,49 @@ def export(
         p = w.export_file("record.md")
         p.write_text(_render_markdown(record), encoding="utf-8")
         written["md"] = p
-        progress.advance(source="md")
+        _report_written(w, on_event, "md", p, progress.advance(source="md"))
     if "srt" in wanted:
         p = w.export_file("record.srt")
         p.write_text(_render_srt(record), encoding="utf-8")
         written["srt"] = p
-        progress.advance(source="srt")
+        _report_written(w, on_event, "srt", p, progress.advance(source="srt"))
     if "vtt" in wanted:
         p = w.export_file("record.vtt")
         p.write_text(_render_vtt(record), encoding="utf-8")
         written["vtt"] = p
-        progress.advance(source="vtt")
+        _report_written(w, on_event, "vtt", p, progress.advance(source="vtt"))
     if "json" in wanted:
         p = w.export_file("record.json")
         write_json(p, record)
         written["json"] = p
-        progress.advance(source="json")
+        _report_written(w, on_event, "json", p, progress.advance(source="json"))
 
     return written
+
+
+def _report_written(
+    w: Workspace,
+    sink: EventSink | None,
+    fmt: str,
+    path: Path,
+    report: JobEvent,
+) -> None:
+    """Report one written artifact, as the export pass's own line.
+
+    Each format is its own line, reported where that file lands: the export pass
+    is a sequence of writes, and a reader watching a long one sees each format
+    as it is written rather than the set at the end. The format travels as the
+    line's ``source`` — the value the advance that closed it already carries, so
+    the row and the report beside it name the same thing.
+    """
+    report_line(
+        w,
+        sink,
+        Step.EXPORT.value,
+        f"[export] {fmt:4s} -> {path}",
+        source=fmt,
+        report=report,
+    )
 
 
 def _render_markdown(record: RecordDocument) -> str:
@@ -918,10 +1146,13 @@ def _run_transcribe(
     # spectral diarization; when off, the default `diarize` path is unchanged.
     if options.attribute_energy and sources:
         # The attribution pass is part of what this stage produced, so its report
-        # rides with the transcribe report: `run` renders one stage, and this is
-        # the stage that ran it.
+        # rides with the transcribe report, and its line goes on the run's own
+        # channel like every other line.
         attribution = attribute(
-            directory, mixed_source=options.mixed_source, window_s=options.window_s
+            directory,
+            mixed_source=options.mixed_source,
+            window_s=options.window_s,
+            on_event=on_event,
         )
         report = dataclasses.replace(report, attribution=attribution)
     else:
@@ -962,7 +1193,9 @@ def run_cancel_signal(on_event: EventSink | None) -> threading.Event | None:
 
 
 # One runner per declared stage; the drift test checks the keys against the spec.
-# A runner returns what its stage produced, and ``run`` hands that value on.
+# A runner returns what its stage produced, so a caller that wants the typed
+# result calls the stage itself; ``run`` drives them for their side effects —
+# the workspace's files and the words they report on the sink.
 _STAGE_RUNNERS: dict[
     Step, Callable[[str, PipelineOptions, EventSink | None], object]
 ] = {
@@ -979,20 +1212,15 @@ def run(
     options: PipelineOptions | None = None,
     *,
     on_event: EventSink | None = None,
-    on_result: Callable[[Step, object], None] | None = None,
 ) -> None:
     """Run every stage the spec declares, in the spec's order.
 
     The order is not restated here: it is read from
     :func:`clear_record.core.pipeline_spec`, the same spec the CLI builds its
     subcommands from, and each stage's wiring lives in :data:`_STAGE_RUNNERS`.
-    ``on_event`` is threaded to every stage so a caller can follow progress.
-
-    ``on_result`` receives each stage's step and the value that stage returned,
-    **as that stage lands**. A caller that renders the stages needs them in the
-    order they ran — the command surface does, and a mapping collected and
-    returned at the end would put every block after the last stage's live lines.
-    A caller that only runs the pipeline (``service``) passes nothing.
+    ``on_event`` is threaded to every stage, so a caller that wants the run's
+    words and progress attaches one sink and reads them off it; a stage's typed
+    result is for a caller that calls that stage itself.
     """
     options = options or PipelineOptions()
     log_event(
@@ -1008,9 +1236,7 @@ def run(
         for stage in pipeline_spec().stages:
             name = stage.step.value
             log_event("info", "stage", "stage.started", stage=name)
-            result = _STAGE_RUNNERS[stage.step](directory, options, on_event)
-            if on_result is not None:
-                on_result(stage.step, result)
+            _STAGE_RUNNERS[stage.step](directory, options, on_event)
             log_event("info", "stage", "stage.finished", stage=name)
     except RunCancelled:
         # A cancellation is an outcome, not a failure: the run queue records the

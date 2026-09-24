@@ -670,7 +670,7 @@ def test_events_persist_and_replay(tmp_path) -> None:
 
     def fake_pipeline(directory, options, on_event) -> None:
         progress = Progress("transcribe", 2, on_event)
-        progress.start("transcribing")
+        progress.start()
         progress.advance(source="a")
         progress.advance(source="b")
 

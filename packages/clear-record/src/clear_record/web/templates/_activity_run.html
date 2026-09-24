@@ -27,6 +27,11 @@
     {# The run's own id, last: it is what a resume link or a log line names. #}
     <span class="run-count">#{{ run.id }}</span>
   </div>
+  {# The newest event's own text — the line the run last reported, a stage line
+     or a pass's summary, and nothing when that report carries counters only —
+     read off the same event the stage and the counters above came from, so this
+     row and the command line's follower show one payload rather than two. #}
+  {% if row.message %}<div class="muted run-message">{{ row.message }}</div>{% endif %}
   {% if live and row.total %}
   <progress aria-label="{{ tr("Transcription progress") }}" value="{{ row.index }}" max="{{ row.total }}"></progress>
   {% endif %}

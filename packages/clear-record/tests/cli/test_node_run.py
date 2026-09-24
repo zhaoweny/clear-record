@@ -35,6 +35,7 @@ import soundfile as sf
 from clear_record.cli import cli
 from clear_record.core import (
     DECODER_KNOB_FIELDS,
+    JobEvent,
     Progress,
     Segment,
     TranscriptionResult,
@@ -204,11 +205,32 @@ def gated_node(node_in_this_process, tmp_path):
 
     def pipeline(directory: str, options, on_event) -> None:
         entered.append(1)
+        # The stage's words, as the pipeline reports them: a line event whose
+        # ``message`` is the text, beside the progress reports (which carry
+        # counters and no words at all).
         progress = Progress("transcribe", 2, on_event)
-        progress.start("transcribing")
-        progress.advance(source="a", message="chunk 1")
+        progress.start()
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=1,
+                total=2,
+                source="a",
+                message="[transcribe]   a chunk 1/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="a")
         gate.wait(_RUN_TIMEOUT)
-        progress.advance(source="b", message="chunk 2")
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=2,
+                total=2,
+                source="b",
+                message="[transcribe]   b chunk 2/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="b")
         export = Path(directory) / "export"
         export.mkdir(parents=True, exist_ok=True)
         (export / "record.md").write_text("# record\n", encoding="utf-8")
@@ -249,8 +271,8 @@ def test_the_node_owns_a_command_line_run_while_it_runs_and_after(
     The proof is the console's own run list over the *same* registry the node
     wrote: the run is there — with the command line as its origin — while the
     pipeline is still held, and it is there as ``done`` once the run ends. The
-    command line's own output is the run's node-side stream: the stage the run
-    closed, and where the run ended — once each, and only when a stage closed.
+    command line's own output is the run's node-side stream: every word the
+    stage reported, once each, and where the run ended.
     """
     workspace = _workspace(tmp_path, "held")
     thread, codes = _in_thread(lambda: _cli_run(workspace))
@@ -281,13 +303,18 @@ def test_the_node_owns_a_command_line_run_while_it_runs_and_after(
     assert '<div class="run status-done">' in history
     assert "cli" in history
     printed = capsys.readouterr().out
-    assert "[transcribe] 2 / 2" in printed, "the run's own stream"
-    # The fake's first advance (1 of 2) reports a chunk and closes nothing, so it
-    # is not a stage line; and a stage that closed is printed **once** — a follow
-    # that printed every event, or a stage twice, fails here.
-    assert "[transcribe] 1 / 2" not in printed, "a non-closing event was printed"
-    assert printed.count("[transcribe] 2 / 2") == 1, "the stage closed twice"
-    assert "[run] #1 done" in printed
+    # The run's own words, read back off the run's stream: one line per chunk the
+    # fake reported, each printed **once**, followed by the surface's own end.
+    # A progress report carries counters and no words, so those events add no
+    # line — and a follower that printed every event, or a line twice, fails the
+    # exact sequence below.
+    lines = printed.splitlines()
+    assert lines[:3] == [
+        "[transcribe]   a chunk 1/2 -> 1 segment(s)",
+        "[transcribe]   b chunk 2/2 -> 1 segment(s)",
+        "[run] #1 done",
+    ], "the run's own stream"
+    assert lines[3].startswith("[next] the record is in ")
 
 
 def test_a_command_line_run_carries_the_command_line_as_its_origin(

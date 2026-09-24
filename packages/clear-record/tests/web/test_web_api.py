@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.core import PROFILE_CUSTOM, PROFILES, Progress
+from clear_record.core import PROFILE_CUSTOM, PROFILES, JobEvent, Progress
 from clear_record.service import AutoProbe, Registry, RunManager
 from clear_record.web.app import create_app
 
@@ -48,10 +48,28 @@ def console(tmp_path) -> SimpleNamespace:
     def fake_pipeline(directory, options, on_event) -> None:
         seen.append(options)
         progress = Progress("transcribe", 2, on_event)
-        progress.start("transcribing")
-        progress.advance(source="a", message="chunk 1")
+        progress.start()
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=1,
+                total=2,
+                source="a",
+                message="[transcribe]   a chunk 1/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="a")
         gate.wait(10)
-        progress.advance(source="b", message="chunk 2")
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=2,
+                total=2,
+                source="b",
+                message="[transcribe]   b chunk 2/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="b")
         export = Path(directory) / "export"
         export.mkdir(parents=True, exist_ok=True)
         (export / "record.md").write_text("# record\n", encoding="utf-8")
@@ -324,12 +342,21 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     assert fetched.json()["state"]["stage"] == "transcribe"
 
     events = client.get(f"/api/runs/{run_id}/events?after=0").json()
-    assert events["next"] == 3
-    assert [event["index"] for event in events["events"]] == [0, 1, 2]
-    assert events["events"][0]["message"] == "transcribing"
+    assert events["next"] == 5
+    # The stream carries both halves of a stage's report: the counters a bar
+    # reads, and the words the stage reported — the line's text in ``message``,
+    # and none on a report that carries counters only.
+    assert [event["index"] for event in events["events"]] == [0, 1, 1, 2, 2]
+    assert [event["message"] for event in events["events"]] == [
+        "",
+        "[transcribe]   a chunk 1/2 -> 1 segment(s)",
+        "",
+        "[transcribe]   b chunk 2/2 -> 1 segment(s)",
+        "",
+    ]
 
     tail = client.get(f"/api/runs/{run_id}/events?after={events['next']}").json()
-    assert tail == {"events": [], "next": 3}
+    assert tail == {"events": [], "next": 5}
 
 
 def test_a_second_run_is_409(console, tmp_path) -> None:

@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-25 05:03+0800\n"
+"POT-Creation-Date: 2026-09-25 05:27+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -262,8 +262,8 @@ msgid "the largest checkpoint that fits this machine, but none is on disk"
 msgstr "适合此机器的最大检查点，但磁盘上没有"
 
 #: packages/clear-record/src/clear_record/pipeline/auto.py:301
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:48
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:52
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:49
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:53
 #: packages/clear-record/src/clear_record/web/templates/_run.html:35
 #: packages/clear-record/src/clear_record/web/templates/_run.html:44
 #: packages/clear-record/src/clear_record/web/templates/_run.html:52
@@ -1389,43 +1389,43 @@ msgstr "无法读取的运行数据"
 msgid "ETA"
 msgstr "预计剩余"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:36
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:37
 #: packages/clear-record/src/clear_record/web/templates/_run.html:67
 msgid "Transcription progress"
 msgstr "转写进度"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:44
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:45
 #: packages/clear-record/src/clear_record/web/templates/_run.html:38
 msgid "speed"
 msgstr "速度"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:46
 #: packages/clear-record/src/clear_record/web/templates/_activity_run.html:47
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:48
 #: packages/clear-record/src/clear_record/web/templates/_run.html:41
 msgid "realtime"
 msgstr "倍速"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:46
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:47
 msgid "so far"
 msgstr "目前"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:51
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:52
 msgid "duration"
 msgstr "耗时"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:54
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:55
 msgid "model"
 msgstr "模型"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:56
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:57
 msgid "origin"
 msgstr "来源"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:58
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:59
 msgid "machine"
 msgstr "机器"
 
-#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:62
+#: packages/clear-record/src/clear_record/web/templates/_activity_run.html:63
 #: packages/clear-record/src/clear_record/web/templates/_run.html:87
 #, python-brace-format
 msgid "resumed from run {run_id}"

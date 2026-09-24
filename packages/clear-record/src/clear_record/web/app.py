@@ -626,17 +626,17 @@ def _content_length(request: Request) -> int | None:
 
 #: The one sentence a non-local client gets when it names a path. It names the
 #: rule, then the shape to reach for instead *per case it answers* — a run, a
-#: tape, a workspace and an archive location each have one, and each is a
-#: registry-addressed or node-decided form rather than a path.
+#: tape, a workspace, an archive location and a glossary each have one, and each
+#: is a registry-addressed or node-decided form rather than a path.
 PATH_IS_LOCAL = (
     "request refused: a path is a location on this node's filesystem, and this "
     "node takes one only from a client that addressed the node itself — its own "
-    "address, not another name for it (a proxy's hostname, say). Name what you "
-    "want the way the registry addresses it instead: a run by its meeting's id "
-    "(POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
+    "address, not another name for it (a proxy's hostname, say) — so name what "
+    "you want the way the registry addresses it instead: a run by its meeting's "
+    "id (POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
     "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
     "node (`managed: true`); an archive location by omitting it, so the node's "
-    "own root stands."
+    "own root stands; a glossary by omitting it, so the node's own stands."
 )
 
 #: The one sentence a run request gets when its model is a path rather than a
@@ -650,8 +650,8 @@ MODEL_IS_THE_NODES = (
 
 #: What makes a string a *path* rather than a name: a separator, in either
 #: platform's spelling (a Windows-style path is refused on a POSIX node too), or
-#: the home shorthand. A model the node resolves is a bare name — ``small``,
-#: ``ggml-small.bin``, or a speech language code like ``en-US``.
+#: the home shorthand. A model the node resolves is a bare name — ``small`` or
+#: ``ggml-small.bin``.
 _MODEL_PATH_CHARS = frozenset("/\\~")
 
 
@@ -2468,10 +2468,11 @@ def create_app(
         addressing, not a licence to name anything on the node: what a remote
         client names is a meeting, and what it sets are knobs.
         """
+        # Looked up first: a missing id is the 404 the sibling routes answer.
+        meeting = lookup.meeting(registry, meeting_id)
         if body.glossary:
             _require_local_client(request)
         _require_model_name(body.model)
-        meeting = lookup.meeting(registry, meeting_id)
         return enqueue_run(meeting, body)
 
     @app.post("/api/runs", status_code=202)

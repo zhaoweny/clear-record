@@ -236,6 +236,28 @@ def test_every_route_that_takes_a_path_refuses_a_non_local_client(
         assert answered.json()["detail"] == web_app.PATH_IS_LOCAL, what
 
 
+def test_an_absent_meeting_is_the_same_404_for_both_clients(local, remote) -> None:
+    """A guard answers about the request, never in place of the absent subject.
+
+    The route looks its subject up before it reads where the client is — as every
+    sibling route does (``PUT /api/meetings/{id}/tapes``, the archive and meeting
+    routes) — so an id this node does not have is the one not-found answer for
+    both clients, and a client that cannot see the difference learns nothing new.
+    The guard itself is unchanged: the same client is still refused a path on an
+    id that exists (``test_every_route_that_takes_a_path_refuses_a_non_local_client``).
+    """
+    for client in (local.client, remote.client):
+        refused = client.post(
+            "/api/meetings/9999/runs", json={"glossary": "/tmp/glossary.txt"}
+        )
+        assert refused.status_code == 404, refused.text
+        # The sibling route answers the same absent id the same way.
+        sibling = client.put(
+            "/api/meetings/9999/tapes", json={"paths": ["/tmp/tape.wav"]}
+        )
+        assert sibling.status_code == 404, sibling.text
+
+
 def test_a_request_that_names_no_path_is_answered_for_any_client(
     remote, tmp_path
 ) -> None:

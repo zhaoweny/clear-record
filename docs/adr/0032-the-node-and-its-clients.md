@@ -86,9 +86,9 @@ promotes nothing the owner did not say beyond the label each clause carries.
   - **Machine-local verbs cannot be facades**: `synth` (it generates fixtures where
     the pipeline runs), `backends` (it probes *the client's* machine — under a
     facade its subject silently becomes the node's), `bench`, `diagnose`.
-  - **Two surfaces invert**: the tray supervises a server it starts, and `mcp` is a
-    stdio adapter over the service in process; both would become clients of a node
-    they may no longer start.
+  - **The tray and `mcp` invert**: the tray supervises a server it starts, and
+    `mcp` is a stdio adapter over the service in process; both would become
+    clients of a node they may no longer start.
   - **Lifecycle: nothing decides it.** At the census's own date (2026-09-21) there
     was no discovery of any kind (no pidfile, no socket, no port environment
     variable — the default port `8765` was then written in four places), no
@@ -158,9 +158,10 @@ promotes nothing the owner did not say beyond the label each clause carries.
   1. [DECISION: owner, 2026-09-21] **Lifecycle and discovery.** The node's endpoint
      is **recorded** — in the app state/config area the path ADR-0025 resolves — and
      the surfaces **find** it instead of scanning: the command line and the MCP
-     adapter dial it, the console answers with it in process, and the tray probes
-     the socket it bound. Whether the recorded channel is a loopback HTTP endpoint
-     or a **unix socket / named pipe** is the backchannel question in (4).
+     adapter dial it, and the console answers with it in process. The tray is not
+     one of them: it starts a node, publishes the record, and probes the socket it
+     bound. Whether the recorded channel is a loopback HTTP endpoint or a **unix
+     socket / named pipe** is the backchannel question in (4).
   2. [DECISION: spec author, 2026-09-21] **Offline and rescue — narrower than the
      direction first stated.** *Offline* is about the cloud, not about a server:
      ADR-0013's requirement is that the console works after one install step,

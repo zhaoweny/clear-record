@@ -117,8 +117,9 @@ class ServiceController:
     def healthy(self) -> bool:
         """Does the console's health URL answer exactly 200, right now?
 
-        Reached through the one node client (:func:`clear_record.core.node.reach`),
-        so the tray probes the node exactly as every other surface reaches it.
+        Reached through the one node client
+        (:func:`clear_record.core.node.reach`) the surfaces reach the node with,
+        so the tray asks the node the same question they ask.
         Only a 200 counts and redirects are **not** followed: a 3xx (e.g. a
         redirect to the setup page) is not a healthy server. The path stays the
         current one — B3 replaces it with a dedicated credential-free

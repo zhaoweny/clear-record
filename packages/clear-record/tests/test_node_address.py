@@ -154,11 +154,11 @@ def serve_node(tmp_path):
 def test_the_node_port_has_a_single_declaration() -> None:
     """Every ``8765`` in the package is the one the node declares (integer literals only).
 
-    A number restated per surface is a number that drifts: the console, the tray
-    and both servers read ``DEFAULT_PORT``. Docstrings and comments may *name*
-    the port (they explain the layout); what may not exist is a second place
-    that decides it, so this walks the source's syntax and looks only at integer
-    literals.
+    A number restated wherever it is used is a number that drifts: the console,
+    the tray and both servers read ``DEFAULT_PORT``. Docstrings and comments may
+    *name* the port (they explain the layout); what may not exist is a second
+    place that decides it, so this walks the source's syntax and looks only at
+    integer literals.
     """
     package = Path(paths.__file__).parent.parent
     declared: list[str] = []

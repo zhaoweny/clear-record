@@ -393,7 +393,7 @@ port its socket holds. An absent record, and a record nothing answers, are the
 (`node.NO_NODE_MESSAGE`) — never a hang, and never a different error per surface.
 `DEFAULT_HOST`/`DEFAULT_PORT` are declared once, there.
 
-| Surface | How it asks where the node is | Where it stands |
+| Who asks | How it asks where the node is | Where it stands |
 |---|---|---|
 | command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
 | console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |

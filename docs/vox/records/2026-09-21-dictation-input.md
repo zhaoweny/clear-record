@@ -4,7 +4,7 @@ Status: **Open requirement, deferred to 0.4** (no release date; no ADR yet). The
 this record is personal-context material and is kept in the **private tracker** (`vox-private-records`)
 rather than reproduced here; this file carries what the repo needs from it, stated from that
 testimony's words. Date per the source export's own stamp — an export lags the moment the words were spoken
-(see the entry's *How to read this file*).
+(see *How to read this file* in [`voice-of-owner.md`](../voice-of-owner.md)).
 
 ## What the position requires
 

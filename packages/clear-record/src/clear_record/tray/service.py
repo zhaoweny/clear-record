@@ -6,11 +6,12 @@ testable without a display — and reusable by a future
 `clear-record serve --supervise` on a headless node.
 
 Starting the server here is starting a **node**: the server records the address
-it bound where every surface resolves it (:mod:`clear_record.core.node`), and
-the health probe below reaches it through the same one client the command line
-and the MCP adapter use — so a healthy tray and their answer mean the same thing.
-The probe dials the socket this controller bound rather than the record, so a node
-on an ephemeral port is probed where it really is, and another node's record
+it bound where the surfaces resolve it (:mod:`clear_record.core.node`), and the
+health probe below asks the node through the same one client, on the same path,
+that the command line and the MCP adapter reach it by — "healthy" says the node
+answered as a surface's request reaches it, not that the two agree about where it
+is. The probe dials the socket this controller bound rather than the record, so a
+node on an ephemeral port is probed where it really is, and another node's record
 cannot answer for it.
 """
 
@@ -58,22 +59,21 @@ class ServiceController:
     def address(self) -> node.NodeAddress:
         """Where the node this controller started answers — the socket it bound.
 
-        The bound socket is the truth for *this* controller's liveness: it is the
-        only address that names the port a node started on an ephemeral one holds
-        (``--port 0``), and unlike the record it cannot belong to another node —
-        the record is one file per machine, so a node started later overwrites the
-        address of the one before it. The record is the fallback while this
-        controller has no bound socket, and the requested ``host:port`` stands
-        when there is neither — which is also the honest answer for a port we
-        never bound (the server died, e.g. the port was taken: nothing answers
-        there).
+        The bound socket is the truth for *this* controller's liveness: it names
+        the port this node really holds (``--port 0`` included), and unlike the
+        record it cannot belong to another node. The requested ``host:port``
+        stands while there is no bound socket, which is also the honest answer for
+        a port we never bound (the server died, e.g. the port was taken: nothing
+        answers there).
+
+        The record is deliberately not consulted, not even as a fallback: it is
+        one file per machine, so a node started later overwrites the address of
+        the one before it — read here, it would let a controller that never bound
+        report another node as running, healthy and its own.
         """
         server = self._server
-        if isinstance(server, NodeServer):
-            bound = server.bound()
-            if bound is not None:
-                return bound
-        return node.recorded() or node.NodeAddress(self.host, self.port)
+        bound = server.bound() if isinstance(server, NodeServer) else None
+        return bound or node.NodeAddress(self.host, self.port)
 
     @property
     def url(self) -> str:

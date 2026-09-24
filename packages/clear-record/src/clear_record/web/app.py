@@ -546,9 +546,10 @@ class NodeServer(uvicorn.Server):
     A record that cannot be **written** does not stop the node. The state
     directory can be missing, read-only or not creatable at all, and recording is
     what a node owes its *clients* — not what makes the node run. That failure is
-    therefore stated once, in the node's own log, and the node serves on: what
-    the direction calls a machine where a node cannot run is not the same thing as
-    a machine where it cannot publish where it is.
+    therefore stated once, in the node's own log, and the node serves on: the
+    direction lists an unwritable state directory among its machines where a node
+    cannot run, and **this batch decides that it is not one** — the node runs
+    there; it is only unfindable.
     """
 
     async def startup(self, sockets=None) -> None:

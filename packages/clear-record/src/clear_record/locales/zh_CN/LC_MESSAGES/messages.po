@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-24 23:21+0800\n"
+"POT-Creation-Date: 2026-09-24 23:39+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -110,7 +110,7 @@ msgstr "列出当前可用的 ASR 后端"
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 
-#: packages/clear-record/src/clear_record/core/node.py:78
+#: packages/clear-record/src/clear_record/core/node.py:79
 msgid "no clear-record node is listening; start one with `clear-record serve`"
 msgstr "没有 clear-record 节点在监听；请用 `clear-record serve` 启动一个"
 
@@ -1117,32 +1117,32 @@ msgstr "无法读取 multipart 上传：{error}"
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:905
+#: packages/clear-record/src/clear_record/web/app.py:906
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:955
+#: packages/clear-record/src/clear_record/web/app.py:956
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1003
+#: packages/clear-record/src/clear_record/web/app.py:1004
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1221
+#: packages/clear-record/src/clear_record/web/app.py:1222
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1637
+#: packages/clear-record/src/clear_record/web/app.py:1638
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1669
+#: packages/clear-record/src/clear_record/web/app.py:1670
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"

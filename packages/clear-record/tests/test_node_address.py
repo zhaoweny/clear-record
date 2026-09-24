@@ -210,13 +210,13 @@ def test_the_tray_posture_records_the_port_it_bound(tmp_path) -> None:
     assert node.recorded() is None, "a stopped node must not leave its address behind"
 
 
-def test_the_tray_probes_the_address_the_record_names(tmp_path) -> None:
+def test_the_tray_probes_the_port_the_node_bound(tmp_path) -> None:
     """The tray's health probe dials what the node bound, not what it was asked for.
 
     Asked for port ``0``, the controller cannot know the port until the socket
     binds — so a probe built from its own request dials ``:0`` and reports a
-    running node as unreachable. It reads the record instead, which is the
-    address every other surface resolves.
+    running node as unreachable. It reads the socket it bound, which the record
+    agrees with because the writer records after the bind.
     """
     controller = ServiceController(port=0, data_dir=str(tmp_path / "data"))
     controller.start()
@@ -281,6 +281,37 @@ def test_a_node_that_cannot_record_its_address_still_serves(
         assert node.recorded() is None, "nothing was written, so nothing may be read"
     finally:
         assert controller.stop(timeout=_READY_TIMEOUT), "the node did not stop"
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_controller_that_never_bound_is_not_another_nodes_node(tmp_path) -> None:
+    """A server that never bound is no node, whatever the record names.
+
+    The requested port is held by something that is not this node, so the server
+    this controller starts dies without binding — uvicorn logs the refusal and
+    exits that thread, which is the case :meth:`wait_until_ready` documents, and
+    the one warning this test silences is pytest noticing it. The record meanwhile
+    names a live node elsewhere on the machine: a controller that read it would
+    report *that* node as its own — ready, healthy, running — while the node it
+    supervises never came up. Its own request is the answer, and nothing answers
+    there.
+    """
+    port, holder = _not_http_listener()
+    other = ServiceController(port=0, data_dir=str(tmp_path / "other"))
+    try:
+        other.start()
+        elsewhere = _wait_for_record()  # a live node, recorded where we can read it
+
+        controller = ServiceController(port=port, data_dir=str(tmp_path / "data"))
+        controller.start()
+
+        assert controller.address == node.NodeAddress(controller.host, port)
+        assert controller.address != elsewhere
+        assert not controller.healthy()
+        assert not controller.wait_until_ready(timeout=_READY_TIMEOUT)
+    finally:
+        holder.close()
+        assert other.stop(timeout=_READY_TIMEOUT), "the node did not stop"
 
 
 # --- a second process reads the address and reaches the node ---------------- #

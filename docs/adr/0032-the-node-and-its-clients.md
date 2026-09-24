@@ -136,11 +136,11 @@ promotes nothing the owner did not say beyond the label each clause carries.
   every surface becoming a network client.** The console **stays an in-process
   backend-for-frontend**: it calls `clear_record.service` in process, one lifecycle,
   no internal hop. Only the command line becomes a client of the node **for its
-  operations**; the tray and the MCP adapter dial the one recorded address only to
-  ask whether the node is there, and the console answers that in process, with no
-  request of its own. The owner's one-app answer below is what confirms this
-  reading; the spec asked the question so the answer is a decision rather than
-  drift. A console that becomes a **channel client** is **deferred, not
+  operations**; the MCP adapter dials the recorded address only to ask whether the
+  node is there, the tray probes the socket it bound, and the console answers in
+  process, with no request of its own. The owner's one-app answer below is what
+  confirms this reading; the spec asked the question so the answer is a decision
+  rather than drift. A console that becomes a **channel client** is **deferred, not
   rejected** — worth revisiting only when the console must run elsewhere.
 - [DECISION: owner, 2026-09-21] **The node is one FastAPI app with its surfaces
   mounted at prefixes**, not several processes:
@@ -157,9 +157,10 @@ promotes nothing the owner did not say beyond the label each clause carries.
   the residue of the one question the shape did not answer:
   1. [DECISION: owner, 2026-09-21] **Lifecycle and discovery.** The node's endpoint
      is **recorded** — in the app state/config area the path ADR-0025 resolves — and
-     every surface **reads** it instead of scanning. Whether the recorded channel is
-     a loopback HTTP endpoint or a **unix socket / named pipe** is the backchannel
-     question in (4).
+     the surfaces **read** it instead of scanning: the command line and the MCP
+     adapter dial it, the console answers with it in process, and the tray probes
+     the socket it bound. Whether the recorded channel is a loopback HTTP endpoint
+     or a **unix socket / named pipe** is the backchannel question in (4).
   2. [DECISION: spec author, 2026-09-21] **Offline and rescue — narrower than the
      direction first stated.** *Offline* is about the cloud, not about a server:
      ADR-0013's requirement is that the console works after one install step,

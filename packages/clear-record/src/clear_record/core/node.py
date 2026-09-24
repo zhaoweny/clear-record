@@ -8,11 +8,12 @@ knows.
 The address is **recorded, never discovered**. A node writes it where the app's
 own path resolution already keeps state
 (:func:`clear_record.core.paths.node_address_path`, ADR-0025's state directory)
-when it starts listening, and removes it when it stops. Every surface resolves
-that one file through :func:`recorded`: the command line and the MCP adapter
-complete their request with :func:`ask`, the console answers with the record its
-own socket vouches for and makes no request of its own, and the tray's supervisor
-reads it back for the node it started. No surface therefore scans a port range,
+when it starts listening, and removes it when it stops; the tray's supervisor
+publishes it the same way, and probes the node it started at the socket that node
+bound rather than through the record. The surfaces that ask resolve that one file
+through :func:`recorded`: the command line and the MCP adapter complete their
+request with :func:`ask`, and the console answers with the record its own socket
+vouches for, with no request of its own. No surface therefore scans a port range,
 guesses a port, or can disagree with another about where the node is. A port the
 node did not choose itself (``--port 0``) is recorded as the port its socket
 actually bound, because the writer records *after* the bind, not the request.

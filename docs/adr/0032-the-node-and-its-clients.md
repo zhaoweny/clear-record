@@ -343,8 +343,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   they are about where they have one and in the order the pass produced them. So
   one payload serves every consumer — the command line prints it, a client
   reading the run's stream reads it, and the console's activity row and run
-  fragment show it — and a progress report carries no words at all, which is what
-  lets a client print every message and nothing else. Two consequences recorded
+  fragment show it — and a pure progress report carries no words at all, which is
+  what lets a client print every message and nothing else. Two consequences recorded
   where they live: `run`'s block is the stage commands' own bytes read back, with
   the surface's end line before `[next]` (ADR-0022's Update, again), and the
   stages' returns are now for a caller that wants the typed value rather than for
@@ -436,7 +436,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
   forward the original `Host` rather than rewrite it to a name of their own
   (§2, §3).
 - [DECISION] **The console keeps its path fields, and only the machine-facing
-  edge refuses.** ADR-0032 makes the console an in-process backend-for-frontend —
+  edge refuses.** The Decision makes the console an in-process backend-for-frontend —
   it *is* the node's own face, it shows back the paths the node resolved (the storage
   panel), and its forms name the node's folders rather than a client's — so the
   machine-facing JSON routes are where the rule binds and the `/ui/*` forms and

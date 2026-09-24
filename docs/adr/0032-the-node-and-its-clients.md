@@ -342,9 +342,13 @@ promotes nothing the owner did not say beyond the label each clause carries.
   self-sufficient directory" is qualified where a reader meets it.
 - [FACT] **Preliminary 5 is answered, and it has an edge the base install does not
   cover.** The question was whether an invocation must be able to **bring a node
-  up**; it must, so the node's stack has to be present for `run` to work at all:
-  `serve` — the command the ensure path starts — is declared by the `web` provider
-  (ADR-0013's extra), and a base-only install has no such subcommand, so `run`
-  there ends on the one sentence. The desktop bundle carries the stack, and the
-  README's `run` passage names the extra; whether the base install should carry it
-  too is the release decision this leaves open rather than decides.
+  up**; it must, so the node's stack has to be present for `run` to work at all.
+  `serve` — the command the ensure path starts — is registered **unconditionally**
+  from the base wheel's entry points (the provider contributes its subcommands so
+  they are visible in `--help` without the extra; running one explains how to
+  install it), and what the `web` extra supplies is the **stack**, not the verb:
+  without it `serve` exits non-zero with the install hint, and the ensure path's
+  child dies on that exit, so `run` there ends on the one sentence. The desktop
+  bundle carries the stack; whether the base install should carry it too, so `run`
+  works without the extra, is the release decision this leaves open rather than
+  decides.

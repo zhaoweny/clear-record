@@ -866,10 +866,9 @@ def _cmd_backends(**kwargs: Any) -> int:
 # --------------------------------------------------------------------------- #
 # the node: ensure one is up before the work a command does needs it
 # --------------------------------------------------------------------------- #
-#: How long a node a command started gets to answer before the command calls the
-#: machine one where no node can start. A node binds and records its address in
-#: well under a second, so this is room for a slow machine, not a wait anyone
-#: should feel.
+#: How long a node a command started gets to answer before the command gives up
+#: on starting one. A node binds and records its address in well under a second,
+#: so this is room for a slow machine, not a wait anyone should feel.
 _NODE_START_TIMEOUT = 20.0
 
 #: The grace a node that has just exited gets before its command gives up. Two
@@ -877,16 +876,21 @@ _NODE_START_TIMEOUT = 20.0
 #: but the winner's answers as soon as it can, and that is the node to attach to.
 _NODE_RACE_GRACE = 2.0
 
-#: The one sentence a command states when no node can start on this machine. It
-#: is the answer the direction records — the work needs a node, and there is no
-#: in-process fallback — and it names the command that says *why* no node starts
-#: rather than guessing at a cause. The ways it names to start one are the same
-#: ones :data:`clear_record.core.node.NO_NODE_MESSAGE` names, and they are both
-#: real for a bundle user whose CLI is not on ``PATH``: ``serve`` from a terminal,
-#: the tray app (the double-click target) for the desktop.
+#: The one sentence a command states when it could not start a node here. It is
+#: the answer the direction records — the work needs a node, and there is no
+#: in-process fallback — and it **diagnoses** rather than instructs: what this
+#: command knows is that *its* attempt failed, never why no node can run on the
+#: machine (a cause is not its to guess). The ways it names to start one are the
+#: same ones :data:`clear_record.core.node.NO_NODE_MESSAGE` names, and they are
+#: both real for a bundle user whose CLI is not on ``PATH``: ``serve`` from a
+#: terminal, the tray app (the double-click target) for the desktop. The why is
+#: **not** promised on a terminal: ``serve``'s posture is to write its log to the
+#: diagnostics sink (a node this command starts gets ``DEVNULL`` streams), so the
+#: sentence names the sink the way :data:`_NODE_STARTED_BUT_UNFINDABLE` does.
 _NODE_IS_THE_TOOL = deferred(
-    "clear-record's work needs a node, and no node can start on this machine; "
-    "start one with `clear-record serve`, or from the tray app — `serve` says why"
+    "clear-record's work needs a node, and this command could not start one; "
+    "start one with `clear-record serve`, or from the tray app — `serve` writes "
+    "its log to the diagnostics sink"
 )
 
 #: The sentence for a node that **did** start and is still alive, but that this
@@ -958,12 +962,12 @@ def ensure_node(*, timeout: float = _NODE_START_TIMEOUT) -> node.NodeAddress:
     the one the node **recorded**, the socket it really bound, never the port it
     was asked for.
 
-    A machine where no node can start is not a machine where the command does the
-    work itself: :data:`_NODE_IS_THE_TOOL` is stated and the command exits
-    non-zero — there is no in-process fallback. A node that started and is
-    *alive* is a different case and gets its own sentence: it is left running,
-    because a node that runs is a node, and this command cannot know why it cannot
-    be reached.
+    A machine where this command cannot start a node is not a machine where the
+    command does the work itself: :data:`_NODE_IS_THE_TOOL` is stated and the
+    command exits non-zero — there is no in-process fallback. A node that started
+    and is *alive* is a different case and gets its own sentence: it is left
+    running, because a node that runs is a node, and this command cannot know why
+    it cannot be reached.
 
     The address is the caller's to use, and ``run`` uses it: the run it starts is
     submitted to the node this ensured (:func:`_cmd_run`), so the work happens
@@ -1246,11 +1250,11 @@ def _cmd_run(**kwargs: Any) -> int:
     ADR-0032: a run started here is a **node run** — it joins the one run per node
     queue, is recorded with the ``cli`` origin, and is followed from the node. So
     this **ensures** a node: a recorded one that answers is attached to, and one is
-    started when none does. A machine where no node can start is one sentence,
-    never a local fallback — the node *is* the tool (:func:`ensure_node`) — and if
-    the node goes away while the run it accepted is still being followed, the same
-    one sentence stands, at whatever step of the run it happened
-    (:func:`_node_step`).
+    started when none does. A machine where this command cannot start one is one
+    sentence, never a local fallback — the node *is* the tool
+    (:func:`ensure_node`) — and if the node goes away while the run it accepted is
+    still being followed, the same one sentence stands, at whatever step of the run
+    it happened (:func:`_node_step`).
 
     What ``--auto`` chose is explained here, in the resolver's own words: the
     resolution ran **on the node**, so its account comes back on the run the node

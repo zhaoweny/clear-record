@@ -7,9 +7,11 @@ only exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), an
 every other stage assertion is a substring check. This module is the pin: the
 eight stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
 actually types, and the ``synth`` development command. ``run`` is the one block
-whose lines are not this surface's rendering: a command-line run is the node's
-(ADR-0032), so they are the node's own progress, read back by the follower
-(``cli/runs.py``) and pinned here as it comes over.
+whose **stage** lines are not this surface's rendering: a command-line run is the
+node's (ADR-0032), so they are the node's own progress, read back by the follower
+(``cli/runs.py``) and pinned here as it comes over. That block's other two lines
+are the surface's own — ``[run] #<id> <status>`` and the ``[next]`` pointer
+(``_cmd_run``) — where every other block's lines are all its own.
 
 What makes it a stable pin rather than a flaky one:
 

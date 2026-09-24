@@ -219,9 +219,10 @@ recorded one, or one it starts ([ADR-0032](docs/adr/0032-the-node-and-its-client
 you type it:
 
 - **It ensures a node.** It attaches to the recorded one, and starts one when none
-  answers (`clear-record serve` starts one too — that verb, and the node it runs,
-  come with the `web` extra — and `clear-record node` prints where it is). A
-  machine where no node can start is one sentence and no run at all: there is
+  answers (`clear-record serve` starts one too — the verb ships in every install,
+  while the node it runs needs the `web` extra, whose absence `serve` itself
+  explains — and `clear-record node` prints where the node is). A machine where
+  the command cannot start one is one sentence and no run at all: there is
   deliberately no local fallback, because the node *is* the tool.
 - **The run writes a registry row.** It joins the node's one-run-at-a-time queue,
   the console's Activity list shows it with `cli` as its **origin** while it runs

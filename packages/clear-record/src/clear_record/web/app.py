@@ -298,6 +298,15 @@ def render_download_error(exc: Exception) -> str:
 
 
 class ProjectCreate(BaseModel):
+    """A project; ``default_archive_root`` is a directory on this node.
+
+    That field is where the project's archives are written whenever a call names
+    no ``root`` of its own, so it is a **path**, and this route takes it only from
+    a request that addressed the node by its own address — the same rule the
+    archives route itself applies to a named ``root``. Everything else here is a
+    registry value.
+    """
+
     name: str
     notes: str = ""
     default_archive_root: str | None = None
@@ -305,6 +314,12 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
+    """A project update; ``default_archive_root`` is a path on this node.
+
+    Taken only from a request that addressed the node by its own address, or
+    omitted — in which case the project keeps the root it has.
+    """
+
     name: str | None = None
     notes: str | None = None
     default_archive_root: str | None = None
@@ -330,6 +345,16 @@ class TermUpdate(BaseModel):
 
 
 class MeetingCreate(BaseModel):
+    """A meeting: its title, and — for a local client — where its files live.
+
+    ``workspace_path`` is a directory **on this node's filesystem**, so this
+    route takes it only from a request that addressed the node by its own
+    address; a client that reached the node through the name the operator
+    published for it is refused one sentence and should use ``managed=True``
+    instead, which provisions an app-owned workspace on the node and takes an
+    upload of the tapes.
+    """
+
     title: str
     #: A user-chosen workspace (ADR-0007), kept for the CLI-shaped flow. An
     #: upload requires a *managed* workspace; see ``managed=True``.
@@ -341,11 +366,38 @@ class MeetingCreate(BaseModel):
 
 
 class TapesUpdate(BaseModel):
+    """A meeting's tape set, named by **path** — a local client's noun.
+
+    Each path is a file on this node's filesystem, so the route takes one only
+    from a request that addressed the node by its own address; a client elsewhere
+    sends the tape's bytes to the managed workspace instead
+    (``POST /api/meetings/{id}/tapes``). An empty list names no path and is
+    therefore not refused for where it came from — clearing the set is a registry
+    write under any client.
+    """
+
     paths: list[str]
 
 
 class RunCreate(BaseModel):
+    """A run request: the knobs, and how the client names what it runs.
+
+    Every field here is a **knob**. What the run runs *over* is the route's own
+    subject, not a field: ``POST /api/meetings/{id}/runs`` names a meeting by its
+    registry id, and :class:`WorkspaceRunCreate` adds the one field a client that
+    addressed the node itself uses instead.
+
+    ``model`` names a checkpoint the node resolves **in its own models
+    directory** — a bare name (``small``, ``ggml-small.bin``), never a path. A
+    model is the exception to both namings: it is addressed neither by path nor
+    by id, and must already be on the node that runs the work (ADR-0032); the
+    node also never takes a client's models directory. A path-valued model is
+    refused rather than resolved against the wrong machine.
+    """
+
     backend: str = "apple"
+    #: A model **name the node resolves** in its own models directory — never a
+    #: path. See the class docstring.
     model: str | None = None
     language: str | None = None
     split: str = "auto"
@@ -370,17 +422,33 @@ class RunCreate(BaseModel):
 class WorkspaceRunCreate(RunCreate):
     """A run a client starts over a workspace **directory** (ADR-0032).
 
-    The command line's subject is a directory (``--dir``), not a registry id, and
-    ``directory`` names it **on this node's filesystem** — a client and a node on
-    the same machine is what a local run means. Everything else is the meeting
-    route's own body, inherited rather than restated, so the two edges cannot
-    come to set different knobs.
+    The run command's subject is its ``<directory>`` argument, not a registry id,
+    and ``directory`` names it **on this node's filesystem** — a local run means a
+    client that addressed the node itself, which in the ordinary case is a client
+    and a node on one machine. Everything else is the meeting route's own body,
+    inherited rather than restated, so the two edges cannot come to set different
+    knobs.
+
+    **The directory is a local client's noun.** This route takes it only from a
+    request that addressed the node by its own address — the name the node
+    answers to, which is what every surface on the machine records and dials;
+    a client that reached the node through the name the operator published for it
+    is elsewhere and is refused with one sentence, rather than having a path of
+    its own — or a same-named file on the node — acted on. Such a client
+    addresses a run the way the registry does: ``POST /api/meetings/{id}/runs``.
     """
 
     directory: str
 
 
 class ArchiveCreate(BaseModel):
+    """Where an archive is written — a directory on this node's filesystem.
+
+    ``root`` is a local client's noun: the route takes it only from a request
+    that addressed the node by its own address. Omitting it names no path, so the
+    service's own default root stands for any client.
+    """
+
     root: str | None = None
 
 
@@ -481,6 +549,111 @@ def _content_length(request: Request) -> int | None:
     except ValueError:
         return None
     return value if value >= 0 else None
+
+
+# --- naming: a path is local, a model is already on the node (ADR-0032) ---- #
+#
+# Two rules settle how a *client* names what it wants, and this edge is where a
+# machine client meets them: they are stated in the request shapes above (and so
+# in the OpenAPI schema ``/api/docs`` publishes), and enforced here.
+#
+# - **A path is a local client's noun.** A directory — a run's workspace, a
+#   meeting's ``workspace_path``, a tape's files, an archive location a project or
+#   a call names — is a location on *this node's* filesystem, and a client may hand
+#   one over only when it addressed the node **itself**: a loopback name, or the
+#   very address this node is listening on (``core.node``). A client that reached
+#   the node through the name the operator published for it is elsewhere, and a
+#   path it sent would be acted on against the wrong machine; it is told, per
+#   case, the shape to reach for instead (``PATH_IS_LOCAL``).
+# - **A model is neither a path nor an id.** It must already be on the node that
+#   runs the work, so a run request carries the name the node resolves in its own
+#   models directory (``CR_MODELS_DIR`` / ``--models-dir``, which are the node's),
+#   never a path.
+#
+# Both refusals are plain English **on purpose**: they answer a machine (the JSON
+# API's ``detail``, which a client prints), not a person reading a translated
+# console — the same shape as the request guard's own messages, and the reason
+# neither is a catalog message ID.
+
+#: The one sentence a non-local client gets when it names a path. It names the
+#: rule, then the shape to reach for instead *per case it answers* — a run, a
+#: tape, a workspace and an archive location each have one, and each is a
+#: registry-addressed or node-decided form rather than a path.
+PATH_IS_LOCAL = (
+    "request refused: a path is a location on this node's filesystem, and this "
+    "node takes one only from a client that addressed the node itself — its own "
+    "address, not another name for it (a proxy's hostname, say). Name what you "
+    "want the way the registry addresses it instead: a run by its meeting's id "
+    "(POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
+    "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
+    "node (`managed: true`); an archive location by omitting it, so the node's "
+    "own root stands."
+)
+
+#: The one sentence a run request gets when its model is a path rather than a
+#: name the node resolves.
+MODEL_IS_THE_NODES = (
+    "request refused: a run's model must already be on the node that runs the "
+    "work, so it is named the way the node names it — a bare name its models "
+    "directory resolves, e.g. 'small' or 'ggml-small.bin' — never a path: a path "
+    "names a file on whatever machine the client is on."
+)
+
+#: What makes a string a *path* rather than a name: a separator, in either
+#: platform's spelling (a Windows-style path is refused on a POSIX node too), or
+#: the home shorthand. A model the node resolves is a bare name — ``small``,
+#: ``ggml-small.bin``, or a speech language code like ``en-US``.
+_MODEL_PATH_CHARS = frozenset("/\\~")
+
+
+def _local_client(request: Request) -> bool:
+    """Whether this request addressed the node **itself**.
+
+    Two names count, and both are the node's own. A **loopback** name is where a
+    node binds by default and the address every surface running on this machine
+    dials (``core.node``). The address this app is **listening on** counts too,
+    whatever it is: ``serve --host 192.168.1.5`` records *and* dials that address,
+    so a client on the node's machine sends ``Host: 192.168.1.5:8765`` — not
+    loopback, and still the very node the path is on. ``_served_by`` answers that
+    in process, and it is the same address the node records, so the two agree by
+    construction.
+
+    **The consequence, stated rather than discovered: this is not
+    same-machine-only, and cannot be.** ``Host`` says which name the client
+    addressed, never where it sits — so a LAN client dialling the node at that
+    same address is admitted too. Two things bound that. It is not new exposure:
+    the request guard already requires every ``Host`` to be loopback or named in
+    ``CR_TRUSTED_HOSTS``, so a node on a named address is reachable there only
+    because the operator published it there, and without this a client on the
+    node's *own* machine would be refused its own node. And what the rule does
+    refuse is a client that addressed the node by **another** name — the hostname
+    a proxy publishes, say — which is a client elsewhere, naming a path of its
+    own; that is the case ``PATH_IS_LOCAL`` answers.
+
+    It is deliberately **not** the peer address. The transport says nothing about
+    where a client is: the operator's proxy forwards from loopback, and a
+    published container port arrives over the host's bridge — so a peer-based
+    test would refuse a local client (the documented container posture) while
+    accepting a remote one (every proxied deployment). What the client *named*
+    is the fact that settles it.
+    """
+    name = guard.host_name(request.headers.get("host"))
+    if guard.is_loopback_host(name):
+        return True
+    served = _served_by(request.app)
+    return served is not None and name == guard.host_name(served.host)
+
+
+def _require_local_client(request: Request) -> None:
+    """Refuse a client that names a path without addressing the node itself."""
+    if not _local_client(request):
+        raise HTTPException(status_code=403, detail=PATH_IS_LOCAL)
+
+
+def _require_model_name(model: str | None) -> None:
+    """Refuse a model that is a path rather than a name the node resolves."""
+    if model and _MODEL_PATH_CHARS.intersection(model):
+        raise HTTPException(status_code=400, detail=MODEL_IS_THE_NODES)
 
 
 #: HTTP status for each upload guard. Kept in the web layer so the service stays
@@ -911,6 +1084,14 @@ def create_app(
         ``runs.start`` instead — the same condition for the same user, so the
         re-read below is what tells that refusal (409) apart from the bad
         requests (no workspace, no tape set), which stay 400.
+
+        A ``model`` named as a **path** is refused by each run edge before it
+        resolves anything — see ``_require_model_name``: a model must already be
+        on the node that runs the work, and the node resolves names, not another
+        machine's paths. It is deliberately *not* refused here, in the shared
+        submission: the workspace edge has already registered a meeting for the
+        directory by the time it lands here, and a refused request must not have
+        written anything.
         """
         if runs.active_state(meeting.id) is not None:
             # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
@@ -1831,7 +2012,16 @@ def create_app(
         ]
 
     @app.post("/api/projects", status_code=201)
-    def create_project(body: ProjectCreate) -> ProjectOut:
+    def create_project(request: Request, body: ProjectCreate) -> ProjectOut:
+        """Create a project; ``default_archive_root`` is a local client's noun.
+
+        A named root is a directory on this node's filesystem, where this
+        project's archives are later written — so it is taken only from a request
+        that addressed the node by its own address, exactly as the archives route
+        guards a ``root`` it is handed. Omitted, the node's own default stands.
+        """
+        if body.default_archive_root:
+            _require_local_client(request)
         try:
             project = registry.create_project(
                 body.name,
@@ -1848,8 +2038,16 @@ def create_app(
         return ProjectOut.model_validate(lookup.project(registry, slug))
 
     @app.patch("/api/projects/{slug}")
-    def update_project(slug: str, body: ProjectUpdate) -> ProjectOut:
+    def update_project(slug: str, request: Request, body: ProjectUpdate) -> ProjectOut:
+        """Update a project; a ``default_archive_root`` is a local client's noun.
+
+        Same rule as the create route: a named root is a path on this node, and
+        only a client that addressed the node itself may set one. Omitting it
+        leaves the project's current root alone.
+        """
         lookup.project(registry, slug)
+        if body.default_archive_root:
+            _require_local_client(request)
         try:
             project = registry.update_project(
                 slug,
@@ -1912,8 +2110,17 @@ def create_app(
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)
-    def create_meeting(slug: str, body: MeetingCreate) -> MeetingOut:
+    def create_meeting(slug: str, request: Request, body: MeetingCreate) -> MeetingOut:
+        """Create a meeting; a ``workspace_path`` is a local client's noun.
+
+        A named path is a directory on this node's filesystem, so it is taken
+        only from a request that addressed the node by its own address;
+        ``managed=True`` names no path (the node provisions the workspace) and is
+        therefore open to any client.
+        """
         lookup.project(registry, slug)
+        if body.workspace_path and not body.managed:
+            _require_local_client(request)
         try:
             meeting = registry.create_meeting(
                 slug,
@@ -1989,8 +2196,16 @@ def create_app(
         return review_api(meeting_id, draft_id, accept=False, version=version)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
-    def set_tapes(meeting_id: int, body: TapesUpdate) -> TapeSetOut:
+    def set_tapes(meeting_id: int, request: Request, body: TapesUpdate) -> TapeSetOut:
+        """Set a meeting's tapes; each path is a local client's noun.
+
+        A non-empty ``paths`` names files on this node's filesystem, so it is
+        taken only from a request that addressed the node by its own address. An
+        empty list names nothing and clears the set for any client.
+        """
         lookup.meeting(registry, meeting_id)
+        if body.paths:
+            _require_local_client(request)
         try:
             tape_set = registry.set_recording_set(meeting_id, body.paths)
         except ValueError as exc:
@@ -2069,11 +2284,21 @@ def create_app(
 
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
     def start_run(meeting_id: int, body: RunCreate) -> RunSnapshotOut:
+        """Start a run over a meeting — the route a **remote** client uses.
+
+        The meeting is named the way the registry addresses it, by its id, so this
+        route needs no path and is answered from anywhere the node is reachable;
+        no client's own directory is involved. (The body's ``model`` is still a
+        name the node resolves — see :class:`RunCreate`.)
+        """
+        _require_model_name(body.model)
         meeting = lookup.meeting(registry, meeting_id)
         return enqueue_run(meeting, body)
 
     @app.post("/api/runs", status_code=202)
-    def start_workspace_run(body: WorkspaceRunCreate) -> RunSnapshotOut:
+    def start_workspace_run(
+        request: Request, body: WorkspaceRunCreate
+    ) -> RunSnapshotOut:
         """Start a run over a workspace directory on **this node** (ADR-0032).
 
         Where the command line's ``run`` reaches the node. The directory is
@@ -2081,7 +2306,19 @@ def create_app(
         directory holds as its tapes (``service.runs.workspace_run_meeting``),
         and the run then takes the same path the meeting route takes: one queue,
         one claim, one row, with ``origin`` naming the surface that asked.
+
+        The directory is a **path**, so it is taken only from a client that
+        addressed the node by its own address: a client elsewhere would
+        name a directory on its own machine, and this node would run a same-named
+        directory of its own instead. A non-local client gets one sentence and
+        the route that replaces this one (:data:`PATH_IS_LOCAL`).
+
+        The body's ``model`` is refused if it is a path *before* the directory is
+        resolved, so a refused request registers no meeting (see
+        :func:`_require_model_name`).
         """
+        _require_local_client(request)
+        _require_model_name(body.model)
         meeting = workspace_run_meeting(registry, body.directory)
         return enqueue_run(meeting, body)
 
@@ -2102,9 +2339,19 @@ def create_app(
 
     # --- JSON API: archives ------------------------------------------------- #
     @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
-    def post_archive(meeting_id: int, body: ArchiveCreate | None = None) -> ArchiveOut:
+    def post_archive(
+        meeting_id: int, request: Request, body: ArchiveCreate | None = None
+    ) -> ArchiveOut:
+        """Archive a meeting; a named ``root`` is a local client's noun.
+
+        An omitted ``root`` names no path — the service's own default stands, for
+        any client. A named one is a directory on this node's filesystem, so it is
+        taken only from a request that addressed the node by its own address.
+        """
         meeting = lookup.meeting(registry, meeting_id)
         root = body.root if body else None
+        if root:
+            _require_local_client(request)
         try:
             archive = archive_meeting(registry, meeting, root)
         except ValueError as exc:

@@ -32,10 +32,21 @@ def _auto_probe() -> AutoProbe:
     )
 
 
+#: The address the console's own client dials — the loopback a node binds
+#: (``core.node``). The suite's default ``TestClient`` speaks as ``testserver``
+#: (see ``conftest.py``), which the request guard accepts through
+#: ``CR_TRUSTED_HOSTS`` — but that is a *proxied* client, and a client behind a
+#: published name may not name a **path** (ADR-0032): ``workspace_path``, a tape
+#: set, an archive root. These fixtures are the API's ordinary caller *on the
+#: node's machine*, so they address it the way every surface here does; the rule
+#: and its refusal have their own module (``test_web_naming.py``).
+LOCAL_ORIGIN = "http://127.0.0.1:8765"
+
+
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    return TestClient(app)
+    return TestClient(app, base_url=LOCAL_ORIGIN)
 
 
 @pytest.fixture()
@@ -76,7 +87,7 @@ def console(tmp_path) -> SimpleNamespace:
 
     manager = RunManager(registry, pipeline=fake_pipeline)
     return SimpleNamespace(
-        client=TestClient(create_app(registry, runs=manager)),
+        client=TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN),
         registry=registry,
         manager=manager,
         gate=gate,

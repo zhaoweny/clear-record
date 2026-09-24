@@ -513,14 +513,14 @@ class RunState:
 def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     """The meeting a run over workspace *directory* is a run of, tapes and all.
 
-    A command line's subject is a workspace **directory** (``--dir``) and this
-    node's subjects are meetings, so the two are brought together here, once,
-    rather than in the edge that happens to ask (ADR-0032's facade): the meeting
-    is the one registered for that workspace
+    A run command's subject is a workspace **directory** (``clear-record run
+    <directory>``) and this node's subjects are meetings, so the two are brought
+    together here, once, rather than in the edge that happens to ask (ADR-0032's
+    facade): the meeting is the one registered for that workspace
     (:meth:`~clear_record.service.store.Registry.meeting_for_workspace`), and its
-    **tapes become the audio the directory holds** — a ``--dir`` run's inputs are
-    the workspace's files, re-read on every such run, which is what makes a tape
-    added since the last run part of the next one
+    **tapes become the audio the directory holds** — the files that workspace
+    holds are a run's inputs, re-read on every such run, which is what makes a
+    tape added since the last run part of the next one
     (``pipeline.workspace.discover_audio``; a workspace's own output dirs are not
     inputs). A directory that holds no audio keeps whatever tape set it had, and
     a run with none is refused by :meth:`RunManager.start` the way any tape-less
@@ -528,9 +528,12 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
 
     The caller then enqueues this meeting through :meth:`RunManager.start` like
     any other run: one queue, one claim, one registry row. A *path sent by a
-    client* means a path on **this node's** filesystem; a client on another
-    machine naming its own directory is the direction's open addressing question,
-    not this function's.
+    client* means a path on **this node's** filesystem — the direction's open
+    addressing question, settled at the edge that takes one: only a client that
+    named the node itself may send a directory
+    (``web.app.start_workspace_run``), and a client elsewhere addresses a meeting
+    by its registry id. So this function is only ever reached with a path the
+    node can mean.
     """
     meeting = registry.meeting_for_workspace(directory)
     tapes = [str(path) for path in discover_audio(Path(directory))]

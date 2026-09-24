@@ -215,8 +215,8 @@ uv run --all-packages --extra apple clear-record run recordings \
 
 **A `run` is a node run.** `clear-record run` starts the run **on the node** — the
 recorded one, or one it starts ([ADR-0032](docs/adr/0032-the-node-and-its-clients.md))
-— instead of running the pipeline inside itself. Two consequences to know before
-you type it:
+— instead of running the pipeline inside itself. Three consequences to know
+before you type it:
 
 - **It ensures a node.** It attaches to the recorded one, and starts one when none
   answers (`clear-record serve` starts one too — the verb ships in every install,
@@ -230,6 +230,20 @@ you type it:
   workspace keeps every file it kept before — `manifest.json`, `audio/`,
   `segments.json`, `record.json`, `export/` — and the node's registry only
   records that the run happened.
+- **The directory and the model are named the node's way.** The run's
+  `<directory>` argument is sent as a path **the node resolves**: `run` talks to
+  the node, so the directory has to be the node's — in the ordinary case a client
+  and a node on one machine, which is what that argument always meant. A client
+  that reached the node through the name an operator published for it (a reverse
+  proxy, Tailscale) is refused a directory with one sentence, rather than having a
+  path of its own, or a same-named directory of the node's, acted on. A client
+  elsewhere names what it wants the way the registry does: a run names its meeting
+  by id (`POST /api/meetings/{id}/runs`), and a tape is uploaded into a managed
+  workspace. A **model is the exception in both directions** — it is addressed
+  neither by path nor by id, and must already be on the node that runs the work —
+  so `--model` names a checkpoint the node's models directory resolves (`small`,
+  `ggml-small.bin`); a path is refused, and `--models-dir` is the node's own,
+  never the client's.
 
 What a run may set today is what the node's run API declares: `--backend`,
 `--model`, `--language`, `--split-channels`/`--mix-down`, `--no-resume`, `--jobs`,

@@ -294,7 +294,10 @@ promotes nothing the owner did not say beyond the label each clause carries.
   the knobs `RunCreate` is missing, the words on the channel beside the progress
   events, and addressing (the next bullet). Each is a ticket in the tracker's
   `architecture` lane.
-- [OPEN] **How a client addresses a workspace.** The command line's subject is a
+- [OPEN → **decided 2026-09-25**] **How a client addresses a workspace.** (The
+  question this bullet names is **settled**; the text below is kept as it stood
+  when it was open, and the settlement is the Update at the end of this file.)
+  The command line's subject is a
   local directory; a node's subjects are registry ids, and a path a client sends is
   a path *on the node's filesystem*. The upload route that exists covers tapes only
   and has no resume; reference transcripts, glossaries and models have none. This is
@@ -367,3 +370,83 @@ promotes nothing the owner did not say beyond the label each clause carries.
   that sentence names are the paths that speak. The desktop bundle carries the
   stack; whether the base install should carry it too, so `run` works without the
   extra, is the release decision this leaves open rather than decides.
+
+## Update (2026-09-25) — how a client names what it wants, settled
+
+- [DECISION] **A path is a local client's noun; everything else is addressed the
+  way the registry addresses it, and a model is the exception in both
+  directions.** The Consequences bullet above asked how a client addresses a
+  workspace; the answer is that it names a **path** only when it addressed the
+  node **itself** — the node's own address, not another name for it (a run's
+  `<directory>`, a tape's files, an archive root) — and otherwise names the
+  registry object by its id. A **model** is addressed neither way: it must already
+  be on the node that runs the work, so a run request carries the *name* the node
+  resolves in its own models directory (`CR_MODELS_DIR` / `--models-dir`, which
+  are the node's) and never a path.
+- [DECISION] **"Local" is decided by the name the client addressed, not by the
+  connection.** A request's `Host` has to name the node **itself**: a loopback
+  name (where a node binds by default, and what the recorded wildcard bind is
+  dialled at), or the very address this node is listening on — `serve --host
+  192.168.1.5` records and dials exactly that, so a client on the node's machine
+  sends it. `web.app._served_by` answers that address in process, the same one
+  `GET /api/node` vouches for and the record carries. It is also the same fact the
+  request guard already reads.
+- [FACT] **What that admits, stated rather than left to be discovered.** `Host`
+  says which name the client addressed, never where it sits, so this is **not**
+  same-machine-only and cannot be: a LAN client dialling the node at that same
+  address is admitted too. Two things bound it. It is not new exposure — the
+  request guard already requires every `Host` to be loopback or named in
+  `CR_TRUSTED_HOSTS`, so a node on a named address is reachable there only because
+  the operator published it there, and without this a client on the node's *own*
+  machine would be refused its own node. And what the rule refuses is a client
+  addressing the node by **another** name — the hostname a proxy publishes, say —
+  which is a client elsewhere, naming a path of its own; that is the case the
+  sentence answers. The peer address is deliberately *not* the test — an
+  operator's proxy forwards from loopback and a published container port arrives
+  over the host's bridge, so a peer test would refuse a local client in the
+  documented container posture while accepting a remote one in every proxied
+  deployment.
+- [FACT] **The rule is enforced once, at the machine-facing edge, and reads the
+  same to every client.** `web.app` takes a path only from a request that named
+  the node itself: `POST /api/runs` (a run's directory), `POST
+  /api/projects/{slug}/meetings` (a `workspace_path`), `PUT
+  /api/meetings/{id}/tapes` (a tape set), `POST /api/projects` and `PATCH
+  /api/projects/{slug}` (a project's `default_archive_root`, which is where its
+  archives are later written), and `POST /api/meetings/{id}/archives` (a named
+  root) answer **403** with one sentence naming the rule and, per case, the shape
+  to reach for instead (`PATH_IS_LOCAL`). A request that names no path is
+  untouched. A **path-valued `model`** is refused **400** by each of the two
+  machine-facing run edges *before* it resolves anything (`MODEL_IS_THE_NODES`),
+  so a refused request writes nothing — not even the meeting the directory edge
+  would have registered; the console's run form and the MCP adapter carry
+  `model` through in process, as the node's own surfaces.
+- [FACT] **The registry-addressed run is unchanged in behaviour.** `POST
+  /api/meetings/{id}/runs` still answers any client that can reach the node: a
+  meeting is named by id, no directory is involved, and the run takes the queue,
+  the claim and the row it always took. That is the route a client elsewhere
+  uses, and the sentence above names it.
+- [FACT] **The rules are stated where a client author meets them**, not
+  discovered: in the request shapes' own declarations, so the OpenAPI schema at
+  `/api/docs` publishes them (`RunCreate`, `WorkspaceRunCreate`, `MeetingCreate`,
+  `TapesUpdate`, `ArchiveCreate`, `ProjectCreate`, `ProjectUpdate`, and each
+  route's description); in the command line's `run` help; in README's "A `run` is
+  a node run" passage; and in the operator guide, where the proxy recipes must
+  forward the original `Host` rather than rewrite it to a name of their own
+  (§2, §3).
+- [DECISION] **The console keeps its path fields, and only the machine-facing
+  edge refuses.** ADR-0032 makes the console an in-process backend-for-frontend —
+  it *is* the node's own face, it renders the node's resolved paths beside the
+  fields, and its forms name the node's folders rather than a client's — so the
+  machine-facing JSON routes are where the rule binds and the `/ui/*` forms and
+  pages are deliberately **not** guarded. A visitor who reaches the console
+  through the operator's proxy can therefore still type a path there; that path
+  is the node's, and it is not offered as a way to name a file on the visitor's
+  own machine. What such a visitor is *not* given is the machine-facing refusal,
+  because the console is not that surface: what the console shows a remote
+  visitor is unchanged by this batch.
+- [OPEN] **A reference transcript and a glossary still have no way to reach the
+  node** — not by upload and not as registry objects. Tapes alone have an upload
+  route (ADR-0024), and the census line that named this stands; a run's
+  `--reference` and `--glossary` are not carryable through the node's run API
+  yet, so those two nouns remain to be named by whichever ticket gives them a
+  route.

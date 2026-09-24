@@ -1221,6 +1221,12 @@ def _run_help() -> str:
     refused rather than dropped, which a user should know before typing it. The
     command ensures that node (it attaches to a recorded one, or starts one), so
     the clause says *ensures* rather than *needs*.
+
+    The **naming clause** is this surface's too, and it is where a client author
+    meets ADR-0032's two rules: the directory argument is a path *the node*
+    resolves (which is why only a client that addressed the node itself may send
+    one), and a model must already be on the node — named the way the node names
+    it, never a path, with the models directory the node's own.
     """
     return (
         pipeline_spec().run_help()
@@ -1228,7 +1234,11 @@ def _run_help() -> str:
         "queue and shows in the console's Activity list (this command ensures a "
         "node — attaching to the recorded one or starting one; `clear-record "
         "node` prints where it is). A flag the node's run API does not carry is "
-        "refused, never dropped."
+        "refused, never dropped. The directory is a path this node resolves, which "
+        "is why only a client that addressed the node itself may name one; --model "
+        "names a checkpoint the node already has, by the name its models directory "
+        "resolves (`small`, `ggml-small.bin`) — never a path — and --models-dir "
+        "is the node's own."
     )
 
 

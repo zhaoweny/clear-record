@@ -404,6 +404,29 @@ The console stays an **in-process backend-for-frontend** rather than becoming a
 channel client (ADR-0032): which process owns the operations is the question, and
 answering it does not mean inserting an HTTP hop inside one process.
 
+**A client names what it wants by a path or by a registry id, and only the first
+is local.** A **path** — a run's workspace directory, a meeting's
+`workspace_path`, a tape's files, an archive root (one a call hands over, or one
+a project keeps) — names a location on *the node's* filesystem, so the
+machine-facing JSON routes take one only from a request that named the node
+**itself**: its loopback, or the very address it is listening on (the address the
+section above records and every surface dials). A client that reached the node
+through a name an operator published for it is a client elsewhere, and is answered
+with **one sentence** naming the rule and, per case, the registry-addressed or
+node-decided shape that replaces it (`POST /api/meetings/{id}/runs`, an upload
+into a managed workspace, `managed: true`, or simply omitting the root) rather
+than having a path of its own — or a same-named file on the node — acted on.
+Everything the registry owns is named by its id, and that is the route a remote
+client uses. The **console is not that edge**: its `/ui/*` forms are the node's
+own in-process face, so a visitor reaching the console through a proxy may still
+type a path there, and the panel beside the field shows whose folder it is. A
+**model** is named neither way: it must already be on the node that runs the work,
+so a run request carries a name the node's models directory resolves
+(`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are
+stated where a client author meets them — the request shapes and route
+descriptions the OpenAPI schema publishes at `/api/docs`, the `run` command's
+help, and README — and enforced at the edge (ADR-0032's 2026-09-25 Update).
+
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI** is
 the page information architecture of ADR-0027 — **Projects** (the daily

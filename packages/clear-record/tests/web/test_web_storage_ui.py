@@ -29,7 +29,13 @@ def _managed_root(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
-    return TestClient(create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")))
+    # A client **on the node's machine** (ADR-0032): naming a ``workspace_path``
+    # is a local client's noun, and the suite's default ``testserver`` client is a
+    # proxied one — see ``test_web_naming.py``.
+    return TestClient(
+        create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
+        base_url="http://127.0.0.1:8765",
+    )
 
 
 def _project(client: TestClient, name: str = "Ops") -> None:

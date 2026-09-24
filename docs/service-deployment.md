@@ -210,6 +210,33 @@ global "disable the guard" switch: the hatch stays explicit and minimal, and
 loopback keeps working regardless. Set it to every hostname you serve the
 console on; a stock install leaves it unset and trusts loopback only.
 
+[DESIGN] The name a request carries does a second job since ADR-0032's facade
+landed: the node's **machine-facing** edge reads it to tell a client on this
+machine from one that came in through your proxy. A request counts as local only
+when it named the node **itself** — a loopback name, or the address the node is
+listening on — and only such a client may name a **path** for the node to resolve
+through the JSON API: a run's workspace directory, a meeting's `workspace_path`, a
+tape's files, an archive root (one it hands over, or one it sets on a project).
+A visitor arriving through `CR_TRUSTED_HOSTS` gets one sentence from the **JSON
+API** and the shape to reach for instead, rather than having a path of its own —
+or a same-named file on the node — acted on. Note what "the address the node is
+listening on" costs: `Host` says which name was addressed and never where the
+client sits, so if you bind the node to a named address and trust that name, a
+client dialling it from the network is treated as local too — your choice of bind
+and trust is what admits it, and the bind stays loopback-only by default for
+exactly this reason. Two boundaries worth being clear about:
+
+- **The console is not that edge.** The `/ui/*` pages and forms are the node's
+  own in-process face (ADR-0032), so they are not guarded: a visitor who reaches
+  the console through your proxy can still type a path in its forms, and that path
+  is a folder **on the node** — which is what the panel beside the field shows.
+  The refusal belongs to the JSON API, the surface where a program names what it
+  wants.
+- **Forward the original `Host`.** Caddy and Tailscale Serve do; nginx does with
+  `$host` and does **not** with `$proxy_host`. Rewriting it to a loopback name
+  would make every visitor look local, and a path typed on another machine would
+  then be resolved here.
+
 ## 3. Front it with a proxy
 
 ### nginx (`auth_basic`)
@@ -226,16 +253,23 @@ server {
         auth_basic_user_file /etc/nginx/clear-record.htpasswd;
 
         proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host 127.0.0.1:8765;   # the guard's loopback default
+        proxy_set_header Host $host;   # the name the browser used — do not rewrite
     }
 }
 ```
 
 Create the password file with `htpasswd -c /etc/nginx/clear-record.htpasswd you`.
-nginx's default upstream `Host` (`$proxy_host`) is already `127.0.0.1:8765`, but
-being explicit documents the intent. You still need
-`CR_TRUSTED_HOSTS=console.example.com` on the service, because the browser's
-`Origin` is the public name. This is HTTP Basic auth: use TLS, and treat the
+Be explicit that `Host` is passed through: **do not** rewrite it to
+`127.0.0.1:8765`. The node reads the name the client addressed to tell a client on
+its machine from one that came in through this proxy: a name that is the node's
+own (its loopback, or the address it listens on) is what lets a client name a
+**path** for the node to resolve through the JSON API — a run's workspace
+directory, a tape, an archive root (ADR-0032) — while a client arriving through
+this proxy is told, in one sentence, to address work the registry's way instead.
+Rewriting `Host` would make every visitor look local, and a path typed on another
+machine would then be resolved here. `CR_TRUSTED_HOSTS=console.example.com` is
+required either way: `Host` is a name the guard must trust, and the browser's
+`Origin` is the public name too. This is HTTP Basic auth: use TLS, and treat the
 password as the only barrier between the internet and a console with no
 accounts of its own.
 

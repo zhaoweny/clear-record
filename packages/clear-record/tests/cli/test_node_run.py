@@ -45,6 +45,7 @@ from clear_record.pipeline import stages
 from clear_record.pipeline.auto import MODEL_LADDER
 from clear_record.providers import BackendBase, BackendInfo
 from clear_record.service.lifecycle import QUEUED, RUN_ORIGINS
+from clear_record.web.app import MODEL_IS_THE_NODES
 
 #: How long a run gets to finish once nothing is gating it.
 _RUN_TIMEOUT = 30.0
@@ -508,3 +509,22 @@ def test_every_flag_run_exposes_is_carried_or_refused() -> None:
         cli._NODE_RUN_CARRIED
     )
     assert exposed == declared
+
+
+def test_a_model_named_as_a_path_is_refused_in_the_nodes_own_words(
+    node_in_this_process, tmp_path
+) -> None:
+    """A model must be on the node: the node refuses a path, and this prints it.
+
+    ``--model`` *is* a flag a node run carries, so the refusal cannot be the
+    command line's own — and it must not be a second wording of the rule either:
+    the node owns the sentence, and a person reads exactly that sentence here
+    (``web.app.MODEL_IS_THE_NODES``), not a traceback or a raw JSON detail.
+    """
+    workspace = _workspace(tmp_path, "path-model", tapes=1)
+    with node_in_this_process() as node_here:
+        with pytest.raises(SystemExit) as ended:
+            _cli_run(workspace, "--model", str(tmp_path / "ggml-mine.bin"))
+        # Refused before anything was asked of the registry.
+        assert node_here.registry.list_meetings() == []
+    assert str(ended.value) == MODEL_IS_THE_NODES

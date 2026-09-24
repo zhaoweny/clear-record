@@ -437,8 +437,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   (§2, §3).
 - [DECISION] **The console keeps its path fields, and only the machine-facing
   edge refuses.** ADR-0032 makes the console an in-process backend-for-frontend —
-  it *is* the node's own face, it renders the node's resolved paths beside the
-  fields, and its forms name the node's folders rather than a client's — so the
+  it *is* the node's own face, it shows back the paths the node resolved (the storage
+  panel), and its forms name the node's folders rather than a client's — so the
   machine-facing JSON routes are where the rule binds and the `/ui/*` forms and
   pages are deliberately **not** guarded. A visitor who reaches the console
   through the operator's proxy can therefore still type a path there; that path

@@ -419,7 +419,7 @@ than having a path of its own — or a same-named file on the node — acted on.
 Everything the registry owns is named by its id, and that is the route a remote
 client uses. The **console is not that edge**: its `/ui/*` forms are the node's
 own in-process face, so a visitor reaching the console through a proxy may still
-type a path there, and the panel beside the field shows whose folder it is. A
+type a path there; the meeting's storage panel shows back the path the node resolved. A
 **model** is named neither way: it must already be on the node that runs the work,
 so a run request carries a name the node's models directory resolves
 (`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are

@@ -229,7 +229,7 @@ exactly this reason. Two boundaries worth being clear about:
 - **The console is not that edge.** The `/ui/*` pages and forms are the node's
   own in-process face (ADR-0032), so they are not guarded: a visitor who reaches
   the console through your proxy can still type a path in its forms, and that path
-  is a folder **on the node** — which is what the panel beside the field shows.
+  is a folder **on the node**; the console shows back the path the node resolved.
   The refusal belongs to the JSON API, the surface where a program names what it
   wants.
 - **Forward the original `Host`.** Caddy and Tailscale Serve do; nginx does with

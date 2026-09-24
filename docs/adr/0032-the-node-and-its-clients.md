@@ -483,9 +483,9 @@ promotes nothing the owner did not say beyond the label each clause carries.
   tray becomes a client of and **no second node is started**; only when nothing
   answers does it start one, embedded in its own process as before, publishing the
   record exactly as every other posture does. Preliminary 1's "it starts a node,
-  publishes the record, and probes the socket it bound" — a sentence the
-  Decision's own census repeats — therefore describes the case where none
-  answered, not the tray's first act. Two consequences are
+  publishes the record, and probes the socket it bound" — and the BFF
+  decision's "the tray probes the socket it bound" — therefore describe the
+  case where none answered, not the tray's first act. Two consequences are
   recorded where they live: the live state is the **node's** health rather than
   this process's thread (a node the tray joined has no thread here at all), and a
   node the tray only joined is not its to stop or restart — `stop`/`restart` act

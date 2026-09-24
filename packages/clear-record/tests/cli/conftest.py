@@ -48,9 +48,11 @@ def node_in_this_process(tmp_path):
     its registry lives — the fixture's ``tmp_path`` unless the caller names one.
 
     Yields a context manager returning a namespace: ``address`` (what the node
-    recorded), ``registry`` and ``manager`` (the node's own), and ``console`` — a
+    recorded), ``registry`` and ``manager`` (the node's own), ``console`` — a
     ``TestClient`` over the *same app object*, so what the console shows is
-    exactly what the node owns.
+    exactly what the node owns — and ``server``, the uvicorn server itself, so a
+    test can take the node **away** under a client that is already talking to it
+    (``should_exit = True``) and watch what that client does.
     """
 
     @contextlib.contextmanager
@@ -88,6 +90,7 @@ def node_in_this_process(tmp_path):
                 registry=registry,
                 manager=manager,
                 console=TestClient(app),
+                server=server,
             )
         finally:
             node.forget()

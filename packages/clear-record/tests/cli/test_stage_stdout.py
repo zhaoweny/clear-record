@@ -1,12 +1,15 @@
 """The commands' default stdout, pinned byte for byte.
 
 ``cli/cli.py`` states the contract — the stages print nothing and the command
-surface renders every word of what they returned and reported, so the commands'
-default stdout is byte-identical — and nothing enforced it: the suite's only
-exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
+surface renders every word of what they returned and reported, so a stage
+command's default stdout is byte-identical — and nothing enforced it: the suite's
+only exact-stdout assertion was an *empty* output (``test_diagnostics_cli``), and
 every other stage assertion is a substring check. This module is the pin: the
 eight stage-bearing commands, the ``run`` and ``calibrate`` aggregates a user
-actually types, and the ``synth`` development command.
+actually types, and the ``synth`` development command. ``run`` is the one block
+whose lines are not this surface's rendering: a command-line run is the node's
+(ADR-0032), so they are the node's own progress, read back by the follower
+(``cli/runs.py``) and pinned here as it comes over.
 
 What makes it a stable pin rather than a flaky one:
 
@@ -22,6 +25,12 @@ What makes it a stable pin rather than a flaky one:
   lines of a second pass;
 - ``CR_LANG=en``, and every other ``CR_*`` variable cleared, so the machine's
   own environment cannot reach a knob or swap the catalog;
+- the ``run`` block carries no ``[queued]`` line, and cannot here: the follower
+  prints a run's queue place only from a **poll** (``cli.runs.follow`` — the
+  read after the one it starts with), and this node has one run and nothing
+  gating it, so the run is claimed long before the follower's second read. A run
+  that is *still* queued a full poll after the node accepted it is the only thing
+  that adds a line there;
 - the fixture directory is normalised out of the captured text, because every
   printed path is absolute;
 - nothing machine- or clock-derived is printed at all: the fake backend sizes
@@ -55,8 +64,10 @@ from clear_record.providers import BackendBase, BackendInfo
 
 #: The whole capture, in the order it was taken. Regenerate by running
 #: :func:`_capture` once and pasting its text here; a mismatch is a byte-level
-#: diff. The bytes are the **pre-move** ones — every block was captured against
-#: 1277852 — so the pin doubles as the move's equivalence check.
+#: diff. Every block but ``run`` is the **pre-move** one — captured against
+#: 1277852 — so those double as the move's equivalence check. ``run`` is not one
+#: of them: a command-line run is the node's now (ADR-0032), so its lines are the
+#: node-side progress the follower reads back, re-pinned by 244 when that landed.
 _GOLDEN = """\
 $ clear-record glossary --add Clear Record --add Oh My Pi
 [glossary] $FIXTURE/tape/glossary.txt (2 term(s))
@@ -113,7 +124,7 @@ $ clear-record run
 [transcribe] 3 / 3
 [reconcile] 1 / 1
 [export] 4 / 4
-[run] 1 done
+[run] #1 done
 [next] the record is in $FIXTURE/run/export; review it and accept the minutes in the console: `clear-record web`
 $ clear-record calibrate
 [ingest] decode a.wav -> a.wav

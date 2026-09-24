@@ -17,7 +17,8 @@ The relation these tests prove is not "``run`` speaks HTTP". It is:
 
 The node comes from ``conftest.py`` (a real app on an ephemeral port, its address
 recorded) and the client is the real command line; only the ASR backend is faked,
-so a whole run is exercised with no model and no tape.
+so a whole run is exercised with no model in the picture, over a real tape — and,
+where a test gates the queue, the pipeline itself.
 """
 
 from __future__ import annotations
@@ -25,14 +26,22 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 import soundfile as sf
 
 from clear_record.cli import cli
-from clear_record.core import Progress, Segment, TranscriptionResult
+from clear_record.core import (
+    DECODER_KNOB_FIELDS,
+    Progress,
+    Segment,
+    TranscriptionResult,
+)
+from clear_record.core import node
 from clear_record.pipeline import stages
+from clear_record.pipeline.auto import MODEL_LADDER
 from clear_record.providers import BackendBase, BackendInfo
 from clear_record.service.lifecycle import QUEUED, RUN_ORIGINS
 
@@ -41,7 +50,13 @@ _RUN_TIMEOUT = 30.0
 
 
 class _FakeBackend(BackendBase):
-    """A deterministic decoder: one segment spanning each chunk it is handed."""
+    """A deterministic decoder: one segment spanning each chunk it is handed.
+
+    It advertises every decoder knob (``DECODER_KNOB_FIELDS``) because it takes
+    them all through ``**decoder_knobs`` and ignores them: a test whose run
+    resolves a **profile** — the one that fills those knobs — then still
+    executes, instead of failing a run on a capability the fake really has.
+    """
 
     info = BackendInfo(
         id="fake",
@@ -49,6 +64,7 @@ class _FakeBackend(BackendBase):
         frameworks=(),
         description="fake decoder",
         default_model="fake-model",
+        decoder_knobs=DECODER_KNOB_FIELDS,
     )
 
     def available(self) -> bool:
@@ -102,16 +118,51 @@ def _cli_run(directory: Path, *flags: str) -> int:
     return cli.main(["run", str(directory), *flags])
 
 
-def _in_thread(target) -> tuple[threading.Thread, list[int]]:
-    """Run *target* on its own thread, collecting its return value."""
-    out: list[int] = []
+def _in_thread(target) -> tuple[threading.Thread, list[Any]]:
+    """Run *target* on its own thread, collecting how it ended.
+
+    A command that ends by **raising** is collected as the exception it raised:
+    ``cli.main`` returns a code for the errors Click itself reports, but a failure
+    the command surface composes leaves as a ``SystemExit`` — the same end the
+    process boundary has, sentence and all — and a test wants to read both the
+    code and the sentence.
+    """
+    out: list[Any] = []
 
     def body() -> None:
-        out.append(target())
+        try:
+            out.append(target())
+        except BaseException as exc:  # the command's own exit is a result here
+            out.append(exc)
 
     thread = threading.Thread(target=body, daemon=True)
     thread.start()
     return thread, out
+
+
+def _models_on_disk(root: Path) -> Path:
+    """A models directory holding every ladder checkpoint (empty files do).
+
+    ``--auto`` never downloads, so a machine with nothing on disk is **refused**
+    rather than explained; a test that wants the explanation gives its probe a
+    directory where whichever model the resolver picks is already present. The
+    resolver only looks at presence, and the decoder is faked, so the files are
+    never read.
+    """
+    models = root / "models"
+    models.mkdir()
+    for size in MODEL_LADDER:
+        (models / f"ggml-{size}.bin").touch()
+    return models
+
+
+def _unreachable(address: node.NodeAddress) -> bool:
+    """Whether nothing answers at *address* any more."""
+    try:
+        node.reach(address, timeout=0.2)
+    except node.NoNodeError:
+        return True
+    return False
 
 
 def _wait_for(predicate, *, timeout: float = _RUN_TIMEOUT) -> bool:
@@ -120,6 +171,21 @@ def _wait_for(predicate, *, timeout: float = _RUN_TIMEOUT) -> bool:
         if predicate():
             return True
         time.sleep(0.02)
+    return False
+
+
+def _wait_for_line(capsys, text: str, *, timeout: float = _RUN_TIMEOUT) -> bool:
+    """Whether *text* reaches stdout within *timeout* (consuming what it reads).
+
+    For output a command prints while a test still holds the node's queue: the
+    read is destructive (``readouterr``) because the point is to see the line as
+    it appears, not to collect everything one command printed.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if text in capsys.readouterr().out:
+            return True
+        time.sleep(0.05)
     return False
 
 
@@ -175,7 +241,7 @@ def test_a_command_line_run_is_a_row_the_node_owns(
     ]
 
 
-def test_a_command_line_run_is_the_node_s_while_it_runs_and_after(
+def test_the_node_owns_a_command_line_run_while_it_runs_and_after(
     gated_node, tmp_path, capsys
 ) -> None:
     """The console shows the run while it runs, and after it finishes.
@@ -184,7 +250,7 @@ def test_a_command_line_run_is_the_node_s_while_it_runs_and_after(
     wrote: the run is there — with the command line as its origin — while the
     pipeline is still held, and it is there as ``done`` once the run ends. The
     command line's own output is the run's node-side stream: the stage the run
-    closed, and where the run ended.
+    closed, and where the run ended — once each, and only when a stage closed.
     """
     workspace = _workspace(tmp_path, "held")
     thread, codes = _in_thread(lambda: _cli_run(workspace))
@@ -216,7 +282,12 @@ def test_a_command_line_run_is_the_node_s_while_it_runs_and_after(
     assert "cli" in history
     printed = capsys.readouterr().out
     assert "[transcribe] 2 / 2" in printed, "the run's own stream"
-    assert "[run] 1 done" in printed
+    # The fake's first advance (1 of 2) reports a chunk and closes nothing, so it
+    # is not a stage line; and a stage that closed is printed **once** — a follow
+    # that printed every event, or a stage twice, fails here.
+    assert "[transcribe] 1 / 2" not in printed, "a non-closing event was printed"
+    assert printed.count("[transcribe] 2 / 2") == 1, "the stage closed twice"
+    assert "[run] #1 done" in printed
 
 
 def test_a_command_line_run_carries_the_command_line_as_its_origin(
@@ -245,14 +316,16 @@ def test_a_command_line_run_carries_the_command_line_as_its_origin(
 
 # --- one queue, and the node decides who runs ------------------------------ #
 def test_a_command_line_run_waits_while_another_run_holds_the_node(
-    gated_node, tmp_path
+    gated_node, tmp_path, capsys
 ) -> None:
     """A second command-line run is ``queued`` while the node is busy.
 
     Both runs are the command line's, over two directories, so both are node runs
     in the one queue. The held run is the one executing; the second is at the
     back of the FIFO, executes only after the first ends, and the pipeline is
-    entered once at a time — the client never executes anything itself.
+    entered once at a time — the client never executes anything itself. And it
+    **says** it is waiting: the follower prints the queue place the node reports
+    (``cli.runs.follow``), so a queued run does not read as a hung one.
     """
     first = _workspace(tmp_path, "first")
     second = _workspace(tmp_path, "second")
@@ -268,6 +341,13 @@ def test_a_command_line_run_waits_while_another_run_holds_the_node(
         assert _wait_for(lambda: second_run() is not None), "never submitted"
         assert _wait_for(lambda: second_run().status == QUEUED), "never queued"
         assert len(gated_node.entered) == 1, "two runs executed at once"
+        # The waiting client says where it is, and it takes a **poll** to say it
+        # (a queue place is printed from a read the loop makes after its first),
+        # which is why this waits for the line and not only for the row. The gate
+        # is still held, so nothing here started the run it waits behind.
+        assert _wait_for_line(capsys, "[queued] position 1"), (
+            "the waiting run said nothing about its queue place"
+        )
     finally:
         gated_node.gate.set()
     first_thread.join(_RUN_TIMEOUT)
@@ -308,9 +388,65 @@ def test_a_run_over_a_local_directory_works_when_client_and_node_agree(
     assert (workspace / "export" / "record.md").is_file()
     assert (workspace / "manifest.json").is_file()
     printed = capsys.readouterr().out
-    assert "[run] 2 done" in printed, "the run's own id and its end"
+    assert "[run] #2 done" in printed, "the run's own id and its end"
     assert "[next] the record is in" in printed
     assert f"{workspace.resolve()}/export" in printed
+
+
+# --- what `--auto` chose, in the node's own words -------------------------- #
+def test_an_auto_run_prints_the_explanation_the_node_recorded(
+    node_in_this_process, tmp_path, monkeypatch, capsys
+) -> None:
+    """``--auto`` keeps its promise — "explain the choice" — from the node's row.
+
+    The resolver runs on the **node** (the run is the node's), so the account of
+    what it chose is the node's too: it is recorded in the run's meta
+    (``RunOut.options``), which is what the console's run row renders and what
+    this pins. The expected sentence is read back out of the node's own registry,
+    so this cannot pass on an explanation the command line invented.
+    """
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    monkeypatch.setenv("CR_MODELS_DIR", str(_models_on_disk(tmp_path)))
+    workspace = _workspace(tmp_path, "auto", tapes=1)
+    with node_in_this_process() as node_here:
+        assert _cli_run(workspace, "--auto") == 0
+        run = node_here.registry.list_runs(_meeting_id(node_here, workspace))[0]
+    recorded = (run.options or {}).get("auto") or {}
+    assert recorded.get("explanation"), "the node recorded no auto explanation"
+    printed = capsys.readouterr().out
+    assert recorded["explanation"] in printed, "the choice was not explained"
+    assert printed.index(recorded["explanation"]) < printed.index("[run] #"), (
+        "the explanation came after the run it explains"
+    )
+
+
+# --- the node can go away under a follower --------------------------------- #
+def test_a_node_that_goes_away_mid_follow_is_one_sentence(gated_node, tmp_path) -> None:
+    """A node lost mid-follow reads as the one sentence, not as a traceback.
+
+    The command line is a client (ADR-0032), so the node can go away at any step
+    of a run — here while the run it accepted is being followed, after the
+    submission was answered. What a person gets is the sentence ``core.node``
+    wrote for exactly that (``node.NO_NODE_MESSAGE``) and a non-zero end: an
+    uncaught :class:`~clear_record.core.node.NoNodeError` would print the
+    traceback a bug in the client looks like.
+    """
+    workspace = _workspace(tmp_path, "vanished", tapes=1)
+    thread, ended = _in_thread(lambda: _cli_run(workspace))
+    try:
+        assert _wait_for(lambda: gated_node.entered), "the node never started the run"
+        gated_node.server.should_exit = True
+        assert _wait_for(lambda: _unreachable(gated_node.address)), (
+            "the node never went away"
+        )
+    finally:
+        gated_node.gate.set()
+    thread.join(_RUN_TIMEOUT)
+    assert not thread.is_alive(), "the command line never returned"
+    assert len(ended) == 1, "the thread ended with neither a code nor an exception"
+    failure = ended[0]
+    assert isinstance(failure, SystemExit), f"{failure!r} was not the command's end"
+    assert str(failure) == str(node.NoNodeError()), "not the node's own sentence"
 
 
 # --- what a client may not set --------------------------------------------- #

@@ -2,9 +2,10 @@
 
 The sink lives in ``core`` — the lowest layer, which every surface may import —
 so the CLI, the service and the web console all write the same records and the
-diagnostics bundle reads them back. A bare ``clear-record run`` therefore leaves
-a trail without the CLI importing the service layer (which the layer DAG
-forbids).
+diagnostics bundle reads them back. A bare ``clear-record transcribe`` therefore
+leaves a trail without the CLI importing the service layer (which the layer DAG
+forbids); a ``run`` writes its trail on the node, because the run is the node's
+(ADR-0032).
 
 A record is a stable, additive-only JSON line::
 

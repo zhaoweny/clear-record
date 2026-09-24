@@ -360,7 +360,9 @@ class RunCreate(BaseModel):
     #: default for this edge: a caller that does not name itself is a script or an
     #: integration. The command line names itself (``cli``) — the value the
     #: service already declares for it — and the service refuses a value it does
-    #: not know, so provenance is never a client's invention.
+    #: not know, so the recorded origin is never an unknown value. (Which surface
+    #: may claim which name is not pinned per edge: a local client may send any
+    #: name the service declares.)
     origin: str = "api"
 
 
@@ -895,9 +897,13 @@ def create_app(
     def enqueue_run(meeting: Meeting, body: RunCreate) -> RunSnapshotOut:
         """Resolve one run body on *meeting* and enqueue it: the one submission.
 
-        Both edges that start a run — the meeting route and the workspace route —
-        come through here, so the resolver, the in-flight guard, the refusal
-        mapping and the recorded ``origin`` cannot come to differ between them.
+        The **two JSON edges** that start a run — ``POST /api/meetings/{id}/runs``
+        and ``POST /api/runs`` — come through here, so the resolver, the
+        in-flight guard, the refusal mapping and the recorded ``origin`` cannot
+        come to differ between them. (The console's own form edge,
+        ``POST /ui/meetings/{id}/runs``, is not one of them: it answers with a run
+        fragment rather than a snapshot, and pins ``origin='console'`` as it
+        resolves the picker's fields itself.)
 
         The pre-check reads the live run before anything is written; a submission
         that *raced* another client reads nothing there and is refused by

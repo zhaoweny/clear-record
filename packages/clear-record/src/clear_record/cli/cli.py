@@ -42,7 +42,7 @@ import functools
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, TypeVar
 
 import click
 
@@ -1050,7 +1050,7 @@ def _node_run_body(args: Any, *, split: str) -> dict:
     and its spellings for the shared ones; the flags it does not declare are
     refused by :func:`_node_run_refusal` before this is reached. The origin is the
     command line's own (``cli``), which is what puts this run in the console's
-    list as one a person started.
+    list as one the command line started.
 
     ``split`` is the value the shared channel mapper produced
     (:func:`_split_value`), passed in by the caller that already ran it — the
@@ -1069,13 +1069,43 @@ def _node_run_body(args: Any, *, split: str) -> dict:
     }
 
 
+_T = TypeVar("_T")
+
+
+def _node_step(step: Callable[[], _T]) -> _T:
+    """Run one step of this client's path to the node, or end on its answer.
+
+    Every step — the address, the submission, and each read that follows it — can
+    find the node gone: it stopped, or the address it recorded went stale. The
+    sentence for that is ``node.NoNodeError``'s, the one every surface reports,
+    and a person reads it from here rather than as a traceback. A **refusal** the
+    node answered with (an HTTP answer, not a lost transport: the node's own
+    ``detail``) ends the command the same way, and it reads the same in the middle
+    of a run as at its submission.
+    """
+    try:
+        return step()
+    except node.NoNodeError as exc:
+        raise SystemExit(str(exc)) from exc
+    except Refused as exc:
+        # The node's own sentence, rendered here because this is the surface a
+        # person reads it on.
+        raise SystemExit(tr(str(exc))) from exc
+
+
 def _cmd_run(**kwargs: Any) -> int:
     """Run the workspace on the node, and follow the run the node owns.
 
     ADR-0032: a run started here is a **node run** — it joins the one run per node
     queue, is recorded with the ``cli`` origin, and is followed from the node. So
     this needs a node: with none recorded (or a recorded one that does not
-    answer) that is one sentence, never a local fallback.
+    answer) that is one sentence, never a local fallback — and if the node goes
+    away while the run it accepted is still being followed, the same one sentence
+    stands, at whatever step of the run it happened.
+
+    What ``--auto`` chose is explained here, in the resolver's own words: the
+    resolution ran **on the node**, so its account comes back on the run the node
+    accepted and is printed before the stages it resolved (``cli.runs``).
 
     Everything the flags alone can decide is decided **before** the node is
     touched — a usage error neither needs a node nor brings one up — and every
@@ -1089,23 +1119,19 @@ def _cmd_run(**kwargs: Any) -> int:
     refusal = _node_run_refusal(args)
     if refusal is not None:
         raise click.UsageError(refusal)
-    try:
-        address = node.ask()
-    except node.NoNodeError as exc:
-        raise SystemExit(str(exc)) from exc
     directory = str(Path(kwargs["directory"]).resolve())
-    try:
-        started = start_run(address, directory, _node_run_body(args, split=split))
-    except Refused as exc:
-        # The node's own sentence (its ``detail``), rendered here because this is
-        # the surface a person reads it on.
-        raise SystemExit(tr(str(exc))) from exc
-    state = follow_run(address, started.run_id)
+    address = _node_step(node.ask)
+    started = _node_step(
+        lambda: start_run(address, directory, _node_run_body(args, split=split))
+    )
+    for line in started.explanations:
+        print(line)
+    state = _node_step(lambda: follow_run(address, started.run_id))
     # The run's own end, in the node's own words: the status value (machine-read
     # by design, printed verbatim like the console's badge) and, when the run
     # wrote one, its stored reason — a message ID the service composed, rendered
     # here because this is where a person reads it.
-    end = f"[run] {started.run_id} {state.status}"
+    end = f"[run] #{started.run_id} {state.status}"
     if state.succeeded:
         print(end)
         print(
@@ -1145,6 +1171,25 @@ _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
     Step.EXPORT: (_cmd_export, (_DIRECTORY,)),
 }
 
+
+def _run_help() -> str:
+    """``run``'s help: the stage order it walks, and the node it walks it on.
+
+    The order is the pipeline's own declaration
+    (:meth:`~clear_record.core.pipeline.PipelineSpec.run_help`); the node clause
+    is this surface's, because ADR-0032 makes a command-line run the **node's** —
+    it joins the node's queue, and a flag the node's run API does not carry is
+    refused rather than dropped, which a user should know before typing it.
+    """
+    return (
+        pipeline_spec().run_help()
+        + " — on the node, which runs it: the run joins its one-run-at-a-time "
+        "queue and shows in the console's Activity list (needs a node; "
+        "`clear-record node` prints it). A flag the node's run API does not "
+        "carry is refused, never dropped."
+    )
+
+
 #: The subcommands that are not one declared stage: `run`/`calibrate` and the
 #: pipeline's conveniences that are not stage-derived (diarize / attribute /
 #: glossary) with the argparse-era help text, the development and diagnostic
@@ -1155,7 +1200,7 @@ _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "run",
         _cmd_run,
-        pipeline_spec().run_help(),
+        _run_help(),
         (_DIRECTORY, _BACKEND, _CHANNEL, _DIARIZE, _ATTRIBUTE, _REFERENCE),
     ),
     (

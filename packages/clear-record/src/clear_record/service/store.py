@@ -439,7 +439,7 @@ def _resolved_workspace(path: str) -> str:
     A command-line run names a *directory*, and the same directory can be named
     relatively, with a trailing separator, or through a symlink. Resolving is
     what makes those one meeting rather than a new one per spelling
-    (:meth:`Registry.workspace_meeting`).
+    (:meth:`Registry.meeting_for_workspace`).
     """
     return str(Path(path).expanduser().resolve())
 

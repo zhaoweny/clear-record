@@ -169,7 +169,8 @@ uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clear-record calibrate recordings \
     --backend apple --model small --reference-transcript recordings/ref.txt
 
-# or run and just get the report:
+# or run and just get the report (a `run` is a node run: it needs a node —
+# see "Running a real meeting tape" below)
 uv run --all-packages --extra apple clear-record run recordings --backend apple --model medium
 ```
 
@@ -228,11 +229,13 @@ running the pipeline inside itself. Two consequences to know before you type it:
   records that the run happened.
 
 What a run may set today is what the node's run API declares: `--backend`,
-`--model`, `--language`, `--split-channels`/`--mix-down`, `--resume`, `--jobs`,
-`--profile`, `--auto`. A flag the node does not carry yet — `--diarize`,
-`--speakers`, `--glossary`, `--rerun-source`/`--rerun-range`, `--chunk-seconds`
-and the other decoder knobs — is **refused with one sentence**, never dropped:
-silently ignoring what you asked for would misreport what ran. The stage commands
+`--model`, `--language`, `--split-channels`/`--mix-down`, `--no-resume`, `--jobs`,
+`--profile` and `--auto` (the group's `-v/--verbose` is accepted too — it raises
+the command line's own log detail). Anything else the command accepts —
+`--diarize`, `--speakers`, `--glossary`, `--rerun-source`/`--rerun-range`,
+`--chunk-seconds`, and the other stage and decoder knobs — is **refused with one
+sentence**, never dropped: silently ignoring what you asked for would misreport
+what ran, and that sentence names every flag you set. The stage commands
 (`clear-record diarize`, `transcribe`, `reconcile`, …) and `calibrate` still run
 in this process, over the workspace.
 

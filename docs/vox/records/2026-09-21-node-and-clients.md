@@ -12,7 +12,8 @@ the owner's **verbatim**, exactly as that spec carries them. Why a new file rath
 move: the words were never in `docs/vox/voice-of-owner.md`, so nothing was moved and
 nothing was rewritten; this is the dated record of a position that had no home in the
 record. Date per the spec's own stamp — a session or an export is written after the fact
-(see the entry's *How to read this file*), so a 2026-09-21 capture may rest on words first
+(see *How to read this file* in
+[`voice-of-owner.md`](../voice-of-owner.md)), so a 2026-09-21 capture may rest on words first
 spoken earlier.
 
 ## The direction (2026-09-21)

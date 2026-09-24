@@ -982,10 +982,11 @@ _STAGE_COMMANDS: dict[Step, tuple[Any, tuple]] = {
     Step.EXPORT: (_cmd_export, (_DIRECTORY,)),
 }
 
-#: The subcommands that are not one declared stage, with the argparse-era help
-#: text: `run`/`calibrate` (the run conveniences), the pipeline's conveniences
-#: that are not stage-derived (diarize / attribute / glossary), and the
-#: development and diagnostic commands (synth / backends).
+#: The subcommands that are not one declared stage: `run`/`calibrate` and the
+#: pipeline's conveniences that are not stage-derived (diarize / attribute /
+#: glossary) with the argparse-era help text, the development and diagnostic
+#: commands (synth / backends), and `node`, the verb that reaches the recorded
+#: address and states its help as a message ID like the stage commands'.
 _CONVENIENCE_COMMANDS: tuple[tuple[str, Any, str, tuple], ...] = (
     (
         "run",

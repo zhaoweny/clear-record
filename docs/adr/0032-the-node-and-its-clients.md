@@ -89,11 +89,14 @@ promotes nothing the owner did not say beyond the label each clause carries.
   - **Two surfaces invert**: the tray supervises a server it starts, and `mcp` is a
     stdio adapter over the service in process; both would become clients of a node
     they may no longer start.
-  - **Lifecycle: nothing decides it.** No discovery of any kind (no pidfile, no
-    socket, no port environment variable — the default port `8765` is written in
-    four places), no behaviour for "no node answers", no `serve --supervise` (a
-    docstring promise, not a flag), and the Tailscale console URL is printed but
-    never recorded for another process to find.
+  - **Lifecycle: nothing decides it.** At the census's own date (2026-09-21) there
+    was no discovery of any kind (no pidfile, no socket, no port environment
+    variable — the default port `8765` was then written in four places), no
+    behaviour for "no node answers", no `serve --supervise` (a docstring promise,
+    not a flag), and the Tailscale console URL was printed but never recorded for
+    another process to find. **The address batch (2026-09-24) has since landed the
+    record, the one answer and the one declaration** — this bullet is the gap as
+    it stood when the direction was written, not as it stands now.
 - [FACT] **The precedent the owner named**, read from OpenCode v2's own
   documentation: a backend subcommand owns every backend operation and publishes an
   **OpenAPI 3.1 spec** at `/doc`, from which its **client SDK is generated**; the
@@ -132,17 +135,19 @@ promotes nothing the owner did not say beyond the label each clause carries.
 - [DECISION: spec author, 2026-09-21] **BFF is about the architecture, not about
   every surface becoming a network client.** The console **stays an in-process
   backend-for-frontend**: it calls `clear_record.service` in process, one lifecycle,
-  no internal hop. Only the command line speaks a wire protocol. The owner's one-app
-  answer below is what confirms this reading; the spec asked the question so the
-  answer is a decision rather than drift. A console that becomes a **channel
-  client** is **deferred, not rejected** — worth revisiting only when the console
-  must run elsewhere.
+  no internal hop. Only the command line becomes a client of the node **for its
+  operations**; the tray and the MCP adapter dial the one recorded address only to
+  ask whether the node is there, and the console answers that in process, with no
+  request of its own. The owner's one-app answer below is what confirms this
+  reading; the spec asked the question so the answer is a decision rather than
+  drift. A console that becomes a **channel client** is **deferred, not
+  rejected** — worth revisiting only when the console must run elsewhere.
 - [DECISION: owner, 2026-09-21] **The node is one FastAPI app with its surfaces
   mounted at prefixes**, not several processes:
 
   | prefix | surface | today |
   |---|---|---|
-  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the console as it does now, the MCP server as it chooses) | spec'd, unbuilt: the `/api/v1` re-root belongs to the tracker's `console-ia` lane; today the routes are unversioned under `/api/…` |
+  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the MCP server as it chooses) | spec'd, unbuilt: the `/api/v1` re-root belongs to the tracker's `console-ia` lane; today the routes are unversioned under `/api/…` |
   | `/web` | the console BFF — pages and htmx fragments | served today at `/` and `/ui/*` |
   | `/mcp` | the agent surface | today **stdio only** (`clear-record mcp`) |
 

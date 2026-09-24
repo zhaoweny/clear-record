@@ -379,28 +379,29 @@ runnable, and the **project console** is built on top of it:
   deferred Flatpak story (ADR-0014, ADR-0015).
 
 **The surfaces share one recorded address.** A node — `clear-record serve`,
-`clear-record web` or the tray — writes the endpoint it actually *bound* into
+`clear-record web` or the tray — writes the address it actually *bound* into
 the app-owned state directory (`core.paths.node_address_path`, ADR-0025) as soon
 as its socket is listening, and clears it when it stops. Every surface resolves
 that one file through `clear_record.core.node`: the command line and the MCP
 adapter complete a request against the address it names, the console answers with
-it, and the tray probes the node it started with it. Nothing scans a port range,
-and a port the node did not choose itself (`--port 0`) is recorded as the port
-its socket holds. An absent record, and a record nothing answers, are the **same**
-one sentence from the command line, the console and the MCP adapter
-(`node.NO_NODE_MESSAGE`) — never a hang, and never a different error per surface.
+it, and the tray probes the node it started through the same client, at the socket
+that node bound. Nothing scans a port range, and a port the node did not choose
+itself (`--port 0`) is recorded as the port its socket holds. An absent record,
+and a record nothing answers, are the **same** one sentence from the command
+line, the console and the MCP adapter (`node.NO_NODE_MESSAGE`) — never a hang, and
+never a different error per surface.
 `DEFAULT_HOST`/`DEFAULT_PORT` are declared once, there.
 
 | Surface | How it asks where the node is | Where it stands |
 |---|---|---|
 | command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
 | console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
-| tray | the recorded address, for the health probe it already runs | starts a node, so it records like any other posture |
+| tray | the socket it bound, for the health probe it already runs | starts a node, so it records like any other posture |
 | MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017) |
 
 The console stays an **in-process backend-for-frontend** rather than becoming a
-channel client: which process owns the operations is the question, and answering
-it does not mean inserting an HTTP hop inside one process.
+channel client (ADR-0032): which process owns the operations is the question, and
+answering it does not mean inserting an HTTP hop inside one process.
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI** is

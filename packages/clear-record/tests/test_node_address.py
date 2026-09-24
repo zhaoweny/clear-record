@@ -11,7 +11,8 @@ The relation these tests prove is not "some modules import :mod:`urllib`". It is
   refusal, not the start of a search, even while a node listens elsewhere on the
   machine;
 - an **absent or stale** address yields one stated error, the same sentence from
-  the command line, the console and the MCP adapter;
+  the command line, the console and the MCP adapter — a stale one whose port is
+  held by a listener that does not speak HTTP included;
 - the port has a single declaration (:data:`clear_record.core.node.DEFAULT_PORT`).
 
 The console is asked through ``GET /api/node``; the MCP adapter through the note
@@ -57,6 +58,35 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _not_http_listener() -> tuple[int, socket.socket]:
+    """A TCP listener that answers with something that is not HTTP.
+
+    What a stale record meets when another process has taken the port it names: a
+    banner, not a status line. The caller closes the listener to stop the thread.
+    """
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(5)
+
+    def answer() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return  # the listener was closed; the thread is done
+            try:
+                conn.recv(4096)
+                conn.sendall(b"SSH-2.0-OpenSSH_9.8\r\nnot an HTTP response\r\n")
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+    threading.Thread(target=answer, name="not-http", daemon=True).start()
+    return int(listener.getsockname()[1]), listener
 
 
 def _wait_for_record(timeout: float = _READY_TIMEOUT) -> node.NodeAddress:
@@ -200,6 +230,59 @@ def test_the_tray_probes_the_address_the_record_names(tmp_path) -> None:
         assert controller.stop(timeout=_READY_TIMEOUT), "the node did not stop"
 
 
+def test_the_tray_resolves_the_socket_it_bound_not_another_nodes_record(
+    tmp_path,
+) -> None:
+    """The tray dials the node *it* runs, even when the record names another node.
+
+    The record is one file for the machine, so a second node overwrites the first
+    one's: the address in it then belongs to a node this controller does not
+    supervise. The socket this controller bound is the truth for its own
+    liveness — asked through it, a record pointing at a port nothing holds cannot
+    make a running node read as unreachable, and a node answering elsewhere
+    cannot make a dead one read as healthy.
+    """
+    controller = ServiceController(port=0, data_dir=str(tmp_path / "data"))
+    controller.start()
+    try:
+        bound = _wait_for_record()
+        assert controller.wait_until_ready(timeout=_READY_TIMEOUT)
+        # Another node's record replaces this one's (one file, last writer wins).
+        node.record(node.NodeAddress.of("127.0.0.1", _free_port()))
+
+        assert controller.address == bound
+        assert controller.url == bound.url
+        assert controller.healthy()
+    finally:
+        assert controller.stop(timeout=_READY_TIMEOUT), "the node did not stop"
+
+
+def test_a_node_that_cannot_record_its_address_still_serves(
+    monkeypatch, tmp_path
+) -> None:
+    """A machine where the address cannot be *written* is not one where no node runs.
+
+    The record is written where the app's path resolution keeps state, and that
+    directory can be missing, read-only, or — the case the direction names — not
+    creatable at all. Recording is what a node owes its **clients**; it is not
+    what makes the node run, so a node that cannot publish its address serves
+    anyway rather than dying in startup with a traceback.
+    """
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("a file where the state directory's parent should be")
+    monkeypatch.setenv("CR_STATE_DIR", str(blocker / "state"))
+
+    controller = ServiceController(port=0, data_dir=str(tmp_path / "data"))
+    controller.start()
+    try:
+        assert controller.wait_until_ready(timeout=_READY_TIMEOUT), (
+            "a node whose address cannot be recorded must still serve"
+        )
+        assert node.recorded() is None, "nothing was written, so nothing may be read"
+    finally:
+        assert controller.stop(timeout=_READY_TIMEOUT), "the node did not stop"
+
+
 # --- a second process reads the address and reaches the node ---------------- #
 
 
@@ -330,6 +413,34 @@ def test_a_record_that_cannot_be_read_is_no_address(capsys, tmp_path, written) -
     assert str(core.value) == node.NO_NODE_MESSAGE == node_line() == console_detail
     assert (console_status, cli_status) == (503, 1)
     assert cli_text == node.NO_NODE_MESSAGE
+
+
+def test_a_record_naming_a_listener_that_is_not_http_states_the_one_answer(
+    capsys,
+) -> None:
+    """A port that speaks another protocol is no node: the one sentence, not a traceback.
+
+    A stale record is an ordinary case, and the port it names can be held by
+    something that is not HTTP at all (sshd is the everyday one). ``urlopen``
+    raises :class:`http.client.BadStatusLine` there — an
+    ``http.client.HTTPException``, neither an ``OSError`` nor a ``ValueError`` —
+    so a client that catches only the connection errors hands a traceback to the
+    command line, an exception to the tray's status probe and a dead adapter to
+    the agent. Nothing that does not answer as a node is the one sentence, from
+    every surface.
+    """
+    port, listener = _not_http_listener()
+    try:
+        node.record(node.NodeAddress.of("127.0.0.1", port))
+
+        with pytest.raises(node.NoNodeError) as core:
+            node.ask()
+        cli_status, cli_text = _command_line_answer(capsys)
+
+        assert str(core.value) == node.NO_NODE_MESSAGE == node_line() == cli_text
+        assert cli_status == 1
+    finally:
+        listener.close()
 
 
 # --- a node answers about itself, without a second request ------------------ #

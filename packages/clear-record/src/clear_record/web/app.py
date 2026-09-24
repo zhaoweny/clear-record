@@ -35,6 +35,7 @@ while remote access stays the operator's reverse proxy.
 
 from __future__ import annotations
 
+import logging
 import threading
 import webbrowser
 from collections.abc import Mapping, Sequence
@@ -530,9 +531,9 @@ async def _receive_tape(
 class NodeServer(uvicorn.Server):
     """A uvicorn server that records the node's address while it listens.
 
-    Both node postures start their server through this class — ``serve`` for the
-    console and the tray's supervisor — so the address is published and cleared
-    in one place, the same way, wherever a node runs.
+    Every node posture starts its server through this class — the ``serve`` and
+    ``web`` commands (one entry point) and the tray's supervisor — so the address
+    is published and cleared in one place, the same way, wherever a node runs.
 
     :meth:`startup` records **after** ``super().startup()``: uvicorn binds its
     sockets there (0.53 runs the app's lifespan startup first), so that is the
@@ -541,13 +542,29 @@ class NodeServer(uvicorn.Server):
     the 0 it asked for. :meth:`shutdown` clears the record; a node that died
     without shutting down leaves a **stale** address, which every surface answers
     exactly as an absent one (:data:`clear_record.core.node.NO_NODE_MESSAGE`).
+
+    A record that cannot be **written** does not stop the node. The state
+    directory can be missing, read-only or not creatable at all, and recording is
+    what a node owes its *clients* — not what makes the node run. That failure is
+    therefore stated once, in the node's own log, and the node serves on: what
+    the direction calls a machine where a node cannot run is not the same thing as
+    a machine where it cannot publish where it is.
     """
 
     async def startup(self, sockets=None) -> None:
         await super().startup(sockets)
         address = self.bound()
-        if address is not None:
+        if address is None:
+            return
+        try:
             node.record(address)
+        except OSError as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "clear-record: could not record the node's address %s (%s); "
+                "no surface can resolve this node",
+                address.url,
+                exc,
+            )
 
     async def shutdown(self, sockets=None) -> None:
         await super().shutdown(sockets)

@@ -9,12 +9,13 @@ The address is **recorded, never discovered**. A node writes it where the app's
 own path resolution already keeps state
 (:func:`clear_record.core.paths.node_address_path`, ADR-0025's state directory)
 when it starts listening, and removes it when it stops. Every surface resolves
-that one file through :func:`recorded`: the command line, the console and the MCP
-adapter complete their request with :func:`ask`, and the tray's supervisor reads
-it back for the node it started. No surface therefore scans a port range, guesses
-a port, or can disagree with another about where the node is. A port the node did
-not choose itself (``--port 0``) is recorded as the port its socket actually
-bound, because the writer records *after* the bind, not the request.
+that one file through :func:`recorded`: the command line and the MCP adapter
+complete their request with :func:`ask`, the console answers with the record its
+own socket vouches for and makes no request of its own, and the tray's supervisor
+reads it back for the node it started. No surface therefore scans a port range,
+guesses a port, or can disagree with another about where the node is. A port the
+node did not choose itself (``--port 0``) is recorded as the port its socket
+actually bound, because the writer records *after* the bind, not the request.
 
 A record nothing answers is answered as an absent one is. :class:`NoNodeError`
 carries :data:`NO_NODE_MESSAGE`, so the command line, the console's
@@ -35,6 +36,7 @@ tray's supervisor already made for its health probe, which now goes through
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -50,7 +52,7 @@ from clear_record.core.paths import node_address_path
 
 #: The node's default bind — **the** declaration of where a node listens by
 #: default. The console's and the tray's ``--host``/``--port`` options, and the
-#: servers both postures start, read these and nothing else.
+#: servers every posture starts, read these and nothing else.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
@@ -244,10 +246,11 @@ def reach(
 ) -> bytes:
     """GET ``path`` from ``target``; :class:`NoNodeError` unless it answers 200.
 
-    Only an ``HTTP 200`` counts: a redirect, a refusal, a timeout and a guard
-    rejection are all "nothing is there", which is the same answer as no record
-    at all. Returning the body keeps the one client useful to a caller that wants
-    the node's own answer rather than only its existence.
+    Only an ``HTTP 200`` counts: a redirect, a refusal, a timeout, a guard
+    rejection and a listener that does not answer as HTTP at all (something else
+    holds the port the record names) are all "nothing is there", which is the same
+    answer as no record at all. Returning the body keeps the one client useful to
+    a caller that wants the node's own answer rather than only its existence.
     """
     try:
         with _OPENER.open(target.url_for(path), timeout=timeout) as response:
@@ -256,7 +259,12 @@ def reach(
             return response.read()
     except NoNodeError:
         raise
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (
+        urllib.error.URLError,
+        http.client.HTTPException,
+        OSError,
+        ValueError,
+    ) as exc:
         raise NoNodeError() from exc
 
 

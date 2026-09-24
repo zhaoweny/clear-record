@@ -7,9 +7,11 @@ testable without a display — and reusable by a future
 
 Starting the server here is starting a **node**: the server records the address
 it bound where every surface resolves it (:mod:`clear_record.core.node`), and
-the health probe below reaches it through the same one client the command line,
-the console and the MCP adapter use — so the tray's liveness signal and their
-"where is the node" answer cannot drift.
+the health probe below reaches it through the same one client the command line
+and the MCP adapter use — so a healthy tray and their answer mean the same thing.
+The probe dials the socket this controller bound rather than the record, so a node
+on an ephemeral port is probed where it really is, and another node's record
+cannot answer for it.
 """
 
 from __future__ import annotations
@@ -54,21 +56,24 @@ class ServiceController:
 
     @property
     def address(self) -> node.NodeAddress:
-        """Where the node this controller started answers — the record, once bound.
+        """Where the node this controller started answers — the socket it bound.
 
-        The record is the address every surface resolves, and the only one that
-        names a node started on an ephemeral port (``--port 0``), so the health
-        probe dials what the node actually holds rather than the port it asked
-        for. Until the server this controller started has finished binding there
-        is no record of ours to read and the requested ``host:port`` stands —
-        which is also the honest answer for a port we never bound (the server
-        died, e.g. the port was taken: nothing answers there).
+        The bound socket is the truth for *this* controller's liveness: it is the
+        only address that names the port a node started on an ephemeral one holds
+        (``--port 0``), and unlike the record it cannot belong to another node —
+        the record is one file per machine, so a node started later overwrites the
+        address of the one before it. The record is the fallback while this
+        controller has no bound socket, and the requested ``host:port`` stands
+        when there is neither — which is also the honest answer for a port we
+        never bound (the server died, e.g. the port was taken: nothing answers
+        there).
         """
-        bound = self._server is not None and bool(
-            getattr(self._server, "started", False)
-        )
-        recorded = node.recorded() if bound else None
-        return recorded or node.NodeAddress(self.host, self.port)
+        server = self._server
+        if isinstance(server, NodeServer):
+            bound = server.bound()
+            if bound is not None:
+                return bound
+        return node.recorded() or node.NodeAddress(self.host, self.port)
 
     @property
     def url(self) -> str:

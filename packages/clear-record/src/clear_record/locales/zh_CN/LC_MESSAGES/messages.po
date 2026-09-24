@@ -13,7 +13,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-24 22:43+0800\n"
+"POT-Creation-Date: 2026-09-24 23:21+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -69,7 +69,7 @@ msgstr ""
 #: packages/clear-record/src/clear_record/cli/cli.py:854
 #, python-brace-format
 msgid "the node is listening at {url}"
-msgstr "节点正在 {url} 监听"
+msgstr "节点正在监听 {url}"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:954
 #, python-brace-format
@@ -78,39 +78,39 @@ msgid ""
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1000
+#: packages/clear-record/src/clear_record/cli/cli.py:1001
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1015
+#: packages/clear-record/src/clear_record/cli/cli.py:1016
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1022
+#: packages/clear-record/src/clear_record/cli/cli.py:1023
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1029
+#: packages/clear-record/src/clear_record/cli/cli.py:1030
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1036
+#: packages/clear-record/src/clear_record/cli/cli.py:1037
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1043
+#: packages/clear-record/src/clear_record/cli/cli.py:1044
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1049
+#: packages/clear-record/src/clear_record/cli/cli.py:1050
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 
-#: packages/clear-record/src/clear_record/core/node.py:67
+#: packages/clear-record/src/clear_record/core/node.py:78
 msgid "no clear-record node is listening; start one with `clear-record serve`"
 msgstr "没有 clear-record 节点在监听；请用 `clear-record serve` 启动一个"
 
@@ -124,7 +124,7 @@ msgstr ""
 "clear-record：正在沿用 platformdirs 之前已有的 {label} 目录 {legacy}；请将其移动到 {native} "
 "以使用平台原生布局（ADR-0025）。{hint}"
 
-#: packages/clear-record/src/clear_record/core/paths.py:366
+#: packages/clear-record/src/clear_record/core/paths.py:365
 msgid " Set CR_MODELS_DIR to pin a different models directory."
 msgstr " 设置 CR_MODELS_DIR 可指定其他模型目录。"
 
@@ -981,6 +981,8 @@ msgstr ""
 msgid "bind address (default localhost)"
 msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:59
 #, python-brace-format
 msgid "port (default {port})"
@@ -1106,41 +1108,41 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:512
+#: packages/clear-record/src/clear_record/web/app.py:513
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:517
+#: packages/clear-record/src/clear_record/web/app.py:518
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:837
+#: packages/clear-record/src/clear_record/web/app.py:905
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:887
+#: packages/clear-record/src/clear_record/web/app.py:955
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:935
+#: packages/clear-record/src/clear_record/web/app.py:1003
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1153
+#: packages/clear-record/src/clear_record/web/app.py:1221
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1569
+#: packages/clear-record/src/clear_record/web/app.py:1637
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1601
+#: packages/clear-record/src/clear_record/web/app.py:1669
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
@@ -3063,8 +3065,6 @@ msgstr "忽略初始设置"
 #~ msgid "prompt"
 #~ msgstr "提示词"
 
-# Per-option help: left English on purpose (the terminal is not the
-# interface).
 #~ msgid "port (default 8765)"
 #~ msgstr ""
 

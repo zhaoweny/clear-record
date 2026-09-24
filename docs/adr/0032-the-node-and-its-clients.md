@@ -412,14 +412,16 @@ promotes nothing the owner did not say beyond the label each clause carries.
   /api/projects/{slug}/meetings` (a `workspace_path`), `PUT
   /api/meetings/{id}/tapes` (a tape set), `POST /api/projects` and `PATCH
   /api/projects/{slug}` (a project's `default_archive_root`, which is where its
-  archives are later written), and `POST /api/meetings/{id}/archives` (a named
-  root) answer **403** with one sentence naming the rule and, per case, the shape
-  to reach for instead (`PATH_IS_LOCAL`). A request that names no path is
-  untouched. A **path-valued `model`** is refused **400** by each of the two
-  machine-facing run edges *before* it resolves anything (`MODEL_IS_THE_NODES`),
-  so a refused request writes nothing — not even the meeting the directory edge
-  would have registered; the console's run form and the MCP adapter carry
-  `model` through in process, as the node's own surfaces.
+  archives are later written), `POST /api/meetings/{id}/archives` (a named
+  root), and either run edge when the body names a **`glossary`** — the file the
+  run decodes with, which is a path for the same reason a directory is — answer
+  **403** with one sentence naming the rule and, per case, the shape to reach for
+  instead (`PATH_IS_LOCAL`). A request that names no path is untouched. A
+  **path-valued `model`** is refused **400** by each of the two machine-facing run
+  edges *before* it resolves anything (`MODEL_IS_THE_NODES`), so a refused
+  request writes nothing — not even the meeting the directory edge would have
+  registered; the console's run form and the MCP adapter carry `model` through in
+  process, as the node's own surfaces.
 - [FACT] **The registry-addressed run is unchanged in behaviour.** `POST
   /api/meetings/{id}/runs` still answers any client that can reach the node: a
   meeting is named by id, no directory is involved, and the run takes the queue,
@@ -444,9 +446,30 @@ promotes nothing the owner did not say beyond the label each clause carries.
   own machine. What such a visitor is *not* given is the machine-facing refusal,
   because the console is not that surface: what the console shows a remote
   visitor is unchanged by this batch.
-- [OPEN] **A reference transcript and a glossary still have no way to reach the
-  node** — not by upload and not as registry objects. Tapes alone have an upload
-  route (ADR-0024), and the census line that named this stands; a run's
-  `--reference` and `--glossary` are not carryable through the node's run API
-  yet, so those two nouns remain to be named by whichever ticket gives them a
-  route.
+- [OPEN] **A reference transcript has no way to reach the node** — not by upload
+  and not as a registry object. Tapes alone have an upload route (ADR-0024), and
+  the census line that named this stands; a run's `--reference` is not carryable
+  through the node's run API, so that noun remains to be named by whichever
+  ticket gives it a route. The **glossary** half of this bullet is closed by the
+  fact below: a run's glossary is carryable now, as a path a *local* client
+  names. What stays open for it is a client **elsewhere**, which still has no way
+  to send the file itself (neither an upload route nor a registry object).
+- [FACT] **The knobs a client may set are the command line's, and the run record
+  keeps them.** The census's second bullet is closed: `RunCreate` declares one
+  field per row of `core.RUN_KNOBS` — the decoder block included — plus the
+  glossary and the re-run scope (`rerun_sources` / `rerun_range`), and `None` is
+  the declaration's own *unset* sentinel, so an omitted body field leaves the run
+  to the **node's** `CR_*` environment, the requested profile and its built-in
+  defaults. The command line carries every knob it accepts and sends the value the
+  parser produced: a knob unset **everywhere** — no flag, and nothing in the
+  client's own `CR_*`, which an unset flag resolves from there — goes as unset so
+  the node decides it, while a `CR_*` value on the client's machine is a value the
+  client sends. Its refusal list is down to the stage and probe flags and
+  `--models-dir`, which is the node's own, and the console's run form offers the
+  declaration's non-decoder rows only — the decoder block stays the profile
+  picker's, and a blank box there means *unset*, never `0`. Both JSON run edges
+  thread the body's knobs into the options the run resolves from, so what a client
+  set is what the run executes with and what its row records (`run_options`); and
+  a body field nobody declares is **refused** rather than dropped. A path-valued
+  `glossary` follows the rule above: 403 with the same sentence on either run
+  edge, while a client that names none gets the node's own glossary.

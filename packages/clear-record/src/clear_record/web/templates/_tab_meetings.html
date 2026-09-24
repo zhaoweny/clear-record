@@ -56,6 +56,17 @@
       </select>
       <input name="model" placeholder="{{ tr("model (optional)") }}">
       <input name="language" placeholder="{{ tr("language (optional)") }}">
+      {# The knobs a person sets, from the declaration (`run_knobs`): the chunking
+         pair and the worker count. A blank box is *unset* — the chosen profile,
+         the node's environment and the built-in defaults then decide, exactly as
+         an unset flag does on the command line. The decoder knobs are the
+         profile picker's, and the glossary and re-run scope are not a browser's
+         to name; none of them renders here. #}
+      {% for knob in run_knobs %}
+      <input type="number" name="{{ knob.name }}" step="{{ knob.step }}"
+             min="0" placeholder="{{ tr(knob.label) }}"
+             title="{{ tr(knob.title) }}">
+      {% endfor %}
       <select name="profile"
               title="{{ tr("transcription profile") }}"
               hx-get="/ui/profile-options"

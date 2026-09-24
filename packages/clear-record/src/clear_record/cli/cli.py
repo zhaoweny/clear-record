@@ -1012,14 +1012,37 @@ def _asked(name: str, value: Any) -> bool:
     return value is not None and value is not False and value != () and value != ""
 
 
-#: The run knobs a node run cannot carry yet, from the knob declaration itself:
-#: the rows whose value the node's run request has no field for (``jobs`` is one
-#: it does), by the parsed argument each lands in and the flag a refusal names.
-_NODE_RUN_UNSETTABLE = tuple(
-    (knob.name, knob.cli[0]) for knob in RUN_KNOBS if knob.name != "jobs"
-) + (
+#: The parsed `run` arguments the node's run request **does** carry: the fields
+#: that are not knobs, then every knob of the declaration itself — so a new row is
+#: carried with no edit here, and a check that every flag of `run` is accounted
+#: for can tell the two sets apart.
+#:
+#: The flags a node run cannot carry at all are what is left: the stage and probe
+#: flags the run request declares no field for, and ``--models-dir``, which is the
+#: **node's** own — a client never names it.
+_NODE_RUN_CARRIED = frozenset(
+    {
+        "backend",
+        "model",
+        "language",
+        "resume",
+        "profile",
+        "auto",
+        # One value between them (`--split-channels` / `--mix-down` → `split`).
+        "split_channels",
+        "mix_down",
+        # Carried, but not a row of the knob declaration: the glossary file the
+        # run decodes with, and the re-run scope (ADR-0018).
+        "glossary",
+        "rerun_sources",
+        "rerun_range",
+    }
+) | {knob.name for knob in RUN_KNOBS}
+
+#: The `run` flags a node run cannot carry, by the parsed argument each lands in
+#: and the flag a refusal names.
+_NODE_RUN_UNSETTABLE = (
     ("models_dir", "--models-dir"),
-    ("glossary", "--glossary"),
     ("check_plugin", "--check-plugin"),
     ("diarize", "--diarize"),
     ("no_diarize", "--no-diarize"),
@@ -1028,37 +1051,20 @@ _NODE_RUN_UNSETTABLE = tuple(
     ("mixed_source", "--mixed-source"),
     ("window_s", "--window-s"),
     ("reference", "--reference"),
-    ("rerun_sources", "--rerun-source"),
-    ("rerun_range", "--rerun-range"),
-)
-
-#: The parsed `run` arguments the node's run request **does** carry, so a check
-#: that every flag of `run` is accounted for can tell the two sets apart.
-_NODE_RUN_CARRIED = frozenset(
-    {
-        "backend",
-        "model",
-        "language",
-        "resume",
-        "jobs",
-        "profile",
-        "auto",
-        # One value between them (`--split-channels` / `--mix-down` → `split`).
-        "split_channels",
-        "mix_down",
-    }
 )
 
 
 def _node_run_refusal(args: Any) -> str | None:
     """The sentence refusing the flags a node run cannot carry, or ``None``.
 
-    A run on the node executes with the node's own run request, so a knob the
-    request does not declare can neither be passed nor honoured. Dropping it
-    silently is what this refuses: the user asked for it, and a run that ignored
-    the request while reporting success would be a lie about what ran — the same
-    rule the chunk scope already states ("the scope is never quietly dropped").
-    Every flag the user set is named in one sentence, so one edit fixes them all.
+    A run on the node executes with the node's own run request: every **knob** of
+    the declaration has a field there (they are all carried), while a stage or
+    probe flag — and the models directory, which is the node's own — has none, and
+    can therefore neither be passed nor honoured. Dropping one silently is what
+    this refuses: the user asked for it, and a run that ignored the request while
+    reporting success would be a lie about what ran — the same rule the chunk scope
+    already states ("the scope is never quietly dropped"). Every flag the user set
+    is named in one sentence, so one edit fixes them all.
     """
     asked = [
         flag
@@ -1077,11 +1083,21 @@ def _node_run_refusal(args: Any) -> str | None:
 def _node_run_body(args: Any, *, split: str) -> dict:
     """The node's own run request, filled from the parsed flags.
 
-    Only the fields the node's run API declares are named here, with its names
-    and its spellings for the shared ones; the flags it does not declare are
-    refused by :func:`_node_run_refusal` before this is reached. The origin is the
-    command line's own (``cli``), which is what puts this run in the console's
-    list as one the command line started.
+    The request declares a field for **every knob of the declaration**, so each is
+    written here under its own name with the value the parser produced. A knob the
+    parser left unset — no flag, and nothing in this machine's ``CR_*``, which an
+    unset flag resolves from (``envvar=`` on the generated option) — goes as
+    ``None``, the declaration's own *unset* sentinel, which leaves the knob to the
+    **node**: its ``CR_*`` environment, the requested profile, then its built-in
+    default, the same precedence an unset flag gets here. A ``CR_*`` value on
+    *this* machine is a value the client sends, as it is for a stage command.
+    Nothing else is translated on the way, so what the flags say is what the node
+    receives and what its row records. The fields that are not knobs
+    (``backend``, ``model``, the channel mapping, the origin) are named here with
+    the node's own spellings; the flags the request does not declare are refused
+    by :func:`_node_run_refusal` before this is reached. The origin is the command
+    line's own (``cli``), which is what puts this run in the console's list as one
+    the command line started.
 
     ``split`` is the value the shared channel mapper produced
     (:func:`_split_value`), passed in by the caller that already ran it — the
@@ -1093,10 +1109,15 @@ def _node_run_body(args: Any, *, split: str) -> dict:
         "language": args.language,
         "split": split,
         "resume": args.resume,
-        "jobs": args.jobs or 0,
         "profile": args.profile or PROFILE_CUSTOM,
         "auto": bool(args.auto),
         "origin": CLI_ORIGIN,
+        "glossary": args.glossary,
+        "rerun_sources": list(args.rerun_sources) or None,
+        "rerun_range": args.rerun_range,
+        # The knobs are the declaration's: read them off the parsed arguments by
+        # their own names, so a new row reaches the node with no edit here.
+        **{knob.name: getattr(args, knob.name) for knob in RUN_KNOBS},
     }
 
 

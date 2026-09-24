@@ -245,14 +245,27 @@ before you type it:
   `ggml-small.bin`); a path is refused, and `--models-dir` is the node's own,
   never the client's.
 
-What a run may set today is what the node's run API declares: `--backend`,
-`--model`, `--language`, `--split-channels`/`--mix-down`, `--no-resume`, `--jobs`,
-`--profile` and `--auto` (the group's `-v/--verbose` is accepted too — it raises
-the command line's own log detail). Anything else the command accepts —
-`--diarize`, `--speakers`, `--glossary`, `--rerun-source`/`--rerun-range`,
-`--chunk-seconds`, and the other stage and decoder knobs — is **refused with one
-sentence**, never dropped: silently ignoring what you asked for would misreport
-what ran, and that sentence names every flag you set. The stage commands
+What a run may set is what the node's run API declares: the flags that name and
+frame it (`--backend`, `--model`, `--language`, `--split-channels`/`--mix-down`,
+`--no-resume`, `--profile`, `--auto` — and the group's `-v/--verbose`, which
+raises the command line's own log detail), and **every run knob** — the chunking
+pair (`--chunk-seconds`, `--overlap-seconds`), `--jobs`, the decoder knobs
+(`--beam-size`, `--best-of`, `--temperature`, `--entropy-thold`,
+`--no-speech-thold`, `--max-context`, `--threads`), `--glossary`, and the re-run
+scope `--rerun-source`/`--rerun-range`. What the flags say is what the node runs
+with and what its run record keeps. A knob unset **everywhere** — no flag, and
+nothing in this machine's `CR_*`, which an unset flag resolves from here anyway —
+stays unset, so the **node's** `CR_*` environment, the chosen profile and its
+built-in defaults decide it; a `CR_*` value on *this* machine is a value the
+client sends, exactly as it is for a stage command. `--glossary` names a file on
+the node (the glossary *is* a path, like the run's directory), so it is taken only
+from a client that addressed the node itself. Anything else the command accepts —
+`--diarize`/`--no-diarize`, `--speakers`, `--attribute-energy`, `--mixed-source`,
+`--window-s`, `--reference`, `--check-plugin`, and `--models-dir`, which is the
+node's own — is still **refused with one sentence**, never dropped: silently
+ignoring what you asked for would misreport what ran, and that sentence names
+every flag you set. (A run request declares no field for one either: a client
+sending one is refused, rather than handed a run without it.) The stage commands
 (`clear-record diarize`, `transcribe`, `reconcile`, …) and `calibrate` still run
 in this process, over the workspace.
 

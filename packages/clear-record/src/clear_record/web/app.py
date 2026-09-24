@@ -47,11 +47,11 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from clear_record.core import PROFILE_CUSTOM
+from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob
 from clear_record.core import i18n
 from clear_record.core import node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
@@ -393,7 +393,27 @@ class RunCreate(BaseModel):
     by id, and must already be on the node that runs the work (ADR-0032); the
     node also never takes a client's models directory. A path-valued model is
     refused rather than resolved against the wrong machine.
+
+    **The knobs are the declaration's.** The rows of ``core.RUN_KNOBS`` each have
+    a field here under the row's own name, and the decoder block is those rows:
+    the command line derives its flags from the same table, so a knob a person can
+    pass to ``run`` is a knob a client can send here, and the two cannot drift.
+    ``None`` — the field's default for every knob — is the declaration's own
+    **unset** sentinel (``core.RESOLVABLE_FIELDS``), so an omitted knob leaves the
+    run to the **node's** resolution: its ``CR_*`` environment, the requested
+    profile, then the built-in default. An explicit value that equals a default is
+    still explicit (``"jobs": 0``, the documented "auto"). The glossary and the
+    re-run scope are knobs too, and neither is a decoder's: the glossary is a
+    **file on this node** (a local client's noun, like a run's directory) and the
+    scope is ``core.ChunkScope``'s two raw inputs, which the service parses when
+    the run executes.
+
+    A field this shape does not declare is **refused**, never ignored
+    (``extra="forbid"``): a client that misspells a knob is told, rather than
+    getting a run with something else set.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     backend: str = "apple"
     #: A model **name the node resolves** in its own models directory — never a
@@ -402,7 +422,6 @@ class RunCreate(BaseModel):
     language: str | None = None
     split: str = "auto"
     resume: bool = True
-    jobs: int = 0
     profile: str = PROFILE_CUSTOM
     #: Opt-in: resolve the profile/model (and per-speaker attribution) from the
     #: machine and the tape, and record the resolver's explanation with the run.
@@ -417,6 +436,36 @@ class RunCreate(BaseModel):
     #: may claim which name is not pinned per edge: a local client may send any
     #: name the service declares.)
     origin: str = "api"
+
+    # --- the run knobs, one field per row of ``core.RUN_KNOBS`` -------------- #
+    #
+    # The type of each is the value's annotation (``core.options``), which is the
+    # one place a knob's type exists — a declaration row carries the flag, the
+    # ``CR_*`` name, the converter and the default, not a Python type. The names
+    # and the set are the declaration's, pinned by a test.
+    chunk_seconds: float | None = None
+    overlap_seconds: float | None = None
+    jobs: int | None = None
+    beam_size: int | None = None
+    best_of: int | None = None
+    temperature: float | None = None
+    entropy_thold: float | None = None
+    no_speech_thold: float | None = None
+    max_context: int | None = None
+    threads: int | None = None
+    #: The re-run scope (ADR-0018's 2026-09-15 update): re-decode only these
+    #: sources and/or this ``START-END`` range, reusing every other chunk from the
+    #: cache. Raw, exactly as the command line takes them — the scope is parsed
+    #: once, on the node, and a malformed one is refused rather than quietly
+    #: meaning "everything".
+    rerun_sources: list[str] | None = None
+    rerun_range: str | None = None
+    #: The glossary **file** the run decodes with — a path on this node's
+    #: filesystem, so it is taken only from a client that addressed the node
+    #: itself (:data:`PATH_IS_LOCAL`), exactly like a directory. A client that
+    #: names none gets the node's own: the meeting's ``glossary.txt``, or the
+    #: project's confirmed terms.
+    glossary: str | None = None
 
 
 class WorkspaceRunCreate(RunCreate):
@@ -793,6 +842,52 @@ def _served_by(app: FastAPI) -> node.NodeAddress | None:
     return server.bound() if isinstance(server, NodeServer) else None
 
 
+# The console's run form submits its knobs as form fields, and they are read off
+# the declaration rather than from one named argument each (see
+# `_console_knob_values`): a knob the form does not offer is not read at all, so
+# the console can never set one it does not show.
+def _console_knob_value(knob: RunKnob, label: str, raw: object) -> object | None:
+    """One console knob field: the number a person typed, or ``None`` when unset.
+
+    A blank box is the declaration's own **unset** sentinel, never ``0``: it
+    leaves the knob to the node's resolution (``CR_*`` environment → the requested
+    profile → the built-in default), which is exactly what an omitted flag asks
+    for. A box that cannot be read as the knob's type is a mistake a person can
+    fix in the form, so it raises for the route to re-render — the console's
+    convention for a form refusal (an htmx 4xx would swap nothing) — and the
+    message names the knob by ``label``: the console's own word for the row, the
+    one on the box a person filled, rather than the spelling the command line
+    gives the knob (``views.console_knob_label``).
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    text = raw.strip() if isinstance(raw, str) else str(raw)
+    try:
+        return knob.convert(text)
+    except ValueError as exc:
+        raise ValueError(
+            tr("{label} needs a number, not {value!r}.", label=label, value=text)
+        ) from exc
+
+
+def _console_knob_values(form: Mapping[str, object]) -> dict[str, object | None]:
+    """The console run form's knobs, read off the declaration by name.
+
+    The fields the form offers are ``views.CONSOLE_KNOBS``, and they are read here
+    by the declaration rather than from one named argument each: a row added there
+    is set with no edit on this side, and a knob the form does not offer — a
+    decoder knob, the glossary, the re-run scope — is not read at all, so the
+    console cannot set one. A value it cannot read is refused in the console's own
+    word for that row.
+    """
+    return {
+        knob.name: _console_knob_value(
+            knob, views.console_knob_label(knob.name), form.get(knob.name)
+        )
+        for knob in views.CONSOLE_KNOBS
+    }
+
+
 def create_app(
     registry: Registry,
     runs: RunManager | None = None,
@@ -1085,6 +1180,16 @@ def create_app(
         re-read below is what tells that refusal (409) apart from the bad
         requests (no workspace, no tape set), which stay 400.
 
+        The **knobs** are threaded straight through: every row of
+        ``core.RUN_KNOBS`` — and the glossary and re-run scope beside them — is
+        read off the body by the row's own name into the options the run is
+        resolved from, so what a client set is what the run executes with and
+        what the row records (``run_options``). An unset knob is ``None`` and stays
+        unset: the resolver on this node fills it from ``CR_*``, the requested
+        profile, then the built-in default — the precedence an unset command-line
+        flag gets. A knob the body does not declare never reaches here
+        (``RunCreate`` refuses it).
+
         A ``model`` named as a **path** is refused by each run edge before it
         resolves anything — see ``_require_model_name``: a model must already be
         on the node that runs the work, and the node resolves names, not another
@@ -1104,7 +1209,15 @@ def create_app(
             language=body.language,
             split=body.split,
             resume=body.resume,
-            jobs=body.jobs,
+            glossary=body.glossary,
+            rerun_sources=tuple(body.rerun_sources) if body.rerun_sources else None,
+            rerun_range=body.rerun_range,
+            # Every knob the declaration names is read off the body by its own
+            # name, so a row cannot be forgotten at this seam: `RunCreate`
+            # declares one field per row and a test pins that, and the value the
+            # resolver leaves in the options is what the run executes with and
+            # what its row records (`run_options`).
+            **{knob.name: getattr(body, knob.name) for knob in RUN_KNOBS},
         )
         try:
             resolved = resolve_run(
@@ -1731,24 +1844,37 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return render(request, "_profile_options.html", {"profile_options": preview})
 
-    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
-    def ui_start_run(
+    def _start_console_run(
         request: Request,
         meeting_id: int,
-        backend: str = Form("apple"),
-        model: str = Form(""),
-        language: str = Form(""),
-        profile: str = Form(PROFILE_CUSTOM),
-        auto: bool = Form(False),
+        form: Mapping[str, object],
+        *,
+        backend: str,
+        model: str,
+        language: str,
+        profile: str,
+        auto: bool,
     ) -> HTMLResponse:
+        """The console's run submission, off the event loop (see ``ui_start_run``).
+
+        Everything that touches the service runs here, in the threadpool: the
+        lookup, the submitted knobs, the resolution — which for an ``auto`` run
+        probes the machine and the tape before anything is written — the enqueue
+        and the fragment's own render. ``form`` is the already-parsed submission,
+        which is the one thing the route had to await.
+        """
         meeting = lookup.meeting(registry, meeting_id)
         try:
+            knobs = _console_knob_values(form)
             # The picker's ``custom`` is the console's "no preset" state (it has
             # no separate unset), so it is passed as an unset profile — exactly
             # what lets the opt-in ``--auto`` choose one.
             resolved = resolve_run(
                 PipelineOptions(
-                    backend=backend, model=model or None, language=language or None
+                    backend=backend,
+                    model=model or None,
+                    language=language or None,
+                    **knobs,
                 ),
                 profile=None if profile == PROFILE_CUSTOM else profile,
                 auto=auto,
@@ -1774,6 +1900,50 @@ def create_app(
                 return render_run(request, active)
             return render_run_error(request, meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
+
+    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
+    async def ui_start_run(
+        request: Request,
+        meeting_id: int,
+        backend: str = Form("apple"),
+        model: str = Form(""),
+        language: str = Form(""),
+        profile: str = Form(PROFILE_CUSTOM),
+        auto: bool = Form(False),
+    ) -> HTMLResponse:
+        """Start a run from the console's form, on this node.
+
+        The form's **knobs** are the declaration's rows a preset does not decide
+        (``views.CONSOLE_KNOBS``): each is read off the submitted form by name
+        (:func:`_console_knob_values`), so a blank box is the declaration's own
+        *unset* sentinel — the node's ``CR_*`` environment, the chosen profile and
+        the built-in defaults then decide, exactly as an unset flag does on the
+        command line — and a typed value is explicit, even when it equals a
+        default. The knobs the form does not offer (the decoder block, the
+        glossary, the re-run scope) are never read from a submission, so the
+        console cannot set one; the profile picker is where a person tunes the
+        decoder.
+
+        The **body** is the only thing this route reads on the event loop. The
+        run itself runs in the threadpool (:func:`_start_console_run`,
+        ``run_in_threadpool``), because resolution is real work — an ``auto`` run
+        probes the machine and the tape before anything is written — and a route
+        that did it on the loop would stall **every** other client of this node
+        for as long as it takes. The JSON edges are ``def`` routes for the same
+        reason: FastAPI runs those in this same pool.
+        """
+        form = await request.form()
+        return await run_in_threadpool(
+            _start_console_run,
+            request,
+            meeting_id,
+            form,
+            backend=backend,
+            model=model,
+            language=language,
+            profile=profile,
+            auto=auto,
+        )
 
     @app.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
     def ui_cancel_run(request: Request, run_id: int) -> HTMLResponse:
@@ -2283,14 +2453,23 @@ def create_app(
         )
 
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
-    def start_run(meeting_id: int, body: RunCreate) -> RunSnapshotOut:
+    def start_run(request: Request, meeting_id: int, body: RunCreate) -> RunSnapshotOut:
         """Start a run over a meeting — the route a **remote** client uses.
 
         The meeting is named the way the registry addresses it, by its id, so this
         route needs no path and is answered from anywhere the node is reachable;
-        no client's own directory is involved. (The body's ``model`` is still a
-        name the node resolves — see :class:`RunCreate`.)
+        no client's own directory is involved.
+
+        The body's ``model`` is a name the node resolves, never a path (see
+        :class:`RunCreate`). Its ``glossary`` **is** one: the file this node
+        decodes with, taken only from a client that addressed the node itself
+        (:data:`PATH_IS_LOCAL`) exactly like a directory — while a client that
+        names none gets the node's own glossary. So this route is the registry's
+        addressing, not a licence to name anything on the node: what a remote
+        client names is a meeting, and what it sets are knobs.
         """
+        if body.glossary:
+            _require_local_client(request)
         _require_model_name(body.model)
         meeting = lookup.meeting(registry, meeting_id)
         return enqueue_run(meeting, body)
@@ -2311,7 +2490,9 @@ def create_app(
         addressed the node by its own address: a client elsewhere would
         name a directory on its own machine, and this node would run a same-named
         directory of its own instead. A non-local client gets one sentence and
-        the route that replaces this one (:data:`PATH_IS_LOCAL`).
+        the route that replaces this one (:data:`PATH_IS_LOCAL`). The body's
+        ``glossary`` is a path for the same reason and is refused the same way —
+        but only when it is named: a run without one uses the node's own glossary.
 
         The body's ``model`` is refused if it is a path *before* the directory is
         resolved, so a refused request registers no meeting (see

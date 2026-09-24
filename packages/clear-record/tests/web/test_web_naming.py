@@ -133,6 +133,33 @@ def test_a_local_client_names_a_directory_and_the_node_runs_it(local, tmp_path) 
     assert local.entered == [workspace.resolve()]
 
 
+def test_a_local_client_names_a_glossary_and_the_node_decodes_with_it(
+    local, tmp_path
+) -> None:
+    """The other half of the rule: a local client's glossary is used, and recorded.
+
+    The glossary is a path like the directory, so the node takes it from a client
+    that addressed the node — and what it used is recorded with the run (the path
+    and the file's hash), so a later reader can tell one glossary from another.
+    """
+    workspace = _workspace(tmp_path)
+    glossary = workspace / "glossary.txt"
+    glossary.write_text("ZX-2000\n", encoding="utf-8")
+    meeting = _meeting_with_a_workspace(local, workspace)
+
+    answered = local.client.post(
+        f"/api/meetings/{meeting.id}/runs", json={"glossary": str(glossary)}
+    )
+
+    assert answered.status_code == 202, answered.text
+    run_id = answered.json()["run"]["id"]
+    assert local.manager.wait(run_id, timeout=10).status == "done"
+    run = local.registry.get_run(run_id)
+    assert run is not None
+    assert run.run_options["glossary"] == str(glossary)
+    assert (run.options or {}).get("glossary_sha256")
+
+
 # --- a client elsewhere is refused, with one sentence --------------------- #
 def test_a_non_local_client_naming_a_directory_is_refused_with_one_sentence(
     remote, tmp_path
@@ -184,6 +211,23 @@ def test_every_route_that_takes_a_path_refuses_a_non_local_client(
             "patch",
             "/api/projects/ops",
             {"default_archive_root": str(tmp_path / "archive")},
+        ),
+        # A run's glossary is the *file this node decodes with*, so it is the same
+        # rule as the directory beside it — on either run edge: the workspace one
+        # names it in a body that also carries a path, and the registry-addressed
+        # one is otherwise path-free.
+        "a run's glossary": (
+            "post",
+            "/api/runs",
+            {
+                "directory": str(workspace),
+                "glossary": str(workspace / "glossary.txt"),
+            },
+        ),
+        "a meeting run's glossary": (
+            "post",
+            f"/api/meetings/{meeting.id}/runs",
+            {"glossary": str(workspace / "glossary.txt")},
         ),
     }
     for what, (method, path, body) in refusals.items():

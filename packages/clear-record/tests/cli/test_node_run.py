@@ -26,6 +26,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -477,20 +478,113 @@ def test_a_node_that_goes_away_mid_follow_is_one_sentence(gated_node, tmp_path) 
     assert str(failure) == str(node.NoNodeError()), "not the node's own sentence"
 
 
+# --- what a client may set -------------------------------------------------- #
+def test_the_command_line_passes_its_knobs_through_unchanged(
+    node_in_this_process, tmp_path, monkeypatch
+) -> None:
+    """Every knob ``run`` accepts reaches the node's row with the value it was given.
+
+    A flag is a field of the node's run request (``RunCreate``), so one run walks
+    the whole knob surface — the chunking pair and the worker count, the seven
+    decoder knobs, the glossary file and the re-run scope — and every value is
+    read back off the run's own row (``run_options``): what the user typed is what
+    the node received, with nothing translated on the way, nothing invented, and
+    no default filled in behind them. The glossary is a path like the directory,
+    so it is the same file on this machine; the node records its hash beside it.
+    """
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    workspace = _workspace(tmp_path, "knobs", tapes=1)
+    glossary = tmp_path / "glossary.txt"
+    glossary.write_text("ZX-2000\n", encoding="utf-8")
+    flags = (
+        "--chunk-seconds",
+        "30",
+        "--overlap-seconds",
+        "1",
+        "--jobs",
+        "1",
+        "--beam-size",
+        "4",
+        "--best-of",
+        "2",
+        "--temperature",
+        "0.2",
+        "--entropy-thold",
+        "2.4",
+        "--no-speech-thold",
+        "0.6",
+        "--max-context",
+        "-1",
+        "--threads",
+        "2",
+        "--glossary",
+        str(glossary),
+        "--rerun-source",
+        "a",
+        "--rerun-range",
+        "0:00-0:06",
+    )
+    with node_in_this_process() as node_here:
+        assert _cli_run(workspace, *flags) == 0
+        run = node_here.registry.list_runs(_meeting_id(node_here, workspace))[0]
+
+    expected = {
+        "chunk_seconds": 30.0,
+        "overlap_seconds": 1.0,
+        "jobs": 1,
+        "beam_size": 4,
+        "best_of": 2,
+        "temperature": 0.2,
+        "entropy_thold": 2.4,
+        "no_speech_thold": 0.6,
+        "max_context": -1,
+        "threads": 2,
+        "glossary": str(glossary),
+        "rerun_sources": ("a",),
+        "rerun_range": "0:00-0:06",
+    }
+    recorded = run.run_options
+    assert {name: recorded[name] for name in expected} == expected
+    assert (run.options or {}).get("glossary_sha256"), "the glossary was not identified"
+
+
+def test_the_request_run_sends_is_exactly_the_run_api_it_speaks_to() -> None:
+    """The body ``run`` sends carries every field the node declares, and no other.
+
+    The command surface may not import ``web`` (ADR-0004/ADR-0012), so nothing but
+    a test ties the client to the node's own declaration: a knob the run API gains
+    and this client forgets would be refused at a user's run (the API refuses a
+    field it does not declare) or silently defaulted, and a field this client
+    invents would be refused before it ever reached a client. ``directory`` is the
+    workspace route's own subject, added by :func:`clear_record.cli.runs.start`.
+    """
+    from clear_record.web.app import WorkspaceRunCreate
+
+    command = cli._build_group().commands["run"]
+    with command.make_context("run", ["dir"]) as ctx:
+        args = SimpleNamespace(**ctx.params)
+    body = cli._node_run_body(args, split="auto")
+
+    assert set(body) == set(WorkspaceRunCreate.model_fields) - {"directory"}
+
+
 # --- what a client may not set --------------------------------------------- #
 def test_a_flag_a_node_run_cannot_carry_is_refused(
     node_in_this_process, tmp_path, capsys
 ) -> None:
-    """A knob the node's run API does not declare is refused, never dropped.
+    """A flag the node's run API does not declare is refused, never dropped.
 
     Nothing is written: the refusal happens before anything is asked of the node,
     and the sentence names every flag the user set, so one edit fixes them all.
+    What is refused is what the request has no field for — a stage or probe flag
+    (``--diarize``, ``--speakers``) or the models directory, which is the node's
+    own; the run **knobs** are all carried now, so none of them is refused.
     """
     workspace = _workspace(tmp_path, "refused", tapes=1)
     with node_in_this_process() as node_here:
-        assert _cli_run(workspace, "--diarize", "--chunk-seconds", "60") != 0
+        assert _cli_run(workspace, "--diarize", "--speakers", "2") != 0
         captured = capsys.readouterr()
-        assert "--diarize" in captured.err and "--chunk-seconds" in captured.err
+        assert "--diarize" in captured.err and "--speakers" in captured.err
         assert "a node run cannot set" in captured.err
         assert node_here.registry.list_meetings() == []
 

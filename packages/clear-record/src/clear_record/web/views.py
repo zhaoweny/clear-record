@@ -37,8 +37,10 @@ from pathlib import Path
 from clear_record.core import (
     PROFILE_CUSTOM,
     PROFILES,
+    RUN_KNOBS,
     JobEvent,
     PipelineOptions,
+    RunKnob,
     profile_values,
     resolve_options,
 )
@@ -232,6 +234,87 @@ def profile_preview(profile: str) -> dict:
 PROFILE_CHOICES = tuple(name for name in PROFILES if name != PROFILE_CUSTOM) + (
     PROFILE_CUSTOM,
 )
+
+
+#: The knobs the console's run form offers, and **no more**: the declaration's
+#: rows that are not decoder knobs. A run's decoder is what a **profile** trades —
+#: the console's picker offers every preset in ``core.PROFILES``, and the panel
+#: under the form says which knobs the chosen one resolves — so the form itself
+#: offers what a profile does not decide: how the tape is chunked, and how many
+#: workers decode it. The rest of the run request's knobs are the machine
+#: surface's, not a browser's: a glossary and a re-run scope are named on the
+#: command line (the one is a path on the node, the other a transcript-tuning move
+#: whose console lever is *resume*), and a decoder knob is the profile's.
+CONSOLE_KNOBS: tuple[RunKnob, ...] = tuple(
+    knob for knob in RUN_KNOBS if not knob.decoder
+)
+
+#: The console's own words for those rows — the declaration's ``help`` is the
+#: terminal's per-option text, which this catalog deliberately leaves English
+#: ("the terminal is not the interface"), so the form says each knob again in the
+#: console's voice: the placeholder a person reads in the empty box, and the
+#: longer sentence behind it.
+CONSOLE_KNOB_WORDS: dict[str, tuple[str, str]] = {
+    "chunk_seconds": (
+        deferred("chunk seconds"),
+        deferred(
+            "how much audio one transcription pass decodes at once; a long tape "
+            "wants longer chunks"
+        ),
+    ),
+    "overlap_seconds": (
+        deferred("overlap seconds"),
+        deferred(
+            "how much neighbouring chunks share, so a word on a boundary is not lost"
+        ),
+    ),
+    "jobs": (
+        # The console's own word for this knob, and the one the run fragment
+        # already shows (``tr("jobs")`` beside the auto facts): one knob, one
+        # word in one interface — not the command line's "workers".
+        deferred("jobs"),
+        deferred(
+            "how many transcription workers may run at once; 0 lets the node choose"
+        ),
+    ),
+}
+
+
+def console_knob_label(name: str) -> str:
+    """The console's own word for one knob, in this request's locale.
+
+    A console refusal about a knob the form **renders** names the box a person
+    filled — this word — rather than the spelling the command line gives the knob
+    (:func:`clear_record.web.app._console_knob_values`), and the word is looked up
+    here so the form and the refusal cannot say different things. ``tr`` is read
+    here rather than at the call site, so it is the word this request's locale
+    would show on the box.
+    """
+    return tr(CONSOLE_KNOB_WORDS[name][0])
+
+
+def console_knob_rows() -> tuple[dict[str, str], ...]:
+    """The run form's knob fields, in the declaration's order.
+
+    A row is what the form needs to render one input: the field's ``name`` (what
+    the submission carries and :func:`clear_record.web.app._console_knob_values`
+    reads back), the console's ``label`` and ``title``, and the input's ``step`` —
+    whole numbers for a knob the declaration converts with ``int``, any number for
+    a ``float`` one. The form and the route's reader are therefore one list in two
+    directions: nothing here names a knob the route would not read, and the route
+    reads no knob the form does not offer. A test ties the subset to the
+    declaration, so a row added without deciding where a person meets it fails
+    there, named.
+    """
+    return tuple(
+        {
+            "name": knob.name,
+            "label": CONSOLE_KNOB_WORDS[knob.name][0],
+            "title": CONSOLE_KNOB_WORDS[knob.name][1],
+            "step": "1" if knob.convert is int else "any",
+        }
+        for knob in CONSOLE_KNOBS
+    )
 
 
 def run_backend_choices() -> tuple[str, ...]:
@@ -889,6 +972,10 @@ def project_context(
             profiles=PROFILE_CHOICES,
             profile_default=PROFILE_CUSTOM,
             profile_options=profile_preview(PROFILE_CUSTOM),
+            # The knobs the run form offers, rendered from the declaration (see
+            # `console_knob_rows`): the form and the route that reads it are the
+            # same list, so a knob cannot be offered and then dropped.
+            run_knobs=console_knob_rows(),
             archives=archive_rows(registry, slug),
         )
     elif tab == "glossary":

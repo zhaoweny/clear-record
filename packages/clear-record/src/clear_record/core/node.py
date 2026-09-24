@@ -1,29 +1,31 @@
 """Where the running node is: one record, one resolver, one answer.
 
 The API server — the **node** — is the centre of the v0.4.0 direction: the
-surfaces — the command line, the console and the MCP adapter — reach *it* rather
-than running the pipeline in their own process, while the tray supervises a node
-of its own and probes the socket that node bound. Reaching a node means knowing
-where it is, and this module is the one place that knows.
+surfaces — the command line, the console, the MCP adapter and the tray — reach
+*it* rather than running the pipeline in their own process, and the tray
+**attaches first**: the node that answers the recorded address is the node it
+becomes a client of, and only when nothing answers does it start one of its own.
+Reaching a node means knowing where it is, and this module is the one place that knows.
 
 The address is **recorded, never discovered**. A node writes it where the app's
 own path resolution already keeps state
 (:func:`clear_record.core.paths.node_address_path`, ADR-0025's state directory)
 when it starts listening, and removes it when it stops; the tray's supervisor
-publishes it the same way, and probes the node it started at the socket that node
-bound rather than through the record. The surfaces resolve that one file through
-:func:`recorded`: the command line and the MCP adapter complete their request with
-:func:`ask`, and the console answers with the record its own socket vouches for,
-with no request of its own. No surface therefore scans a port range or guesses a
-port. A port the node did not choose itself (``--port 0``) is recorded as the port
-its socket actually bound, because the writer records *after* the bind, not the
-request.
+publishes it the same way when it starts one, and probes *that* node at the socket
+it bound rather than through the record — a node the tray only joined is probed
+through the address the record gave it, as every surface reaches it. The surfaces
+resolve that one file through :func:`recorded`: the command line, the MCP adapter
+and the tray complete their request with :func:`ask`, and the console answers
+with the record its own socket vouches for, with no request of its own. No surface
+therefore scans a port range or guesses a port. A port the node did not choose
+itself (``--port 0``) is recorded as the port its socket actually bound, because
+the writer records *after* the bind, not the request.
 
 A record nothing answers is answered as an absent one is. :class:`NoNodeError`
 carries :data:`NO_NODE_MESSAGE`, so the command line, the console's
 ``GET /api/node`` refusal and the MCP adapter's instructions state **one**
 sentence — never a hang, and never a different error per surface. (The tray's
-status line is about the server it supervises, so it keeps its own two strings.)
+status line is the node's own health, so it keeps its own two strings.)
 The English source *is* the message ID (marked with
 :func:`~clear_record.core.i18n.deferred`): a person reads ``tr(NO_NODE_MESSAGE)``
 in their locale, and a machine surface (the JSON API's ``detail``, the MCP
@@ -106,8 +108,8 @@ class NodeAddress:
 
     ``pid`` is the process that wrote the record — the node's own. It is ``None``
     for an address a caller assembled without reading one (the tray probing the
-    server it supervises), and it is what :func:`forget` compares to decide
-    whether a record is this process's to remove.
+    node it started at the socket that node bound), and it is what :func:`forget`
+    compares to decide whether a record is this process's to remove.
     """
 
     host: str

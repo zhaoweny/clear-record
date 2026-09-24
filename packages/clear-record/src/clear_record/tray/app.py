@@ -95,10 +95,6 @@ def main(
 
     restart_action = QAction(tr("Restart server"), menu)
     restart_action.triggered.connect(lambda: controller.restart())
-    # Only a node this tray started is its to restart: the action is offered
-    # greyed out for a node it only joined, because `restart` answers `False`
-    # for a node this process does not own.
-    restart_action.setEnabled(controller.supervises)
     menu.addAction(restart_action)
 
     menu.addSeparator()
@@ -113,9 +109,16 @@ def main(
     menu.addAction(quit_action)
 
     def refresh() -> None:
-        """Repaint the live state; called once now, then on every poll tick."""
+        """Repaint the live state; called once now, then on every poll tick.
+
+        Restart is offered for the node this tray started and greyed out for one
+        it only joined — ``restart`` answers ``False`` for a node this process
+        does not own — so it is decided here, with the rest of the live state: a
+        restart that joins a node already up leaves this tray none of its own.
+        """
         status = status_text(controller)
         status_action.setText(status)
+        restart_action.setEnabled(controller.supervises)
         tray.setToolTip(tr("clear-record console — {status}", status=status))
 
     tray.setContextMenu(menu)

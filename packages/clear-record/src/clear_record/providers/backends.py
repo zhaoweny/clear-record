@@ -409,12 +409,12 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
 # dependency: a Simplified prompt becomes part of the decoder's context and biases
 # the decode to Simplified. It is a *bias*, not a rewrite — it is asked for, never
 # assumed effective — and it is only ever sent to a CLI that advertises
-# ``--prompt``; the bias assumes no flag exists, while the caller's own glossary
-# goes out as it always did. What the bias cannot guarantee, the transcribe stage
-# records and names: the scripts each source's Han text shows go in the stage's
-# ``segments.json`` meta and, carried through by ``reconcile``, in the record's own
-# metadata, and every source is named whenever that is not uniform — an in-source
-# mix included (``engine.text.han_scripts``).
+# ``--prompt``; the bias never assumes the flag is there, while the caller's own
+# glossary goes out as it always did. What the bias cannot guarantee, the
+# transcribe stage records and names: the scripts each source's Han text shows go
+# in the stage's ``segments.json`` meta and, carried through by ``reconcile``, in
+# the record's own metadata, and every source is named whenever that is not
+# uniform — an in-source mix included (``engine.text.han_scripts``).
 
 #: A short Simplified-Chinese sentence (hand-written, not field content) used as
 #: the initial prompt for ``zh``, so the decoder's own context is Simplified.

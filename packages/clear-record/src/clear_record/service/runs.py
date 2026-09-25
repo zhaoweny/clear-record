@@ -537,7 +537,8 @@ class RunState:
 #: meeting whose inputs come from the registry (an upload, a client's typed
 #: paths) is not refused over a declaration that does not govern it.
 #:
-#: It is a **message ID**: the surfaces that show it (``cli.runs``) translate it,
+#: It is a **message ID**: the surfaces that show it translate it — the console
+#: answers with it, and the command line renders it in ``cli.cli._node_step`` —
 #: and it carries no values, because a refusal that reaches the command line is
 #: rendered there from this sentence alone.
 NO_INPUTS_LEFT_BY_DECLARATION = deferred(

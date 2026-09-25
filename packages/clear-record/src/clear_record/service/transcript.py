@@ -33,8 +33,9 @@ def _render(segments: list[Segment]) -> str:
     """One ``HH:MM:SS.mmm [speaker] text`` line per segment.
 
     A time is read as the page holds it, sign and all: no pre-roll is silently
-    clamped to a zero-length span, which is the clamp that made its SRT/VTT cues
-    zero-length and its Markdown header a bare ``[00:00:00.000–00:00:00.000]``.
+    clamped to a zero-length span, which is the clamp that made the export's
+    SRT/VTT cues zero-length and its Markdown header a bare
+    ``[00:00:00.000–00:00:00.000]``.
     The rounding `format_timestamp` applies is to the millisecond the time prints
     as: the last half-millisecond before zero reads ``00:00:00.000`` rather than a
     signed ``-00:00:00.000``. Which clock the page holds depends on it:

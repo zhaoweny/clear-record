@@ -312,9 +312,9 @@ def _staged_id(
     exactly the id its slug read, and a disambiguated one can itself be
     disambiguated again: of ``[x.wav (4-channel), x__ch1.wav, x__ch1-2.wav]``, the
     last stages as ``x__ch1-2-2``. Staged audio is named after the id
-    (``audio/<id>.wav``), so two units settling on one id means the second decode
-    overwrites the first's audio while the manifest keeps two entries naming that
-    one path.
+    (``audio/<id>.wav``), so **without** this a second unit settling on one id
+    would decode onto the first's audio while the manifest kept two entries naming
+    that one path.
 
     Returns ``(id, holder)``: ``holder`` is the unit whose id the later one
     collided with, or ``None`` when there was no collision, so the caller can
@@ -330,6 +330,35 @@ def _staged_id(
     sid = f"{desired}-{number}"
     taken[sid] = subject
     return sid, holder
+
+
+def _settled_id_for(base: str, declared: set[str], staged: set[str]) -> str | None:
+    """The id a declaration for the unit whose slug reads *base* settled under.
+
+    :func:`_staged_id` hands a unit one of exactly two ids: the slug it proposed,
+    or the ``-N`` it was disambiguated onto when that slug was already taken. A
+    declaration keyed by either of those is that unit's — which is what lets a
+    folded copy's declaration be found under the id the settling produced rather
+    than under the slug, where a copy the settling had renamed left it behind.
+
+    An id in *staged* is not it: this pass settled an input there, and the
+    declaration is that input's own (a kept ``take.wav`` beside a folded
+    ``take.wv`` stages under ``take``). The unnumbered id wins when both forms
+    are declared, and the lowest ``-N`` after it, which is the order
+    :func:`_staged_id` hands them out. ``None`` when neither is declared.
+    """
+    candidates = {mid for mid in declared if mid not in staged}
+    if base in candidates:
+        return base
+    numbered = sorted(
+        (
+            mid
+            for mid in candidates
+            if mid.startswith(f"{base}-") and mid[len(base) + 1 :].isdigit()
+        ),
+        key=lambda mid: int(mid[len(base) + 1 :]),
+    )
+    return numbered[0] if numbered else None
 
 
 def _shown(path: Path, directory: Path) -> str:
@@ -369,8 +398,9 @@ def _declared_start(path: Path) -> float | None:
     Seconds since the epoch, read as UTC (only differences between two of these
     are ever taken, so the zone they are read in cancels), or ``None`` when the
     name states no start time. The **first** stamp in the name is the start: a
-    name that carries both ends of a part (``…_120320_to_120500``) states its
-    start first, and the start is the end a part is placed by.
+    name that carries both ends of a part
+    (``REC_20260101_120320_to_20260101_120500``) states its start first, and the
+    start is the end a part is placed by.
     """
     match = _STAMP_RE.search(path.stem)
     if match is None:
@@ -554,9 +584,10 @@ def _manifest_roles(w: Workspace) -> dict[str, str]:
     that is not this pass's refusal — it was not asked to *use* the manifest, only
     not to lose what it says — so the read covers exactly the shapes
     :func:`_manifest_starts` names: bytes that cannot be read (``OSError``), bytes
-    that are not JSON or not a mapping (``ValueError``), a mapping with no
-    ``sources`` key (``KeyError``), and a ``sources`` that is not a list or an
-    entry that is not a mapping (``TypeError`` / ``AttributeError``).
+    that are not JSON (``ValueError``), a body that is not a mapping
+    (``TypeError``), a mapping with no ``sources`` key (``KeyError``), and a
+    ``sources`` that is not a list or an entry that is not a mapping
+    (``TypeError`` / ``AttributeError``).
     """
     try:
         sources, _ = w.load_manifest()
@@ -634,12 +665,16 @@ def ingest(
     rotation seam between two parts is not sample-continuous, and consecutive
     parts share no passage, so ``align`` places a declared pair from the
     difference of the declarations rather than correlating two recordings that
-    never overlap. A name that states no start time (or only a date, or only
-    minutes) declares nothing, and that input is staged exactly as it was
-    before — unless a byte-identical copy of it was folded away, in which case
-    the survivor carries the start that copy's name states (the line names the
-    file whose name declares it), as it carries one the manifest declares for
-    the copy's id.
+    never overlap — when the two cannot overlap (their distance reaches the
+    length of the part that began first, less one correlation window: the pre-roll
+    a rotating recorder may keep, its parts meeting inside it) or when that
+    distance is wider than its search band. A pair that *can* overlap is the
+    audio's to place, and the declaration is the fallback when it has no verdict.
+    A name that states no start time (or only a date, or only minutes) declares
+    nothing, and that input is staged exactly as it was before — unless a
+    byte-identical copy of it was folded away, in which case the survivor carries
+    the start that copy's name states (the line names the file whose name declares
+    it), as it carries one the manifest declares for the copy's id.
 
     A start the manifest **already** declares is not lost to this pass: the
     manifest it rebuilds is read first, and a source whose name declares nothing
@@ -751,48 +786,77 @@ def ingest(
     # held for it, and neither is lost to the ``run`` that follows.
     carried = _manifest_starts(w)
     roles = _manifest_roles(w)
-    # A folded copy is the same audio under another name, so a start it states is
-    # a start about *this* input's audio, and the survivor inherits it where its
-    # own name and its own id state nothing. The copy can be the survivor — the
-    # fold keeps the first in discovery order — and then the name that declares a
-    # rotation seam, or the id a hand-written declaration lives under, is exactly
-    # what leaves the manifest: dropped silently, with only the audio left to
-    # place a source its own name had already placed.
+    # Every unit's id is settled **before** anything is decoded: a declaration is
+    # filed under the id the unit settled on, not under the slug it proposed, so
+    # the fold below can only read one off the ids the settling produced. The
+    # decode loop reads this map rather than settling again, and the collision
+    # line arrives here, where the id is decided.
+    units: dict[Path, list[str]] = {}
+    channels: dict[Path, int] = {}
+    for number, p in enumerate(files, start=1):
+        base = _source_id(p, d)
+        nch = channel_count(p)
+        channels[p] = nch
+        do_split = (split == "split") or (split == "auto" and nch > 2)
+        if do_split and nch > 1:
+            units[p] = [
+                stage_id(
+                    f"{base}__ch{ch + 1}", f"{p.name} ch{ch + 1}/{nch}", number - 1
+                )
+                for ch in range(nch)
+            ]
+        else:
+            units[p] = [stage_id(base, p.name, number - 1)]
+
+    # A folded copy is the same audio under another name, so a declaration about
+    # the copy — a start its id holds, the role it was given ("this one is a
+    # room, that one feeds a duplicate") — is a declaration about the survivor's
+    # audio too, and dropping it would re-promote the very microphone the
+    # operator declared not to be a speaker. Which id it lives under is what the
+    # **settling** says: the copy keeps the slug it proposed, or the ``-N`` it was
+    # disambiguated onto, and its channels read ``<slug>__chN`` — reading that off
+    # the slug alone left a renamed copy's declaration behind, and handed a kept
+    # input that merely shares the copy's slug its own declaration as the
+    # survivor's. The copy can be the survivor — the fold keeps the first in
+    # discovery order — and then that id is exactly what leaves the manifest:
+    # dropped silently, with only the audio left to place a source its own name
+    # had already placed. The copy is the survivor's own bytes, so it parts into
+    # the survivor's units, and each declaration follows its channel across.
+    declared_ids = set(carried) | set(roles)
+    staged_ids = set(taken)
     folded_names: dict[Path, tuple[str, float]] = {}
     inherited: dict[str, float] = {}
+    inherited_roles: dict[str, str] = {}
     for copy, kept_file in copies:
         copy_name_start = _declared_start(copy)
         if copy_name_start is not None:
             folded_names.setdefault(kept_file, (copy.name, copy_name_start))
         copy_base = _source_id(copy, d)
-        kept_base = _source_id(kept_file, d)
-        for unit_id, unit_start in carried.items():
-            if unit_id == copy_base:
-                inherited.setdefault(kept_base, unit_start)
-            elif unit_id.startswith(f"{copy_base}__ch"):
-                inherited.setdefault(kept_base + unit_id[len(copy_base) :], unit_start)
+        survived = units.get(kept_file, [])
+        nch = channels.get(kept_file, 1)
+        do_split = (split == "split") or (split == "auto" and nch > 2)
+        bases = (
+            [f"{copy_base}__ch{ch + 1}" for ch in range(nch)]
+            if do_split and nch > 1
+            else [copy_base]
+        )
+        for index, base in enumerate(bases):
+            if index >= len(survived):
+                break
+            settled = _settled_id_for(base, declared_ids, staged_ids)
+            if settled is None:
+                continue
+            target = survived[index]
+            if settled in carried:
+                inherited.setdefault(target, carried[settled])
+            if settled in roles:
+                inherited_roles.setdefault(target, roles[settled])
 
-    # The same for a role: the copy is the same audio, so a role declared for the
-    # copy's id — "this one is a room, that one feeds a duplicate" — describes the
-    # surviving source too, and dropping it would re-promote the very microphone
-    # the operator declared not to be a speaker.
-    inherited_roles: dict[str, str] = {}
-    for copy, kept_file in copies:
-        copy_base = _source_id(copy, d)
-        kept_base = _source_id(kept_file, d)
-        for unit_id, unit_role in roles.items():
-            if unit_id == copy_base:
-                inherited_roles.setdefault(kept_base, unit_role)
-            elif unit_id.startswith(f"{copy_base}__ch"):
-                inherited_roles.setdefault(
-                    kept_base + unit_id[len(copy_base) :], unit_role
-                )
-
-    def declared_role(sid: str, unit: str) -> str:
+    def declared_role(sid: str) -> str:
         """The role this source carries: its own id's declaration, a folded copy's,
         or the default. ``_manifest_roles`` carries no empty value, so either
         declaration either stands or the default does."""
-        return roles.get(sid) or inherited_roles.get(unit) or "candidate"
+        return roles.get(sid) or inherited_roles.get(sid) or "candidate"
 
     def kept_line(sid: str, subject: str, start: float, number: int) -> None:
         """Name a start this input **keeps** from the manifest (its name declared
@@ -837,62 +901,34 @@ def ingest(
                 index=number - 1,
                 total=len(files),
             )
-        advance_source = base
-        nch = channel_count(p)
-        do_split = (split == "split") or (split == "auto" and nch > 2)
-        if do_split and nch > 1:
-            # One source per channel: this is the multi-mic meeting case, where
-            # each speaker is nearest one channel and diarization is nearly free.
-            for ch in range(nch):
-                subject = f"{p.name} ch{ch + 1}/{nch}"
-                sid = stage_id(f"{base}__ch{ch + 1}", subject, number - 1)
-                declared = from_name if from_name is not None else carried.get(sid)
-                if declared is None:
-                    declared = inherited.get(f"{base}__ch{ch + 1}")
-                if from_name is None and declared is not None:
-                    kept_line(sid, subject, declared, number)
-                norm = audio_dir / f"{sid}.wav"
-                # The line announces this decode, where the pre-move CLI printed
-                # it: before normalizing that input, not batched after the pass.
-                report_line(
-                    w,
-                    on_event,
-                    Step.INGEST.value,
-                    f"[ingest] decode {p.name} ch{ch + 1}/{nch} -> {norm.name}",
-                    source=sid,
-                    index=number - 1,
-                    total=len(files),
-                )
-                prepare_16k_wav(p, norm, channel=ch)
-                sources.append(
-                    Source(
-                        id=sid,
-                        path=str(norm),
-                        label=f"Speaker {len(sources) + 1}",
-                        clock_domain="wall",
-                        start_s=declared,
-                        role=declared_role(sid, f"{base}__ch{ch + 1}"),
-                    )
-                )
-        else:
-            sid = stage_id(base, p.name, number - 1)
+        nch = channels[p]
+        # One source per channel is the multi-mic meeting case, where each speaker
+        # is nearest one channel and diarization is nearly free; the ids above are
+        # what the settling produced, so the split decision is that list's length.
+        splitting = len(units[p]) > 1
+        for ch, sid in enumerate(units[p]):
+            subject = f"{p.name} ch{ch + 1}/{nch}" if splitting else p.name
             declared = from_name if from_name is not None else carried.get(sid)
             if declared is None:
-                declared = inherited.get(base)
+                declared = inherited.get(sid)
             if from_name is None and declared is not None:
-                kept_line(sid, p.name, declared, number)
-            advance_source = sid
+                kept_line(sid, subject, declared, number)
             norm = audio_dir / f"{sid}.wav"
+            # The line announces this decode, where the pre-move CLI printed it:
+            # before normalizing that input, not batched after the pass.
             report_line(
                 w,
                 on_event,
                 Step.INGEST.value,
-                f"[ingest] decode {p.name} -> {norm.name}",
+                f"[ingest] decode {subject} -> {norm.name}",
                 source=sid,
                 index=number - 1,
                 total=len(files),
             )
-            prepare_16k_wav(p, norm)
+            if splitting:
+                prepare_16k_wav(p, norm, channel=ch)
+            else:
+                prepare_16k_wav(p, norm)
             sources.append(
                 Source(
                     id=sid,
@@ -900,9 +936,10 @@ def ingest(
                     label=f"Speaker {len(sources) + 1}",
                     clock_domain="wall",
                     start_s=declared,
-                    role=declared_role(sid, base),
+                    role=declared_role(sid),
                 )
             )
+        advance_source = base if splitting else units[p][0]
         closing = progress.advance(source=advance_source)
     w.write_manifest(sources)
     # The pass as a whole: the summary and the source table, reported on the same
@@ -1355,6 +1392,12 @@ def diarize(
     first candidate's label). `attribute`, which reads every candidate's mic in the
     segment's window, is the pass that may name one.
 
+    A one-off `attribute --mixed-source` declaration (:func:`_declined_references`)
+    is left unnamed here for the same reason, even though its source is a manifest
+    candidate: the declaration is what keeps a microphone out of the record, and a
+    cluster label is a name like any other — relabelled here, the declaration the
+    pass after this one honours would be explaining labels that no longer exist.
+
     What the pass produced comes back as a :class:`DiarizeReport`: the segments
     with the labels it applied and, per source, the counts that source's line
     states, plus the decode failure that took a source out of the pass — the one
@@ -1366,6 +1409,12 @@ def diarize(
     w = Workspace.at(directory)
     sources, _ = w.load_manifest()
     per_source, meta = w.load_segments()
+    # The one-off a caller named for the attribute pass alone, read from this file's
+    # own declaration: a source that may not be named is not a person, so this pass
+    # must not hand it a cluster label either — the label would be a name the pass
+    # after this one can no longer strip, and the declaration would be left
+    # explaining labels that no longer exist.
+    declared = set(_declined_references(meta))
     src_by_id = {s.id: s for s in sources}
     total = len(per_source)
     applied = False
@@ -1392,16 +1441,19 @@ def diarize(
             audio, sr, [(s.start, s.end) for s in segs], n_speakers=speakers
         )
         n_found = len(set(labels))
-        if n_found > 1 and src.role == "candidate":
+        if n_found > 1 and src.role == "candidate" and sid not in declared:
             per_source[sid] = [
                 dataclasses.replace(s, speaker=f"Speaker {labels[i] + 1}")
                 for i, s in enumerate(segs)
             ]
             applied = True
         facts.append(DiarizedSource(id=sid, segments=len(segs), speakers=n_found))
-        note = (
-            "" if src.role == "candidate" else f" (declared {src.role}: left unnamed)"
-        )
+        if sid in declared:
+            note = " (named a reference for this pass: left unnamed)"
+        elif src.role != "candidate":
+            note = f" (declared {src.role}: left unnamed)"
+        else:
+            note = ""
         report_line(
             w,
             on_event,
@@ -1687,7 +1739,11 @@ _PREVIEW_LINES = 12
 
 
 def _declined_references(meta: dict) -> tuple[str, ...]:
-    """The one-off reference ids an `attribute` pass recorded, as the ids they are.
+    """The reference ids an `attribute` pass recorded, as the ids they are.
+
+    Every reference that pass was **asked** to gate with — the ids the caller
+    named for the pass itself, and the manifest's declared ``mixed`` roles — as
+    the pass recorded them (see ``AttributeReport.mixed_references``).
 
     ``segments.json``'s meta is a hand-editable file like the manifest, so only a
     list of strings is a declaration here: any other shape reads as none, the way
@@ -1716,12 +1772,13 @@ def _unname_non_candidates(
     segment is left unnamed exactly as the attribution pass leaves it — the
     fallback is the one thing that could put a microphone's name back in.
 
-    ``declined`` is the pass's own one-off: the ids an `attribute` pass was asked
-    to gate with by name (``--mixed-source``), read from the declaration that pass
-    records in ``segments.json``'s meta. A caller naming one declares it for that
-    pass rather than in the manifest, so without the declaration here the fallback
-    would name every segment the pass left unnamed — the one-off's guarantee has to
-    hold in the record too.
+    ``declined`` is the pass's own record of what it was asked to gate with: every
+    reference id that pass was given — the caller's named ids (``--mixed-source``)
+    and the manifest's declared ``mixed`` roles — read from the declaration that
+    pass records in ``segments.json``'s meta. A caller naming one declares it for
+    that pass rather than in the manifest, so without the declaration here the
+    fallback would name every segment the pass left unnamed — the one-off's
+    guarantee has to hold in the record too.
 
     Only the source's **own** label is dropped, and only for its own segments: a
     name the attribution pass judged from the candidates' own mics is that

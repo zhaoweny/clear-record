@@ -576,7 +576,8 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   really starts there, the record's `metadata.unplaced` names each such source that
   had segments and how much of it went — the alignment's own `unresolved` list names
   the sources but not the transcript that goes with them, and a source with nothing
-  to place stays named there alone.
+  to place is named by the alignment itself, in its `unresolved` list or as a null
+  offset, and by nothing at all when the manifest carries no alignment.
 - `export` → Markdown / SRT / VTT / JSON.
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.

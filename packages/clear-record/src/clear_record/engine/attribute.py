@@ -61,9 +61,10 @@ unmiked bleed does not. A reference far below the per-mic level, or much stronge
 cross-talk (near 0 dB), can still misclassify -- attribution then keeps the
 incoming speaker rather than invent a room identity. A reference that hears one
 speaker far better than the rest is not a room-eye view and does not belong in
-that role: as a witness it would refuse honest claims about the speakers it hears
-quietly, which is why the vocabulary sends it to ``excluded`` rather than to
-``mixed``.
+that role: as a witness its loud window raises the floor, so it refuses the
+honest claims of the speaker it hears **best** (measured: 12 of 12 refused, where
+15 of 15 of the quietly-heard speaker's are accepted) — which is why the
+vocabulary sends it to ``excluded`` rather than to ``mixed``.
 """
 
 from __future__ import annotations
@@ -290,7 +291,10 @@ def attribute_segments(
     """
     if not segments:
         return list(segments)
-    offsets = dict(offsets or {})
+    # A null offset is the same deliberate silence ``merge._placements`` reads it
+    # as: a manifest may carry a source with no position, and that source is read
+    # on the record's own clock rather than aborting arithmetic on ``None``.
+    offsets = {sid: off for sid, off in (offsets or {}).items() if off is not None}
 
     references = _as_references(mixed)
     loaded, witnesses = _read_candidates(sources, references, target_sr, frame_s)
@@ -386,7 +390,10 @@ def attribute_segments_windowed(
     """
     if not segments:
         return list(segments)
-    offsets = dict(offsets or {})
+    # A null offset is the same deliberate silence ``merge._placements`` reads it
+    # as: a manifest may carry a source with no position, and that source is read
+    # on the record's own clock rather than aborting arithmetic on ``None``.
+    offsets = {sid: off for sid, off in (offsets or {}).items() if off is not None}
 
     references = _as_references(mixed)
     loaded, witnesses = _read_candidates(sources, references, target_sr, frame_s)

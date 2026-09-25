@@ -652,8 +652,8 @@ def _probe_auto_or_exit(
     command cannot read leaves it unable to know which files are inputs, so the
     command ends with the declaration's own sentence
     (:data:`CANNOT_READ_DECLARATION`), rendered here where a person reads it,
-    rather than with a traceback out of the walk. Only this machine-local path
-    probes in this process: a ``run`` is the node's, and the node's own probe
+    rather than with a traceback out of the walk. Only this command's own path
+    probes in its process: a ``run`` is the node's, and the node's own probe
     answers the same id.
     """
     try:

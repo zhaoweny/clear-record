@@ -144,7 +144,10 @@ def start(target: node.NodeAddress, directory: str, body: dict[str, Any]) -> Sta
     that makes this a run over a workspace rather than over a registry id.
     :class:`Refused` carries the node's sentence for anything but a 2xx — a run
     already in flight for this workspace, a workspace this node cannot run (no
-    tape set), an ``origin`` the service does not know.
+    tape set), a workspace whose own declaration leaves the walk no inputs
+    (``service.runs.NO_INPUTS_LEFT_BY_DECLARATION``) or cannot be read
+    (``pipeline.workspace.CANNOT_READ_DECLARATION``), an ``origin`` the service
+    does not know.
 
     What the node accepted carries the run's own row, so the resolved options it
     recorded — including the resolver's account of an ``auto`` choice — come back

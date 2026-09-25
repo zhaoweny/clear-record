@@ -1334,6 +1334,46 @@ def test_align_places_a_declared_pair_that_meets_inside_its_pre_roll(tmp_path) -
     assert alignment.method == "declared-start"
 
 
+def test_align_places_a_declared_pair_inside_one_window_of_the_earlier_part(
+    tmp_path,
+) -> None:
+    """The pre-roll allowance itself, pinned where a stub cannot stand in for it.
+
+    The pair here *meets* inside one correlation window of the earlier part's
+    length (90 s and 88 s files, declared 88 s apart), so ``_cannot_overlap``
+    reads it as a rotation and the declaration places it — but the audio would
+    answer for this pair, and answer with the opposite: the two files carry the
+    same passage, so ``estimate_offset`` measures the 2 s arming skew their
+    whole-second names miss. Remove the allowance (``- _WINDOW_S``) from the
+    predicate and that +2 s is what lands in the record. The existing pre-roll
+    test cannot show this: its parts share 2 s and stop there, so the estimator
+    returns no verdict, and the declaration places the pair either way.
+    """
+    from clear_record.engine import SYNTH_SR, align as engine_align, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(90.0, 2, seed=7)
+    skew = scene.size - 88 * SYNTH_SR  # the 2 s both files really share
+    sf.write(str(wd / "REC_20260101_120000.wav"), scene, SYNTH_SR)
+    sf.write(str(wd / "REC_20260101_120128.wav"), scene[skew:], SYNTH_SR)
+
+    # the estimator has a verdict over this pair, and it is the audio's own
+    off, conf = engine_align.estimate_offset(
+        str(wd / "REC_20260101_120000.wav"), str(wd / "REC_20260101_120128.wav")
+    )
+    assert conf is not None and conf > 0.5
+    assert off == pytest.approx(2.0, abs=0.5)
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    # ... and the declaration decides anyway: inside one window of the earlier
+    # part's length, the pair is a rotation, and the audio is not asked.
+    assert alignment.offsets[second.id] == pytest.approx(88.0)
+    assert alignment.method == "declared-start"
+
+
 def test_align_lets_the_audio_place_a_stamped_pair_that_can_overlap(tmp_path) -> None:
     """The other side of the same rule: two *simultaneous* devices whose names
     disagree with their audio. A whole-second stamp does not resolve an arming

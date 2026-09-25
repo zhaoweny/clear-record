@@ -290,19 +290,38 @@ def estimate_offset(
 
 def _length_s(path: str) -> float | None:
     """A recording's length in seconds, from its header, or ``None`` when the
-    header cannot be read (the estimator's own verdict is then all the evidence
-    there is). A header read, not a decode: it costs nothing on a long tape."""
+    recording cannot be read at all (the estimator's own verdict is then all the
+    evidence there is).
+
+    A header read, not a decode, for every container libsndfile opens: it costs
+    nothing on a long tape. A container libsndfile *refuses* — WavPack, m4a/aac,
+    the field tapes ``read_audio`` decodes through ffmpeg — is measured from that
+    same decode at the alignment rate instead. Its length is not unknown: it is
+    one this function would otherwise miss, and reading it as unknown is what
+    leaves a sequential pair's question open for the estimator's spurious peak to
+    answer, the misplacement this bound exists to prevent. The decode costs what
+    the estimator's own read of the same file costs, and only a pair whose
+    declarations reach this path pays it.
+    """
     try:
         info = sf.info(str(path))
     except (OSError, RuntimeError):
-        return None
+        try:
+            data, sr = read_audio(str(path), _ALIGN_SR)
+        except Exception:  # not decodable either: no length, and no new refusal
+            return None
+        if sr <= 0 or data.size <= 0:
+            return None
+        return float(data.size) / float(sr)
     if info.samplerate <= 0 or info.frames <= 0:
         return None
     return float(info.frames) / float(info.samplerate)
 
 
 def _cannot_overlap(reference_path: str, source_path: str, gap_s: float) -> bool:
-    """Whether two recordings declared *gap_s* apart can hold shared audio at all.
+    """Whether two recordings declared *gap_s* apart hold no passage a
+    correlation could find — ``True`` for the sequential parts of one recorder,
+    ``False`` where only the audio can say.
 
     *gap_s* is the source's start **after** the reference's (``ref_time =
     source_time + gap_s``, so ``gap_s`` is ``source.start - reference.start``), and
@@ -320,9 +339,10 @@ def _cannot_overlap(reference_path: str, source_path: str, gap_s: float) -> bool
     trust. Two devices armed within the same minute are the first kind: they
     overlap, and the audio measures their arming skew better than a whole-second
     name does. A rotating recorder that keeps a little pre-roll meets *inside* a
-    correlation window of its own length, so that much is allowed here. A header
-    either side cannot be read leaves the question open (``False``): the audio,
-    not the length, then decides.
+    correlation window of its own length, so that much is allowed here: the bound
+    is the earlier length **less ``_WINDOW_S``**, and a pair whose gap reaches
+    that is called sequential. A header either side cannot be read leaves the
+    question open (``False``): the audio, not the length, then decides.
     """
     ref_s = _length_s(reference_path)
     src_s = _length_s(source_path)
@@ -337,9 +357,10 @@ def _usable_start(value: object) -> float | None:
 
     ``Source.start_s`` is a number when ``ingest`` reads it off a file name, and
     whatever a hand-edit put in the field when an operator declares one in the
-    manifest — the flow this feature exists for. ``align`` *subtracts* the value,
-    so it can take any number a clock can render (the same measure ``ingest``
-    keeps, so both layers read the field alike) and nothing else: a name
+    manifest — the flow this feature exists for. ``align`` places a declared pair
+    by the difference of the two declarations, so it can take any number a clock
+    can render (the same measure ``ingest`` keeps, so both layers read the field
+    alike) and nothing else: a name
     (``"noon"``), a bool, or ``nan``/``inf`` is no declaration at all, dropped
     here rather than raising out of the stage over a field a user typed.
     """
@@ -369,12 +390,13 @@ def align_sources(sources, reference_id: str | None = None) -> Alignment:
     pair that both declare one, the declaration places it in either of two cases:
 
     - the two **cannot overlap** (:func:`_cannot_overlap`): the distance between
-      their declared starts is at least as long as the recording that began
-      first, so the later one begins after the earlier one ended — they are
-      sequential parts of one recorder and hold no shared passage for a
-      correlation to find. A peak it reports over such a pair is two unrelated
-      passages matching, which is how a part at a length-multiple offset used to
-      be accepted at a spurious small one;
+      their declared starts reaches the recording that began first, less one
+      correlation window (``_WINDOW_S``, 4 s) — a rotating recorder's pre-roll
+      meets *inside* a window of its own length, and that much overlap is still a
+      rotation, holding no passage a correlation window can land in. The parts
+      are sequential, and a peak the estimator reports over such a pair is two
+      unrelated passages matching, which is how a part at a length-multiple
+      offset used to be accepted at a spurious small one;
     - the distance is **wider than ``_MAX_LAG_S``**, outside anything the
       estimator can express, and it is not asked.
 
@@ -396,7 +418,8 @@ def align_sources(sources, reference_id: str | None = None) -> Alignment:
     # One fallback for both, not two: when *reference* names no source the first
     # source stands in as the reference, and it must stand in for its declared
     # start too — otherwise every declaration on the other side is silently
-    # dropped, and `align --reference <typo>` reads as "nothing declared".
+    # dropped, and `clear-record align --reference <typo>` reads as "nothing
+    # declared".
     ref_source = next((s for s in sources if s.id == reference), sources[0])
     ref_path = ref_source.path
     ref_start = _usable_start(ref_source.start_s)

@@ -300,6 +300,10 @@ def test_a_row_carries_the_source_it_is_about(tmp_path) -> None:
 
     events: list[JobEvent] = []
     sources = stages.ingest(str(wd), on_event=events.append).sources
+    # Align the pair first: the record's rows below are the segments reconcile
+    # placed, and a source with no alignment offset is left out, not stacked on
+    # the reference's zero point (ticket 220).
+    stages.align(str(wd), on_event=events.append)
     Workspace.at(wd).write_segments(
         {
             source.id: [Segment(start=0.0, end=1.0, text="hello", source=source.id)]

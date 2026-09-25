@@ -85,6 +85,7 @@ from clear_record.engine import (
     prepare_16k_wav,
     reconcile as reconcile_segments,
     source_speaker_names,
+    unplaced_sources as unplaced_segments,
 )
 from clear_record.engine.audio import read_audio
 from clear_record.providers import (
@@ -1169,6 +1170,12 @@ def reconcile(
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
     segments = reconcile_segments(per_source, alignment, sources)
+    # What the pass could not place: a source with no alignment offset is left
+    # out of the timeline. The alignment already named it in `unresolved`, but
+    # nothing in the artifact said *how much* transcript went with it — an order
+    # of magnitude of tape can hide behind an id — and the pass said it only at
+    # stage time. The summary goes in the record and on the channel both.
+    unplaced = unplaced_segments(per_source, alignment, sources)
     closing = progress.advance()
 
     record = RecordDocument(
@@ -1181,6 +1188,7 @@ def reconcile(
             "model": meta.get("model"),
             "language": meta.get("language"),
             "prefer": prefer,
+            "unplaced": [dataclasses.asdict(u) for u in unplaced],
         },
     )
     w.write_record(record)
@@ -1196,6 +1204,29 @@ def reconcile(
         f"speaker(s) -> {w.record_path}",
         report=closing,
     )
+    # Then what the pass left out: the sources the alignment gave no offset, and
+    # how much of each went with them. The record carries the same thing in its
+    # metadata, so a reader who only opens the artifact sees it too.
+    if unplaced:
+        dropped = sum(u.segments for u in unplaced)
+        dropped_s = round(sum(u.speech_s for u in unplaced), 4)
+        report_line(
+            w,
+            on_event,
+            Step.RECONCILE.value,
+            f"[reconcile] {len(unplaced)} unplaced source(s) left out: "
+            f"{dropped} segment(s), {dropped_s}s of transcript",
+            report=closing,
+        )
+        for u in unplaced:
+            report_line(
+                w,
+                on_event,
+                Step.RECONCILE.value,
+                f"  {u.id:24s} UNPLACED (no alignment offset)",
+                source=u.id,
+                report=closing,
+            )
     for seg in record.segments[:_PREVIEW_LINES]:
         report_line(
             w,

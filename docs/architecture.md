@@ -510,7 +510,13 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   --attribute-energy` opts in without changing the default `diarize` path, and
   the corrected speaker is preserved by `reconcile`. See `docs/test-corpus.md`.
 - `reconcile` → `clear_record.engine.reconcile`; shift by alignment, collapse overlaps,
-  join only same-speaker runs, attribute speaker per source or diarizer.
+  join only same-speaker runs, attribute speaker per source or diarizer. A source
+  `align` could not place is **left out**: rather than merging its segments at the
+  reference's zero point, where the artifact could not tell them from a source that
+  really starts there, the record's `metadata.unplaced` names each such source that
+  had segments and how much of it went — the alignment's own `unresolved` list names
+  the sources but not the transcript that goes with them, and a source with nothing
+  to place stays named there alone.
 - `export` → Markdown / SRT / VTT / JSON.
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.

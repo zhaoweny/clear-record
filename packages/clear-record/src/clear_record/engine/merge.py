@@ -8,13 +8,22 @@ timeline. Because each source is its own recorded channel, **speaker ~= source**
 disappears as an ML problem). ``source.label`` (when present) is used as the
 speaker name; a source with no speaker label gets a generic ``Speaker N`` so a
 tape's file name never becomes a person in the minutes.
+
+A source the alignment could not place (``align`` writes it into
+``Alignment.unresolved`` and gives it **no** offset) has no honest position on
+the reference clock, so its segments are left out of the timeline entirely —
+never read as a zero offset and merged in at the reference's start. The
+alignment's ``unresolved`` list already named the sources themselves;
+:func:`unplaced_sources` adds what it did not say — how much transcript went with
+each one that had segments — and the record carries that in
+``metadata["unplaced"]``, beside the segments they did not contribute.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from clear_record.core import Alignment, Segment, Source
+from clear_record.core import Alignment, Segment, Source, UnplacedSource
 from clear_record.engine.text import clean_segments
 
 # The longest pause between two same-speaker cues that is still bridged. Only a
@@ -76,6 +85,70 @@ def source_speaker_names(sources: Sequence[Source]) -> dict[str, str]:
         names[src.id] = name
         used.add(name.casefold())
     return names
+
+
+def _placements(
+    alignment: Alignment | None, sources: Sequence[Source]
+) -> dict[str, float]:
+    """The offsets reconcile may place segments on, keyed by source id.
+
+    A source is placeable only when the alignment carries a real offset for it: a
+    missing entry is the align stage's deliberate silence — the id it recorded in
+    ``Alignment.unresolved`` — not a position on the reference clock, and neither
+    is an entry whose value is **null** (a hand-written or foreign manifest can
+    carry one). Both read as "no position" here, because this one map is read by
+    membership (:func:`unplaced_sources`) and by lookup (:func:`reconcile`), and
+    a source cannot be dropped by one and unnamed by the other. The reference is
+    the one exception and always sits at zero, because it *is* the record's
+    timeline; with no alignment at all the first source is the reference
+    ``align_sources`` would have chosen, and the only placeable one.
+
+    Reading a missing entry as ``0.0`` is the bug this closes: it stacked a tape
+    that could not be placed on the reference's zero point, where the artifact
+    could not tell it from a source that really starts there.
+    """
+    reference = alignment.reference if alignment else (sources[0].id if sources else "")
+    offsets = (
+        {sid: off for sid, off in alignment.offsets.items() if off is not None}
+        if alignment
+        else {}
+    )
+    if reference:
+        offsets.setdefault(reference, 0.0)
+    return offsets
+
+
+def unplaced_sources(
+    per_source: dict[str, list[Segment]],
+    alignment: Alignment | None,
+    sources: list[Source],
+) -> tuple[UnplacedSource, ...]:
+    """What :func:`reconcile` leaves out for want of an offset, and how much.
+
+    One entry per source that holds segments but no real alignment offset — the
+    sources ``align`` recorded in ``Alignment.unresolved``, plus any a
+    hand-written manifest left *present but null*. It reads the same placement
+    rule :func:`reconcile` does (``_placements``), so a caller can write the
+    record's drop summary without reconciling twice and a source dropped by one
+    is always named by the other. A source with no segments drops nothing and is
+    not listed: it is named by the alignment, not here.
+    """
+    offsets = _placements(alignment, sources)
+    out: list[UnplacedSource] = []
+    for src in sources:
+        if src.id in offsets:
+            continue
+        segs = per_source.get(src.id, ())
+        if not segs:
+            continue
+        out.append(
+            UnplacedSource(
+                id=src.id,
+                segments=len(segs),
+                speech_s=round(sum(max(0.0, s.end - s.start) for s in segs), 4),
+            )
+        )
+    return tuple(out)
 
 
 def _join_continuous(segments: Sequence[Segment], max_cue_s: float) -> list[Segment]:
@@ -143,14 +216,23 @@ def reconcile(
     max_cue_s: float = _MAX_CUE_S,
 ) -> list[Segment]:
     """Produce a reconciled, source-attributed segment list on the reference
-    timebase. The reference source keeps its time; other sources are shifted by
-    their alignment offset (default 0 when unaligned or for the reference)."""
+    timebase. The reference source keeps its time; every other source is shifted
+    by its alignment offset.
+
+    A source with **no** offset — one ``align`` left unresolved — has no honest
+    position on the reference clock, so its segments are left out rather than
+    stacked on the reference's zero point; :func:`unplaced_sources` names what
+    that dropped, and the record carries it. With no alignment at all, the first
+    source is the reference and the only placeable one."""
     order = {s.id: i for i, s in enumerate(sources)}
     label = source_speaker_names(sources)
+    offsets = _placements(alignment, sources)
 
     shifted: list[Segment] = []
     for src in sources:
-        off = alignment.offsets.get(src.id, 0.0) if alignment else 0.0
+        off = offsets.get(src.id)
+        if off is None:
+            continue  # unplaceable: no offset, so no position on the reference
         for seg in per_source.get(src.id, ()):
             shifted.append(
                 Segment(
@@ -174,4 +256,4 @@ def reconcile(
     return [s for s in resolved if s.text.strip()]
 
 
-__all__ = ["reconcile", "source_speaker_names"]
+__all__ = ["reconcile", "source_speaker_names", "unplaced_sources"]

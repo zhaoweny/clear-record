@@ -354,6 +354,123 @@ def test_ingest_folds_a_byte_identical_copy_into_one_source(tmp_path) -> None:
     ] == [("info", None), ("warn", None), ("info", "take-copy"), ("info", None)]
 
 
+def _write_noise(path, sr: int = 8000, seconds: float = 6.0, seed: int = 11) -> None:
+    """A tape from another session: noise shares nothing with the chirp, so
+    ``align`` cannot place it (the align suite's own unplaceable fixture)."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * sr)
+    sf.write(str(path), (0.2 * rng.standard_normal(n)).astype(np.float32), sr)
+
+
+def test_reconcile_leaves_out_a_tape_align_could_not_place(tmp_path) -> None:
+    """Ticket 220, on the ticket's reproduction: two unrelated tapes in one
+    workspace, with the segments seeded by hand so no backend is needed.
+
+    ``align`` reports the noise tape UNRESOLVED and writes no offset for it; the
+    record writer then read that missing offset as 0.0 and merged the stray
+    tape's segments in as if they belonged at the reference's start. Now they are
+    left out, and ``record.json`` carries the drop summary the alignment's own
+    ``unresolved`` id list did not — the source, and how much of it went with it.
+    """
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace, load_json
+
+    wd = tmp_path / "sess"
+    wd.mkdir()
+    _write_tone(wd / "meeting.wav")
+    _write_noise(wd / "stray.wav")
+    sources = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+
+    stray = sources[-1].id
+    assert alignment.unresolved == (stray,), "the fixture must be unplaceable"
+    assert stray not in alignment.offsets
+
+    per_source = {
+        sources[0].id: [
+            Segment(
+                start=0.0,
+                end=5.0,
+                text="the reference recording speaks here",
+                source=sources[0].id,
+                confidence=0.9,
+            )
+        ],
+        stray: [
+            Segment(
+                start=10.0,
+                end=15.0,
+                text="an unrelated tape that could not be placed",
+                source=stray,
+                confidence=0.9,
+            )
+        ],
+    }
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
+
+    record = stages.reconcile(str(wd))
+
+    assert [s.text for s in record.segments] == ["the reference recording speaks here"]
+    assert record.metadata["unplaced"] == [
+        {"id": stray, "segments": 1, "speech_s": 5.0}
+    ]
+    # The artifact a reader opens carries it, not only the stages' lines.
+    written = load_json(Workspace.at(wd).record_path)
+    assert written["metadata"]["unplaced"] == record.metadata["unplaced"]
+    assert [seg["text"] for seg in written["segments"]] == [
+        "the reference recording speaks here"
+    ]
+
+
+def test_reconcile_names_a_null_offset_source_it_drops(tmp_path) -> None:
+    """The same silent drop, reached through a manifest rather than a dataclass.
+
+    A hand-written or foreign manifest can carry ``"stray": null`` in
+    ``offsets``. The key is present, so the drop summary's membership test called
+    that source placed while the placement lookup dropped everything it held: its
+    segments left the record with ``metadata.unplaced == []`` and nothing on the
+    channel, which is exactly the silence this ticket exists to end.
+    """
+    from clear_record.core import JobEvent, Segment, load_json, write_json
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = _workspace(tmp_path)
+    sources = stages.ingest(wd).sources
+    stages.align(wd)
+
+    ws = Workspace.at(wd)
+    manifest = load_json(ws.manifest_path)
+    manifest["alignment"]["offsets"] = {sources[0].id: 0.0, sources[1].id: None}
+    manifest["alignment"]["unresolved"] = []
+    write_json(ws.manifest_path, manifest)
+    ws.write_segments(
+        {
+            sources[0].id: [
+                Segment(0.0, 1.5, "kept line", sources[0].id, confidence=0.9)
+            ],
+            sources[1].id: [
+                Segment(0.0, 2.5, "dropped line", sources[1].id, confidence=0.6)
+            ],
+        },
+        {"backend": "none", "model": "none"},
+    )
+
+    events: list[JobEvent] = []
+    record = stages.reconcile(wd, on_event=events.append)
+
+    assert [s.text for s in record.segments] == ["kept line"]
+    assert record.metadata["unplaced"] == [
+        {"id": sources[1].id, "segments": 1, "speech_s": 2.5}
+    ]
+    # The record is not the only place it is said: the channel carries the row.
+    assert [e.message for e in events if e.message and "UNPLACED" in e.message] == [
+        f"  {sources[1].id:24s} UNPLACED (no alignment offset)"
+    ]
+    assert (
+        load_json(ws.record_path)["metadata"]["unplaced"] == record.metadata["unplaced"]
+    )
+
+
 def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
     """The workspace directory name travels into the record metadata and becomes
     the exported H1, so a qmd index can tell recordings apart."""
@@ -383,6 +500,8 @@ def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
 
     record = stages.reconcile(wd)
     assert record.metadata["title"] == "rec"
+    # Both tapes were placed, so nothing was left out — and the artifact says so.
+    assert record.metadata["unplaced"] == []
 
     written = stages.export(wd)
     first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]

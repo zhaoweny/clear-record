@@ -43,6 +43,27 @@ class Alignment:
 
 
 @dataclass(frozen=True)
+class UnplacedSource:
+    """A source ``reconcile`` left out of the record, and how much of it.
+
+    ``align`` records what it could not place in ``Alignment.unresolved`` and
+    writes no offset for it. No offset means no honest position on the reference
+    clock, so that source's segments are left out of the timeline instead of
+    being stacked on the reference's zero point. The alignment already named
+    which sources those are; what this adds is **how much** went with each of
+    them, in the artifact a reader opens rather than only in the pass's output at
+    stage time, and only for a source that actually had segments to drop — one
+    with nothing to place stays named by the alignment alone.
+    ``segments`` is how many of its segments were dropped and ``speech_s`` the
+    speaking time they covered.
+    """
+
+    id: str
+    segments: int
+    speech_s: float
+
+
+@dataclass(frozen=True)
 class Segment:
     """One attributed unit of transcript in reference-timeline time (seconds)."""
 
@@ -69,7 +90,16 @@ class TranscriptionResult:
 
 @dataclass(frozen=True)
 class RecordDocument:
-    """The reconciled record: many recordings -> one attributable timeline."""
+    """The reconciled record: many recordings -> one attributable timeline.
+
+    ``metadata`` carries the reconcile pass's own facts about the record. In
+    particular ``metadata["unplaced"]`` is the drop summary: one
+    :class:`UnplacedSource` (as a plain dict) per source left out for having no
+    alignment offset **and holding segments to drop** — so the artifact says what
+    the alignment's own ``unresolved`` list does not, how much transcript went
+    with each. A source with nothing to place is named by
+    ``alignment.unresolved`` alone.
+    """
 
     sources: tuple[Source, ...]
     alignment: Alignment | None
@@ -130,6 +160,7 @@ def load_json(path: Path) -> Any:
 __all__ = [
     "Source",
     "Alignment",
+    "UnplacedSource",
     "Segment",
     "TranscriptionResult",
     "RecordDocument",

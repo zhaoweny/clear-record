@@ -8,8 +8,10 @@ about, not a path. This module owns that read (and its slice) so the MCP adapter
 stays argument marshalling.
 
 The reconciled record wins when it has segments; otherwise the raw segments are
-read and merged onto one timeline. Reading is tolerant of a not-yet-reconciled
-workspace, and a ranged read keeps a multi-hour tape from arriving whole.
+read as they are written, each source's times in its own clock — the page lists
+them in start order across those clocks, and `reconcile` is what shifts them onto
+one. Reading is tolerant of a not-yet-reconciled workspace, and a ranged read
+keeps a multi-hour tape from arriving whole.
 """
 
 from __future__ import annotations
@@ -30,14 +32,16 @@ from clear_record.service.models import Meeting
 def _render(segments: list[Segment]) -> str:
     """One ``HH:MM:SS.mmm [speaker] text`` line per segment.
 
-    A time is read as the page holds it, sign and all — never folded onto
-    ``00:00:00.000``, which is the fold that made a pre-roll's SRT/VTT cues
+    A time is read as the page holds it, sign and all: no pre-roll is silently
+    clamped to a zero-length span, which is the clamp that made its SRT/VTT cues
     zero-length and its Markdown header a bare ``[00:00:00.000–00:00:00.000]``.
-    Which clock the page holds depends on it: ``read_transcript`` renders the
-    reconciled record on the reference clock, where a source started before the
-    reference reads ``-00:01:54.365``, or a not-yet-reconciled workspace's raw
-    per-source segments, whose times are each source's own — `reconcile` is what
-    shifts them onto the reference.
+    The rounding `format_timestamp` applies is to the millisecond the time prints
+    as: the last half-millisecond before zero reads ``00:00:00.000`` rather than a
+    signed ``-00:00:00.000``. Which clock the page holds depends on it:
+    ``read_transcript`` renders the reconciled record on the reference clock, where
+    a source started before the reference reads ``-00:01:54.365``, or a
+    not-yet-reconciled workspace's raw per-source segments, whose times are each
+    source's own — `reconcile` is what shifts them onto the reference.
     """
     return "\n".join(
         f"{format_timestamp(seg.start)} [{seg.speaker or seg.source}] {seg.text}"
@@ -53,10 +57,11 @@ class TranscriptSlice:
     ``"transcript"`` for the raw per-source segments. ``next`` is the offset to
     pass for the following page, or ``None`` at the end; ``text`` is the
     rendered page (one ``HH:MM:SS.mmm [speaker] text`` line per segment). Each
-    time is read as its page holds it, sign included, never folded onto
-    ``00:00:00.000``: the reconciled record's reference clock (a source started
-    before the reference reads ``-00:01:54.365``), or the raw fallback's
-    per-source clocks, which `reconcile` is what shifts onto the reference.
+    time is read as its page holds it, sign included, with no pre-roll silently
+    clamped to a zero-length span: the reconciled record's reference clock (a
+    source started before the reference reads ``-00:01:54.365``), or the raw
+    fallback's per-source clocks, which `reconcile` is what shifts onto the
+    reference.
     """
 
     meeting_id: int
@@ -94,8 +99,9 @@ def read_transcript(
 
     ``offset`` skips that many segments and ``limit`` caps the page (at least 1 when
     given); both are the natural paging cursor an agent uses on a long tape. A reconciled record
-    with segments is preferred; otherwise the raw per-source segments are
-    merged onto one timeline. Raises :class:`FileNotFoundError` when the
+    with segments is preferred; otherwise the raw per-source segments are read
+    as they are written, each source's times in its own clock; `reconcile` is
+    what shifts them onto one. Raises :class:`FileNotFoundError` when the
     workspace has neither file (no run has produced a transcript yet).
     """
     if not meeting.workspace_path:

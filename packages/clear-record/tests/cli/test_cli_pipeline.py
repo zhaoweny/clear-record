@@ -911,6 +911,434 @@ def test_align_reports_unresolved_source(tmp_path) -> None:
     ]
 
 
+#: The ticket's split-capture shape: one long `synth` scene cut into the parts a
+#: recorder that rotates hands over. The parts are 200 s because a gap that wide
+#: is outside the estimator's whole search band (`_MAX_LAG_S`, 120 s) — the shape
+#: the field tape failed on, and the one placed without asking the audio at all
+#: (a split *inside* the band is the narrow-declaration test's).
+_SPLIT_TAKE_S = 400.0
+_SPLIT_PART_S = _SPLIT_TAKE_S / 2.0
+
+#: A take split the same way but inside the estimator's own search band: 90 s
+#: parts 90 s apart. On the reviewer's repro — the `synth` verb's degraded 400 s
+#: device (seed 7) cut at 0-90 / 90-180 and named by its start — the audio placed
+#: the pair at +21.3330 s, conf 0.505, against a true +90 s: two unrelated
+#: passages matching. 90 s of recording 90 s apart cannot overlap, so the
+#: declaration places them (`_cannot_overlap`).
+_SHORT_SPLIT_TAKE_S = 180.0
+
+#: Two *simultaneous* stamped devices: long enough that their 30 s name gap is
+#: far inside both recordings, so the audio — which measures the arming skew a
+#: whole-second name cannot — is the evidence that counts.
+_OVERLAP_TAKE_S = 60.0
+
+
+@pytest.fixture(scope="module")
+def split_take() -> tuple[np.ndarray, np.ndarray]:
+    """One capture as two *sequential* parts of one recorder.
+
+    Built straight from ``engine.synth`` (the ticket's repro cuts a ``synth``
+    scene with ffmpeg; this is the same two halves without a subprocess). The
+    parts share no passage — the join is a rotation, not an overlap — which is
+    what makes them unreachable by correlation and reachable only by the start
+    time each name states.
+    """
+    from clear_record.engine import make_scene
+
+    scene, _ = make_scene(_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    return scene[:half], scene[half:]
+
+
+def test_ingest_reads_a_split_recorders_starts_off_its_names(
+    tmp_path, split_take
+) -> None:
+    """A recorder that splits one capture into numbered files hands `ingest` files
+    that are *sequential*, not simultaneous (ticket 221).
+
+    The start written into each name is what places them. The parts share no
+    passage, so no correlation could ever find the 200 s between them: it is
+    further than the estimator's whole search band, and the pair used to come
+    back UNRESOLVED — or worse, accepted at a spurious small offset — with
+    `reconcile` then stacking the two halves into one window.
+    """
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (
+        ("REC_20260101_120000.wav", split_take[0]),
+        ("REC_20260101_120320.wav", split_take[1]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    events: list[JobEvent] = []
+    first, second = stages.ingest(str(wd), on_event=events.append).sources
+
+    alignment = stages.align(str(wd))
+    # Placed from the declaration, and never reported unplaceable: a declared
+    # start is a placement, not an estimate.
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SPLIT_PART_S)
+    assert alignment.method == "declared-start"
+
+    # ... and the declaration travelled: into the manifest, and onto the channel.
+    assert first.start_s is not None and second.start_s is not None
+    assert second.start_s - first.start_s == pytest.approx(_SPLIT_PART_S)
+    assert (
+        "[ingest] REC_20260101_120320.wav declares start 2026-01-01 12:03:20 "
+        "(from its filename): carried into the manifest"
+    ) in [event.message for event in events]
+    reopened, _ = Workspace.at(wd).load_manifest()
+    assert reopened[1].start_s == second.start_s
+
+    # The field symptom itself: `reconcile` tiles the two halves end to end
+    # instead of stacking them into one window (the ticket's five-way collage).
+    from clear_record.core import Segment
+
+    Workspace.at(wd).write_segments(
+        {
+            source.id: [Segment(start=0.0, end=1.0, text=source.id, source=source.id)]
+            for source in (first, second)
+        },
+        {"backend": "none", "model": "none"},
+    )
+    assert [seg.start for seg in stages.reconcile(str(wd)).segments] == [
+        0.0,
+        pytest.approx(_SPLIT_PART_S),
+    ]
+
+
+def test_align_places_a_start_the_manifest_declares(tmp_path, split_take) -> None:
+    """The ticket's repro names — `rec-A.wav`, `rec-B.wav` — state no start time,
+    so the operator declares it where the record can carry it: ``start_s`` in the
+    manifest. `align` places the pair from that declaration, the only evidence
+    that reaches across a gap wider than its band — and keeps placing it when the
+    named reference does not exist and the first source stands in (its declared
+    start stands in with it).
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    sources = stages.ingest(str(wd)).sources
+    # the names state no start time, so nothing was declared from them
+    assert [source.id for source in sources] == ["rec-A", "rec-B"]
+
+    # The declaration a user may make by hand: this file began at 12:00:00, that
+    # one 200 s later.
+    w = Workspace.at(wd)
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+    # --reference <a name no source has>: the first source stands in (its path
+    # *and* its declared start together), so the declarations are still honoured
+    # rather than silently dropped.
+    fallback = stages.align(str(wd), reference="nosuch")
+    assert fallback.unresolved == ()
+    assert fallback.offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_ingest_keeps_a_start_declared_in_the_manifest(tmp_path, split_take) -> None:
+    """This pass rebuilds the manifest it reads, and `run` ingests every time, so
+    a declaration has to survive the re-ingest: a source whose *name* declares
+    nothing keeps the start the manifest held for its id — named on the sink,
+    because a start that appears in the record without a word is how an operator
+    loses track of which parts are placed by a declaration."""
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    w = Workspace.at(wd)
+    sources = stages.ingest(str(wd)).sources
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    events: list[JobEvent] = []
+    again = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.start_s for source in again] == [
+        pytest.approx(noon),
+        pytest.approx(noon + _SPLIT_PART_S),
+    ]
+    assert (
+        "[ingest] rec-B.wav keeps declared start 2026-01-01 12:03:20: "
+        "declared in the manifest"
+    ) in [event.message for event in events]
+    assert stages.align(str(wd)).offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_align_places_an_in_band_declared_split_by_its_declaration(
+    tmp_path,
+) -> None:
+    """Two parts of one recorder 90 s apart, inside the estimator's own band: the
+    declaration still places them, because the parts **cannot overlap** — they
+    are 90 s long and 90 s apart, so no passage is shared, and a correlation run
+    over them reports two unrelated passages matching (the reviewer measured
+    +21.3330 s, conf 0.505, against a true +90 s). The audio is not consulted."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert alignment.method == "declared-start"
+
+
+def test_align_ignores_a_verdict_over_parts_that_cannot_overlap(
+    tmp_path, monkeypatch
+) -> None:
+    """The rule 221-R1 is about, with the estimator's verdict made explicit: over
+    two 90 s parts 90 s apart a correlation reports two unrelated passages
+    matching — the reviewer's repro read +21.3330 s, conf 0.505, against a true
+    +90 s — and that verdict must not be used, because the parts cannot overlap:
+    there is nothing for it to have found. It is therefore not even asked."""
+    from clear_record.engine import SYNTH_SR, align as engine_align, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    asked: list[str] = []
+
+    def spurious(reference_path, source_path, **kwargs):
+        asked.append(source_path)
+        return 21.333, 0.505
+
+    monkeypatch.setattr(engine_align, "estimate_offset", spurious)
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert asked == []  # not consulted: the two recordings cannot share a passage
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert alignment.method == "declared-start"
+
+
+def test_align_asks_the_audio_for_a_later_take_inside_an_earlier_one(tmp_path) -> None:
+    """A shorter take that starts *later* still lies inside a longer earlier one:
+    the earlier tape's tail covers the later one's start, so the two share
+    passage and the pair is the audio's to place (R7). Bounding the overlap by
+    the *shorter* recording instead of by the one that began first called this
+    pair sequential and placed it from its names alone — discarding a measured
+    +40.0 s at conf 0.983."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_OVERLAP_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "TX01_20260101_120000.wav"), scene, SYNTH_SR)
+    # 20 s of the same event beginning 40 s in: 20 s of shared passage.
+    sf.write(str(wd / "TX01_20260101_120040.wav"), scene[40 * SYNTH_SR :], SYNTH_SR)
+
+    _first, later = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[later.id] == pytest.approx(40.0, abs=0.5)
+    # the tape placed it, and the record says so rather than crediting the name
+    assert alignment.method == "windowed-cross-correlation"
+    assert alignment.confidence is not None and alignment.confidence > 0.9
+
+
+def test_align_places_a_declared_pair_that_meets_inside_its_pre_roll(tmp_path) -> None:
+    """The allowance for a rotating recorder's pre-roll: its parts meet *inside*
+    a correlation window of each other (90 s parts 88 s apart here), so the pair
+    is still sequential — and the declaration places it where the estimator,
+    seeing only the 2 s the two share, finds nothing at all."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "REC_20260101_120000.wav"), scene[: 90 * SYNTH_SR], SYNTH_SR)
+    sf.write(
+        str(wd / "REC_20260101_120128.wav"),
+        scene[88 * SYNTH_SR : 178 * SYNTH_SR],
+        SYNTH_SR,
+    )
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(88.0)
+    assert alignment.method == "declared-start"
+
+
+def test_align_lets_the_audio_place_a_stamped_pair_that_can_overlap(tmp_path) -> None:
+    """The other side of the same rule: two *simultaneous* devices whose names
+    disagree with their audio. A whole-second stamp does not resolve an arming
+    skew, so where the two recordings can overlap the audio places them — 30 s
+    apart by name, 5 s apart on the tape, and the tape wins."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_OVERLAP_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "TX01_20260101_120000.wav"), scene, SYNTH_SR)
+    # The same scene 5 s in: ref_time = source_time + 5, i.e. +5 s.
+    sf.write(str(wd / "TX02_20260101_120030.wav"), scene[5 * SYNTH_SR :], SYNTH_SR)
+
+    _room, later = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[later.id] == pytest.approx(5.0, abs=0.5)
+    # the audio spoke, so the record says so (and carries its confidence)
+    assert alignment.method == "windowed-cross-correlation"
+    assert alignment.confidence is not None and alignment.confidence > 0.0
+
+
+def test_ingest_declares_no_start_for_a_name_that_states_no_clock_time(
+    tmp_path,
+) -> None:
+    """A name that states only a date — or only minutes — does not say when a
+    part *started*. Reading one as a start would declare two devices that share a
+    day simultaneous, the exact confusion a declared start exists to prevent, so
+    such a name declares nothing and its source is estimated as before.
+
+    The recorder names the owner's own playbook records — `mac-05`, `tx01`… —
+    carry no clock time at all, so they are in here too: the accepted shapes are
+    this pass's set, not a vendor's convention.
+    """
+    from clear_record.core import JobEvent
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for index, name in enumerate(
+        (
+            "meeting-2026-01-01.wav",
+            "meeting_20260101_1200.wav",
+            "tx01.wav",
+            "mac-05.wav",
+        )
+    ):
+        _write_tone(wd / name, freq=140.0 + index * 10.0, gain=0.4)
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.start_s for source in sources] == [None] * 4
+    assert not [event for event in events if "declares start" in event.message]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    (
+        "{}",
+        '{"alignment": {"reference": "a"}}',
+        "[1, 2]",
+        '{"sources": [{"id": "a"}]}',
+        '{"sources": {"a": {"id": "a", "path": "a.wav"}}}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": "noon"}]}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": 1767000000000.0}]}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": true}]}',
+        '{"sources": [{"id": ["a"], "path": "a.wav", "start_s": 10.0}]}',
+    ),
+)
+def test_ingest_survives_a_manifest_a_hand_edit_broke(tmp_path, broken) -> None:
+    """The hand-declare flow is exactly what produces a manifest the pass cannot
+    take a declaration out of, and `ingest` must not end in a traceback over one:
+    the pass has not been asked to *use* the manifest, only not to lose what it
+    says, so a broken one costs the record its declarations and nothing else
+    (R8, R9). A `start_s` the record cannot render is one of those shapes however
+    numeric it looks — the last four entries are a name, a year-57 970 number, a
+    bool, and an id that cannot key anything — and each is dropped rather than
+    carried into a source or a sink line."""
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=140.0)
+    Workspace.at(wd).manifest_path.write_text(broken, encoding="utf-8")
+
+    sources = stages.ingest(str(wd)).sources
+    assert [source.id for source in sources] == ["a"]
+    assert sources[0].start_s is None
+
+
+def test_ingest_reads_a_start_off_a_dotted_name(tmp_path) -> None:
+    """The accepted shapes, spelled out in `stages._STAMP_RE`: a dotted date with
+    a dotted clock time is one of them (a name outside the set declares nothing,
+    and its source is estimated as before)."""
+    from datetime import datetime, timezone
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "2026.01.01_12.03.20.wav", freq=180.0)
+
+    (source,) = stages.ingest(str(wd)).sources
+    assert source.start_s == pytest.approx(
+        datetime(2026, 1, 1, 12, 3, 20, tzinfo=timezone.utc).timestamp()
+    )
+
+
+def test_align_survives_a_hand_declared_start_no_clock_can_render(tmp_path) -> None:
+    """The same hand-edit class on the other reader (R10): `align` *subtracts*
+    `Source.start_s`, so a value that arrived by hand-edit has to be usable or
+    absent there too. A manifest declaring `a: 12:00:00` and `b: "noon"` places
+    `b` by its audio — the two chirps of the fixture correlate at zero — where it
+    used to raise `TypeError` out of the stage over a field a user typed."""
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = _workspace(tmp_path)
+    stages.ingest(wd)  # the manifest this test then hand-edits
+    w = Workspace.at(wd)
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        entry["start_s"] = noon if entry["id"] == "a" else "noon"
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    alignment = stages.align(wd)
+    assert alignment.unresolved == ()
+    assert alignment.offsets["b"] == pytest.approx(0.0, abs=0.1)
+    assert alignment.method == "windowed-cross-correlation"
+
+
 def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
     """`run` must measure alignment against the chosen reference, not the
     first source (the stages below are stubbed so no ASR backend is needed)."""

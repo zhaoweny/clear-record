@@ -248,6 +248,23 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   are split per channel by default** (when >2 channels) so a 4-channel DJI
   file becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
+- [DESIGN] **A recorder's sequential segment files carry their own start.**
+  Some recorders rotate the internal file every 30 minutes and write each part's
+  start time into the file name. Those files are *sequential*, not simultaneous,
+  and `ingest` reads the start off the name into `Source.start_s` — **seconds
+  since the epoch, read as UTC** (only differences between two of them are ever
+  taken, so the zone cancels). The manifest is where a declared per-source start
+  lives, so an operator may declare one there by hand when a name states none,
+  and `ingest` carries such a declaration forward across its own passes instead
+  of losing it to the manifest it rebuilds. Of a pair that both declare one,
+  `align` places them from the difference of the declarations when the two
+  **cannot overlap** (their distance is at least as long as the recording that
+  began first, so the later one begins after the earlier one ended) or when that
+  distance is wider than its search band — and otherwise lets the audio decide,
+  falling back to the declaration only when the audio has no verdict. The parts
+  stay separate sources at their declared starts: the rotation seam is **not**
+  sample-continuous, so splicing them into one waveform would invent a continuity
+  the recorder never wrote, and the record shows each part and its start.
 - [DESIGN] The `whisper-cli` adapter reads millisecond `offsets` from its `-ojf`
   JSON (`clear_record.providers.backends._whispercli_segments`).
   Note: cross-device clock sync is still **out of scope** (§7).
@@ -497,7 +514,11 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   fine — and such a declaration simply names nothing.
 - `align` → `clear_record.engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
-  simultaneous-start fallback.
+  simultaneous-start fallback. A source that declares its own start, against a
+  reference that declares one, is placed by that declaration when the two cannot
+  overlap or are further apart than the search band; a pair that can overlap is
+  the audio's to place, and the declaration is the fallback when it has no
+  verdict.
 - `transcribe` → real ASR via `clear_record.providers`; **Apple/macOS (system
   `whisper-cli` + `ggml-metal`) is hot-tested end-to-end on an Apple M4** (164
   segments, no wheel installed), with auto language detection and per-segment

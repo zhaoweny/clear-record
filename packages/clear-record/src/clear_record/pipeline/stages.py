@@ -53,8 +53,10 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import re
 import threading
 from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 
 from clear_record.core import (
@@ -325,6 +327,124 @@ def _shown(path: Path, directory: Path) -> str:
         return str(path)
 
 
+#: The kinds of name this pass reads a start off, spelled out because they are
+#: *this* pass's set and not a vendor's: a date (``20260101`` or ``2026-01-01`` or
+#: ``2026.01.01``), then a clock time whose seconds are present
+#: (``120320``, ``12:03:20``, ``12-03-20``, ``12.03.20``), joined by at most one
+#: ``T``/``_``/``-``/``.``/space — ``20260101_120320``, ``20260101T120320``,
+#: ``2026-01-01_12-03-20``, ``2026.01.01 12.03.20``. The recorder names in the
+#: owner's own playbook (``mac-05``, ``tx01``…) carry no clock time at all, so a
+#: name outside these shapes — a date alone, minutes without seconds, a shape no
+#: recorder here writes — declares **nothing**, and its source is then estimated
+#: from the audio as before (or placed by a start the operator declares in the
+#: manifest). A date alone is refused on purpose: reading it as a start would
+#: declare every device that shares a day simultaneous, which is the confusion a
+#: declared start exists to prevent.
+_STAMP_RE = re.compile(
+    r"(?<!\d)"
+    r"(?P<y>\d{4})[-.]?(?P<mo>\d{2})[-.]?(?P<d>\d{2})"
+    r"[T_\- .]?(?P<h>\d{2})[:.\-]?(?P<mi>\d{2})[:.\-]?(?P<s>\d{2})"
+    r"(?!\d)"
+)
+
+
+def _declared_start(path: Path) -> float | None:
+    """*path*'s start, as the recorder that wrote its name declared it.
+
+    Seconds since the epoch, read as UTC (only differences between two of these
+    are ever taken, so the zone they are read in cancels), or ``None`` when the
+    name states no start time. The **first** stamp in the name is the start: a
+    name that carries both ends of a part (``…_120320_to_120500``) states its
+    start first, and the start is the end a part is placed by.
+    """
+    match = _STAMP_RE.search(path.stem)
+    if match is None:
+        return None
+    try:
+        return datetime(
+            int(match["y"]),
+            int(match["mo"]),
+            int(match["d"]),
+            int(match["h"]),
+            int(match["mi"]),
+            int(match["s"]),
+            tzinfo=timezone.utc,
+        ).timestamp()
+    except ValueError:
+        # A run of digits shaped like a stamp but not a date or a clock time
+        # (2026-13-45, 12-99-00): the name declares nothing, and inventing a
+        # start from it would place the source on a timeline it never saw.
+        return None
+
+
+def _stamp_text(seconds: float) -> str:
+    """A declared start as the operator reads it (whole seconds, UTC — the zone
+    :func:`_declared_start` read it in, so the text is the name's own)."""
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+
+def _usable_start(value: object) -> float | None:
+    """*value* as a declared start this pass can use, or ``None``.
+
+    ``Source.start_s`` is a number when :func:`_declared_start` reads it off a file
+    name; it is whatever a hand-edit put there when an operator declares one in
+    the manifest, which is the flow this feature exists for. So both readings take
+    only a value a clock can **render** — the pass reports every declaration it
+    keeps as a date and a time, and a value it cannot say is a value it cannot
+    back. A name (``"noon"``), a bool, ``nan``/``inf``, or a number no
+    ``datetime`` holds (``1767000000000.0``, year 57 970) is therefore **no
+    declaration at all**: dropped where it is read, never raised over.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+        datetime.fromtimestamp(number, tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+    return number
+
+
+def _manifest_starts(w: Workspace) -> dict[str, float]:
+    """The declared starts the workspace's manifest already holds, by source id.
+
+    This pass **rebuilds** the manifest from what it discovered, so a start an
+    operator declared by hand — or one an earlier pass read off a name — would be
+    dropped by the next pass, and ``run`` ingests every time: the documented flow
+    (declare, then run) has to survive it. What is carried over is keyed by id,
+    which is what the manifest names a source by, and only a start
+    :func:`_usable_start` accepts is carried: a value this pass cannot render is
+    dropped, not carried into a source or a sink line.
+
+    A manifest this pass cannot take a declaration out of declares nothing, and
+    that is not this pass's refusal: the pass has not been asked to *use* the
+    manifest, only not to lose what it says, so a broken one costs the record its
+    declarations and nothing else. **The shapes a hand-edit produces are exactly
+    what that has to cover** — an operator editing ``manifest.json`` to declare a
+    start is who this function is for — so every way the read can fail is named
+    here: bytes that cannot be read (``OSError``), bytes that are not JSON or not
+    a mapping (``ValueError``), a mapping with no ``sources`` key (``KeyError``),
+    a ``sources`` that is not a list or an entry without ``path`` or ``id``
+    (``TypeError``), an entry that is not a mapping at all (``AttributeError``,
+    which is also what iterating a plain string yields), and a ``start_s`` no
+    clock can render (:func:`_usable_start`).
+    """
+    try:
+        sources, _ = w.load_manifest()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+    starts: dict[str, float] = {}
+    for source in sources:
+        start = _usable_start(source.start_s)
+        # The id is an unhashable hand-edit too (a list, an object): it cannot key
+        # a mapping, so no id means no way to carry the declaration anywhere.
+        if start is not None and isinstance(source.id, str):
+            starts[source.id] = start
+    return starts
+
+
 #: One read block of the copy check below: a copy is compared as a stream, so a
 #: folder of long takes is never held in memory to compare them.
 _DIGEST_BLOCK = 1 << 20
@@ -441,6 +561,26 @@ def ingest(
     sink as folded into it (level ``warn``), before the bar opens. Which of a
     pair survives is discovery order, which the operator names files to control.
 
+    A recorder that splits one long capture into numbered files hands the pass
+    files that are *sequential*, not simultaneous. A name that states when the
+    part started (:func:`_declared_start`) declares it — reported as its own
+    line, level ``info``, saying what *this* pass did (it read the name) rather
+    than what ``align`` will do with it, which depends on the reference's own
+    declaration and on whether the two can overlap — and the start is carried
+    into the manifest as ``Source.start_s``. That is where it belongs: the
+    rotation seam between two parts is not sample-continuous, and consecutive
+    parts share no passage, so ``align`` places a declared pair from the
+    difference of the declarations rather than correlating two recordings that
+    never overlap. A name that states no start time (or only a date, or only
+    minutes) declares nothing, and that input is staged exactly as it was before.
+
+    A start the manifest **already** declares is not lost to this pass: the
+    manifest it rebuilds is read first, and a source whose name declares nothing
+    keeps the start that manifest held for its id (reported as ``keeps declared
+    start …``). An operator's own declaration, and the ``run`` that ingests
+    before it aligns, therefore survive the re-ingest. A manifest that cannot be
+    read declares nothing and is not this pass's refusal.
+
     Each input's decode line is reported on the sink (:func:`report_line`) as
     that decode begins — one line per decode, before normalizing that input, not
     batched after the pass — so a caller watching a long ingest sees every file
@@ -536,8 +676,48 @@ def ingest(
     # so every source gets a positional ``Speaker N`` (an explicit caller label
     # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
+    # The manifest this pass is about to rebuild, read first: a start already
+    # declared there (by an operator by hand, or by an earlier pass off a name) is
+    # part of the record, and a source whose name declares none keeps it.
+    carried = _manifest_starts(w)
+
+    def kept_line(sid: str, subject: str, start: float, number: int) -> None:
+        """Name a start this input **keeps** from the manifest (its name declared
+        none), where the source is the one it settled on."""
+        report_line(
+            w,
+            on_event,
+            Step.INGEST.value,
+            f"[ingest] {subject} keeps declared start {_stamp_text(start)}: "
+            f"declared in the manifest",
+            level="info",
+            source=sid,
+            index=number - 1,
+            total=len(files),
+        )
+
     for number, p in enumerate(files, start=1):
         base = _source_id(p, d)
+        # A recorder that splits one capture into numbered files writes the start
+        # time of each part into its name; that is the pass's only evidence that
+        # this input is a *slice of one session* rather than a device of its own,
+        # and the name is the honest place for the fact. What the line says is
+        # what this pass did — it read the name — and not what `align` will do
+        # with it: whether the reference declares a start, and whether the two
+        # can overlap, is not known here.
+        from_name = _declared_start(p)
+        if from_name is not None:
+            report_line(
+                w,
+                on_event,
+                Step.INGEST.value,
+                f"[ingest] {p.name} declares start {_stamp_text(from_name)} "
+                f"(from its filename): carried into the manifest",
+                level="info",
+                source=base,
+                index=number - 1,
+                total=len(files),
+            )
         advance_source = base
         nch = channel_count(p)
         do_split = (split == "split") or (split == "auto" and nch > 2)
@@ -545,9 +725,11 @@ def ingest(
             # One source per channel: this is the multi-mic meeting case, where
             # each speaker is nearest one channel and diarization is nearly free.
             for ch in range(nch):
-                sid = stage_id(
-                    f"{base}__ch{ch + 1}", f"{p.name} ch{ch + 1}/{nch}", number - 1
-                )
+                subject = f"{p.name} ch{ch + 1}/{nch}"
+                sid = stage_id(f"{base}__ch{ch + 1}", subject, number - 1)
+                declared = from_name if from_name is not None else carried.get(sid)
+                if from_name is None and declared is not None:
+                    kept_line(sid, subject, declared, number)
                 norm = audio_dir / f"{sid}.wav"
                 # The line announces this decode, where the pre-move CLI printed
                 # it: before normalizing that input, not batched after the pass.
@@ -567,10 +749,14 @@ def ingest(
                         path=str(norm),
                         label=f"Speaker {len(sources) + 1}",
                         clock_domain="wall",
+                        start_s=declared,
                     )
                 )
         else:
             sid = stage_id(base, p.name, number - 1)
+            declared = from_name if from_name is not None else carried.get(sid)
+            if from_name is None and declared is not None:
+                kept_line(sid, p.name, declared, number)
             advance_source = sid
             norm = audio_dir / f"{sid}.wav"
             report_line(
@@ -589,6 +775,7 @@ def ingest(
                     path=str(norm),
                     label=f"Speaker {len(sources) + 1}",
                     clock_domain="wall",
+                    start_s=declared,
                 )
             )
         closing = progress.advance(source=advance_source)

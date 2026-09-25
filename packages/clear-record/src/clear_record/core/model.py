@@ -25,6 +25,16 @@ class Source:
     clock_domain: str = "wall"
     sample_rate: int | None = None
     channels: int | None = None
+    # The recording's own **declared** start, in seconds, on the common timebase
+    # its name states (a recorder that splits one capture into numbered files
+    # writes the start time of each part into its name, and ``ingest`` reads it
+    # there). ``None`` means nothing declared a start and the source's offset has
+    # to be *estimated* from the audio. Of two sources that both declare one,
+    # ``align`` places the pair from the difference of the declarations when they
+    # cannot overlap or are further apart than its search band, lets the audio
+    # decide when they can overlap, and falls back to the declaration when the
+    # audio has no verdict.
+    start_s: float | None = None
 
 
 @dataclass(frozen=True)

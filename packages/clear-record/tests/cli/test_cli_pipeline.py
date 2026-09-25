@@ -1182,6 +1182,127 @@ def test_attribute_refuses_a_declaration_it_cannot_honour(tmp_path) -> None:
         stages.attribute(str(wd), mixed_source="nobody")
 
 
+def test_a_named_reference_stays_unnamed_in_the_record(tmp_path) -> None:
+    """Ticket 222: a source the caller names with ``--mixed-source`` is declared
+    not a speaker, and the declaration reaches the record, not only the pass.
+
+    ``attribute`` leaves a reference's own segments unnamed in ``segments.json``;
+    ``reconcile`` is what names an unnamed segment from its source's label, and a
+    source named for one pass carries no manifest role — so the pass records the
+    ids it was asked to gate with, and reconcile reads that declaration. Without
+    it the microphone's own label comes back, while the same workspace with the
+    source declared ``role: "mixed"`` in the manifest stays unnamed: the asymmetry
+    this pins. No audio is needed: an unreadable candidate is skipped, and the
+    labels the pass writes are the ones it was handed.
+    """
+    import json
+
+    from clear_record.core import Alignment, Segment, Source
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "named"
+    wd.mkdir()
+    Workspace.at(wd).write_manifest(
+        [
+            Source(id="room", path=str(wd / "room.wav"), label="Speaker 2"),
+            Source(id="lavA", path=str(wd / "lavA.wav"), label="Speaker 1"),
+        ],
+        Alignment(reference="lavA", offsets={"room": 0.0, "lavA": 0.0}, method="hand"),
+    )
+    Workspace.at(wd).write_segments(
+        {
+            "room": [Segment(0.0, 1.0, "room line", "room", "Speaker 2")],
+            "lavA": [Segment(2.0, 3.0, "lav line", "lavA", "Speaker 1")],
+        },
+        {"backend": "none", "model": "none"},
+    )
+
+    assert stages.attribute(str(wd), mixed_source="room").mixed_references == ("room",)
+
+    disk, meta = Workspace.at(wd).load_segments()
+    assert [seg.speaker for seg in disk["room"]] == [""], "the pass un-names it"
+
+    record = stages.reconcile(str(wd))
+    by_source = {seg.source: seg for seg in record.segments}
+    assert by_source["room"].speaker == "", "the one-off declaration reaches the record"
+    assert by_source["lavA"].speaker == "Speaker 1", "a candidate is untouched"
+    assert json.loads(Workspace.at(wd).segments_path.read_text(encoding="utf-8"))[
+        "meta"
+    ]["mixed_references"] == ["room"], "and the pass recorded what it was asked"
+
+
+def test_diarize_does_not_name_a_declared_non_candidate(tmp_path) -> None:
+    """Ticket 222: a room microphone's diarized clusters are not the record's
+    speakers.
+
+    ``diarize`` clusters **one source's own audio**, so the ``Speaker N`` it finds
+    belongs to that source's index, not to a person: read in the record it names a
+    speaker the microphone merely heard, and the microphone's first cluster
+    collides with the first candidate's label. A source the manifest does not
+    declare a candidate is therefore left exactly as it came in — ``attribute``,
+    which reads every candidate's mic in the segment's window, is the pass that may
+    name one — while the counts still say what the split found.
+    """
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 16000
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(sr, dtype=np.float64) / sr
+        return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+
+    wd = tmp_path / "room"
+    wd.mkdir()
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    voices = np.concatenate(seq)
+    voices /= np.max(np.abs(voices)) or 1.0
+    sf.write(str(wd / "roomMic.wav"), voices.astype(np.float32), sr)
+    _write_tone(wd / "lavA.wav")
+    stages.ingest(str(wd))
+
+    seeded = {
+        "roomMic": [
+            Segment(start=float(i), end=i + 1.0, text=f"u{i}", source="roomMic")
+            for i in range(4)
+        ],
+        "lavA": [Segment(start=10.0, end=11.0, text="u4", source="lavA")],
+    }
+    Workspace.at(wd).write_segments(seeded, {"backend": "none", "model": "none"})
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in data["sources"]:
+        entry["role"] = "mixed" if entry["id"] == "roomMic" else "candidate"
+    data["alignment"] = {
+        "reference": "lavA",
+        "offsets": {entry["id"]: 0.0 for entry in data["sources"]},
+        "method": "hand",
+        "confidence": 1.0,
+        "unresolved": [],
+    }
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    events: list = []
+    report = stages.diarize(str(wd), speakers=2, on_event=events.append)
+
+    facts = {fact.id: fact for fact in report.sources}
+    assert facts["roomMic"].speakers == 2, "the split is real; it just may not name"
+    assert all(seg.speaker == "" for seg in report.per_source["roomMic"])
+    # The pass says why it left them alone: the artifact alone cannot tell that
+    # from a source it found one speaker in.
+    line = next(e.message for e in events if e.source == "roomMic" and e.message)
+    assert line.startswith("[diarize] roomMic: 2 speaker(s) over 4 segment(s)")
+    assert "declared mixed" in line
+
+    record = stages.reconcile(str(wd))
+    room = [seg for seg in record.segments if seg.source == "roomMic"]
+    assert len(room) == 4
+    assert all(not seg.speaker for seg in room), "no cluster name reaches the record"
+    assert all(seg.speaker for seg in record.segments if seg.source == "lavA")
+
+
 def test_ingest_carries_a_hand_declared_role_forward(tmp_path) -> None:
     """`run` ingests every time, so a role written into ``manifest.json`` by hand
     has to survive the manifest ``ingest`` rebuilds — otherwise the documented

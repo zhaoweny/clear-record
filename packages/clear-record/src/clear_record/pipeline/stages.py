@@ -1347,6 +1347,14 @@ def diarize(
     labels collapse to one and are left as the source label). For a single mixed
     stream it is how you get `Speaker 1/2/…` in the record.
 
+    A source the manifest does not declare a candidate — the room microphone, the
+    duplicate feed (see :func:`_attribution_roles`) — is left exactly as it came
+    in: this pass clusters **one source's own audio**, so the ``Speaker N`` it finds
+    is that source's index rather than a person's name, and the record reads it as
+    a speaker the microphone merely heard (its first cluster collides with the
+    first candidate's label). `attribute`, which reads every candidate's mic in the
+    segment's window, is the pass that may name one.
+
     What the pass produced comes back as a :class:`DiarizeReport`: the segments
     with the labels it applied and, per source, the counts that source's line
     states, plus the decode failure that took a source out of the pass — the one
@@ -1384,18 +1392,21 @@ def diarize(
             audio, sr, [(s.start, s.end) for s in segs], n_speakers=speakers
         )
         n_found = len(set(labels))
-        if n_found > 1:
+        if n_found > 1 and src.role == "candidate":
             per_source[sid] = [
                 dataclasses.replace(s, speaker=f"Speaker {labels[i] + 1}")
                 for i, s in enumerate(segs)
             ]
             applied = True
         facts.append(DiarizedSource(id=sid, segments=len(segs), speakers=n_found))
+        note = (
+            "" if src.role == "candidate" else f" (declared {src.role}: left unnamed)"
+        )
         report_line(
             w,
             on_event,
             "diarize",
-            f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s)",
+            f"[diarize] {sid}: {n_found} speaker(s) over {len(segs)} segment(s){note}",
             source=sid,
             index=index,
             total=total,
@@ -1516,7 +1527,9 @@ def attribute(
     enters the pass **unnamed**, and that un-naming is a change the pass counts
     and writes: where no candidate carries its window it stays unnamed in
     ``segments.json`` too, instead of carrying a microphone's label into the
-    record.
+    record. The ids it was asked to gate with are recorded there as well, so
+    `reconcile` — which is what names an unnamed segment from its source's label —
+    honours a one-off declaration that is in no manifest role.
 
     Each count the summary reports is measured where the pass measures it — the
     pre-pass list, the before/after label diff, the labels it returned — and comes
@@ -1529,6 +1542,20 @@ def attribute(
     candidates, references = _attribution_roles(
         sources, _named_references(mixed_source)
     )
+    # What this pass was asked to gate with — the manifest's declared roles and the
+    # ids a caller named for this pass alone — goes into ``segments.json``'s meta,
+    # where `reconcile` reads it: a name the caller gives on one command line is in
+    # no manifest role, so the record would otherwise name every segment this pass
+    # left unnamed from the microphone's own label. The manifest's `role` is the
+    # durable form and needs nothing here; a pass asked to gate with nothing clears
+    # the key, and `transcribe` rewrites this file, so a declaration cannot outlive
+    # the labels it explains.
+    declared = [ref.id for ref in references]
+    recorded = _declined_references(meta)
+    if declared:
+        meta["mixed_references"] = declared
+    else:
+        meta.pop("mixed_references", None)
     # What the pass was handed, before anything it does to a label: `changed` is
     # the loaded-vs-returned diff, so a label this pass *removes* counts as a
     # change — and a change is what makes it write (below).
@@ -1580,8 +1607,10 @@ def attribute(
         # it only *removed*, or the file would keep a label the pass's own return
         # does not have and the artifact would name a microphone this pass refuses
         # to name. The windowed path also writes a confidence, so persist even if
-        # no label changed (otherwise the new confidence would be lost to reconcile).
-        if changed or window_s is not None:
+        # no label changed (otherwise the new confidence would be lost to reconcile)
+        # — and so does a declaration that differs from the recorded one, which is
+        # what carries a one-off reference to `reconcile` when nothing else changed.
+        if changed or window_s is not None or recorded != tuple(declared):
             w.write_segments(per_source, meta)
         speakers = {
             seg.speaker for segs in attributed.values() for seg in segs if seg.speaker
@@ -1657,8 +1686,24 @@ def glossary(
 _PREVIEW_LINES = 12
 
 
+def _declined_references(meta: dict) -> tuple[str, ...]:
+    """The one-off reference ids an `attribute` pass recorded, as the ids they are.
+
+    ``segments.json``'s meta is a hand-editable file like the manifest, so only a
+    list of strings is a declaration here: any other shape reads as none, the way
+    :func:`_manifest_starts` drops a start it cannot read. (An id that is no source
+    names no segment either way; the shape is what is guarded.)
+    """
+    value = meta.get("mixed_references")
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
 def _unname_non_candidates(
-    segments: Sequence[Segment], sources: Sequence[Source]
+    segments: Sequence[Segment],
+    sources: Sequence[Source],
+    declined: Sequence[str] = (),
 ) -> list[Segment]:
     """Leave a non-candidate source's own segments unnamed in the record.
 
@@ -1671,11 +1716,19 @@ def _unname_non_candidates(
     segment is left unnamed exactly as the attribution pass leaves it — the
     fallback is the one thing that could put a microphone's name back in.
 
+    ``declined`` is the pass's own one-off: the ids an `attribute` pass was asked
+    to gate with by name (``--mixed-source``), read from the declaration that pass
+    records in ``segments.json``'s meta. A caller naming one declares it for that
+    pass rather than in the manifest, so without the declaration here the fallback
+    would name every segment the pass left unnamed — the one-off's guarantee has to
+    hold in the record too.
+
     Only the source's **own** label is dropped, and only for its own segments: a
-    diarized speaker name that happens to match another source's label is that
-    speaker's, and a candidate's segments are untouched.
+    name the attribution pass judged from the candidates' own mics is that
+    speaker's — the diarizing pass leaves a non-candidate unnamed for exactly this
+    reason — and a candidate's segments are untouched.
     """
-    unnameable = {src.id for src in sources if src.role != "candidate"}
+    unnameable = {src.id for src in sources if src.role != "candidate"} | set(declined)
     if not unnameable:
         return list(segments)
     labels = source_speaker_names(sources)
@@ -1698,8 +1751,14 @@ def reconcile(
     progress.start()
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
+    # The one-off a pass was asked to gate with: the ids `attribute` declined are in
+    # this file's meta, because a name the caller gives for a single pass is in no
+    # manifest role, and the fallback `engine.reconcile` applies would otherwise
+    # name that source anyway. Read here so the pass's own declaration reaches the
+    # record it wrote the labels for.
+    declined = _declined_references(meta)
     segments = _unname_non_candidates(
-        reconcile_segments(per_source, alignment, sources), sources
+        reconcile_segments(per_source, alignment, sources), sources, declined
     )
     # What the pass could not place: a source with no alignment offset is left
     # out of the timeline. The alignment already named it in `unresolved`, but

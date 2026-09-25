@@ -8,8 +8,11 @@ provisioning (``prepare_model`` / ``download_ggml_model``) that ``service``
 reaches the providers through; ``calibration_report``, whose numbers the
 `calibrate` command writes into ``export/calibration.json``; and
 ``format_timestamp``, the one ``HH:MM:SS.mmm`` the Markdown serializer renders
-with the command surface's transcript preview — the SRT/VTT renderers go through
-``_srt_tc``, which writes the comma form.
+with the command surface's transcript preview — on the record's own reference
+clock, so a cue from before zero keeps its sign — while the SRT/VTT renderers go
+through ``_srt_tc``, which writes the comma form of a time on the *export*
+timeline: unsigned as the format is, it is translated by the pre-roll
+(``_cue_origin``) rather than clamped onto zero.
 
 A stage **returns** what it produced — the record, the artifact set, the report
 of what it did — and reports everything it has to say through the sink it is
@@ -1501,9 +1504,26 @@ def reconcile(
 
 
 def format_timestamp(seconds: float) -> str:
-    m, s = divmod(max(0.0, seconds), 60.0)
+    """``HH:MM:SS.mmm`` on the record's own (reference) clock.
+
+    The clock's zero is the reference source's start, and a source that began
+    *before* it — the phone started first, the ordinary case — has negative
+    reference times. The sign is part of the time: ``-00:01:54.365`` is a
+    pre-roll, and clamping it to ``00:00:00.000`` both states the wrong instant
+    and collapses the cue's span to nothing. Only the subtitle timecode, which
+    has no room for a minus, is translated instead (see ``_cue_origin``).
+
+    The time is rounded to the millisecond it prints before the sign is read, so
+    the last half-millisecond before zero is zero rather than a signed
+    ``-00:00:00.000`` — a sign that is not real, and one the subtitles would not
+    share — while a real sub-millisecond negative keeps its sign, rounded
+    (``-0.0006`` reads ``-00:00:00.001``).
+    """
+    total = round(seconds, 3)
+    sign = "-" if total < 0 else ""
+    m, s = divmod(abs(total), 60.0)
     h, m = divmod(int(m), 60)
-    return f"{h:02d}:{m:02d}:{s:06.3f}"
+    return f"{sign}{h:02d}:{m:02d}:{s:06.3f}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1590,27 +1610,59 @@ def _render_markdown(record: RecordDocument) -> str:
     return "\n".join(lines)
 
 
+def _cue_origin(record: RecordDocument) -> float:
+    """The time the subtitle timeline starts at: zero, or the pre-roll.
+
+    A subtitle timecode is unsigned — ``HH:MM:SS,mmm`` has no place for a minus
+    — so a cue before zero is neither rendered where it is nor clamped where it
+    does not fit: the renderers translate the whole timeline by this origin,
+    which keeps every cue's length and the distance between cues. Zero unless
+    the first cue *is* a pre-roll, so a record that already starts at or after
+    zero is exported at the times it holds. ``format_timestamp`` and
+    ``record.json`` keep the reference clock, where the pre-roll is visible as
+    what it is.
+    """
+    earliest = min((seg.start for seg in record.segments), default=0.0)
+    return min(earliest, 0.0)
+
+
 def _srt_tc(seconds: float) -> str:
-    ms = max(0.0, seconds)
-    h = int(ms // 3600)
-    m = int((ms % 3600) // 60)
-    s = ms % 60
+    """``HH:MM:SS,mmm`` — an unsigned timecode, so a time on the *export* timeline.
+
+    A negative time has no representation here and is refused rather than folded
+    onto ``00:00:00,000``: folding a pre-roll that way is what made its cues
+    zero-length. The renderers translate first (see ``_cue_origin``).
+
+    The time is rounded to the millisecond it prints, the rule
+    `format_timestamp` follows, so the two surfaces never disagree in the last
+    half-millisecond before zero — and a cue a hair short of a minute reads
+    ``00:01:00,000`` rather than ``00:00:60,000``, which is no timecode at all.
+    """
+    total = round(seconds, 3)
+    if total < 0.0:
+        raise ValueError(f"a subtitle timecode is unsigned, got {seconds}")
+    h = int(total // 3600)
+    m = int((total % 3600) // 60)
+    s = total % 60
     return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
 
 
 def _render_srt(record: RecordDocument) -> str:
+    origin = _cue_origin(record)
     blocks = []
     for i, seg in enumerate(record.segments, start=1):
-        blocks.append(f"{i}\n{_srt_tc(seg.start)} --> {_srt_tc(seg.end)}\n{seg.text}\n")
+        start, end = _srt_tc(seg.start - origin), _srt_tc(seg.end - origin)
+        blocks.append(f"{i}\n{start} --> {end}\n{seg.text}\n")
     return "\n".join(blocks)
 
 
 def _render_vtt(record: RecordDocument) -> str:
+    origin = _cue_origin(record)
     lines = ["WEBVTT", ""]
     for seg in record.segments:
-        lines.append(
-            f"{_srt_tc(seg.start).replace(',', '.')} --> {_srt_tc(seg.end).replace(',', '.')}"
-        )
+        start = _srt_tc(seg.start - origin).replace(",", ".")
+        end = _srt_tc(seg.end - origin).replace(",", ".")
+        lines.append(f"{start} --> {end}")
         lines.append(seg.text)
         lines.append("")
     return "\n".join(lines)

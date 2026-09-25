@@ -525,6 +525,133 @@ def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
     assert first_line == "# Record"
 
 
+def test_a_pre_roll_export_keeps_every_cue(tmp_path) -> None:
+    """A source started before the reference keeps its negative reference times,
+    and the exports say so rather than folding them onto 00:00:00.
+
+    `reconcile` shifts every source onto the reference clock, so a tape whose
+    phone was started first holds cues before zero (measured: -114.365 s on a
+    field tape). Both formatters clamped, so those cues came out as
+    `00:00:00.000 --> 00:00:00.000` — zero-length — and as
+    `[00:00:00.000-00:00:00.000]` headers. The text formats keep the clock, sign
+    and all; the subtitle timecode has no sign to carry, so its timeline is
+    translated by the pre-roll and every cue keeps its length.
+    """
+    import json
+
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(
+                Segment(
+                    start=-114.365,
+                    end=-112.0,
+                    text="before the clock",
+                    source="phone",
+                ),
+                Segment(start=1.0, end=3.5, text="after it", source="room"),
+            ),
+        )
+    )
+
+    written = stages.export(str(wd))
+
+    md = written["md"].read_text(encoding="utf-8")
+    assert "[-00:01:54.365–-00:01:52.000] phone" in md
+
+    srt = written["srt"].read_text(encoding="utf-8")
+    assert srt.splitlines()[:3] == [
+        "1",
+        "00:00:00,000 --> 00:00:02,365",
+        "before the clock",
+    ]
+    assert "00:00:00,000 --> 00:00:00,000" not in srt
+    assert "00:01:55,365 --> 00:01:57,865" in srt
+
+    vtt = written["vtt"].read_text(encoding="utf-8")
+    assert "00:00:00.000 --> 00:00:02.365" in vtt
+    assert "00:00:00.000 --> 00:00:00.000" not in vtt
+    assert "00:01:55.365 --> 00:01:57.865" in vtt
+
+    # The machine artifact keeps the record's own clock: the pre-roll is real.
+    exported = json.loads(written["json"].read_text(encoding="utf-8"))
+    assert exported["segments"][0]["start"] == -114.365
+
+
+def test_a_record_that_starts_after_zero_keeps_its_times(tmp_path) -> None:
+    """Only a pre-roll moves the subtitle timeline; a record whose first cue is
+    already at or after zero is exported at the times it holds."""
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=5.0, end=7.0, text="later", source="room"),),
+        )
+    )
+
+    written = stages.export(str(wd))
+    srt = written["srt"].read_text(encoding="utf-8")
+    md = written["md"].read_text(encoding="utf-8")
+
+    assert "00:00:05,000 --> 00:00:07,000" in srt
+    assert "[00:00:05.000–00:00:07.000] room" in md
+
+
+def test_a_time_just_before_zero_is_not_signed() -> None:
+    """The last half-millisecond before zero is zero, not a signed zero.
+
+    `reconcile` rounds to 4 decimals and the aligner's offsets are whole
+    samples, so a source placed one sample early whose first cue starts at local
+    0.0 lands on -0.0001 s: rendering that as ``-00:00:00.000`` would be a sign
+    that is not real, and one the subtitles' plain ``00:00:00,000`` would not
+    share. The sign comes from the millisecond the time prints as, so a *real*
+    sub-millisecond negative keeps it.
+    """
+    from clear_record.pipeline.stages import format_timestamp
+
+    assert format_timestamp(-0.0001) == "00:00:00.000"
+    assert format_timestamp(-0.0006) == "-00:00:00.001"
+
+
+def test_a_cue_a_hair_short_of_a_minute_reads_as_the_minute(tmp_path) -> None:
+    """``00:01:00,000``, not ``00:00:60,000`` — no player reads the latter.
+
+    The subtitle renderer rounds a cue to the millisecond it prints before
+    splitting it into fields, the same rule `format_timestamp` follows, so a
+    second past 59.9999 s carries into the minute on both surfaces instead of
+    leaving a timecode whose seconds field runs to 60.
+    """
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=59.9999, end=61.0, text="edge", source="a"),),
+        )
+    )
+
+    written = stages.export(str(wd))
+    srt = written["srt"].read_text(encoding="utf-8")
+
+    assert "00:01:00,000 --> 00:01:01,000" in srt
+    assert "00:00:60" not in srt
+
+
 def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     """A 4-channel meeting/DJI capture becomes four per-channel sources (auto),
     and `--mix-down` collapses it to one."""

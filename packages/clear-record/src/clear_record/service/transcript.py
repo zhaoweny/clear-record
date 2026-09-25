@@ -28,6 +28,17 @@ from clear_record.service.models import Meeting
 
 
 def _render(segments: list[Segment]) -> str:
+    """One ``HH:MM:SS.mmm [speaker] text`` line per segment.
+
+    A time is read as the page holds it, sign and all — never folded onto
+    ``00:00:00.000``, which is the fold that made a pre-roll's SRT/VTT cues
+    zero-length and its Markdown header a bare ``[00:00:00.000–00:00:00.000]``.
+    Which clock the page holds depends on it: ``read_transcript`` renders the
+    reconciled record on the reference clock, where a source started before the
+    reference reads ``-00:01:54.365``, or a not-yet-reconciled workspace's raw
+    per-source segments, whose times are each source's own — `reconcile` is what
+    shifts them onto the reference.
+    """
     return "\n".join(
         f"{format_timestamp(seg.start)} [{seg.speaker or seg.source}] {seg.text}"
         for seg in segments
@@ -41,7 +52,11 @@ class TranscriptSlice:
     ``source`` is ``"record"`` when the reconciled record was read and
     ``"transcript"`` for the raw per-source segments. ``next`` is the offset to
     pass for the following page, or ``None`` at the end; ``text`` is the
-    rendered page (one ``HH:MM:SS.mmm [speaker] text`` line per segment).
+    rendered page (one ``HH:MM:SS.mmm [speaker] text`` line per segment). Each
+    time is read as its page holds it, sign included, never folded onto
+    ``00:00:00.000``: the reconciled record's reference clock (a source started
+    before the reference reads ``-00:01:54.365``), or the raw fallback's
+    per-source clocks, which `reconcile` is what shifts onto the reference.
     """
 
     meeting_id: int

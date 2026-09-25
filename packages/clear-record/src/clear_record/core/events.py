@@ -1,17 +1,21 @@
-"""Structured progress events for the pipeline.
+"""The pipeline's one channel: structured progress events, and the words on them.
 
-A stage reports progress through an optional **sink**, and its own mid-stage
-lines travel the same way. With no sink attached a stage writes only its durable
-log: a line's text reaches stdout through the sink's optional ``line``
-capability, which the command surface attaches — so what a command prints is
-unchanged by whether a consumer is listening. The web/service consumer attaches
-a sink to drive a progress bar and an ETA, and a test attaches one to assert the
-sequence.
+A stage reports everything it has to say through an optional **sink**, and a
+:class:`JobEvent` carries both halves of it:
 
-The event shape is deliberately flat and small: a stage, an optional source, a
-1-based unit counter against a total, and the timing needed for an estimate.
-Unit kinds are stage-specific (files for ``ingest``, chunks for ``transcribe``)
-so a consumer renders one bar without knowing each stage's internals.
+- the **counters** — the stage, an optional source, a 1-based unit counter
+  against a total, and the timing needed for an estimate — which a consumer
+  renders as a bar and a rate. Unit kinds are stage-specific (files for
+  ``ingest``, chunks for ``transcribe``) so a consumer renders one bar without
+  knowing each stage's internals;
+- the **words** — ``message``, exactly the text the stage wants read: a
+  mid-stage line (``report_line``), a summary line, or a data item the pass
+  produced. A pure progress report carries none, so a client that prints every
+  non-empty message prints every word once, in the one order the stream has.
+
+With no sink attached a stage writes only its durable log. The web/service
+consumer attaches a sink to persist the same payload and drive a progress bar,
+and a test attaches one to assert the sequence.
 
 Vendor-free: stdlib only, like the rest of ``clear_record.core``.
 """
@@ -29,7 +33,7 @@ Level = Literal["info", "warn", "error"]
 
 @dataclasses.dataclass(frozen=True)
 class JobEvent:
-    """One progress report from a stage."""
+    """One report from a stage: its counters, and the words it has to say."""
 
     stage: str
     index: int = 0
@@ -97,15 +101,11 @@ class Progress:
         self._reused = 0
         self._lock = threading.Lock()
 
-    def start(self, message: str = "") -> None:
-        emit(
-            self.sink,
-            JobEvent(stage=self.stage, index=0, total=self.total, message=message),
-        )
+    def start(self) -> None:
+        """Open the stage: one report at 0 of ``total``, and no words."""
+        emit(self.sink, JobEvent(stage=self.stage, index=0, total=self.total))
 
-    def advance(
-        self, source: str | None = None, message: str = "", *, reused: bool = False
-    ) -> JobEvent:
+    def advance(self, source: str | None = None, *, reused: bool = False) -> JobEvent:
         """One completed unit; ``reused`` when the cache supplied it.
 
         The count is what a speed reading needs (see the class docstring): the
@@ -131,12 +131,11 @@ class Progress:
             done=done >= self.total,
             elapsed_s=round(elapsed, 3),
             eta_s=round(eta, 3) if eta is not None else None,
-            message=message,
         )
         emit(self.sink, event)
         return event
 
-    def finish(self, message: str = "") -> None:
+    def finish(self) -> None:
         """Emit one terminal event (for stages with no countable units)."""
         emit(
             self.sink,
@@ -146,7 +145,6 @@ class Progress:
                 total=self.total,
                 done=True,
                 elapsed_s=round(max(0.0, self._clock() - self._started), 3),
-                message=message,
             ),
         )
 

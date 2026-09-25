@@ -44,7 +44,7 @@ from typing import NoReturn
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from clear_record.pipeline import stages
-from clear_record.pipeline.workspace import Workspace
+from clear_record.pipeline.workspace import Workspace, discover_audio
 from clear_record.core import EventSink, JobEvent, PipelineOptions, RunCancelled
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
@@ -448,6 +448,16 @@ class RunSummary(Shape):
     progress through this, so a browser and an agent cannot be told different
     things about the same run. ``stage``/``index``/``total``/``eta_s`` come from
     the newest event and are ``None``/``0`` while the run has reported nothing.
+    ``terminal`` says whether the run has **ended** — derived from
+    :data:`~clear_record.service.lifecycle.TERMINAL_STATUSES`, never a second
+    list — so a reader that follows a run (the command line's ``run``) stops on
+    the lifecycle's own answer instead of spelling the states out again.
+    ``succeeded`` says whether it ended *well*: it is
+    :data:`~clear_record.service.lifecycle.FINISH`'s target, the one terminal
+    state that means the work happened, which is what a reader that promises a
+    record — ``[next] the record is in …`` — has to ask rather than compare a
+    status string itself. The two are derived, so the console, the API and a
+    client cannot read the same run's end differently.
     """
 
     run_id: int
@@ -459,6 +469,8 @@ class RunSummary(Shape):
     eta_s: float | None
     error: str | None
     position: int
+    terminal: bool
+    succeeded: bool
 
 
 @dataclasses.dataclass
@@ -493,7 +505,41 @@ class RunState:
             eta_s=last.eta_s if last else None,
             error=self.error,
             position=self.position,
+            terminal=self.status in TERMINAL_STATUSES,
+            succeeded=self.status == FINISH.target,
         )
+
+
+def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
+    """The meeting a run over workspace *directory* is a run of, tapes and all.
+
+    A run command's subject is a workspace **directory** (``clear-record run
+    <directory>``) and this node's subjects are meetings, so the two are brought
+    together here, once, rather than in the edge that happens to ask (ADR-0032's
+    facade): the meeting is the one registered for that workspace
+    (:meth:`~clear_record.service.store.Registry.meeting_for_workspace`), and its
+    **tapes become the audio the directory holds** — the files that workspace
+    holds are a run's inputs, re-read on every such run, which is what makes a
+    tape added since the last run part of the next one
+    (``pipeline.workspace.discover_audio``; a workspace's own output dirs are not
+    inputs). A directory that holds no audio keeps whatever tape set it had, and
+    a run with none is refused by :meth:`RunManager.start` the way any tape-less
+    meeting is.
+
+    The caller then enqueues this meeting through :meth:`RunManager.start` like
+    any other run: one queue, one claim, one registry row. A *path sent by a
+    client* means a path on **this node's** filesystem — the direction's open
+    addressing question, settled at the edge that takes one: only a client that
+    named the node itself may send a directory
+    (``web.app.start_workspace_run``), and a client elsewhere addresses a meeting
+    by its registry id. So this function is only ever reached with a path the
+    node can mean.
+    """
+    meeting = registry.meeting_for_workspace(directory)
+    tapes = [str(path) for path in discover_audio(Path(directory))]
+    if tapes:
+        registry.set_recording_set(meeting.id, tapes)
+    return meeting
 
 
 class RunManager:
@@ -511,13 +557,16 @@ class RunManager:
 
     The queue is **cross-process** (RUN-02): a queued run is claimed by one
     conditional update (:meth:`~clear_record.service.store.Registry.claim_run`),
-    so the console and an agent's MCP server can both write to the same registry
-    and exactly one of them executes a run — the CLI is not a third writer: it
-    runs the pipeline in-process (``cli.cli._cmd_run``) and writes no run row, so
-    the ``cli`` origin is recorded only for a run a CLI-shaped surface enqueues
-    through this service. The in-process pieces are a fast path, not the
-    guarantee: :attr:`_pending` saves re-reading what this process just wrote,
-    and :attr:`_live` says what this process is executing.
+    so every surface that writes to the same registry — the console, an agent's
+    MCP server **and the command line** — meets at one queue and exactly one of
+    them executes a run. The command line is a client of the node rather than a
+    second executor (ADR-0032): ``clear-record run`` asks the node for a run
+    (``POST /api/runs``, the node's ``start_workspace_run``) and follows the row
+    the node owns, so the ``cli`` origin is recorded for a run that really is the
+    node's.
+    The in-process pieces are a fast path, not the guarantee: :attr:`_pending`
+    saves re-reading what this process just wrote, and :attr:`_live` says what
+    this process is executing.
 
     An executing manager **beats** (:attr:`_heartbeat`), refreshing its run's
     liveness heartbeat, and reconciliation reads that beat together with the

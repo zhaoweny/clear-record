@@ -43,6 +43,13 @@ Design notes:
 - **No model, no credential.** No model or provider key is read, required or
   bundled: the harness brings its own, and this server never speaks to one
   (ADR-0031).
+- **The node is a neighbour, not a dependency.** The adapter is a client of the
+  *service*, not of the node's HTTP API: it opens the same registry in this
+  process, so its tools answer with or without a node running, and the only thing
+  it asks the node is whether it is there (:func:`node_line`). It starts no node —
+  neither at startup nor to satisfy a tool call — which is what makes the posture
+  it states to an agent (:data:`NODE_POSTURE`) true of the code behind it.
+  ADR-0032 keeps this server in process; ADR-0017's transport is unchanged.
 
 The server speaks **stdio** only (the client launches ``clear-record mcp`` as a
 subprocess); a network transport is deliberately out of scope for v1.
@@ -57,7 +64,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from clear_record.core import PipelineOptions
+from clear_record.core import PipelineOptions, node
 from clear_record.service import (
     TASK_KINDS,
     AgentDraftsOut,
@@ -95,6 +102,22 @@ from clear_record.service import (
 
 SERVER_NAME = "clear-record"
 
+#: What the adapter is relative to the node, stated for **both** cases at once —
+#: a node running, and none — because it is the same answer either way. Which case
+#: holds is the other half of the statement, the line :func:`node_line` names
+#: beside this one. Here rather than in a docstring because the agent reading
+#: ``INSTRUCTIONS`` is the one who needs it: an agent that took "no node is
+#: listening" for "these tools cannot work" would stop using a surface that is
+#: answering.
+NODE_POSTURE = (
+    "A clear-record node may or may not be running, and these tools answer the "
+    "same either way: they are the same service the node serves, in this process "
+    "— one registry, one run queue — rather than a client of the node's HTTP API. "
+    "A run started here is enqueued on that one queue, which the node and this "
+    "process both drain, so exactly one of them executes it and every surface "
+    "reads it back from the same registry. This adapter never starts a node."
+)
+
 INSTRUCTIONS = (
     "clear-record is a local-first transcription console. Use these tools to read "
     "and edit a project's glossary, manage its meetings and tape sets, keep the "
@@ -111,8 +134,28 @@ INSTRUCTIONS = (
     "credential. Recordings and model weights are local files; this server is a "
     "thin adapter over the same service the web console uses. For the glossary "
     "↔ transcript tuning loop you orchestrate: read the transcript, write "
-    "candidate terms as a draft, then re-run with intent."
+    "candidate terms as a draft, then re-run with intent.\n\n" + NODE_POSTURE
 )
+
+
+def node_line() -> str:
+    """Which case holds for the node, for the agent — the half that varies.
+
+    The adapter asks through the one node client
+    (:func:`clear_record.core.node.ask`): the recorded address, proved by one
+    request against it, or the sentence the surfaces state when nothing answers.
+    So this line answers *where* the node is; what that means for these
+    tools — that they answer either way, and that this adapter starts no node — is
+    :data:`NODE_POSTURE`, which the instructions carry whatever this line says.
+    English on purpose — the MCP surface is machine-read and is never translated
+    (``docs/i18n.md``), so a person's locale cannot leak into an agent's
+    instructions.
+    """
+    try:
+        address = node.ask()
+    except node.NoNodeError:
+        return node.NO_NODE_MESSAGE
+    return f"The clear-record node is listening at {address.url}"
 
 
 def _a_refused_row_is_a_tool_error(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -483,13 +526,16 @@ class ServiceTools:
 
     @_a_refused_row_is_a_tool_error
     def run_events(self, run_id: int, after: int = 0) -> RunEventPageOut:
-        """Read a run's progress events after a cursor.
+        """Read a run's stream after a cursor: its progress, and the words it reported.
 
         Pass the previous response's ``next`` as ``after`` to page forward without
-        re-reading. Events are the run's *persisted* stream, so a run an earlier
-        server process started replays here too (the live run is a queue claim,
-        not a copy of the stream: ``RunManager.state`` reads the registry's rows
-        and events on every call).
+        re-reading. Events are the run's *persisted* stream and carry both: a
+        stage's mid-stage lines, each pass's summary and the data items it
+        produced arrive as events whose ``message`` is the text, while a pure
+        progress report carries no message at all — so a run an earlier server
+        process started replays here too (the live run is a queue claim, not a
+        copy of the stream: ``RunManager.state`` reads the registry's rows and
+        events on every call).
         """
         state: RunState | None = self.manager.state(run_id)
         if state is None:
@@ -700,10 +746,23 @@ def build_server(
     manager: RunManager | None = None,
     *,
     name: str = SERVER_NAME,
+    node_note: str | None = None,
 ) -> MCPServer:
-    """Build the MCP server over an opened registry (inject a temp one in tests)."""
+    """Build the MCP server over an opened registry (inject a temp one in tests).
+
+    ``node_note`` is the line that states **which case holds** for the node — where
+    it answers, or that none does (:func:`node_line`; ``main`` passes it). The
+    adapter's own posture toward the node needs no note, because it is the same in
+    both cases and :data:`INSTRUCTIONS` already carries it. Omitted, the
+    instructions are the adapter's own text, which is what a test that constructs
+    the server directly wants: this adapter works over the service in process, with
+    a node or without one, and starts none either way.
+    """
     tools = ServiceTools(registry, manager)
-    server: MCPServer = MCPServer(name=name, instructions=INSTRUCTIONS)
+    instructions = (
+        INSTRUCTIONS if node_note is None else f"{INSTRUCTIONS}\n\n{node_note}"
+    )
+    server: MCPServer = MCPServer(name=name, instructions=instructions)
     for tool_name in TOOL_NAMES:
         server.add_tool(getattr(tools, tool_name))
     return server
@@ -711,13 +770,14 @@ def build_server(
 
 def main(*, data_dir: str | None = None) -> int:
     """Open the registry and serve over stdio until the client disconnects."""
-    server = build_server(Registry.open(data_dir=data_dir))
+    server = build_server(Registry.open(data_dir=data_dir), node_note=node_line())
     server.run(transport="stdio")
     return 0
 
 
 __all__ = [
     "INSTRUCTIONS",
+    "NODE_POSTURE",
     "SERVER_NAME",
     "TOOL_NAMES",
     "RunEventPageOut",
@@ -726,4 +786,5 @@ __all__ = [
     "ServiceTools",
     "build_server",
     "main",
+    "node_line",
 ]

@@ -6,7 +6,7 @@ Date: 2026-09-14
 - Superseded in part by [ADR-0016](0016-app-shell-htmx-tray-pi-agent.md)
   (2026-09-14): the console is now server-rendered htmx/Alpine with **package-data
   templates and vendored static assets**, not embedded Python string assets, and
-  there is a PySide6 `tray` surface beside `web`.
+  there is a PySide6 `tray` supervisor beside `web`.
 - Superseded in part by [ADR-0022](0022-adopt-click.md) and
   [ADR-0025](0025-platformdirs.md): the base dist also carries `click` and
   `platformdirs`, not `numpy` + `soundfile` alone. (ADR-0031 removed the

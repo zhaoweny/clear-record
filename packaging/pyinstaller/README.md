@@ -73,8 +73,9 @@ The app is a **console**, not an offline bundle of models.
 
 The windowed app has no terminal, so the console's page carries a **Quit**
 button that asks the local server to stop (`POST /api/shutdown`), and the tray's
-menu has a **Quit** item that stops the server and exits. Closing the browser
-tab does not stop the server.
+menu has a **Quit** item that exits, stopping the node this tray started — a
+node it only joined is left running. Closing the browser tab does not stop the
+server.
 
 ## Adding an icon later
 

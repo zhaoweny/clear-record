@@ -414,12 +414,12 @@ def test_merge_chunk_segments_dedupes_by_coverage() -> None:
         assert earlier.end <= later.start + 1e-9
 
 
-def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
+def test_align_reports_unresolved_source(tmp_path) -> None:
     """`align` names the sources it could not place instead of silently
     recording a fake zero offset."""
     import dataclasses
 
-    from clear_record.cli import cli
+    from clear_record.core import JobEvent
     from clear_record.pipeline.workspace import Workspace
 
     wd = _workspace(tmp_path)
@@ -430,12 +430,14 @@ def test_align_reports_unresolved_source(tmp_path, capsys) -> None:
     ]
     Workspace.at(wd).write_manifest(broken)
 
-    alignment = stages.align(wd)
+    events: list[JobEvent] = []
+    alignment = stages.align(wd, on_event=events.append)
     assert "b" in alignment.unresolved
-    # The stage returns what it found; naming it on the terminal is the command
-    # surface's rendering (and the pin for its bytes is the stdout golden).
-    cli._render_align(alignment, Workspace.at(wd))
-    assert "UNRESOLVED" in capsys.readouterr().out
+    # The stage reports what it found on its own channel — the same line the
+    # command surface prints — and returns the typed alignment beside it.
+    assert "  b                        UNRESOLVED (could not place this source)" in [
+        event.message for event in events
+    ]
 
 
 def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
@@ -466,7 +468,7 @@ def test_run_attribute_energy_selects_energy_path(tmp_path, monkeypatch) -> None
     wd = _workspace(tmp_path)
     calls = {"attribute": 0, "diarize": 0}
 
-    def spy_attribute(directory, mixed_source=None, window_s=None):
+    def spy_attribute(directory, mixed_source=None, window_s=None, *, on_event=None):
         calls["attribute"] += 1
         return stages.AttributeReport(per_source={}, segments=0, speakers=0, changed=0)
 

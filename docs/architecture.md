@@ -369,7 +369,9 @@ runnable, and the **project console** is built on top of it:
   and the injected adapters (ADR-0030).
 - `clear_record.tray` — a **PySide6** system-tray supervisor / desktop entry
   point (open / status / quit) over a Qt-free `ServiceController` (extra:
-  `tray`) (ADR-0016).
+  `tray`) (ADR-0016). It is a **client of a node that may already exist**: the
+  recorded one is joined, and a node is started (on the tray's own thread) only
+  when nothing answers.
 - `clear_record.mcp` — the **agent boundary**: the service exposed as stdio MCP
   tools (projects, glossary, meetings, runs, artifacts, drafts), holding no
   credential of its own, with no harness entering the core (extra: `agents`)
@@ -377,6 +379,71 @@ runnable, and the **project console** is built on top of it:
 - Packaging on top of the wheel: a **PyInstaller** desktop build
   (`clear-record-web` / `clear-record.app`, unsigned, no bundled weights) and a
   deferred Flatpak story (ADR-0014, ADR-0015).
+
+**The surfaces share one recorded address.** A node — `clear-record serve`,
+`clear-record web` or the tray — writes the address it actually *bound* into
+the app-owned state directory (`core.paths.node_address_path`, ADR-0025) as soon
+as its socket is listening, and clears it when it stops. The surfaces — the
+command line, the console, the MCP adapter and the tray — resolve that one file
+through `clear_record.core.node`: the command line, the MCP adapter and the tray
+complete a request against the address it names, and the console answers with it
+in process. The tray therefore **attaches**: a node already up is the node it
+becomes a client of, and only when nothing answers does it start one — on its own
+thread, publishing the record like any other posture and probing the socket that
+node bound. A node the tray only joined is not its to stop or restart, and its
+status line is that node's health either way. Nothing scans a port range, and a
+port the node did not choose itself (`--port 0`) is recorded as the port its
+socket holds. An absent record, and a record nothing answers, are the
+**same** one sentence from the command line, the console and the MCP adapter
+(`node.NO_NODE_MESSAGE`) — never a hang, and never a different error per surface.
+`DEFAULT_HOST`/`DEFAULT_PORT` are declared once, there.
+
+| Who asks | How it asks where the node is | Where it stands |
+|---|---|---|
+| command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
+| console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
+| tray | the record, proved by one request — the attach path the command line takes | a client of the node it found; it starts one only when none answers, and stops or restarts only that one |
+| MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017), with no path that starts a node |
+
+The console stays an **in-process backend-for-frontend** rather than becoming a
+channel client (ADR-0032): which process owns the operations is the question, and
+answering it does not mean inserting an HTTP hop inside one process.
+
+**Four verbs are not facades: their subject is the machine you run them on.**
+`synth` (it generates, on your machine, the fixture the pipeline consumes),
+`backends` (it probes *this* machine's backends), `bench` and `diagnose` are
+**machine-local** — under a facade the backend probe would silently answer about
+the node's machine instead of yours, which is a change to what its answer is
+*about* rather than a refactor. So the boundary is stated where a reader meets
+each verb: the group appends `cli.MACHINE_LOCAL_NOTE` to every verb in
+`cli.MACHINE_LOCAL_VERBS`, so a verb contributed through an entry point states it
+too, and the probe's report opens by naming the machine it ran on.
+`tests/cli/test_machine_local_verbs.py` fails if any of the four gains a path
+through the node.
+
+**A client names what it wants by a path or by a registry id, and only the first
+is local.** A **path** — a run's workspace directory, a meeting's
+`workspace_path`, a tape's files, an archive root (one a call hands over, or one
+a project keeps) — names a location on *the node's* filesystem, so the
+machine-facing JSON routes take one only from a request that named the node
+**itself**: its loopback, or the very address it is listening on (the address the
+section above records and every surface dials). A client that reached the node
+through a name an operator published for it is a client elsewhere, and is answered
+with **one sentence** naming the rule and, per case, the registry-addressed or
+node-decided shape that replaces it (`POST /api/meetings/{id}/runs`, an upload
+into a managed workspace, `managed: true`, or simply omitting the root or the
+glossary) rather than having a path of its own — or a same-named file on the
+node — acted on.
+Everything the registry owns is named by its id, and that is the route a remote
+client uses. The **console is not that edge**: its `/ui/*` forms are the node's
+own in-process face, so a visitor reaching the console through a proxy may still
+type a path there; the meeting's storage panel shows back the path the node resolved. A
+**model** is named neither way: it must already be on the node that runs the work,
+so a run request carries a name the node's models directory resolves
+(`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are
+stated where a client author meets them — the request shapes and route
+descriptions the OpenAPI schema publishes at `/api/docs`, the `run` command's
+help, and README — and enforced at the edge (ADR-0032's 2026-09-25 Update).
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI** is

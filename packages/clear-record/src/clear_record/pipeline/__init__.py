@@ -29,5 +29,7 @@ subcommand surface and ``run``'s dispatch derive from — while executing a stag
 needs a workspace, a provider and an event sink. Its consumers reach it as a
 layer, not through the command surface: ``clear_record.service`` drives
 ``run``/``transcribe`` here directly, and the CLI's own commands are the thin
-per-command wrappers over these stages.
+per-command wrappers over these stages — all but ``run``, which a command-line
+run hands to the **node** instead (ADR-0032): ``cli/runs.py`` submits the run and
+follows it, and the node is what executes these stages.
 """

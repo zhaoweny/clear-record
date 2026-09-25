@@ -59,6 +59,9 @@ from clear_record.core.i18n import tr
 APP = "clear-record"
 REGISTRY_FILENAME = "registry.sqlite3"
 CONFIG_FILENAME = "config.toml"
+#: File under the state dir that records the running node's address, so every
+#: surface reaches it instead of scanning for a port (:mod:`clear_record.core.node`).
+NODE_FILENAME = "node.json"
 #: Directory under the data dir that holds a managed meeting's workspace
 #: (ADR-0024). Kept here so the layout has one owner.
 WORKSPACES_DIRNAME = "workspaces"
@@ -297,6 +300,15 @@ def resolve_state_dir(explicit: str | os.PathLike | None = None) -> Path:
     )
 
 
+def node_address_path() -> Path:
+    """The file where a running node records its address (may not exist).
+
+    One path for the writer and the readers — the command line, the console, the
+    MCP adapter and the tray — so no surface guesses a port.
+    """
+    return resolve_state_dir() / NODE_FILENAME
+
+
 def resolve_cache_dir(explicit: str | os.PathLike | None = None) -> Path:
     """Resolve the app-owned *cache* directory (the chunk cache root, ADR-0007)."""
     dirs = _dirs()
@@ -387,11 +399,13 @@ __all__ = [
     "ENV_STATE_DIR",
     "ENV_WORKSPACE_ROOT",
     "MODELS_DIRNAME",
+    "NODE_FILENAME",
     "REGISTRY_FILENAME",
     "WORKSPACES_DIRNAME",
     "config_path",
     "install_defaults",
     "install_models_recognizer",
+    "node_address_path",
     "registry_path",
     "resolve_cache_dir",
     "resolve_config_dir",

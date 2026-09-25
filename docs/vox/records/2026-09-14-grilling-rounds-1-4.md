@@ -1,6 +1,6 @@
 # Open-question grilling, rounds 1–4 — owner-voice record (2026-09-14)
 
-Status: In force as answered; each answer's scoped consequence lives in an ADR named inline.
+Status: In force as answered, except the 2026-09-14 `serve` + `mcp` CLI decision, superseded by ADR-0032 (annotated in place); each answer's scoped consequence lives in an ADR named inline.
 Moved here verbatim from `docs/vox/voice-of-owner.md` on 2026-09-21: no wording changed — the entry
 keeps the standing positions and the index, and each section below keeps its own date.
 
@@ -25,7 +25,12 @@ scoped consequences live in the trackers and ADRs; this is the intent record.
 - [DECISION] **Apple-native first; Windows-native deferred** (the MSIX +
   `systemAIModels` requirement collides with the PyInstaller app).
 - [DECISION] The service CLI stays **`serve` + `mcp`**; a read-only convenience
-  CLI is deferred.
+  CLI is deferred. *(Superseded 2026-09-24 by
+  [ADR-0032](../../adr/0032-the-node-and-its-clients.md): the owner
+  chose a server-centric move on 2026-09-21, with the command line as a **facade of
+  the server** — the words are in
+  [`2026-09-21-node-and-clients.md`](2026-09-21-node-and-clients.md), and the
+  direction's spec is the tracker's `architecture` lane.)*
 - [DECISION] **Push** `main` + `releases/v0.1.x` upstream.
 - [DECISION] **Ship the macOS app unsigned**, keeping the documented Gatekeeper
   workaround (no Apple Developer Program spend).

@@ -425,3 +425,34 @@ def test_a_queued_row_names_no_machine(tmp_path) -> None:
 
     assert "run-owner.example" in live
     assert "run-owner.example" not in waiting
+
+
+def test_the_row_shows_the_newest_events_own_text(tmp_path) -> None:
+    """The row's text comes off the same event as its stage and its counters.
+
+    A run's stream carries both halves — the counters a bar and a rate read, and
+    the words a stage reported — so the row reads one event for the whole row:
+    the text it shows is the newest report's own, the same payload the command
+    line's follower prints from, never a second source of its own.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    client = _console(registry)
+    run = _seeded_running(registry, index=3, reused=0, elapsed_s=36.0)
+    registry.add_run_event(
+        run.id,
+        JobEvent(
+            stage="transcribe",
+            index=3,
+            total=240,
+            elapsed_s=36.0,
+            source="a",
+            message="[transcribe]   a chunk 3/240: 12 segment(s)",
+        ),
+    )
+
+    page = client.get("/activity").text
+    row = next(
+        part for part in page.split('class="run status-') if f"#{run.id}</span>" in part
+    )
+
+    assert "[transcribe]   a chunk 3/240: 12 segment(s)" in row

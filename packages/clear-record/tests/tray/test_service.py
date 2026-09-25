@@ -3,6 +3,12 @@
 No Qt and no display — this is the part worth testing. The two awkward paths
 are driven with stubs instead of sleeps: a shutdown that outlasts the join
 timeout, and a health route that answers with a redirect.
+
+What the tray *is* is the other half of that: a client of a node that may already
+exist. So the tests below drive both postures — one it started, and one it only
+**joined** where the record says a node answers — with the same attention, because
+"no second node is started" and "the status is the node's health" are contracts
+about a controller that runs no server of its own.
 """
 
 from __future__ import annotations
@@ -12,6 +18,10 @@ import socket
 import threading
 import urllib.request
 
+import pytest
+
+from clear_record.core import node
+from clear_record.tray.app import status_text
 from clear_record.tray.service import ServiceController, ServiceState
 
 
@@ -19,6 +29,60 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+class _Node(http.server.BaseHTTPRequestHandler):
+    """A listener that answers the node's health path exactly as a node does."""
+
+    def do_GET(self) -> None:
+        if self.path != "/api/health":
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = b'{"status":"ok","registry":"registry.sqlite3"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass  # keep the test output quiet
+
+
+class _AnsweringNode:
+    """A node that is already there: recorded where surfaces resolve it, no child here.
+
+    The case :meth:`ServiceController.start` attaches to. A real ``serve`` posture
+    would be more machinery for the same three facts this stub carries — the
+    record, one request against it, one health answer — and that posture is what
+    ``tests/test_node_address.py`` drives.
+    """
+
+    def __init__(self) -> None:
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Node)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="answering-node", daemon=True
+        )
+        self._thread.start()
+        self.address = node.NodeAddress.of("127.0.0.1", self._server.server_address[1])
+        node.record(self.address)
+
+    def stop(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(5)
+
+
+@pytest.fixture
+def answering_node():
+    """A node already listening where the record says, for the whole test."""
+    joined = _AnsweringNode()
+    try:
+        yield joined
+    finally:
+        joined.stop()
+        node.forget()
 
 
 class _StubbornThread:
@@ -177,3 +241,121 @@ def test_a_redirect_is_not_a_healthy_server(tmp_path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(5)
+
+
+def test_start_joins_the_node_that_answers_instead_of_starting_a_second(
+    tmp_path, answering_node
+) -> None:
+    """A node already up is the node this tray serves; it starts none of its own.
+
+    The controller is given a free port of its own — and a tray that bound it would
+    publish a second address on the machine, so the record is what says which node
+    this is. Everything it reports is then *that* node's: its address, its URL, its
+    health, and no thread here at all.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
+    controller.start()
+    try:
+        assert node.ask() == answering_node.address, "the record still names that node"
+        assert controller.address == answering_node.address
+        assert controller.url == answering_node.address.url
+        assert controller.state() is ServiceState.RUNNING
+        assert controller.supervises is False, "the tray started no node"
+        assert controller.running is False, "... and runs no server of its own"
+    finally:
+        assert controller.stop(timeout=15) is True
+    assert node.ask() == answering_node.address, "quitting left it running"
+
+
+def test_the_status_follows_the_node_it_joined_not_a_thread_of_its_own(
+    tmp_path, answering_node
+) -> None:
+    """The status line is the node's health — a joined node has no child to read.
+
+    A status decided by this process's thread would call a node that *is*
+    answering "stopped", and would keep saying "running" after that node went
+    away. Both readings are the node's own answer, which is the same question
+    whether the tray started it or joined it.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
+    controller.start()
+    try:
+        assert status_text(controller) == f"Running at {answering_node.address.url}"
+        answering_node.stop()
+        assert not controller.healthy()
+        assert controller.state() is ServiceState.UNREACHABLE
+        assert status_text(controller) == "Not responding"
+    finally:
+        assert controller.stop(timeout=15) is True
+
+
+def test_a_node_the_tray_only_joined_is_not_stopped_or_restarted_here(
+    tmp_path, answering_node
+) -> None:
+    """A node the user started is not this tray's to stop: quitting leaves it up.
+
+    ``restart`` answers ``False`` and starts nothing — the node is restarted by
+    whoever runs it, and a second node is what the join avoids.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
+    controller.start()
+    try:
+        assert controller.restart() is False, "the node is not this tray's to restart"
+        assert controller.supervises is False
+        assert controller.running is False
+        assert node.ask() == answering_node.address, "and it was left alone"
+    finally:
+        assert controller.stop(timeout=15) is True
+    assert node.ask() == answering_node.address, "quitting left it running"
+
+
+def test_a_tray_that_joined_a_node_that_stopped_can_start_one_again(
+    tmp_path, answering_node
+) -> None:
+    """The way back for a tray whose joined node went away is a **click**, not the tick.
+
+    Once the node the tray joined stops, the tray is a client of nothing, and
+    ``restart`` — the owner's act — still answers ``False``. So the item it offers
+    has to be able to start a node of its own, exactly as ``start`` does,
+    re-reading the record; otherwise the tray is a dead handle until relaunched.
+    The item is offered in that state and takes the user's click as the ask: the
+    poll tick only reads, so nothing starts on its own.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
+    controller.start()
+    try:
+        assert controller.supervises is False, "the tray joined that node"
+        answering_node.stop()
+        assert controller.state() is ServiceState.UNREACHABLE
+        assert controller.restart() is False, "restart stays the owner's act"
+        assert controller.offers_restart() is True, "but the item must be offered"
+        assert controller.restart_or_start(timeout=15), "the click did not start one"
+        assert controller.supervises is True, "the tray now owns a node"
+        assert controller.state() is ServiceState.RUNNING
+    finally:
+        assert controller.stop(timeout=15) is True
+
+
+def test_the_status_line_and_the_restart_offer_share_one_live_read(
+    tmp_path, monkeypatch
+) -> None:
+    """One poll tick reads the node's health once, and both readers use that read.
+
+    The tick shows the status line and decides whether to offer a restart from the
+    same live state; were each to read the node again, a node that accepts but does
+    not answer would cost the whole poll interval twice. A pre-read ``state``
+    therefore reaches both consumers without a second probe.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
+    reads: list[ServiceState] = []
+
+    def counted() -> ServiceState:
+        reads.append(ServiceState.UNREACHABLE)
+        return ServiceState.UNREACHABLE
+
+    monkeypatch.setattr(controller, "state", counted)
+
+    live = controller.state()  # what refresh reads once
+    assert status_text(controller, state=live) == "Not responding"
+    assert controller.offers_restart(state=live) is True
+    assert len(reads) == 1, "a reader probed the node again"

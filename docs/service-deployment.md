@@ -101,6 +101,12 @@ environment at delivery time — put it in an `EnvironmentFile=` with mode
 store (research note §1.4). Readiness can be polled from `ExecStartPost=` at
 `GET /api/health`.
 
+No service manager? `clear-record serve --supervise` is the stand-in: the node
+keeps **itself** up — a server that stops without being asked is started again
+over the same registry, after a short pause — while an asked-for stop
+(`POST /api/shutdown`) or a signal ends it exactly as it does an unsupervised
+node. No unit file and no root: just the command.
+
 ### macOS (launchd agent)
 
 [FACT] Launch**Agents** run in the user's GUI session and stop on logout; a
@@ -204,6 +210,33 @@ global "disable the guard" switch: the hatch stays explicit and minimal, and
 loopback keeps working regardless. Set it to every hostname you serve the
 console on; a stock install leaves it unset and trusts loopback only.
 
+[DESIGN] The name a request carries does a second job since ADR-0032's facade
+landed: the node's **machine-facing** edge reads it to tell a client on this
+machine from one that came in through your proxy. A request counts as local only
+when it named the node **itself** — a loopback name, or the address the node is
+listening on — and only such a client may name a **path** for the node to resolve
+through the JSON API: a run's workspace directory, a meeting's `workspace_path`, a
+tape's files, an archive root (one it hands over, or one it sets on a project).
+A visitor arriving through `CR_TRUSTED_HOSTS` gets one sentence from the **JSON
+API** and the shape to reach for instead, rather than having a path of its own —
+or a same-named file on the node — acted on. Note what "the address the node is
+listening on" costs: `Host` says which name was addressed and never where the
+client sits, so if you bind the node to a named address and trust that name, a
+client dialling it from the network is treated as local too — your choice of bind
+and trust is what admits it, and the bind stays loopback-only by default for
+exactly this reason. Two boundaries worth being clear about:
+
+- **The console is not that edge.** The `/ui/*` pages and forms are the node's
+  own in-process face (ADR-0032), so they are not guarded: a visitor who reaches
+  the console through your proxy can still type a path in its forms, and that path
+  is a folder **on the node**; the console shows back the path the node resolved.
+  The refusal belongs to the JSON API, the surface where a program names what it
+  wants.
+- **Forward the original `Host`.** Caddy and Tailscale Serve do; nginx does with
+  `$host` and does **not** with `$proxy_host`. Rewriting it to a loopback name
+  would make every visitor look local, and a path typed on another machine would
+  then be resolved here.
+
 ## 3. Front it with a proxy
 
 ### nginx (`auth_basic`)
@@ -220,16 +253,23 @@ server {
         auth_basic_user_file /etc/nginx/clear-record.htpasswd;
 
         proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host 127.0.0.1:8765;   # the guard's loopback default
+        proxy_set_header Host $host;   # the name the browser used — do not rewrite
     }
 }
 ```
 
 Create the password file with `htpasswd -c /etc/nginx/clear-record.htpasswd you`.
-nginx's default upstream `Host` (`$proxy_host`) is already `127.0.0.1:8765`, but
-being explicit documents the intent. You still need
-`CR_TRUSTED_HOSTS=console.example.com` on the service, because the browser's
-`Origin` is the public name. This is HTTP Basic auth: use TLS, and treat the
+Be explicit that `Host` is passed through: **do not** rewrite it to
+`127.0.0.1:8765`. The node reads the name the client addressed to tell a client on
+its machine from one that came in through this proxy: a name that is the node's
+own (its loopback, or the address it listens on) is what lets a client name a
+**path** for the node to resolve through the JSON API — a run's workspace
+directory, a tape, an archive root (ADR-0032) — while a client arriving through
+this proxy is told, in one sentence, to address work the registry's way instead.
+Rewriting `Host` would make every visitor look local, and a path typed on another
+machine would then be resolved here. `CR_TRUSTED_HOSTS=console.example.com` is
+required either way: `Host` is a name the guard must trust, and the browser's
+`Origin` is the public name too. This is HTTP Basic auth: use TLS, and treat the
 password as the only barrier between the internet and a console with no
 accounts of its own.
 
@@ -381,7 +421,10 @@ workspace exactly as it would over a `--dir` one — an uploaded tape is added t
 the meeting's tape set like a path is, so runs, archiving and the MCP surface
 need no new plumbing ([ADR-0024](adr/0024-managed-workspace-tape-upload.md)).
 ADR-0007 is amended only here: a `--dir` workspace and a meeting's user-chosen
-`workspace_path` stay user documents.
+`workspace_path` stay user documents — about **where the files live**. Since
+[ADR-0032](adr/0032-the-node-and-its-clients.md) that is not the whole story
+about a **run**: `clear-record run` starts a run the node owns and records, so a
+run over a workspace writes a registry row and a client needs a node to talk to.
 
 ### The managed root
 
@@ -479,13 +522,15 @@ console process's memory:
 - **The active-run guard is read from the registry**, so a stale `running` row
   can no longer be silently doubled by a second start.
 
-[FACT, repo] Every writer shares **one queue**. The console and the agent's MCP
-server both enqueue into the same registry FIFO, and the move from `queued` to
-`running` is **one conditional update**, so exactly one of them executes a run:
-a second claimant loses cleanly and goes back to waiting, and a run the node is
-already busy with is not claimable at all. Each run records the **origin** it was
-started from — `console`, `api`, `mcp` or `cli` — so the row itself says where
-the work came from.
+[FACT, repo] Every writer shares **one queue**. The console, the agent's MCP
+server and the command line all enqueue into the same registry FIFO — `clear-record
+run` is a client of the node (ADR-0032), so it starts its run there instead of
+running the pipeline in its own process — and the move from `queued` to `running`
+is **one conditional update**, so exactly one of them executes a run: a second
+claimant loses cleanly and goes back to waiting, and a run the node is already
+busy with is not claimable at all. Each run records the **origin** it was started
+from — `console`, `api`, `mcp` or `cli` — so the row itself says where the work
+came from.
 
 [DESIGN] The node runs **one pipeline run at a time** — a persisted FIFO queue
 in the registry. Starting a run while another is executing **enqueues** it and

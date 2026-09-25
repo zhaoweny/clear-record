@@ -516,14 +516,14 @@ def report_line(
     that text: ``JobEvent`` is one of the frozen boundary dataclasses of ADR-0030,
     so no field is added to it for them.
 
-    Two copies beyond the event:
+    Beyond the event there is one durable copy, and no second channel:
 
     - the workspace's durable ``transcribe.log`` (``Workspace.log``), always;
-    - the text itself, offered to a sink that asks for it through the optional
-      ``line`` capability — the same optional-capability seam
-      ``run_cancel_signal`` reads a sink's ``signal`` through. That is how the
-      command surface prints the line when it happens; a sink without it (the
-      console's, a test's) still has the event.
+    - **the event is the only channel**: ``message`` is the line, so a consumer
+      that prints every non-empty ``message`` prints this line exactly once, and
+      a client reading the run's stream over the API reads the same text the
+      command surface prints — there is no capability to attach beside it, and a
+      sink that wants the words reads them off the event.
     """
     workspace.log(message)
     if report is None:
@@ -541,9 +541,6 @@ def report_line(
             report, stage=stage, level=level, source=source, message=message
         )
     emit(sink, line)
-    print_line = getattr(sink, "line", None)
-    if print_line is not None:
-        print_line(message)
 
 
 __all__ = [

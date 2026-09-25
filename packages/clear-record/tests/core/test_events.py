@@ -74,7 +74,7 @@ def test_finish_marks_a_stageless_run_done() -> None:
     events: list[JobEvent] = []
     progress = Progress("transcribe", 0, events.append, clock=_Clock())
     progress.start()
-    progress.finish("nothing to do")
+    progress.finish()
     assert events[-1].done
     assert events[-1].index == 0 and events[-1].total == 0
 

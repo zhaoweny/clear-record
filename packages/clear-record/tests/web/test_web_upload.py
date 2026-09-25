@@ -27,7 +27,14 @@ def _managed_root(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
-    return TestClient(create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")))
+    # A client **on the node's machine**: it addresses the loopback a node binds
+    # (``core.node``), which is what lets it name a ``workspace_path`` (ADR-0032;
+    # the suite's default ``testserver`` client is a *proxied* one, and is refused
+    # a path — see ``test_web_naming.py``).
+    return TestClient(
+        create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
+        base_url="http://127.0.0.1:8765",
+    )
 
 
 def _managed_meeting(client: TestClient, title: str = "Kickoff") -> dict:

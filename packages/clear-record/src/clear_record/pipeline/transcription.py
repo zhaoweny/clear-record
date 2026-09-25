@@ -855,8 +855,8 @@ def transcribe(
     overlap_seconds = options.overlap_seconds
     scope = options.scope
     # Every mid-stage line this stage reports: one structured event on the
-    # caller's sink, the workspace's durable ``transcribe.log``, and the command
-    # surface's copy of the text where it is produced (see ``report_line``).
+    # caller's sink, and the workspace's durable ``transcribe.log`` (see
+    # ``report_line``). The event's ``message`` *is* the line.
     log = functools.partial(report_line, workspace, on_event, "transcribe")
 
     # Decoder knobs are passed to the backend only when set. A backend that does
@@ -912,7 +912,7 @@ def transcribe(
     # that would move the bar's "N / M" backwards mid-stage (see ``report_line``).
     total_chunks = sum(len(chunks) for _src, _duration, chunks in planned)
     progress = Progress("transcribe", total_chunks, on_event)
-    progress.start(f"{total_chunks} chunk(s) over {len(planned)} source(s)")
+    progress.start()
 
     # Then run the uncached chunks through one bounded pool so the GPU stays fed
     # across source boundaries too.
@@ -1028,7 +1028,7 @@ def transcribe(
     # stage's elapsed clock only paid for the chunks the decoder actually ran, and
     # a live speed reading is derived from the two (RUN-03).
     for src_id in cached_hits:
-        progress.advance(source=src_id, message="cached", reused=True)
+        progress.advance(source=src_id, reused=True)
 
     plan_by_id = {plan.source.id: plan for plan in plans}
     workers = resolve_jobs(
@@ -1082,10 +1082,7 @@ def transcribe(
         # that report: the console reads the newest event, so the line has to
         # carry the counters — and the elapsed clock its rate divides by — that
         # the bar just reported, not a pair of its own.
-        counted = progress.advance(
-            source=task.source_id,
-            message=f"chunk {task.index + 1}/{task.n_chunks}",
-        )
+        counted = progress.advance(source=task.source_id)
         log(
             f"[transcribe]   {task.source_id} chunk {task.index + 1}/{task.n_chunks} "
             f"[{task.start_s:.0f}-{task.end_s:.0f}s] -> {len(shifted)} segment(s)",
@@ -1106,7 +1103,7 @@ def transcribe(
         if sampler is not None:
             sampler.stop()
     if total_chunks == 0:
-        progress.finish("no chunks to transcribe")
+        progress.finish()
 
     # Report the cost, so the loop's economics are visible rather than inferred.
     # This line speaks for the pass that just finished, so it carries the pass's

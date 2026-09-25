@@ -8,15 +8,31 @@ test client — no network, no browser.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from clear_record.core import PROFILE_CUSTOM, PROFILES, Progress
+from clear_record.core import (
+    DECODER_KNOBS,
+    PROFILE_CUSTOM,
+    PROFILES,
+    RUN_KNOBS,
+    JobEvent,
+    Progress,
+)
 from clear_record.service import AutoProbe, Registry, RunManager
-from clear_record.web.app import create_app
+from clear_record.web.app import RunCreate, WorkspaceRunCreate, create_app
+
+#: The knobs a person sets in the console's run form: the declaration's rows that
+#: are **not** decoder knobs. A preset trades the decoder — the picker offers every
+#: one in ``core.PROFILES``, and the panel under the form says what it resolves —
+#: so the form offers what a preset does not decide. Stated here rather than read
+#: from the view module, so the test says what the rule is instead of what the code
+#: happens to export.
+CONSOLE_KNOBS = tuple(knob for knob in RUN_KNOBS if not knob.decoder)
 
 
 def _auto_probe() -> AutoProbe:
@@ -32,10 +48,21 @@ def _auto_probe() -> AutoProbe:
     )
 
 
+#: The address the console's own client dials — the loopback a node binds
+#: (``core.node``). The suite's default ``TestClient`` speaks as ``testserver``
+#: (see ``conftest.py``), which the request guard accepts through
+#: ``CR_TRUSTED_HOSTS`` — but that is a *proxied* client, and a client behind a
+#: published name may not name a **path** (ADR-0032): ``workspace_path``, a tape
+#: set, an archive root. These fixtures are the API's ordinary caller *on the
+#: node's machine*, so they address it the way every surface here does; the rule
+#: and its refusal have their own module (``test_web_naming.py``).
+LOCAL_ORIGIN = "http://127.0.0.1:8765"
+
+
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    return TestClient(app)
+    return TestClient(app, base_url=LOCAL_ORIGIN)
 
 
 @pytest.fixture()
@@ -48,17 +75,35 @@ def console(tmp_path) -> SimpleNamespace:
     def fake_pipeline(directory, options, on_event) -> None:
         seen.append(options)
         progress = Progress("transcribe", 2, on_event)
-        progress.start("transcribing")
-        progress.advance(source="a", message="chunk 1")
+        progress.start()
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=1,
+                total=2,
+                source="a",
+                message="[transcribe]   a chunk 1/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="a")
         gate.wait(10)
-        progress.advance(source="b", message="chunk 2")
+        on_event(
+            JobEvent(
+                stage="transcribe",
+                index=2,
+                total=2,
+                source="b",
+                message="[transcribe]   b chunk 2/2 -> 1 segment(s)",
+            )
+        )
+        progress.advance(source="b")
         export = Path(directory) / "export"
         export.mkdir(parents=True, exist_ok=True)
         (export / "record.md").write_text("# record\n", encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
     return SimpleNamespace(
-        client=TestClient(create_app(registry, runs=manager)),
+        client=TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN),
         registry=registry,
         manager=manager,
         gate=gate,
@@ -324,12 +369,21 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     assert fetched.json()["state"]["stage"] == "transcribe"
 
     events = client.get(f"/api/runs/{run_id}/events?after=0").json()
-    assert events["next"] == 3
-    assert [event["index"] for event in events["events"]] == [0, 1, 2]
-    assert events["events"][0]["message"] == "transcribing"
+    assert events["next"] == 5
+    # The stream carries both halves of a stage's report: the counters a bar
+    # reads, and the words the stage reported — the line's text in ``message``,
+    # and none on a report that carries counters only.
+    assert [event["index"] for event in events["events"]] == [0, 1, 1, 2, 2]
+    assert [event["message"] for event in events["events"]] == [
+        "",
+        "[transcribe]   a chunk 1/2 -> 1 segment(s)",
+        "",
+        "[transcribe]   b chunk 2/2 -> 1 segment(s)",
+        "",
+    ]
 
     tail = client.get(f"/api/runs/{run_id}/events?after={events['next']}").json()
-    assert tail == {"events": [], "next": 3}
+    assert tail == {"events": [], "next": 5}
 
 
 def test_a_second_run_is_409(console, tmp_path) -> None:
@@ -414,6 +468,122 @@ def test_unknown_run_endpoints_are_404(console) -> None:
     client = console.client
     assert client.get("/api/runs/999").status_code == 404
     assert client.get("/api/runs/999/events").status_code == 404
+
+
+# --- the knobs a client may set (one field per declaration row) ------------ #
+def test_every_knob_the_command_line_takes_has_a_run_api_field() -> None:
+    """The run body declares a field for every knob of ``core.RUN_KNOBS``, and no other.
+
+    The command line derives its flags from that declaration, so this is what
+    makes "what a client may set" and "what the command line may set" one set: a
+    knob a person can pass to ``run`` is a field a client can send, and a row
+    added to the table fails here until the body carries it. The glossary and the
+    re-run scope are knobs too — the two the table does not describe with a row —
+    and the fields that are *not* knobs are the ones that say how a client names
+    and frames what it runs. The workspace edge adds its own subject (a
+    ``directory``) and no second set of knobs.
+    """
+    knobs = {knob.name for knob in RUN_KNOBS} | {
+        "glossary",
+        "rerun_sources",
+        "rerun_range",
+    }
+    framing = {
+        "backend",
+        "model",
+        "language",
+        "split",
+        "resume",
+        "profile",
+        "auto",
+        "origin",
+    }
+    assert set(RunCreate.model_fields) == knobs | framing
+    assert set(WorkspaceRunCreate.model_fields) == knobs | framing | {"directory"}
+
+
+def test_every_knob_a_client_sets_survives_into_the_run_record(
+    console, tmp_path
+) -> None:
+    """One request sets every knob, and the run's own row carries each one back.
+
+    ``run_options`` is what the console, a resumed run and every later reader
+    read, so "the run record keeps what was set" is this comparison. The values
+    differ from every built-in default and from every profile's, so only the
+    request can account for them, and the pipeline the run executed with is
+    checked beside the row — a knob that reached the row but not the decoder
+    would be a record of something that did not happen.
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    sent = {
+        "chunk_seconds": 30.0,
+        "overlap_seconds": 1.5,
+        "jobs": 2,
+        "beam_size": 4,
+        "best_of": 2,
+        "temperature": 0.2,
+        "entropy_thold": 2.4,
+        "no_speech_thold": 0.6,
+        "max_context": 0,
+        "threads": 3,
+        "rerun_sources": ["a"],
+        "rerun_range": "0:00-0:05",
+    }
+    started = console.client.post(f"/api/meetings/{meeting['id']}/runs", json=sent)
+    assert started.status_code == 202, started.text
+
+    console.gate.set()
+    run_id = started.json()["run"]["id"]
+    assert console.manager.wait(run_id, timeout=10).status == "done"
+
+    # The row is JSON, and the seam reads it back as the options value declares:
+    # a list the client sent for a tuple-typed knob comes back as the tuple.
+    recorded = console.registry.get_run(run_id).run_options
+    assert {name: recorded[name] for name in sent} == {
+        **sent,
+        "rerun_sources": ("a",),
+    }
+
+    executed = console.seen[-1]
+    assert executed.chunk_seconds == 30.0
+    assert executed.beam_size == 4
+    assert executed.rerun_sources == ("a",)
+
+
+def test_an_unknown_knob_is_refused_rather_than_ignored(console, tmp_path) -> None:
+    """A body field nobody declares is refused, and nothing is written.
+
+    A misspelled knob used to be dropped on the way in: the run started, and the
+    setting the client sent was simply not in it — a run that is not the one that
+    was asked for. Both run edges refuse such a body instead, before the resolver,
+    the registry or the workspace resolution sees anything (the workspace edge
+    must not register a meeting for a request it refuses).
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    misspelled = console.client.post(
+        f"/api/meetings/{meeting['id']}/runs", json={"chunk_second": 30}
+    )
+    assert misspelled.status_code == 422, misspelled.text
+    assert "chunk_second" in misspelled.text
+    assert console.registry.list_runs(meeting["id"]) == []
+
+    # `--diarize` is a flag the command line has and the run request does not: a
+    # client sending it is told, not handed a run without it.
+    undeclared = console.client.post(
+        "/api/runs", json={"directory": str(tmp_path), "diarize": True}
+    )
+    assert undeclared.status_code == 422, undeclared.text
+    assert "diarize" in undeclared.text
+    assert len(console.registry.list_meetings()) == 1, "a refused body wrote a meeting"
 
 
 # --- HTML surface: meetings and the live run fragment --------------------- #
@@ -726,6 +896,161 @@ def test_ui_run_custom_sets_no_profile_knobs(console, tmp_path) -> None:
     assert options.profile == "custom"
     assert options.beam_size is None
     assert options.best_of is None
+
+
+def test_the_console_run_form_exposes_the_user_facing_knobs_and_no_more(
+    console, tmp_path
+) -> None:
+    """The form offers the declaration's non-decoder rows, and no other knob.
+
+    What a person sets in the browser is what a **profile** does not decide — how
+    the tape is chunked and how many workers decode it; the decoder block is the
+    preset picker's (the panel under the form shows which knobs the chosen preset
+    resolves). The glossary and the re-run scope are the machine surface's: a
+    browser names no path on the node, and re-decoding a range is a transcript
+    move the console already serves with *resume*. Asserting both directions is
+    what keeps a knob from being offered and then dropped, or settable and
+    invisible.
+    """
+    _make_meeting(console, tmp_path)
+    form = console.client.get("/ui/projects/ops/meetings").text
+
+    for knob in CONSOLE_KNOBS:
+        assert f'name="{knob.name}"' in form, knob.name
+    for knob in DECODER_KNOBS:
+        assert f'name="{knob.name}"' not in form, knob.name
+    for name in ("glossary", "rerun_sources", "rerun_range"):
+        assert f'name="{name}"' not in form, name
+
+
+@pytest.mark.parametrize("knob", CONSOLE_KNOBS, ids=lambda knob: knob.name)
+def test_a_console_run_sets_each_knob_the_form_offers(console, tmp_path, knob) -> None:
+    """Every knob the form renders is one the route reads, and it reaches the run.
+
+    Parametrized over the declaration, so a row the form shows but a submission
+    drops — or one the route reads and the form never shows — fails here, named.
+    ``7`` is a value no built-in default and no preset produces, so only the
+    submission can account for it.
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    options = _start_ui_run(console, meeting["id"], backend="apple", **{knob.name: "7"})
+
+    assert getattr(options, knob.name) == knob.convert("7")
+    row = console.registry.list_runs(meeting["id"])[0].run_options
+    assert row[knob.name] == knob.convert("7")
+
+
+def test_the_console_reads_no_knob_its_form_does_not_offer(console, tmp_path) -> None:
+    """The submission half of the form's subset: a knob it does not show is not read.
+
+    A decoder knob reaches the console through the profile picker, and the
+    glossary is a path on the node — so a submission carrying either is not a
+    setting the console can make, and the run is started without it. Only a
+    submission can prove this: the form's own markup cannot say what the route
+    would accept.
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    options = _start_ui_run(
+        console,
+        meeting["id"],
+        backend="apple",
+        beam_size="7",
+        glossary=str(tmp_path / "glossary.txt"),
+    )
+
+    assert options.beam_size is None, "a decoder knob the form does not offer"
+    assert options.glossary is None, "a path the console cannot name"
+
+
+def test_a_console_knob_that_is_not_a_number_re_renders(console, tmp_path) -> None:
+    """A mistyped knob is a form mistake: it re-renders, in the console's own words.
+
+    htmx swaps no 4xx, so a refusal a person can fix has to come back as the run
+    fragment with the message — the rule the tape and archive forms already
+    follow — and the run must not be queued behind it. The message names the box
+    the person filled (**chunk seconds**, the console's own word for that knob),
+    not the spelling the command line gives the knob.
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+
+    answered = console.client.post(
+        f"/ui/meetings/{meeting['id']}/runs",
+        data={"backend": "apple", "chunk_seconds": "half"},
+    )
+
+    assert answered.status_code == 200, answered.text
+    assert "chunk seconds needs a number" in answered.text, answered.text
+    assert "--chunk-seconds" not in answered.text, answered.text
+    assert console.registry.list_runs(meeting["id"]) == []
+
+
+def test_a_slow_run_resolution_does_not_stall_the_node(
+    console, tmp_path, monkeypatch
+) -> None:
+    """The console resolves a run off the event loop, so other clients keep answering.
+
+    Resolving a run is real work — an ``auto`` run probes the machine and the tape
+    before anything is written — and the console's route is the one edge that has
+    to read a form before it can do it. If that work ran on the event loop, every
+    other client of this node would wait for it: the probe here is slowed to a
+    visible pause, a concurrent request is made while it runs, and that request
+    must come back long before the probe does. Entering the client is what puts
+    both requests on one loop (``with console.client``), so what is measured is
+    the loop's own wait, not two loops' independence.
+    """
+    meeting = _make_meeting(console, tmp_path)
+    console.client.put(
+        f"/api/meetings/{meeting['id']}/tapes",
+        json={"paths": [str(tmp_path / "a.wav")]},
+    )
+    pause = 0.75
+    probing = threading.Event()
+
+    def slow_probe(*args, **kwargs):
+        probing.set()
+        time.sleep(pause)
+        return _auto_probe()
+
+    monkeypatch.setattr("clear_record.service.auto.probe_auto", slow_probe)
+
+    with console.client:
+        answered: list = []
+        submitted = threading.Thread(
+            target=lambda: answered.append(
+                console.client.post(
+                    f"/ui/meetings/{meeting['id']}/runs",
+                    data={"backend": "apple", "auto": "1"},
+                )
+            )
+        )
+        submitted.start()
+        assert probing.wait(10), "the run was never resolved"
+        began = time.monotonic()
+        health = console.client.get("/api/health")
+        waited = time.monotonic() - began
+        submitted.join(30)
+        assert not submitted.is_alive(), "the submission never returned"
+        console.gate.set()
+
+    assert [response.status_code for response in answered] == [200]
+    assert health.status_code == 200
+    assert waited < pause / 2, (
+        f"a concurrent request waited {waited:.2f}s on a {pause}s resolution"
+    )
 
 
 def test_run_api_accepts_a_profile(console, tmp_path) -> None:

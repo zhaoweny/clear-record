@@ -1,0 +1,279 @@
+"""The invocation a person types ensures a node: attach, or bring one up.
+
+The node is a process of its own (``clear-record serve``), so these tests start
+real ones. Everything a node resolves — its recorded address, its registry, its
+diagnostics sink — goes through ``CR_*``, so a test's node is invisible to the
+machine's own; only its port has to be chosen here, because the node's default
+bind is one declaration (:mod:`clear_record.core.node`) and one machine-wide port
+is not a thing a test may hold. Each test stops the node it started, by pid.
+
+What a test replaces, where it says so, is the node's **run**: whether a run
+executes is not what these tests measure (``tests/cli/test_node_run.py`` drives
+that against a node in the test process), while the node the command ensures —
+attached to, or started and left behind — is.
+"""
+
+from __future__ import annotations
+
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+import pytest
+
+from clear_record.cli import cli, runs
+from clear_record.core import node
+from clear_record.core.diagnostics import log_path
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_exit(pid: int, timeout: float = 10.0) -> None:
+    """Wait until the node is gone — reaped, not merely a zombie of ours."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            reaped, _ = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:  # not this process's child after all
+            reaped = 0
+        if reaped == pid:
+            return
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"node {pid} did not stop")
+
+
+@pytest.fixture
+def node_port(tmp_path, monkeypatch) -> int:
+    """A machine with this command's own state dirs and a node port of its own.
+
+    The port is patched onto the argv the command starts a node with; the default
+    bind itself is still the node's own declaration, and nothing here restates it.
+    On the way out, a node the test left running is stopped, so no node outlives
+    the test that started it.
+    """
+    port = _free_port()
+    monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("CR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("CR_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    real_argv = cli._node_argv
+    monkeypatch.setattr(cli, "_node_argv", lambda: real_argv() + ["--port", str(port)])
+    monkeypatch.setattr(cli, "_NODE_RACE_GRACE", 0.2)
+    yield port
+    address = node.recorded()
+    if address is not None and address.pid != os.getpid():
+        try:
+            os.kill(address.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        else:
+            _wait_for_exit(address.pid)
+
+
+def _submitted_runs(monkeypatch) -> list[str]:
+    """Record the runs the command hands the node, in place of the run's work.
+
+    These tests are about the node ``run`` **ensures** — attach, or bring one up
+    — so the two calls that would need the node to *execute* a run are replaced by
+    their answers (``tests/cli/test_node_run.py`` drives the real submit/follow
+    against a node in the test process). The address the command hands the
+    submission is not stubbed away: each fake completes a real request against it
+    first, which is the composition's own claim — the address ``ensure_node()``
+    returned is the live node, and it is used rather than discarded.
+
+    The run is answered as a finished, successful one, so a test reads the
+    command's end (a non-zero code, or the one sentence) without needing a
+    pipeline behind the node.
+    """
+    submitted: list[str] = []
+
+    def start(address, directory, body):
+        node.reach(address, timeout=10.0)
+        submitted.append(directory)
+        return runs.Started(run_id=1, meeting_id=1)
+
+    def follow(address, run_id):
+        return runs.Progress(
+            status="done",
+            stage=None,
+            index=1,
+            total=1,
+            error=None,
+            terminal=True,
+            succeeded=True,
+            events=0,
+            position=0,
+        )
+
+    monkeypatch.setattr(cli, "start_run", start)
+    monkeypatch.setattr(cli, "follow_run", follow)
+    return submitted
+
+
+def _started_nodes(monkeypatch) -> list[subprocess.Popen]:
+    """The node processes the command starts, keeping `_start_node`'s own start."""
+    started: list[subprocess.Popen] = []
+    real_start = cli._start_node
+
+    def start() -> subprocess.Popen:
+        child = real_start()
+        started.append(child)
+        return child
+
+    monkeypatch.setattr(cli, "_start_node", start)
+    return started
+
+
+def _workspace(tmp_path):
+    directory = tmp_path / "meeting"
+    directory.mkdir()
+    return directory
+
+
+def test_from_a_cold_start_the_command_leaves_a_node_running_and_the_run_on_it(
+    node_port, monkeypatch, tmp_path
+) -> None:
+    """One command: a node is up afterwards, and the run went to it."""
+    submitted = _submitted_runs(monkeypatch)
+    directory = _workspace(tmp_path)
+
+    assert node.recorded() is None, "the test starts from a cold machine"
+    assert cli.main(["run", str(directory)]) == 0
+
+    assert submitted == [str(directory)], "the run the command was asked for went on"
+    address = node.recorded()
+    assert address is not None, "the command left a node behind"
+    assert address.pid != os.getpid(), "the node is a process of its own"
+    assert node.ask() == address, "and it answers as every surface reaches it"
+
+
+def test_with_a_node_already_up_the_command_attaches_instead_of_starting_a_second(
+    node_port, monkeypatch, tmp_path
+) -> None:
+    """The same command twice starts a node once; the second attaches."""
+    submitted = _submitted_runs(monkeypatch)
+    directory = _workspace(tmp_path)
+    started: list[int] = []
+    real_start = cli._start_node
+    monkeypatch.setattr(cli, "_start_node", lambda: started.append(1) or real_start())
+
+    assert cli.main(["run", str(directory)]) == 0
+    first = node.ask()
+    assert cli.main(["run", str(directory)]) == 0
+
+    assert started == [1], "the second command started no node"
+    assert submitted == [str(directory)] * 2, "and both commands ran on the one node"
+    assert node.ask() == first, "the node it attached to is the one already up"
+
+
+def test_a_machine_where_no_node_can_start_states_one_sentence_and_runs_no_work(
+    node_port, monkeypatch, tmp_path, capsys
+) -> None:
+    """The node is the tool: no node means one sentence, never an in-process run."""
+    submitted = _submitted_runs(monkeypatch)
+    started = _started_nodes(monkeypatch)
+    directory = _workspace(tmp_path)
+    # A listener that is not a node holds the port the node would bind, so no node
+    # can start here — the machine the direction's one honest sentence is for.
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", node_port))
+        busy.listen(1)
+        with pytest.raises(SystemExit) as exit:
+            cli.main(["run", str(directory)])
+
+    assert exit.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == cli._NODE_IS_THE_TOOL
+    assert "\n" not in captured.err.strip(), "one sentence, not a paragraph"
+    assert submitted == [], "there is no second implementation to fall back into"
+    # The child died of the *bind conflict*, not of a broken `serve`: uvicorn's
+    # startup failure is its own exit, and the node's sink names the port it could
+    # not take. Without this the same assertions would pass for a `serve` that
+    # never ran at all.
+    assert len(started) == 1, "one node was started"
+    child = started[0]
+    assert child.returncode == 3, (
+        "the node exited on uvicorn's bind refusal (STARTUP_FAILURE), not on a "
+        f"usage error: {child.returncode}"
+    )
+    sink = log_path().read_text(encoding="utf-8")
+    assert "address already in use" in sink, sink
+    assert f"('127.0.0.1', {node_port})" in sink, sink
+
+
+def test_a_node_that_started_but_cannot_be_found_is_left_running_and_stated(
+    node_port, monkeypatch, capsys
+) -> None:
+    """A live node this command cannot reach is not the no-node case.
+
+    A machine whose state directory cannot be written serves on and is only
+    unfindable (the record decision in :class:`clear_record.web.app.NodeServer`),
+    so the node that *did* start is alive and unreachable. It is a node, not
+    debris: it is left running, and the sentence is the one this command can
+    honestly state — that it started, and its pid.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    monkeypatch.setattr(cli, "_start_node", lambda: child)
+    try:
+        with pytest.raises(SystemExit) as exit:
+            cli.ensure_node(timeout=0.3)
+        # A `terminate()` would land within a signal's delivery, and `poll()`
+        # reaps it, so a short grace is what makes "it was not killed" an
+        # observation rather than a race.
+        time.sleep(0.5)
+        left_running = child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+    assert exit.value.code == 1
+    assert left_running, "a node that started is not killed for being unfindable"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    sentence = cli._NODE_STARTED_BUT_UNFINDABLE.format(pid=child.pid)
+    assert captured.err.strip() == sentence
+    assert "\n" not in captured.err.strip(), "one sentence, not a paragraph"
+    assert captured.err.strip() != cli._NODE_IS_THE_TOOL, "not the no-node sentence"
+
+
+def test_a_node_that_cannot_even_be_started_is_the_same_one_sentence(
+    node_port, monkeypatch, tmp_path, capsys
+) -> None:
+    """`Popen` failing (no interpreter, no room for a process) is still one sentence.
+
+    `_start_node` runs outside the command's own error channel, so an `OSError`
+    from it must take the no-node exit rather than reaching the top as a
+    traceback.
+    """
+    directory = _workspace(tmp_path)
+
+    def no_process() -> subprocess.Popen:
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(cli, "_start_node", no_process)
+
+    with pytest.raises(SystemExit) as exit:
+        cli.main(["run", str(directory)])
+
+    assert exit.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == cli._NODE_IS_THE_TOOL

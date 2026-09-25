@@ -151,6 +151,7 @@ from clear_record.service.runs import (
     collect_artifacts,
     cost_of,
     estimate_eta_s,
+    workspace_run_meeting,
 )
 from clear_record.service.run_options import (
     MalformedRunOptions,
@@ -340,6 +341,7 @@ __all__ = [
     "snapshot_from_text",
     "upload_tape",
     "verify_archive",
+    "workspace_run_meeting",
     "workspace_usage",
     "write_hello_tape",
     "write_project_snapshot",

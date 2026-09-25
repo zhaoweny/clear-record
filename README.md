@@ -169,7 +169,8 @@ uv sync --all-packages --extra apple        # or --extra nvidia / --extra amd
 uv run --all-packages --extra apple clear-record calibrate recordings \
     --backend apple --model small --reference-transcript recordings/ref.txt
 
-# or run and just get the report:
+# or run and just get the report (a `run` is a node run: it ensures a node —
+# see "Running a real meeting tape" below)
 uv run --all-packages --extra apple clear-record run recordings --backend apple --model medium
 ```
 
@@ -211,6 +212,62 @@ uv sync --all-packages --extra apple
 uv run --all-packages --extra apple clear-record run recordings \
     --backend apple --model medium --language zh   # zh/en; omit --language to auto-detect
 ```
+
+**A `run` is a node run.** `clear-record run` starts the run **on the node** — the
+recorded one, or one it starts ([ADR-0032](docs/adr/0032-the-node-and-its-clients.md))
+— instead of running the pipeline inside itself. Three consequences to know
+before you type it:
+
+- **It ensures a node.** It attaches to the recorded one, and starts one when none
+  answers (`clear-record serve` starts one too — the verb ships in every install,
+  while the node it runs needs the `web` extra, whose absence `serve` itself
+  explains — and `clear-record node` prints where the node is). A machine where
+  the command cannot start one is one sentence and no run at all: there is
+  deliberately no local fallback, because the node *is* the tool.
+- **The run writes a registry row.** It joins the node's one-run-at-a-time queue,
+  the console's Activity list shows it with `cli` as its **origin** while it runs
+  and after it finishes, and its progress is read back from the node. The
+  workspace keeps every file it kept before — `manifest.json`, `audio/`,
+  `segments.json`, `record.json`, `export/` — and the node's registry only
+  records that the run happened.
+- **The directory and the model are named the node's way.** The run's
+  `<directory>` argument is sent as a path **the node resolves**: `run` talks to
+  the node, so the directory has to be the node's — in the ordinary case a client
+  and a node on one machine, which is what that argument always meant. A client
+  that reached the node through the name an operator published for it (a reverse
+  proxy, Tailscale) is refused a directory with one sentence, rather than having a
+  path of its own, or a same-named directory of the node's, acted on. A client
+  elsewhere names what it wants the way the registry does: a run names its meeting
+  by id (`POST /api/meetings/{id}/runs`), and a tape is uploaded into a managed
+  workspace. A **model is the exception in both directions** — it is addressed
+  neither by path nor by id, and must already be on the node that runs the work —
+  so `--model` names a checkpoint the node's models directory resolves (`small`,
+  `ggml-small.bin`); a path is refused, and `--models-dir` is the node's own,
+  never the client's.
+
+What a run may set is what the node's run API declares: the flags that name and
+frame it (`--backend`, `--model`, `--language`, `--split-channels`/`--mix-down`,
+`--no-resume`, `--profile`, `--auto` — and the group's `-v/--verbose`, which
+raises the command line's own log detail), and **every run knob** — the chunking
+pair (`--chunk-seconds`, `--overlap-seconds`), `--jobs`, the decoder knobs
+(`--beam-size`, `--best-of`, `--temperature`, `--entropy-thold`,
+`--no-speech-thold`, `--max-context`, `--threads`), `--glossary`, and the re-run
+scope `--rerun-source`/`--rerun-range`. What the flags say is what the node runs
+with and what its run record keeps. A knob unset **everywhere** — no flag, and
+nothing in this machine's `CR_*`, which an unset flag resolves from here anyway —
+stays unset, so the **node's** `CR_*` environment, the chosen profile and its
+built-in defaults decide it; a `CR_*` value on *this* machine is a value the
+client sends, exactly as it is for a stage command. `--glossary` names a file on
+the node (the glossary *is* a path, like the run's directory), so it is taken only
+from a client that addressed the node itself. Anything else the command accepts —
+`--diarize`/`--no-diarize`, `--speakers`, `--attribute-energy`, `--mixed-source`,
+`--window-s`, `--reference`, `--check-plugin`, and `--models-dir`, which is the
+node's own — is still **refused with one sentence**, never dropped: silently
+ignoring what you asked for would misreport what ran, and that sentence names
+every flag you set. (A run request declares no field for one either: a client
+sending one is refused, rather than handed a run without it.) The stage commands
+(`clear-record diarize`, `transcribe`, `reconcile`, …) and `calibrate` still run
+in this process, over the workspace.
 
 Notes for a real meeting tape:
 
@@ -306,11 +363,14 @@ split on weak evidence, so diarization is **opt-in**: enable it explicitly, or
 pass a known count, and it otherwise reports one speaker per source.
 
 ```sh
-clear-record run <dir> --backend apple --diarize         # enable auto diarization
-clear-record run <dir> --backend apple --speakers 2      # known count
-clear-record diarize <dir> --speakers 3                  # re-diarize existing segments
-clear-record diarize <dir> --no-diarize                  # off
+clear-record diarize <dir> --speakers 2      # re-cluster this workspace's segments
+clear-record diarize <dir> --speakers 3      # (the count is optional: omit it to estimate)
 ```
+
+`run` itself does not carry `--diarize`/`--speakers` yet — a node run refuses them
+rather than dropping them (see "Running a real meeting tape") — so the way to a
+diarized workspace is a run followed by the stage verb above, and `--auto` may
+choose diarization for the run on its own.
 
 **Glossary (initial prompt).** Put names/terms one per line in
 `<dir>/glossary.txt` (or pass `--glossary FILE`); they become the decoder's
@@ -356,9 +416,16 @@ clear-record web --tailscale           # sets up Tailscale Serve for remote acce
 ```
 
 Running `clear-record web` without the extra prints the exact install command.
-`--no-browser`, `--port`, `--host` and `--data-dir` control the launch; the
-server binds `127.0.0.1` by default and needs no account — leave `--host` on
-loopback and let your proxy be the ingress
+`clear-record serve`, from the same install, is the same console **headless** —
+no browser, and its logs go to the app-owned diagnostics sink instead of the
+terminal; `clear-record serve --supervise` keeps it up by itself: a server that
+stops without being asked is started again, while an asked-for stop or a signal
+ends it as it does an unsupervised node. That is the stand-in when there is no
+systemd/launchd unit — see the
+[deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
+`--no-browser` is `web`'s only; `--port`, `--host` and `--data-dir` control either
+launch; the server binds `127.0.0.1` by default and needs no account — leave
+`--host` on loopback and let your proxy be the ingress
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md)). The UI language comes from
 `--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the
@@ -398,7 +465,11 @@ upload streams to a `.part` file, is `fsync`-ed and atomically renamed, and is
 recorded with its sha256 and size. Upload is a single streaming POST — a dropped
 multi-GB transfer restarts, and resumable upload is deliberately out of scope. A
 `--dir` workspace and a meeting's user-chosen `workspace_path` are unchanged
-([deployment guide §4](docs/service-deployment.md)).
+**in where the files live** ([deployment guide §4](docs/service-deployment.md)) —
+which is all this paragraph claims. A **run** over one is no longer only the
+client's: `clear-record run` starts a run the node owns and records
+([ADR-0032](docs/adr/0032-the-node-and-its-clients.md), see "Running a real
+meeting tape").
 
 > **Status:** the console is the page information architecture of ADR-0027 —
 > Projects, a project's Overview/Meetings/Glossary/Media, Activity, Settings,
@@ -423,7 +494,7 @@ console into a double-clickable app with **PyInstaller** (see
 
 | Artifact | What it is |
 |---|---|
-| `clear-record-tray` / `clear-record.app` | double-click opens the menu-bar tray, which supervises the console |
+| `clear-record-tray` / `clear-record.app` | double-click opens the menu-bar tray, which serves the console (joining the node already up, or starting one) |
 | `clear-record` | the full console CLI |
 
 The `build-app` CI workflow produces macOS and Windows artifacts. The builds are
@@ -433,10 +504,12 @@ is a documented future step. No model weights or
 keys are bundled — the app drives the machine's own `whisper-cli` and downloads a
 ggml model on first use, exactly like the CLI.
 
-For a menu-bar app instead of a browser launch, `clear-record tray` runs the
-console in the background under a **system-tray icon** (open / status / quit).
-It is an optional extra — `pip install 'clear-record[tray]'` — so the base
-install stays small.
+For a menu-bar app instead of a browser launch, `clear-record tray` serves the
+console under a **system-tray icon** (open / status / quit): a node that is
+already up (say one a `run` left behind, or a supervised `serve`) is **joined**
+rather than started a second time, and the tray starts one only when nothing
+answers. It is an optional extra — `pip install 'clear-record[tray]'` — so the
+base install stays small.
 
 ## Diagnostics (not telemetry)
 

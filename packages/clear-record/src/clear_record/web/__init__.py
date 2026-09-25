@@ -21,12 +21,10 @@ from typing import TYPE_CHECKING
 import click
 
 from clear_record.core.i18n import deferred, tr
+from clear_record.core.node import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
     from clear_record.web.tailscale import ServeSession
-
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
 
 #: Everything the console needs at run time. `clear_record.web` itself is always
 #: importable (it ships in the one wheel); these are the optional `web` extra.
@@ -55,7 +53,10 @@ _COMMON_CONSOLE_OPTIONS = (
         help=tr("bind address (default localhost)"),
     ),
     click.option(
-        "--port", type=int, default=DEFAULT_PORT, help=tr("port (default 8765)")
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=tr("port (default {port})", port=DEFAULT_PORT),
     ),
     click.option(
         "--data-dir",
@@ -171,7 +172,17 @@ def register(group: click.Group) -> None:
             "logs to the diagnostics sink, one run per node"
         ),
     )
-    @_console_options()
+    @_console_options(
+        click.option(
+            "--supervise",
+            is_flag=True,
+            help=tr(
+                "keep this process owning the node: a server that stops without "
+                "being asked is started again, while a stop request or a signal "
+                "ends it as it does an unsupervised node"
+            ),
+        ),
+    )
     def _serve(
         host: str,
         port: int,
@@ -179,6 +190,7 @@ def register(group: click.Group) -> None:
         tailscale: bool,
         tailscale_host: str | None,
         tailscale_port: int | None,
+        supervise: bool,
     ) -> int:
         return _run(
             host=host,
@@ -189,6 +201,7 @@ def register(group: click.Group) -> None:
             tailscale_host=tailscale_host,
             tailscale_port=tailscale_port,
             service=True,
+            supervise=supervise,
         )
 
 
@@ -202,6 +215,7 @@ def _run(
     tailscale_host: str | None = None,
     tailscale_port: int | None = None,
     service: bool = False,
+    supervise: bool = False,
 ) -> int:
     _require_web_stack()
     if (tailscale_host is not None or tailscale_port is not None) and not tailscale:
@@ -249,6 +263,10 @@ def _run(
             port=port,
             data_dir=data_dir or "",
         )
+    # Only `serve --supervise` supervises; the unflagged callers keep calling
+    # `serve` with exactly the arguments they always have.
+    if supervise:
+        serve_kwargs["supervise"] = True
     try:
         return serve(
             host=host,
@@ -395,4 +413,4 @@ def _tailscale_setup(
     return sorted(guard.trusted_extra_hosts() | {name}), session
 
 
-__all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "register"]
+__all__ = ["register"]

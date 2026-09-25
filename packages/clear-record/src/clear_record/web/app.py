@@ -35,21 +35,25 @@ while remote access stays the operator's reverse proxy.
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import webbrowser
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from clear_record.core import PROFILE_CUSTOM
+from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob
 from clear_record.core import i18n
+from clear_record.core import node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
     BUNDLE_FILENAME,
@@ -92,6 +96,7 @@ from clear_record.service import (
     resolve_run,
     run_hello_check,
     verify_archive,
+    workspace_run_meeting,
 )
 from clear_record.service.agent_flow import (
     download_transcription_model,
@@ -293,6 +298,15 @@ def render_download_error(exc: Exception) -> str:
 
 
 class ProjectCreate(BaseModel):
+    """A project; ``default_archive_root`` is a directory on this node.
+
+    That field is where the project's archives are written whenever a call names
+    no ``root`` of its own, so it is a **path**, and this route takes it only from
+    a request that addressed the node by its own address — the same rule the
+    archives route itself applies to a named ``root``. Everything else here is a
+    registry value.
+    """
+
     name: str
     notes: str = ""
     default_archive_root: str | None = None
@@ -300,6 +314,12 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
+    """A project update; ``default_archive_root`` is a path on this node.
+
+    Taken only from a request that addressed the node by its own address, or
+    omitted — in which case the project keeps the root it has.
+    """
+
     name: str | None = None
     notes: str | None = None
     default_archive_root: str | None = None
@@ -325,6 +345,16 @@ class TermUpdate(BaseModel):
 
 
 class MeetingCreate(BaseModel):
+    """A meeting: its title, and — for a local client — where its files live.
+
+    ``workspace_path`` is a directory **on this node's filesystem**, so this
+    route takes it only from a request that addressed the node by its own
+    address; a client that reached the node through the name the operator
+    published for it is refused one sentence and should use ``managed=True``
+    instead, which provisions an app-owned workspace on the node and takes an
+    upload of the tapes.
+    """
+
     title: str
     #: A user-chosen workspace (ADR-0007), kept for the CLI-shaped flow. An
     #: upload requires a *managed* workspace; see ``managed=True``.
@@ -336,24 +366,141 @@ class MeetingCreate(BaseModel):
 
 
 class TapesUpdate(BaseModel):
+    """A meeting's tape set, named by **path** — a local client's noun.
+
+    Each path is a file on this node's filesystem, so the route takes one only
+    from a request that addressed the node by its own address; a client elsewhere
+    sends the tape's bytes to the managed workspace instead
+    (``POST /api/meetings/{id}/tapes``). An empty list names no path and is
+    therefore not refused for where it came from — but it does **not** clear the
+    set: the registry refuses a recording set with no tapes, so a meeting is
+    emptied one tape at a time (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+    """
+
     paths: list[str]
 
 
 class RunCreate(BaseModel):
+    """A run request: the knobs, and how the client names what it runs.
+
+    Every field here is a **knob**. What the run runs *over* is the route's own
+    subject, not a field: ``POST /api/meetings/{id}/runs`` names a meeting by its
+    registry id, and :class:`WorkspaceRunCreate` adds the one field a client that
+    addressed the node itself uses instead.
+
+    ``model`` names a checkpoint the node resolves **in its own models
+    directory** — a bare name (``small``, ``ggml-small.bin``), never a path. A
+    model is the exception to both namings: it is addressed neither by path nor
+    by id, and must already be on the node that runs the work (ADR-0032); the
+    node also never takes a client's models directory. A path-valued model is
+    refused rather than resolved against the wrong machine.
+
+    **The knobs are the declaration's.** The rows of ``core.RUN_KNOBS`` each have
+    a field here under the row's own name, and the decoder block is those rows:
+    the command line derives its flags from the same table, so a knob a person can
+    pass to ``run`` is a knob a client can send here, and the two cannot drift.
+    ``None`` — the field's default for every knob — is the declaration's own
+    **unset** sentinel (``core.RESOLVABLE_FIELDS``), so an omitted knob leaves the
+    run to the **node's** resolution: its ``CR_*`` environment, the requested
+    profile, then the built-in default. An explicit value that equals a default is
+    still explicit (``"jobs": 0``, the documented "auto"). The glossary and the
+    re-run scope are knobs too, and neither is a decoder's: the glossary is a
+    **file on this node** (a local client's noun, like a run's directory) and the
+    scope is ``core.ChunkScope``'s two raw inputs, which the pipeline parses when
+    the run executes.
+
+    A field this shape does not declare is **refused**, never ignored
+    (``extra="forbid"``): a client that misspells a knob is told, rather than
+    getting a run with something else set.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     backend: str = "apple"
+    #: A model **name the node resolves** in its own models directory — never a
+    #: path. See the class docstring.
     model: str | None = None
     language: str | None = None
     split: str = "auto"
     resume: bool = True
-    jobs: int = 0
     profile: str = PROFILE_CUSTOM
     #: Opt-in: resolve the profile/model (and per-speaker attribution) from the
     #: machine and the tape, and record the resolver's explanation with the run.
     #: Never the default — a run is unchanged unless the caller asks.
     auto: bool = False
+    #: The surface that started this run, one of
+    #: :data:`~clear_record.service.lifecycle.RUN_ORIGINS`. ``api`` is the right
+    #: default for this edge: a caller that does not name itself is a script or an
+    #: integration. The command line names itself (``cli``) — the value the
+    #: service already declares for it — and the service refuses a value it does
+    #: not know, so the recorded origin is never an unknown value. (Which surface
+    #: may claim which name is not pinned per edge: a local client may send any
+    #: name the service declares.)
+    origin: str = "api"
+
+    # --- the run knobs, one field per row of ``core.RUN_KNOBS`` -------------- #
+    #
+    # The type of each is the value's annotation (``core.options``), which is the
+    # one place a knob's type exists — a declaration row carries the flag, the
+    # ``CR_*`` name, the converter and the default, not a Python type. The names
+    # and the set are the declaration's, pinned by a test.
+    chunk_seconds: float | None = None
+    overlap_seconds: float | None = None
+    jobs: int | None = None
+    beam_size: int | None = None
+    best_of: int | None = None
+    temperature: float | None = None
+    entropy_thold: float | None = None
+    no_speech_thold: float | None = None
+    max_context: int | None = None
+    threads: int | None = None
+    #: The re-run scope (ADR-0018's 2026-09-15 update): re-decode only these
+    #: sources and/or this ``START-END`` range, reusing every other chunk from the
+    #: cache. Raw, exactly as the command line takes them — the scope is parsed
+    #: once, on the node, and a malformed one is refused rather than quietly
+    #: meaning "everything".
+    rerun_sources: list[str] | None = None
+    rerun_range: str | None = None
+    #: The glossary **file** the run decodes with — a path on this node's
+    #: filesystem, so it is taken only from a client that addressed the node
+    #: itself (:data:`PATH_IS_LOCAL`), exactly like a directory. A client that
+    #: names none gets the node's own: the meeting's ``glossary.txt``, or the
+    #: project's confirmed terms.
+    glossary: str | None = None
+
+
+class WorkspaceRunCreate(RunCreate):
+    """A run a client starts over a workspace **directory** (ADR-0032).
+
+    The run command's subject is its ``<directory>`` argument, not a registry id,
+    and ``directory`` names it **on this node's filesystem** — a local run means a
+    client that addressed the node itself, which in the ordinary case is a client
+    and a node on one machine. Everything else is the meeting route's own body,
+    inherited rather than restated, so the two edges cannot come to set different
+    knobs.
+
+    **The directory is a local client's noun.** This route takes it only from a
+    request that addressed the node by its own address — the name the node
+    answers to, which is what every surface on the machine records and dials;
+    a client that reached the node through the name the operator published for it
+    is elsewhere and is refused with one sentence, rather than having a path of
+    its own — or a same-named file on the node — acted on. Such a client
+    addresses a run the way the registry does: ``POST /api/meetings/{id}/runs``.
+    """
+
+    directory: str
 
 
 class ArchiveCreate(BaseModel):
+    """Where an archive is written — a directory on this node's filesystem.
+
+    ``root`` is a local client's noun: the route takes it only from a request
+    that addressed the node by its own address. Omitting it names no path, so the
+    *project's* own ``default_archive_root`` stands when it is set, for any
+    client; when it is not, the call is refused — there is deliberately no
+    service-owned default root.
+    """
+
     root: str | None = None
 
 
@@ -403,6 +550,16 @@ class HealthOut(Shape):
     registry: str
 
 
+class NodeOut(Shape):
+    """`/api/node`: where this node is, as every surface resolves it."""
+
+    status: str
+    url: str
+    host: str
+    port: int
+    pid: int | None
+
+
 class ShutdownOut(Shape):
     """`/api/shutdown`: the managed server has been asked to stop."""
 
@@ -444,6 +601,120 @@ def _content_length(request: Request) -> int | None:
     except ValueError:
         return None
     return value if value >= 0 else None
+
+
+# --- naming: a path is local, a model is already on the node (ADR-0032) ---- #
+#
+# Two rules settle how a *client* names what it wants, and this edge is where a
+# machine client meets them: they are stated in the request shapes above (and so
+# in the OpenAPI schema ``/api/docs`` publishes), and enforced here.
+#
+# - **A path is a local client's noun.** A directory — a run's workspace, a
+#   meeting's ``workspace_path``, a tape's files, an archive location a project or
+#   a call names — is a location on *this node's* filesystem, and a client may hand
+#   one over only when it addressed the node **itself**: a loopback name, or the
+#   very address this node is listening on (``core.node``). A client that reached
+#   the node through the name the operator published for it is elsewhere, and a
+#   path it sent would be acted on against the wrong machine; it is told, per
+#   case, the shape to reach for instead (``PATH_IS_LOCAL``).
+# - **A model is neither a path nor an id.** It must already be on the node that
+#   runs the work, so a run request carries the name the node resolves in its own
+#   models directory (``CR_MODELS_DIR`` / ``--models-dir``, which are the node's),
+#   never a path.
+#
+# Both refusals are plain English **on purpose**: they answer a machine (the JSON
+# API's ``detail``, which a client prints), not a person reading a translated
+# console — the same shape as the request guard's own messages, and the reason
+# neither is a catalog message ID.
+
+#: The one sentence a non-local client gets when it names a path. It names the
+#: rule, then the shape to reach for instead *per case it answers* — a run, a
+#: tape, a workspace, an archive location and a glossary each have one, and each
+#: is a registry-addressed or node-decided form rather than a path.
+PATH_IS_LOCAL = (
+    "request refused: a path is a location on this node's filesystem, and this "
+    "node takes one only from a client that addressed the node itself — its own "
+    "address, not another name for it (a proxy's hostname, say) — so name what "
+    "you want the way the registry addresses it instead: a run by its meeting's "
+    "id (POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
+    "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
+    "node (`managed: true`); an archive location by omitting it, so the "
+    "*project's* own root stands when it has one; a glossary by omitting it, so "
+    "the node's own stands."
+)
+
+#: The one sentence a run request gets when its model is a path rather than a
+#: name the node resolves.
+MODEL_IS_THE_NODES = (
+    "request refused: a run's model must already be on the node that runs the "
+    "work, so it is named the way the node names it — a bare name its models "
+    "directory resolves, e.g. 'small' or 'ggml-small.bin' — never a path: a path "
+    "names a file on whatever machine the client is on."
+)
+
+#: The one sentence a run-by-path request gets when its ``directory`` names
+#: nothing. An empty or blank value is what an unset shell variable produces, and
+#: it must not be taken as "run the node's own working directory".
+BLANK_DIRECTORY = (
+    "request refused: a workspace run needs the directory it runs, so "
+    "`directory` has to name one — it was empty or blank."
+)
+
+#: What makes a string a *path* rather than a name: a separator, in either
+#: platform's spelling (a Windows-style path is refused on a POSIX node too), or
+#: the home shorthand. A model the node resolves is a bare name — ``small`` or
+#: ``ggml-small.bin``.
+_MODEL_PATH_CHARS = frozenset("/\\~")
+
+
+def _local_client(request: Request) -> bool:
+    """Whether this request addressed the node **itself**.
+
+    Two names count, and both are the node's own. A **loopback** name is where a
+    node binds by default and the address every surface running on this machine
+    dials (``core.node``). The address this app is **listening on** counts too,
+    whatever it is: ``serve --host 192.168.1.5`` records *and* dials that address,
+    so a client on the node's machine sends ``Host: 192.168.1.5:8765`` — not
+    loopback, and still the very node the path is on. ``_served_by`` answers that
+    in process, and it is the same address the node records, so the two agree by
+    construction.
+
+    **The consequence, stated rather than discovered: this is not
+    same-machine-only, and cannot be.** ``Host`` says which name the client
+    addressed, never where it sits — so a LAN client dialling the node at that
+    same address is admitted too. Two things bound that. It is not new exposure:
+    the request guard already requires every ``Host`` to be loopback or named in
+    ``CR_TRUSTED_HOSTS``, so a node on a named address is reachable there only
+    because the operator published it there, and without this a client on the
+    node's *own* machine would be refused its own node. And what the rule does
+    refuse is a client that addressed the node by **another** name — the hostname
+    a proxy publishes, say — which is a client elsewhere, naming a path of its
+    own; that is the case ``PATH_IS_LOCAL`` answers.
+
+    It is deliberately **not** the peer address. The transport says nothing about
+    where a client is: the operator's proxy forwards from loopback, and a
+    published container port arrives over the host's bridge — so a peer-based
+    test would refuse a local client (the documented container posture) while
+    accepting a remote one (every proxied deployment). What the client *named*
+    is the fact that settles it.
+    """
+    name = guard.host_name(request.headers.get("host"))
+    if guard.is_loopback_host(name):
+        return True
+    served = _served_by(request.app)
+    return served is not None and name == guard.host_name(served.host)
+
+
+def _require_local_client(request: Request) -> None:
+    """Refuse a client that names a path without addressing the node itself."""
+    if not _local_client(request):
+        raise HTTPException(status_code=403, detail=PATH_IS_LOCAL)
+
+
+def _require_model_name(model: str | None) -> None:
+    """Refuse a model that is a path rather than a name the node resolves."""
+    if model and _MODEL_PATH_CHARS.intersection(model):
+        raise HTTPException(status_code=400, detail=MODEL_IS_THE_NODES)
 
 
 #: HTTP status for each upload guard. Kept in the web layer so the service stays
@@ -513,6 +784,120 @@ async def _receive_tape(
         declared_bytes=declared,
         upload_id=upload_id,
     )
+
+
+class NodeServer(uvicorn.Server):
+    """A uvicorn server that records the node's address while it listens.
+
+    Every node posture starts its server through this class — the ``serve`` and
+    ``web`` commands (one entry point) and the tray's supervisor — so the address
+    is published and cleared in one place, the same way, wherever a node runs.
+
+    :meth:`startup` records **after** ``super().startup()``: uvicorn binds its
+    sockets there (0.53 runs the app's lifespan startup first), so that is the
+    earliest moment the bound port exists. Recording after the bind, not before,
+    is what makes ``--port 0`` publish the port the node really holds instead of
+    the 0 it asked for. :meth:`shutdown` clears the record; a node that died
+    without shutting down leaves a **stale** address, which every surface answers
+    exactly as an absent one (:data:`clear_record.core.node.NO_NODE_MESSAGE`).
+
+    A record that cannot be **written** does not stop the node. The state
+    directory can be missing, read-only or not creatable at all, and recording is
+    what a node owes its *clients* — not what makes the node run. That failure is
+    therefore stated once, in the node's own log, and the node serves on: the
+    direction lists an unwritable state directory among its machines where a node
+    cannot run, and **the address batch decides that it is not one** — the node
+    runs there; it is only unfindable.
+    """
+
+    async def startup(self, sockets=None) -> None:
+        await super().startup(sockets)
+        address = self.bound()
+        if address is None:
+            return
+        try:
+            node.record(address)
+        except OSError as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "clear-record: could not record the node's address %s (%s); "
+                "no surface can resolve this node",
+                address.url,
+                exc,
+            )
+
+    async def shutdown(self, sockets=None) -> None:
+        await super().shutdown(sockets)
+        node.forget()
+
+    def bound(self) -> node.NodeAddress | None:
+        """The TCP address this server bound, or ``None`` (e.g. a unix socket).
+
+        Two callers ask: :meth:`startup`, which records it, and
+        ``GET /api/node``, which answers with a record only when it is this.
+        """
+        for listener in getattr(self, "servers", ()):
+            for sock in listener.sockets or ():
+                name = sock.getsockname()
+                if isinstance(name, tuple) and len(name) >= 2:
+                    return node.NodeAddress.of(self.config.host, int(name[1]))
+        return None
+
+
+def _served_by(app: FastAPI) -> node.NodeAddress | None:
+    """The address this app is listening on, when a managed node is serving it.
+
+    ``serve`` and the tray's supervisor both put the ``NodeServer`` they run on
+    ``app.state.server``, so the console can vouch for an address **in process**:
+    no probe of its own, and no address it cannot answer for.
+    """
+    server = getattr(app.state, "server", None)
+    return server.bound() if isinstance(server, NodeServer) else None
+
+
+# The console's run form submits its knobs as form fields, and they are read off
+# the declaration rather than from one named argument each (see
+# `_console_knob_values`): a knob the form does not offer is not read at all, so
+# the console can never set one it does not show.
+def _console_knob_value(knob: RunKnob, label: str, raw: object) -> object | None:
+    """One console knob field: the number a person typed, or ``None`` when unset.
+
+    A blank box is the declaration's own **unset** sentinel, never ``0``: it
+    leaves the knob to the node's resolution (``CR_*`` environment → the requested
+    profile → the built-in default), which is exactly what an omitted flag asks
+    for. A box that cannot be read as the knob's type is a mistake a person can
+    fix in the form, so it raises for the route to re-render — the console's
+    convention for a form refusal (an htmx 4xx would swap nothing) — and the
+    message names the knob by ``label``: the console's own word for the row, the
+    one on the box a person filled, rather than the spelling the command line
+    gives the knob (``views.console_knob_label``).
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    text = raw.strip() if isinstance(raw, str) else str(raw)
+    try:
+        return knob.convert(text)
+    except ValueError as exc:
+        raise ValueError(
+            tr("{label} needs a number, not {value!r}.", label=label, value=text)
+        ) from exc
+
+
+def _console_knob_values(form: Mapping[str, object]) -> dict[str, object | None]:
+    """The console run form's knobs, read off the declaration by name.
+
+    The fields the form offers are ``views.CONSOLE_KNOBS``, and they are read here
+    by the declaration rather than from one named argument each: a row added there
+    is set with no edit on this side, and a knob the form does not offer — a
+    decoder knob, the glossary, the re-run scope — is not read at all, so the
+    console cannot set one. A value it cannot read is refused in the console's own
+    word for that row.
+    """
+    return {
+        knob.name: _console_knob_value(
+            knob, views.console_knob_label(knob.name), form.get(knob.name)
+        )
+        for knob in views.CONSOLE_KNOBS
+    }
 
 
 def create_app(
@@ -787,6 +1172,91 @@ def create_app(
             "409.html",
             views.unreadable_row_context(locale(request), exc),
             status_code=409,
+        )
+
+    # --- the app's run submission: resolve a body on a meeting, enqueue it -- #
+    def enqueue_run(meeting: Meeting, body: RunCreate) -> RunSnapshotOut:
+        """Resolve one run body on *meeting* and enqueue it: the one submission.
+
+        The **two JSON edges** that start a run — ``POST /api/meetings/{id}/runs``
+        and ``POST /api/runs`` — come through here, so the resolver, the
+        in-flight guard, the refusal mapping and the recorded ``origin`` cannot
+        come to differ between them. (The console's own form edge,
+        ``POST /ui/meetings/{id}/runs``, is not one of them: it answers with a run
+        fragment rather than a snapshot, and pins ``origin='console'`` as it
+        resolves the picker's fields itself.)
+
+        The pre-check reads the live run before anything is written; a submission
+        that *raced* another client reads nothing there and is refused by
+        ``runs.start`` instead — the same condition for the same user, so the
+        re-read below is what tells that refusal (409) apart from the bad
+        requests (no workspace, no tape set), which stay 400.
+
+        The **knobs** are threaded straight through: every row of
+        ``core.RUN_KNOBS`` — and the glossary and re-run scope beside them — is
+        read off the body by the row's own name into the options the run is
+        resolved from, so what a client set is what the run executes with and
+        what the row records (``run_options``). An unset knob is ``None`` and stays
+        unset: the resolver on this node fills it from ``CR_*``, the requested
+        profile, then the built-in default — the precedence an unset command-line
+        flag gets. A knob the body does not declare never reaches here
+        (``RunCreate`` refuses it).
+
+        A ``model`` named as a **path** is refused by each run edge before it
+        resolves anything — see ``_require_model_name``: a model must already be
+        on the node that runs the work, and the node resolves names, not another
+        machine's paths. It is deliberately *not* refused here, in the shared
+        submission: the workspace edge has already registered a meeting for the
+        directory by the time it lands here, and a refused request must not have
+        written anything.
+        """
+        if runs.active_state(meeting.id) is not None:
+            # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
+            # not a copy: the guard and the index must read the same to this
+            # client.
+            raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
+        options = PipelineOptions(
+            backend=body.backend,
+            model=body.model,
+            language=body.language,
+            split=body.split,
+            resume=body.resume,
+            glossary=body.glossary,
+            rerun_sources=tuple(body.rerun_sources) if body.rerun_sources else None,
+            rerun_range=body.rerun_range,
+            # Every knob the declaration names is read off the body by its own
+            # name, so a row cannot be forgotten at this seam: `RunCreate`
+            # declares one field per row and a test pins that, and the value the
+            # resolver leaves in the options is what the run executes with and
+            # what its row records (`run_options`).
+            **{knob.name: getattr(body, knob.name) for knob in RUN_KNOBS},
+        )
+        try:
+            resolved = resolve_run(
+                options,
+                profile=None if body.profile == PROFILE_CUSTOM else body.profile,
+                auto=body.auto,
+                directory=meeting.workspace_path,
+            )
+        except ModelNotOnDisk as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NoBackendAvailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            run = runs.start(
+                meeting, resolved.options, auto=resolved.meta, origin=body.origin
+            )
+        except ValueError as exc:
+            # A refusal the start path made (see the docstring above), or an
+            # ``origin`` the service does not know.
+            if runs.active_state(meeting.id) is not None:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RunSnapshotOut(
+            run=RunOut.model_validate(run),
+            state=runs.require_state(run.id).summary(),
         )
 
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
@@ -1386,24 +1856,37 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return render(request, "_profile_options.html", {"profile_options": preview})
 
-    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
-    def ui_start_run(
+    def _start_console_run(
         request: Request,
         meeting_id: int,
-        backend: str = Form("apple"),
-        model: str = Form(""),
-        language: str = Form(""),
-        profile: str = Form(PROFILE_CUSTOM),
-        auto: bool = Form(False),
+        form: Mapping[str, object],
+        *,
+        backend: str,
+        model: str,
+        language: str,
+        profile: str,
+        auto: bool,
     ) -> HTMLResponse:
+        """The console's run submission, off the event loop (see ``ui_start_run``).
+
+        Everything that touches the service runs here, in the threadpool: the
+        lookup, the submitted knobs, the resolution — which for an ``auto`` run
+        probes the machine and the tape before anything is written — the enqueue
+        and the fragment's own render. ``form`` is the already-parsed submission,
+        which is the one thing the route had to await.
+        """
         meeting = lookup.meeting(registry, meeting_id)
         try:
+            knobs = _console_knob_values(form)
             # The picker's ``custom`` is the console's "no preset" state (it has
             # no separate unset), so it is passed as an unset profile — exactly
             # what lets the opt-in ``--auto`` choose one.
             resolved = resolve_run(
                 PipelineOptions(
-                    backend=backend, model=model or None, language=language or None
+                    backend=backend,
+                    model=model or None,
+                    language=language or None,
+                    **knobs,
                 ),
                 profile=None if profile == PROFILE_CUSTOM else profile,
                 auto=auto,
@@ -1429,6 +1912,50 @@ def create_app(
                 return render_run(request, active)
             return render_run_error(request, meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
+
+    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
+    async def ui_start_run(
+        request: Request,
+        meeting_id: int,
+        backend: str = Form("apple"),
+        model: str = Form(""),
+        language: str = Form(""),
+        profile: str = Form(PROFILE_CUSTOM),
+        auto: bool = Form(False),
+    ) -> HTMLResponse:
+        """Start a run from the console's form, on this node.
+
+        The form's **knobs** are the declaration's rows a preset does not decide
+        (``views.CONSOLE_KNOBS``): each is read off the submitted form by name
+        (:func:`_console_knob_values`), so a blank box is the declaration's own
+        *unset* sentinel — the node's ``CR_*`` environment, the chosen profile and
+        the built-in defaults then decide, exactly as an unset flag does on the
+        command line — and a typed value is explicit, even when it equals a
+        default. The knobs the form does not offer (the decoder block, the
+        glossary, the re-run scope) are never read from a submission, so the
+        console cannot set one; the profile picker is where a person tunes the
+        decoder.
+
+        The **body** is the only thing this route reads on the event loop. The
+        run itself runs in the threadpool (:func:`_start_console_run`,
+        ``run_in_threadpool``), because resolution is real work — an ``auto`` run
+        probes the machine and the tape before anything is written — and a route
+        that did it on the loop would stall **every** other client of this node
+        for as long as it takes. The JSON edges are ``def`` routes for the same
+        reason: FastAPI runs those in this same pool.
+        """
+        form = await request.form()
+        return await run_in_threadpool(
+            _start_console_run,
+            request,
+            meeting_id,
+            form,
+            backend=backend,
+            model=model,
+            language=language,
+            profile=profile,
+            auto=auto,
+        )
 
     @app.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
     def ui_cancel_run(request: Request, run_id: int) -> HTMLResponse:
@@ -1625,6 +2152,36 @@ def create_app(
     def health() -> HealthOut:
         return HealthOut(status="ok", registry=str(registry.db_path))
 
+    @app.get("/api/node")
+    def node_address() -> NodeOut:
+        """Where the node is — the record, vouched for by the socket this app holds.
+
+        The answer is the recorded address, read **in process**: it is the one
+        every surface resolves, and it is given only when it is the address this
+        app is itself listening on (:func:`_served_by`), so a stale record — one
+        nothing answers — is refused here exactly as the command line refuses it,
+        and no second HTTP leg is spent proving what the request in hand already
+        proves. Nothing is scanned.
+
+        An app with no bound socket of its own — a test client, an embedder —
+        vouches for nothing, which is the same answer as no record at all.
+
+        What the record is compared on is the **address** it names, not the
+        process that wrote it: ``pid`` belongs to the writer, and a record that
+        names this socket is this node's whether or not it also carries one.
+
+        The refusal is the English `detail` (``docs/i18n.md``): a machine reads
+        it, and it is the sentence every surface states when nothing answers.
+        """
+        recorded, serving = node.recorded(), _served_by(app)
+        if (
+            recorded is None
+            or serving is None
+            or (recorded.host, recorded.port) != (serving.host, serving.port)
+        ):
+            raise HTTPException(status_code=503, detail=node.NO_NODE_MESSAGE)
+        return NodeOut.of(recorded, status="ok")
+
     @app.get("/api/webhooks")
     def webhooks_status(request: Request) -> views.WebhookStatusOut:
         """Webhook endpoint health as JSON; see :func:`views.webhook_status_view`.
@@ -1645,7 +2202,18 @@ def create_app(
         ]
 
     @app.post("/api/projects", status_code=201)
-    def create_project(body: ProjectCreate) -> ProjectOut:
+    def create_project(request: Request, body: ProjectCreate) -> ProjectOut:
+        """Create a project; ``default_archive_root`` is a local client's noun.
+
+        A named root is a directory on this node's filesystem, where this
+        project's archives are later written — so it is taken only from a request
+        that addressed the node by its own address, exactly as the archives route
+        guards a ``root`` it is handed. Omitted, the project has no archive root
+        of its own, and an archive call that names none is refused — there is no
+        service-owned default to fall back to.
+        """
+        if body.default_archive_root:
+            _require_local_client(request)
         try:
             project = registry.create_project(
                 body.name,
@@ -1662,8 +2230,16 @@ def create_app(
         return ProjectOut.model_validate(lookup.project(registry, slug))
 
     @app.patch("/api/projects/{slug}")
-    def update_project(slug: str, body: ProjectUpdate) -> ProjectOut:
+    def update_project(slug: str, request: Request, body: ProjectUpdate) -> ProjectOut:
+        """Update a project; a ``default_archive_root`` is a local client's noun.
+
+        Same rule as the create route: a named root is a path on this node, and
+        only a client that addressed the node itself may set one. Omitting it
+        leaves the project's current root alone.
+        """
         lookup.project(registry, slug)
+        if body.default_archive_root:
+            _require_local_client(request)
         try:
             project = registry.update_project(
                 slug,
@@ -1726,8 +2302,17 @@ def create_app(
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)
-    def create_meeting(slug: str, body: MeetingCreate) -> MeetingOut:
+    def create_meeting(slug: str, request: Request, body: MeetingCreate) -> MeetingOut:
+        """Create a meeting; a ``workspace_path`` is a local client's noun.
+
+        A named path is a directory on this node's filesystem, so it is taken
+        only from a request that addressed the node by its own address;
+        ``managed=True`` names no path (the node provisions the workspace) and is
+        therefore open to any client.
+        """
         lookup.project(registry, slug)
+        if body.workspace_path and not body.managed:
+            _require_local_client(request)
         try:
             meeting = registry.create_meeting(
                 slug,
@@ -1803,8 +2388,19 @@ def create_app(
         return review_api(meeting_id, draft_id, accept=False, version=version)
 
     @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
-    def set_tapes(meeting_id: int, body: TapesUpdate) -> TapeSetOut:
+    def set_tapes(meeting_id: int, request: Request, body: TapesUpdate) -> TapeSetOut:
+        """Set a meeting's tapes; each path is a local client's noun.
+
+        A non-empty ``paths`` names files on this node's filesystem, so it is
+        taken only from a request that addressed the node by its own address. An
+        empty list names nothing and is answered for any client, but it does not
+        clear the set — the registry refuses a recording set with no tapes, and a
+        tape is removed one at a time
+        (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+        """
         lookup.meeting(registry, meeting_id)
+        if body.paths:
+            _require_local_client(request)
         try:
             tape_set = registry.set_recording_set(meeting_id, body.paths)
         except ValueError as exc:
@@ -1882,52 +2478,59 @@ def create_app(
         )
 
     @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
-    def start_run(meeting_id: int, body: RunCreate) -> RunSnapshotOut:
+    def start_run(request: Request, meeting_id: int, body: RunCreate) -> RunSnapshotOut:
+        """Start a run over a meeting — the route a **remote** client uses.
+
+        The meeting is named the way the registry addresses it, by its id, so this
+        route needs no path and is answered from anywhere the node is reachable;
+        no client's own directory is involved.
+
+        The body's ``model`` is a name the node resolves, never a path (see
+        :class:`RunCreate`). Its ``glossary`` **is** one: the file this node
+        decodes with, taken only from a client that addressed the node itself
+        (:data:`PATH_IS_LOCAL`) exactly like a directory — while a client that
+        names none gets the node's own glossary. So this route is the registry's
+        addressing, not a licence to name anything on the node: what a remote
+        client names is a meeting, and what it sets are knobs.
+        """
+        # Looked up first: a missing id is the 404 the sibling routes answer.
         meeting = lookup.meeting(registry, meeting_id)
-        if runs.active_state(meeting_id) is not None:
-            # The service's own sentence (see `service.lifecycle.RUN_IN_FLIGHT`),
-            # not a copy: the guard and the index must read the same to this
-            # client.
-            raise HTTPException(status_code=409, detail=RUN_IN_FLIGHT)
-        options = PipelineOptions(
-            backend=body.backend,
-            model=body.model,
-            language=body.language,
-            split=body.split,
-            resume=body.resume,
-            jobs=body.jobs,
-        )
-        try:
-            resolved = resolve_run(
-                options,
-                profile=None if body.profile == PROFILE_CUSTOM else body.profile,
-                auto=body.auto,
-                directory=meeting.workspace_path,
-            )
-        except ModelNotOnDisk as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except NoBackendAvailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin="api"
-            )
-        except ValueError as exc:
-            # A refusal the start path made. The pre-check above reads the live
-            # run before anything is written, so a submission that *raced* another
-            # client reads nothing there and is refused here instead — the same
-            # condition for the same user, and it answers the same 409. The
-            # re-read is what tells that apart from the bad requests (no
-            # workspace, no tape set), which stay 400.
-            if runs.active_state(meeting_id) is not None:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return RunSnapshotOut(
-            run=RunOut.model_validate(run),
-            state=runs.require_state(run.id).summary(),
-        )
+        if body.glossary:
+            _require_local_client(request)
+        _require_model_name(body.model)
+        return enqueue_run(meeting, body)
+
+    @app.post("/api/runs", status_code=202)
+    def start_workspace_run(
+        request: Request, body: WorkspaceRunCreate
+    ) -> RunSnapshotOut:
+        """Start a run over a workspace directory on **this node** (ADR-0032).
+
+        Where the command line's ``run`` reaches the node. The directory is
+        resolved to the meeting this node runs it as, with the audio the
+        directory holds as its tapes (``service.runs.workspace_run_meeting``),
+        and the run then takes the same path the meeting route takes: one queue,
+        one claim, one row, with ``origin`` naming the surface that asked.
+
+        The directory is a **path**, so it is taken only from a client that
+        addressed the node by its own address: a client elsewhere would
+        name a directory on its own machine, and this node would run a same-named
+        directory of its own instead. A non-local client gets one sentence and
+        the route that replaces this one (:data:`PATH_IS_LOCAL`). The body's
+        ``glossary`` is a path for the same reason and is refused the same way —
+        but only when it is named: a run without one uses the node's own glossary.
+
+        The body's ``model`` is refused if it is a path *before* the directory is
+        resolved, so a refused request registers no meeting (see
+        :func:`_require_model_name`); a blank ``directory`` is refused beside it,
+        for the same reason — a request that names nothing runs nothing.
+        """
+        _require_local_client(request)
+        _require_model_name(body.model)
+        if not body.directory.strip():
+            raise HTTPException(status_code=400, detail=BLANK_DIRECTORY)
+        meeting = workspace_run_meeting(registry, body.directory)
+        return enqueue_run(meeting, body)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: int) -> RunSnapshotOut:
@@ -1946,9 +2549,20 @@ def create_app(
 
     # --- JSON API: archives ------------------------------------------------- #
     @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
-    def post_archive(meeting_id: int, body: ArchiveCreate | None = None) -> ArchiveOut:
+    def post_archive(
+        meeting_id: int, request: Request, body: ArchiveCreate | None = None
+    ) -> ArchiveOut:
+        """Archive a meeting; a named ``root`` is a local client's noun.
+
+        An omitted ``root`` names no path — the **project's** own root stands when
+        it is set, for any client, and the call is refused when it is not. A named
+        one is a directory on this node's filesystem, so it is taken only from a
+        request that addressed the node by its own address.
+        """
         meeting = lookup.meeting(registry, meeting_id)
         root = body.root if body else None
+        if root:
+            _require_local_client(request)
         try:
             archive = archive_meeting(registry, meeting, root)
         except ValueError as exc:
@@ -2002,6 +2616,24 @@ def create_app(
     return app
 
 
+#: How long a supervised node waits before starting a server that crashed again.
+#: A fault that repeats should not be restarted in a tight loop; this is the floor
+#: a systemd ``RestartSec`` would give, kept here so ``serve --supervise`` needs no
+#: unit file to be safe.
+_RESTART_PAUSE = 1.0
+
+
+def _open_console(server: NodeServer, requested: node.NodeAddress) -> None:
+    """Open the console at the address the server is **serving**.
+
+    The bound socket is the truth, and the record is not: this timer fires while
+    the node is starting, and a record left by a node that has since died would
+    open a dead endpoint. A node on an ephemeral port knows its port only once it
+    has bound, so ``requested`` is the fallback for a server that has not.
+    """
+    webbrowser.open((server.bound() or requested).url)
+
+
 def serve(
     *,
     host: str,
@@ -2010,6 +2642,7 @@ def serve(
     data_dir: str | None = None,
     trusted_hosts: Sequence[str] | None = None,
     log_config: dict | None = None,
+    supervise: bool = False,
 ) -> int:
     """Run the console; called by the ``clear-record web`` and ``serve`` handlers.
 
@@ -2023,26 +2656,55 @@ def serve(
     config so a headless node's logs land beside every other clear-record record;
     ``None`` keeps uvicorn's own (stderr) logging, which is right for the
     interactive console.
+
+    ``supervise`` keeps **this process** owning a node: a server that stops
+    without being asked — a crash, or a return no stop requested — is started
+    again over the same registry, after :data:`_RESTART_PAUSE` so a fault that
+    repeats cannot spin. A stop that *was* asked for ends the process as it does
+    an unsupervised node: ``POST /api/shutdown`` asks the server to stop
+    (``should_exit``), and a signal ends it because uvicorn's ``capture_signals``
+    restores the handlers it replaced and then re-raises what it caught — so
+    Ctrl-C and ``SIGTERM`` finish the process by signal, not through the loop's
+    ``return 0``. This is the headless stand-in for a systemd/launchd unit, and
+    what ``serve --supervise`` passes.
     """
-    import uvicorn
+    registry = Registry.open(data_dir=data_dir)
+    while True:
+        app = create_app(registry, trusted_hosts=trusted_hosts)
+        extra = {} if log_config is None else {"log_config": log_config}
+        config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
+        server = NodeServer(config)
+        # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
+        # build has no terminal to interrupt.
+        app.state.server = server
+        if open_browser:
+            threading.Timer(
+                0.8, _open_console, args=(server, node.NodeAddress.of(host, port))
+            ).start()
+        try:
+            server.run()
+        except Exception:
+            # Only a supervised node survives its server crashing: without the
+            # flag the exception ends the process exactly as it always has. The
+            # traceback is logged (into the sink, for ``serve``) rather than
+            # swallowed, and ``SystemExit``/``KeyboardInterrupt`` are not caught
+            # here — a port the node cannot take is not a fault to retry.
+            if not supervise:
+                raise
+            logging.getLogger("uvicorn.error").exception(
+                "clear-record: the node stopped with an error; starting it again"
+            )
+        finally:
+            # A clean SIGTERM/stop stops the queue draining; a run still executing
+            # is left for startup reconciliation on the next boot (one run per
+            # node).
+            app.state.runs.shutdown()
+        if not supervise or server.should_exit:
+            return 0
+        # Supervised, and no stop was asked for: the node is started again, over
+        # the same registry, with a new ``NodeServer`` recording the address
+        # afresh.
+        time.sleep(_RESTART_PAUSE)
 
-    app = create_app(Registry.open(data_dir=data_dir), trusted_hosts=trusted_hosts)
-    extra = {} if log_config is None else {"log_config": log_config}
-    config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
-    server = uvicorn.Server(config)
-    # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
-    # build has no terminal to interrupt.
-    app.state.server = server
-    if open_browser:
-        url = f"http://{host}:{port}/"
-        threading.Timer(0.8, webbrowser.open, args=(url,)).start()
-    try:
-        server.run()
-    finally:
-        # A clean SIGTERM/stop stops the queue draining; a run still executing
-        # is left for startup reconciliation on the next boot (one run per node).
-        app.state.runs.shutdown()
-    return 0
 
-
-__all__ = ["create_app", "serve"]
+__all__ = ["NodeOut", "NodeServer", "create_app", "serve"]

@@ -46,6 +46,7 @@ Rows name the owning document and never restate its decision text.
 | Managed workspace | tapes upload into an app-owned workspace; the data-not-state split holds | ADR-0024, ADR-0025 | same record |
 | i18n | `tr()` with English message IDs, the English default unchanged; logs, JSON, exports and the diagnostics bundle are never translated | `docs/i18n.md` | same record |
 | Outbound notifications | webhooks, with endpoint health and the last delivery outcome surfaced | ADR-0020 | `records/2026-09-15-webhooks.md` |
+| The node and its clients | one API server is the centre and the surfaces are backends-for-frontends over it; the console stays in process, the command line becomes a client | ADR-0032 | `records/2026-09-21-node-and-clients.md` |
 | The stated next position | dictation as a first-class input, with near-real-time and re-transcription modes — **deferred to 0.4**, no release date yet | no ADR yet; the tracker's 0.4 headline | `records/2026-09-21-dictation-input.md` |
 
 ## Standing positions
@@ -92,7 +93,8 @@ this repository. See `docs/architecture.md` §7.
 
 ## Records
 
-Dated testimony, one file per topic, moved verbatim from this file (2026-09-21):
+Dated testimony, one file per topic — the entries split out of this file on 2026-09-21
+moved verbatim, and each entry's own header says what its words rest on:
 
 - [`records/2026-09-13-release-and-packaging.md`](records/2026-09-13-release-and-packaging.md) — the command and
   distribution names, the build toolchain, versioning and the release train, and the 0.2.x cut.
@@ -111,4 +113,7 @@ Dated testimony, one file per topic, moved verbatim from this file (2026-09-21):
 - [`records/2026-09-21-dictation-input.md`](records/2026-09-21-dictation-input.md)
   — the dictation position; its verbatim testimony is personal-context material and is kept in the private
   tracker (`vox-private-records`).
+- [`records/2026-09-21-node-and-clients.md`](records/2026-09-21-node-and-clients.md) — the
+  server-centric direction: the command line as a facade of the node, the surfaces as
+  backends-for-frontends, and the preliminaries it rests on.
 - [`records/2026-09-21-v03-scope.md`](records/2026-09-21-v03-scope.md) — the v0.3 scope and milestone decisions.

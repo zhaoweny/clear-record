@@ -37,17 +37,32 @@ window, so attribution can keep the incoming speaker instead of guessing a
 bleed source. The mixed reference is deliberately **not** a speaker candidate (it
 has no single speaker identity); it is used as a presence gate. It is excluded
 from the candidate set even when it is also listed in ``sources`` -- the
-attribution stage passes the manifest sources and separately names the room. See
-``docs/test-corpus.md``.
+attribution stage passes the manifest sources and separately names the
+references. See ``docs/test-corpus.md``.
+
+**A capture can carry more than one non-speaker source**, and what it is decides
+what it may do: the source's ``role`` (``clear_record.core.SOURCE_ROLES``). A
+``mixed`` source is a witness and gates; an ``excluded`` source -- a microphone
+nobody wore, which hears whoever is nearest rather than the room, or a duplicate
+feed such as a phone memo carrying the receiver's downmix of the same mics --
+neither claims a segment nor refuses one. Every reference handed to a pass
+**that reads back** gates (one whose file cannot be read, or which decodes to no
+frames, is skipped and raises no floor), so a claim must be one **each** witness
+that heard the window can account for: a
+speech carried by two rooms needs a witness in each, and a witness that never
+heard the window (a dropout, another room) contributes no floor.
 
 Supported gate range: the gate compares a candidate's gain-normalized window
-level against the room's, so it is invariant to microphone and room gain. It is
-calibrated for a room/mixed reference that carries every speaker at a comparable
-level (a "room-eye view"), and for the common one-to-three close mics with cross-
-talk of about -6 dB or weaker; under those conditions covered speakers clear the
-gate and unmiked bleed does not. A room reference far below the per-mic level, or
-much stronger cross-talk (near 0 dB), can still misclassify -- attribution then
-keeps the incoming speaker rather than invent a room identity.
+level against the witness's, so it is invariant to microphone and room gain. It
+is calibrated for a reference that carries every speaker at a comparable level (a
+"room-eye view"), and for the common one-to-three close mics with cross-talk of
+about -6 dB or weaker; under those conditions covered speakers clear the gate and
+unmiked bleed does not. A reference far below the per-mic level, or much stronger
+cross-talk (near 0 dB), can still misclassify -- attribution then keeps the
+incoming speaker rather than invent a room identity. A reference that hears one
+speaker far better than the rest is not a room-eye view and does not belong in
+that role: as a witness it would refuse honest claims about the speakers it hears
+quietly, which is why the vocabulary separates it from ``excluded``.
 """
 
 from __future__ import annotations
@@ -71,10 +86,12 @@ __all__ = [
 # segment window. A source speaking normally sits near 1.0; bleed and silence sit
 # far below.
 _SILENCE_RATIO = 1e-3
-# When a room reference is present, a candidate must carry at least this share of
-# the room's normalized level to claim a segment; otherwise the room saw speech
-# the identified channels did not, and we decline to invent a speaker. The
-# compared quantity is a *ratio of ratios* (candidate window/level over room
+# When a reference is present, a candidate must carry at least this share of
+# each witness's normalized level to claim a segment; otherwise a witness saw
+# speech the identified channels did not, and we decline to invent a speaker. With
+# several references the floor is the **highest** of them: a claim has to be one
+# that every witness that heard the window can account for. The
+# compared quantity is a *ratio of ratios* (candidate window/level over witness
 # window/level), so it is invariant to microphone and room gain. Measured on
 # make_crosstalk_scene with a mix room (gains randomized 0.3-3x, 40 seeds) in the
 # **non-overlapping** regime — the generator's default overlaps utterances, where
@@ -187,18 +204,43 @@ def _softmax(scores: np.ndarray) -> np.ndarray:
     return e / (float(np.sum(e)) + _EPS)
 
 
-def _read_candidates(
-    sources: Sequence[Source], mixed: Source | None, target_sr: int
-) -> tuple[dict[str, tuple[np.ndarray, int]], np.ndarray | None, int]:
-    """Read every candidate source (the room excluded) plus the room reference.
+def _as_references(
+    mixed: Source | Sequence[Source] | None,
+) -> tuple[Source, ...]:
+    """The mixed references a pass was given, as the tuple it reads.
 
-    Unreadable/empty sources are skipped, as before; the room is returned
-    separately so it can gate claims without ever becoming a speaker.
+    A caller may name none (no witness), one (the field playbook's room), or
+    several — a capture can carry two room microphones, and one room's witness
+    cannot refuse a claim about speech in the other room. Normalizing here keeps
+    every caller's form and both entry points on one contract.
     """
+    if mixed is None:
+        return ()
+    if isinstance(mixed, Source):
+        return (mixed,)
+    return tuple(mixed)
+
+
+def _read_candidates(
+    sources: Sequence[Source],
+    references: Sequence[Source],
+    target_sr: int,
+    frame_s: float,
+) -> tuple[dict[str, tuple[np.ndarray, int]], list[tuple[np.ndarray, int, float]]]:
+    """Read every candidate source plus the witnesses that gate them.
+
+    A source whose id is one of the *references* is not read as a candidate — it
+    is a witness. Every reference that reads back is returned with its own robust
+    speech level (``_level``), so the gate compares a candidate's window against
+    the witness's own normal without a second read; an unreadable or empty one is
+    absent, and a witness that cannot be read does not gate. Candidates that
+    cannot be read are skipped, as before.
+    """
+    ref_ids = {ref.id for ref in references}
     loaded: dict[str, tuple[np.ndarray, int]] = {}
     for src in sources:
-        if mixed is not None and src.id == mixed.id:
-            continue  # the room is a witness, never a speaker candidate
+        if src.id in ref_ids:
+            continue  # a witness, never a speaker candidate
         try:
             data, sr = read_audio(src.path, target_sr)
         except Exception:
@@ -207,16 +249,16 @@ def _read_candidates(
             continue
         loaded[src.id] = (data, sr)
 
-    mixed_data: np.ndarray | None = None
-    mixed_sr = target_sr
-    if mixed is not None:
+    witnesses: list[tuple[np.ndarray, int, float]] = []
+    for ref in references:
         try:
-            data, sr = read_audio(mixed.path, target_sr)
-            if data.size:
-                mixed_data, mixed_sr = data, sr
+            data, sr = read_audio(ref.path, target_sr)
         except Exception:
-            pass  # an unreadable room reference simply does not gate
-    return loaded, mixed_data, mixed_sr
+            continue  # a witness that cannot be read simply does not gate
+        if data.size == 0:
+            continue
+        witnesses.append((data, sr, _level(data, sr, frame_s)))
+    return loaded, witnesses
 
 
 def attribute_segments(
@@ -224,7 +266,7 @@ def attribute_segments(
     sources: Sequence[Source],
     *,
     offsets: Mapping[str, float] | None = None,
-    mixed: Source | None = None,
+    mixed: Source | Sequence[Source] | None = None,
     target_sr: int = ASR_SAMPLE_RATE,
     frame_s: float = _FRAME_S,
     silence_ratio: float = _SILENCE_RATIO,
@@ -236,23 +278,21 @@ def attribute_segments(
     ``offsets`` maps a source id to ``reference_time - source_time`` so every
     candidate can be read in the segment's reference window. ``sources`` supplies
     the caller-provided source -> speaker identity via ``Source.label`` (a
-    source with no speaker label gets a generic ``Speaker N``). With ``mixed`` given, its room energy gates weak candidate
-    claims (see the module docstring) and any entry in ``sources`` with the same
-    id is skipped as a candidate, so the room is never emitted as a speaker.
-    Segments that no candidate can claim keep their incoming speaker.
+    source with no speaker label gets a generic ``Speaker N``). With ``mixed``
+    given — one reference or several — each reference's room energy gates weak
+    candidate claims (see the module docstring) and any entry in ``sources`` with
+    the same id is skipped as a candidate, so a reference is never emitted as a
+    speaker. Segments that no candidate can claim keep their incoming speaker.
     """
     if not segments:
         return list(segments)
     offsets = dict(offsets or {})
 
-    loaded, mixed_data, mixed_sr = _read_candidates(sources, mixed, target_sr)
+    references = _as_references(mixed)
+    loaded, witnesses = _read_candidates(sources, references, target_sr, frame_s)
     levels: dict[str, float] = {
         sid: _level(data, sr, frame_s) for sid, (data, sr) in loaded.items()
     }
-
-    mixed_level = (
-        _level(mixed_data, mixed_sr, frame_s) if mixed_data is not None else 1e-12
-    )
 
     label = source_speaker_names(sources)
 
@@ -272,10 +312,8 @@ def attribute_segments(
                 best_ratio, best_id = ratio, sid
 
         floor = silence_ratio
-        if mixed_data is not None:
-            room_ratio = (
-                _window_energy(mixed_data, mixed_sr, ref_start, ref_end) / mixed_level
-            )
+        for data, sr, level in witnesses:
+            room_ratio = _window_energy(data, sr, ref_start, ref_end) / level
             floor = max(floor, room_share * room_ratio)
 
         if best_id is None or best_ratio < floor:
@@ -292,7 +330,7 @@ def attribute_segments_windowed(
     sources: Sequence[Source],
     *,
     offsets: Mapping[str, float] | None = None,
-    mixed: Source | None = None,
+    mixed: Source | Sequence[Source] | None = None,
     target_sr: int = ASR_SAMPLE_RATE,
     frame_s: float = _FRAME_S,
     silence_ratio: float = _SILENCE_RATIO,
@@ -305,15 +343,16 @@ def attribute_segments_windowed(
     """Attribute segments per source after normalizing each source against its
     **own recent level**, and set a calibrated confidence.
 
-    Same inputs and room-witness contract as :func:`attribute_segments`, but the
-    per-source level is a **causal rolling window** ending at the segment rather
-    than one static whole-recording estimate. That is what lets the method follow
-    a **time-varying** gain (a mid-tape level step); on a constant imbalance a
-    single static correction (``window_s=None``) collapses to the **same decision**
-    (the same argmax) as :func:`attribute_segments`. It is not identical: this
-    path still emits the softmax confidence, whereas ``attribute_segments``
-    preserves the segment's incoming confidence. ``window_s`` defaults to
-    :data:`_DEFAULT_WINDOW_S` (~15 s).
+    Same inputs and mixed-reference-witness contract as
+    :func:`attribute_segments` — one or several witnesses, none of them a
+    speaker — but the per-source level is a **causal rolling window** ending at
+    the segment rather than one static whole-recording estimate. That is what lets
+    the method follow a **time-varying** gain (a mid-tape level step); on a
+    constant imbalance a single static correction (``window_s=None``) collapses to
+    the **same decision** (the same argmax) as :func:`attribute_segments`. It is
+    not identical: this path still emits the softmax confidence, whereas
+    ``attribute_segments`` preserves the segment's incoming confidence.
+    ``window_s`` defaults to :data:`_DEFAULT_WINDOW_S` (~15 s).
 
     The decision is ``argmax`` over each source's normalized margin
     ``(window_dB - recent_level_dB) / scale_db``; the returned ``confidence`` is
@@ -342,7 +381,8 @@ def attribute_segments_windowed(
         return list(segments)
     offsets = dict(offsets or {})
 
-    loaded, mixed_data, mixed_sr = _read_candidates(sources, mixed, target_sr)
+    references = _as_references(mixed)
+    loaded, witnesses = _read_candidates(sources, references, target_sr, frame_s)
     levels: dict[str, float] = {}
     levels_db: dict[str, float] = {}
     tracks_db: dict[str, np.ndarray | None] = {}
@@ -351,10 +391,6 @@ def attribute_segments_windowed(
         levels[sid] = level
         levels_db[sid] = 10.0 * np.log10(level)
         tracks_db[sid] = _frame_levels_db(data, sr, frame_s) if gain_normalize else None
-
-    mixed_level = (
-        _level(mixed_data, mixed_sr, frame_s) if mixed_data is not None else 1e-12
-    )
 
     label = source_speaker_names(sources)
 
@@ -388,10 +424,8 @@ def attribute_segments_windowed(
             scores[i] = (obs_db - level_db) / max(scale_db, _EPS)
 
         floor = silence_ratio
-        if mixed_data is not None:
-            room_ratio = (
-                _window_energy(mixed_data, mixed_sr, ref_start, ref_end) / mixed_level
-            )
+        for data, sr, level in witnesses:
+            room_ratio = _window_energy(data, sr, ref_start, ref_end) / level
             floor = max(floor, room_share * room_ratio)
 
         # The presence gate deliberately keeps the *static* ratio/level (the
@@ -426,7 +460,7 @@ def attribute_by_source(
     sources: Sequence[Source],
     *,
     offsets: Mapping[str, float] | None = None,
-    mixed: Source | None = None,
+    mixed: Source | Sequence[Source] | None = None,
     window_s: float | None = None,
 ) -> dict[str, list[Segment]]:
     """Attribute ``segments`` and group the result by ``Segment.source``.

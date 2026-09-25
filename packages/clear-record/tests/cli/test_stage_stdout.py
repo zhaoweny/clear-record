@@ -109,7 +109,7 @@ $ clear-record diarize
 [diarize] b: 1 speaker(s) over 1 segment(s)
 [diarize] c: 1 speaker(s) over 1 segment(s)
 $ clear-record attribute
-[attribute] 3 segment(s), 1 speaker(s), 2 re-attributed
+[attribute] 3 segment(s), 1 speaker(s), 2 re-attributed or unnamed
 $ clear-record glossary
 [glossary] $FIXTURE/tape/glossary.txt (2 term(s))
   Clear Record

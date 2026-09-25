@@ -66,6 +66,7 @@ from clear_record.core import (
     DECODER_KNOB_FIELDS,
     DEFAULT_CHUNK_S,
     DEFAULT_OVERLAP_S,
+    SOURCE_ROLES,
     Alignment,
     ChunkScope,
     EventSink,
@@ -191,16 +192,27 @@ class AttributeReport:
 
     Each count is measured where the pass measured it: ``segments`` is the flat
     pre-pass list it was handed, ``changed`` the before/after label diff over the
-    loaded segments, and ``speakers`` the distinct labels of the segments the
-    pass returned — so a reader never has to recompute any of the three from a
-    state that no longer exists.
+    loaded segments — a label the pass **removed** counts, not only one it
+    assigned, so it covers a segment a non-candidate source's own name is stripped
+    from as well as one the pass re-attributed — and ``speakers`` the distinct
+    labels of the segments the pass returned — so a reader never has to recompute
+    any of the three from a state that no longer exists. ``speakers`` counts the
+    labels the pass emitted, so a segment left unnamed (a reference's or an
+    excluded feed's own transcript, declined) is not one of them.
+
+    ``mixed_references`` is every reference the pass was **asked** to gate with,
+    by id — the ids the caller named for the pass itself, in the order named, then
+    the manifest's declared ``mixed`` roles in manifest order, with a source the
+    caller named not repeated. It is the declared set, not the set that gated: a
+    reference whose audio cannot be read gates nothing (see the engine's own
+    contract). An empty tuple means nothing was asked to.
     """
 
     per_source: dict[str, list[Segment]]
     segments: int
     speakers: int
     changed: int
-    mixed_source: str | None = None
+    mixed_references: tuple[str, ...] = ()
     window_s: float | None = None
 
 
@@ -523,6 +535,47 @@ def _collapse_copies(
     return kept, copies
 
 
+def _manifest_roles(w: Workspace) -> dict[str, str]:
+    """The roles an existing manifest declares, keyed by source id.
+
+    The twin of :func:`_manifest_starts` for the other declaration an operator
+    makes by hand: ``ingest`` **rebuilds** the manifest from the discovered files,
+    and ``run`` ingests every time, so a role written into ``manifest.json`` — the
+    flow that lets a capture say which of its mics are rooms and which feed
+    duplicates — would be dropped by the next pass, and the documented
+    declare-then-run flow has to survive it. What is carried over is keyed by id,
+    which is what the manifest names a source by, and only a non-empty string is
+    carried: a hand-edit can put anything in the field, and a value this build
+    cannot honour is better read where a role means something (``attribute``
+    refuses a name outside the vocabulary, naming the three) than dropped here in
+    silence.
+
+    A manifest this pass cannot take a declaration out of declares nothing, and
+    that is not this pass's refusal — it was not asked to *use* the manifest, only
+    not to lose what it says — so the read covers exactly the shapes
+    :func:`_manifest_starts` names: bytes that cannot be read (``OSError``), bytes
+    that are not JSON or not a mapping (``ValueError``), a mapping with no
+    ``sources`` key (``KeyError``), and a ``sources`` that is not a list or an
+    entry that is not a mapping (``TypeError`` / ``AttributeError``).
+    """
+    try:
+        sources, _ = w.load_manifest()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+    roles: dict[str, str] = {}
+    for src in sources:
+        # Only a string id can key the mapping: a hand-edit can put a list or an
+        # object where the manifest names a source, and this function's key is the
+        # id — an unhashable one raised ``TypeError`` out of the pass for exactly
+        # the manifests that carried a role. :func:`_manifest_starts` drops the
+        # same shape, and only a non-empty string declares a role here at all.
+        if not isinstance(src.id, str):
+            continue
+        if isinstance(src.role, str) and src.role not in ("", "candidate"):
+            roles[src.id] = src.role
+    return roles
+
+
 def ingest(
     directory: str,
     audio_files: list[str] | None = None,
@@ -690,10 +743,14 @@ def ingest(
     # so every source gets a positional ``Speaker N`` (an explicit caller label
     # still wins in ``engine.merge.source_speaker_names``).
     sources: list[Source] = []
-    # The manifest this pass is about to rebuild, read first: a start already
-    # declared there (by an operator by hand, or by an earlier pass off a name) is
-    # part of the record, and a source whose name declares none keeps it.
+    # The manifest this pass is about to rebuild, read first: both declarations it
+    # can hold about a source are part of the record — a **start** (by an operator
+    # by hand, or by an earlier pass off a name) and the source's **role** (the
+    # room microphone, the duplicate feed a capture carries beside its speakers) —
+    # so a source whose own name and id declare nothing keeps what the manifest
+    # held for it, and neither is lost to the ``run`` that follows.
     carried = _manifest_starts(w)
+    roles = _manifest_roles(w)
     # A folded copy is the same audio under another name, so a start it states is
     # a start about *this* input's audio, and the survivor inherits it where its
     # own name and its own id state nothing. The copy can be the survivor — the
@@ -714,6 +771,28 @@ def ingest(
                 inherited.setdefault(kept_base, unit_start)
             elif unit_id.startswith(f"{copy_base}__ch"):
                 inherited.setdefault(kept_base + unit_id[len(copy_base) :], unit_start)
+
+    # The same for a role: the copy is the same audio, so a role declared for the
+    # copy's id — "this one is a room, that one feeds a duplicate" — describes the
+    # surviving source too, and dropping it would re-promote the very microphone
+    # the operator declared not to be a speaker.
+    inherited_roles: dict[str, str] = {}
+    for copy, kept_file in copies:
+        copy_base = _source_id(copy, d)
+        kept_base = _source_id(kept_file, d)
+        for unit_id, unit_role in roles.items():
+            if unit_id == copy_base:
+                inherited_roles.setdefault(kept_base, unit_role)
+            elif unit_id.startswith(f"{copy_base}__ch"):
+                inherited_roles.setdefault(
+                    kept_base + unit_id[len(copy_base) :], unit_role
+                )
+
+    def declared_role(sid: str, unit: str) -> str:
+        """The role this source carries: its own id's declaration, a folded copy's,
+        or the default. ``_manifest_roles`` carries no empty value, so either
+        declaration either stands or the default does."""
+        return roles.get(sid) or inherited_roles.get(unit) or "candidate"
 
     def kept_line(sid: str, subject: str, start: float, number: int) -> None:
         """Name a start this input **keeps** from the manifest (its name declared
@@ -792,6 +871,7 @@ def ingest(
                         label=f"Speaker {len(sources) + 1}",
                         clock_domain="wall",
                         start_s=declared,
+                        role=declared_role(sid, f"{base}__ch{ch + 1}"),
                     )
                 )
         else:
@@ -820,6 +900,7 @@ def ingest(
                     label=f"Speaker {len(sources) + 1}",
                     clock_domain="wall",
                     start_s=declared,
+                    role=declared_role(sid, base),
                 )
             )
         closing = progress.advance(source=advance_source)
@@ -833,7 +914,14 @@ def ingest(
         on_event,
         Step.INGEST.value,
         f"[ingest] {len(sources)} source(s) -> {w.manifest_path}",
-        [(f"  {source.id:24s} {source.path}", source.id) for source in sources],
+        [
+            (
+                f"  {source.id:24s} {source.path}"
+                + (f"  [{source.role}]" if source.role != "candidate" else ""),
+                source.id,
+            )
+            for source in sources
+        ],
         report=closing,
     )
     return IngestReport(sources=tuple(sources))
@@ -1320,9 +1408,79 @@ def diarize(
 # --------------------------------------------------------------------------- #
 # attribute (cross-talk-aware attribution by relative source energy)
 # --------------------------------------------------------------------------- #
+def _named_references(named: str | Sequence[str] | None) -> tuple[str, ...]:
+    """The reference ids a caller named for one pass, as the tuple the pass reads.
+
+    ``mixed_source`` predates source roles: it names, for one pass, the source the
+    caller knows is not a speaker (the field playbook's room reference). A manifest
+    role says the same thing for every pass that follows, and can say it of several
+    sources, so this call form stays as the one-off and either form composes with
+    the other. Its one exception is a source the manifest already declares
+    ``excluded``: naming one of those is a contradiction this pass refuses (see
+    :func:`_attribution_roles`), because a duplicate feed or a microphone nobody
+    wore is not a witness a caller can promote by naming it.
+    """
+    if named is None:
+        return ()
+    if isinstance(named, str):
+        return (named,)
+    return tuple(named)
+
+
+def _attribution_roles(
+    sources: Sequence[Source], named: Sequence[str]
+) -> tuple[list[Source], list[Source]]:
+    """The candidate sources and the references that gate them, by declared role.
+
+    A source's ``role`` says what it is (``clear_record.core.SOURCE_ROLES``): a
+    ``candidate`` may be named a speaker, a ``mixed`` source is a witness that
+    gates weak claims and is never a speaker, and an ``excluded`` source — a
+    microphone nobody wore, a duplicate feed — is neither a candidate nor a
+    witness. ``named`` is the pass's own one-off: a caller naming a source that way
+    declares it a reference for this pass, whatever its role — save a source
+    declared ``excluded``, which is refused below, because a duplicate feed or a
+    microphone nobody wore is not a witness a caller can promote by naming it. That
+    one-off is what the option has always meant.
+
+    A role outside the vocabulary is **refused** rather than read as a speaker: a
+    typo'd role is a caller asking for something this pass cannot honour, and
+    leaving that source a candidate would emit the very source they tried to
+    silence. A name that is no source at all is refused the same way, and a source
+    declared ``excluded`` cannot be named as a reference — the two roles say
+    different things, and one pass cannot hold both.
+    """
+    for src in sources:
+        if src.role not in SOURCE_ROLES:
+            raise PipelineError(
+                f"[attribute] source '{src.id}' declares role '{src.role}', which is "
+                f"not one of: {', '.join(SOURCE_ROLES)}"
+            )
+    by_id = {src.id: src for src in sources}
+    references: list[Source] = []
+    seen: set[str] = set()
+    for sid in named:
+        src = by_id.get(sid)
+        if src is None:
+            raise PipelineError(f"[attribute] no source '{sid}' in manifest")
+        if src.role == "excluded":
+            raise PipelineError(
+                f"[attribute] source '{sid}' is declared role 'excluded', so it "
+                "cannot be this pass's mixed reference"
+            )
+        if sid not in seen:
+            seen.add(sid)
+            references.append(src)
+    for src in sources:
+        if src.role == "mixed" and src.id not in seen:
+            seen.add(src.id)
+            references.append(src)
+    candidates = [s for s in sources if s.role == "candidate" and s.id not in seen]
+    return candidates, references
+
+
 def attribute(
     directory: str,
-    mixed_source: str | None = None,
+    mixed_source: str | Sequence[str] | None = None,
     window_s: float | None = None,
     *,
     on_event: EventSink | None = None,
@@ -1332,14 +1490,33 @@ def attribute(
     Cross-talk correction for close microphones: instead of trusting the source a
     segment came from ("one source == one speaker", the closest-mic-wins rule),
     pick the source with the highest gain-normalized energy in the segment's
-    aligned window. A mixed/room reference named by ``mixed_source`` gates weak
-    claims and is never itself a speaker candidate. Composable with `reconcile`,
-    which preserves the assigned speaker.
+    aligned window. Which sources must **not** be speakers is what the manifest's
+    ``role`` says: ``"mixed"`` for a mixed/room reference, ``"excluded"`` for a
+    microphone nobody wore or a duplicate feed — how a capture with two room
+    lavaliers and a phone memo tells this pass about all of them, where one
+    ``--mixed-source`` was all a caller could name before. A caller may still
+    name one for a single pass with ``mixed_source`` (one id, or several), and
+    either form composes with the other.
+
+    Every reference that reads back gates weak claims and is never itself a
+    speaker candidate: a claim has to be one each witness that heard the window
+    can account for. (A reference whose audio cannot be read gates nothing; the
+    report still names it, because it names what the pass was asked to gate with.)
+    A role outside the vocabulary is refused, naming the three that exist, rather
+    than quietly read as a candidate. Composable with `reconcile`, which preserves
+    the assigned speaker.
 
     With ``window_s`` set, normalize against each source's **recent** level over a
     causal rolling window of that many seconds (tracking drifting gain) and write
     a calibrated per-segment confidence. Without it, the static whole-recording
     correction is unchanged.
+
+    A segment whose own source is one this pass must not name — a reference's
+    transcription, an excluded feed's copy — is attributed like any other, but
+    enters the pass **unnamed**, and that un-naming is a change the pass counts
+    and writes: where no candidate carries its window it stays unnamed in
+    ``segments.json`` too, instead of carrying a microphone's label into the
+    record.
 
     Each count the summary reports is measured where the pass measures it — the
     pre-pass list, the before/after label diff, the labels it returned — and comes
@@ -1349,14 +1526,28 @@ def attribute(
     w = Workspace.at(directory)
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
-    mixed = None
-    if mixed_source:
-        mixed = next((s for s in sources if s.id == mixed_source), None)
-        if mixed is None:
-            raise PipelineError(f"[attribute] no source '{mixed_source}' in manifest")
+    candidates, references = _attribution_roles(
+        sources, _named_references(mixed_source)
+    )
+    # What the pass was handed, before anything it does to a label: `changed` is
+    # the loaded-vs-returned diff, so a label this pass *removes* counts as a
+    # change — and a change is what makes it write (below).
+    loaded = {sid: [seg.speaker for seg in segs] for sid, segs in per_source.items()}
+    # A source that may not be named a speaker is not a person, so its segments
+    # enter the pass with no name to fall back on. The decision itself is unchanged
+    # — they are attributed to the best candidate like any other segment — but a
+    # declined one is left unnamed rather than printing the microphone's own label.
+    # "May not be named" is read off the pass's own candidate set, so it covers a
+    # source this pass's caller named as a reference as well as the manifest roles.
+    speaker_ids = {src.id for src in candidates}
+    for src in sources:
+        if src.id in speaker_ids or src.id not in per_source:
+            continue
+        per_source[src.id] = [
+            dataclasses.replace(seg, speaker="") if seg.speaker else seg
+            for seg in per_source[src.id]
+        ]
     offsets = dict(alignment.offsets) if alignment else {}
-    # The room is a witness, never a speaker: keep it out of the candidate set.
-    candidates = [s for s in sources if mixed is None or s.id != mixed.id]
 
     flat = [seg for segs in per_source.values() for seg in segs]
     if not flat:
@@ -1365,33 +1556,42 @@ def attribute(
             segments=0,
             speakers=0,
             changed=0,
-            mixed_source=mixed_source,
+            mixed_references=tuple(ref.id for ref in references),
             window_s=window_s,
         )
     else:
         # Attribution owns the grouping: the result is keyed by each segment's own
         # `source`, so no positional reassembly over dict order is needed.
         attributed = attribute_by_source(
-            flat, candidates, offsets=offsets, mixed=mixed, window_s=window_s
+            flat,
+            candidates,
+            offsets=offsets,
+            mixed=tuple(references),
+            window_s=window_s,
         )
         changed = 0
-        for sid, segs in per_source.items():
+        for sid in per_source:
             updated = attributed.get(sid, [])
-            for before, after in zip(segs, updated):
-                if before.speaker != after.speaker:
+            for before, after in zip(loaded.get(sid, []), updated):
+                if before != after.speaker:
                     changed += 1
             per_source[sid] = updated
-        # The windowed path also writes a confidence, so persist even if no label
-        # changed (otherwise the new confidence would be lost to reconcile).
+        # A label the pass changed has to reach ``segments.json`` — including one
+        # it only *removed*, or the file would keep a label the pass's own return
+        # does not have and the artifact would name a microphone this pass refuses
+        # to name. The windowed path also writes a confidence, so persist even if
+        # no label changed (otherwise the new confidence would be lost to reconcile).
         if changed or window_s is not None:
             w.write_segments(per_source, meta)
-        speakers = {seg.speaker for segs in attributed.values() for seg in segs}
+        speakers = {
+            seg.speaker for segs in attributed.values() for seg in segs if seg.speaker
+        }
         report = AttributeReport(
             per_source=per_source,
             segments=len(flat),
             speakers=len(speakers),
             changed=changed,
-            mixed_source=mixed_source,
+            mixed_references=tuple(ref.id for ref in references),
             window_s=window_s,
         )
     # What the pass did, as one line on the run's own channel: the same words
@@ -1399,14 +1599,15 @@ def attribute(
     if not report.segments:
         line = "[attribute] no segments to attribute"
     else:
-        suffix = (
-            f" (room reference: {report.mixed_source})" if report.mixed_source else ""
-        )
+        suffix = ""
+        if report.mixed_references:
+            noun = "reference" if len(report.mixed_references) == 1 else "references"
+            suffix = f" (mixed {noun}: {', '.join(report.mixed_references)})"
         if report.window_s is not None:
             suffix += f" (rolling window: {report.window_s:g}s)"
         line = (
             f"[attribute] {report.segments} segment(s), {report.speakers} speaker(s), "
-            f"{report.changed} re-attributed{suffix}"
+            f"{report.changed} re-attributed or unnamed{suffix}"
         )
     report_line(w, on_event, "attribute", line)
     return report
@@ -1456,6 +1657,36 @@ def glossary(
 _PREVIEW_LINES = 12
 
 
+def _unname_non_candidates(
+    segments: Sequence[Segment], sources: Sequence[Source]
+) -> list[Segment]:
+    """Leave a non-candidate source's own segments unnamed in the record.
+
+    ``engine.reconcile`` names a segment's speaker from the diarizer/attributor,
+    falling back to its **source's label** — right for a source that is a person's
+    microphone, and wrong for the rest of them: a room microphone or a duplicate
+    feed declared by role has no person to fall back to, so its surviving segments
+    (the ones no candidate claimed) would otherwise be listed as an attendee. The
+    role is what the manifest says the source *is*, so it is read there, and the
+    segment is left unnamed exactly as the attribution pass leaves it — the
+    fallback is the one thing that could put a microphone's name back in.
+
+    Only the source's **own** label is dropped, and only for its own segments: a
+    diarized speaker name that happens to match another source's label is that
+    speaker's, and a candidate's segments are untouched.
+    """
+    unnameable = {src.id for src in sources if src.role != "candidate"}
+    if not unnameable:
+        return list(segments)
+    labels = source_speaker_names(sources)
+    return [
+        dataclasses.replace(seg, speaker="")
+        if seg.source in unnameable and seg.speaker == labels.get(seg.source)
+        else seg
+        for seg in segments
+    ]
+
+
 def reconcile(
     directory: str,
     prefer: str | None = None,
@@ -1467,7 +1698,9 @@ def reconcile(
     progress.start()
     sources, alignment = w.load_manifest()
     per_source, meta = w.load_segments()
-    segments = reconcile_segments(per_source, alignment, sources)
+    segments = _unname_non_candidates(
+        reconcile_segments(per_source, alignment, sources), sources
+    )
     # What the pass could not place: a source with no alignment offset is left
     # out of the timeline. The alignment already named it in `unresolved`, but
     # nothing in the artifact said *how much* transcript went with it — an order
@@ -1504,7 +1737,7 @@ def reconcile(
     # The record and its opening lines, on the run's one channel. The preview is
     # the record's own first segments — what the command surface shows, and all
     # of it: a client reads the same window, not a summary of it.
-    speakers = {seg.speaker for seg in record.segments}
+    speakers = {seg.speaker for seg in record.segments if seg.speaker}
     _report_pass(
         w,
         on_event,

@@ -982,6 +982,412 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     assert all(s.speaker == expected[s.text] for s in emitted)
 
 
+#: The field tape's source shape (ticket 222): two worn lavaliers, the two room
+#: lavaliers nobody wore, the two room microphones that witness the rooms, and a
+#: phone memo carrying the receiver's downmix of the same lavaliers. Each entry is
+#: the gain its device gives each of the four stems. Speakers 0 and 1 wear
+#: ``lavA``/``lavB``; speakers 2 and 3 are unmiked — 2 in the room the lavaliers
+#: sit in, 3 in the room next door, so only ``roomMic2`` hears them at all.
+_FIELD_DEVICES = {
+    "lavA": (1.0, 0.5, 0.12, 0.06),
+    "lavB": (0.5, 1.0, 0.12, 0.06),
+    "roomLavA": (1.0, 0.12, 0.2, 0.06),
+    "roomLavB": (0.12, 1.0, 0.2, 0.06),
+    "roomMic1": (0.6, 0.6, 0.6, 0.06),
+    "roomMic2": (0.06, 0.06, 0.06, 0.7),
+    "memo": (0.4, 0.4, 0.4, 0.06),
+}
+
+
+def _field_capture(tmp_path, name, roles, *, unmiked_from_room_only=False):
+    """Build the field capture above, with ``roles`` written into its manifest.
+
+    ``roles`` is keyed by source id and written **by hand** into ``manifest.json``
+    — the operator's route, and the one the pass has to read — with every other
+    source left a candidate. An empty ``roles`` leaves the manifest exactly as
+    ``ingest`` wrote it (no role field at all), which is a workspace from before
+    this field existed.
+
+    The transcript is placed the way the tape's was: a covered utterance's
+    surviving segment came from the **bleed-dominated** lav (the closest-mic-wins
+    wrongness the pass must undo), an unmiked one from a lav with no speaker name
+    at all, and both room mics transcribed the unmiked speech too — unless
+    ``unmiked_from_room_only``, where the only transcript of it is the room mic's
+    (a lav barely hears that speaker, so its decoder wrote nothing).
+
+    Returns ``(workspace, labels, truth)``: each source's speaker label, and the
+    speaker each utterance must end up with (``""`` for an unmiked one, which no
+    candidate can justify claiming).
+    """
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.engine import SYNTH_SR
+    from clear_record.engine.synth import make_speaker_stems
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / name
+    wd.mkdir()
+    stems, events = make_speaker_stems(
+        duration_s=30.0, n_speakers=4, seed=11, non_overlapping=True
+    )
+    for sid, gains in _FIELD_DEVICES.items():
+        device = sum(g * stem for g, stem in zip(gains, stems)).astype(np.float32)
+        sf.write(str(wd / f"{sid}.wav"), device, SYNTH_SR)
+    stages.ingest(str(wd))
+
+    sources, _ = Workspace.at(wd).load_manifest()
+    labels = {src.id: src.label for src in sources}
+    per_source: dict[str, list[Segment]] = {src.id: [] for src in sources}
+    truth: dict[str, str] = {}
+    for i, event in enumerate(events):
+        speaker = event["speaker"]
+        text = f"u{i}"
+        wrong = "lavB" if speaker == 0 else "lavA"  # the bleed-dominated channel
+        if speaker < 2:
+            per_source[wrong].append(
+                Segment(event["start"], event["end"], text, wrong, labels[wrong])
+            )
+            truth[text] = labels["lavA" if speaker == 0 else "lavB"]
+            continue
+        # Unmiked speech: nobody wore a mic for it, and no diarizer named it.
+        truth[text] = ""
+        if unmiked_from_room_only:
+            mic = "roomMic1" if speaker == 2 else "roomMic2"
+            per_source[mic].append(
+                Segment(event["start"], event["end"], text, mic, labels[mic])
+            )
+            continue
+        per_source[wrong].append(Segment(event["start"], event["end"], text, wrong, ""))
+        for mic in ("roomMic1", "roomMic2"):
+            per_source[mic].append(
+                Segment(event["start"], event["end"], text, mic, labels[mic])
+            )
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
+
+    if roles:
+        manifest = Workspace.at(wd).manifest_path
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for entry in data["sources"]:
+            entry["role"] = roles.get(entry["id"], "candidate")
+        manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return wd, labels, truth
+
+
+def _emitted(wd) -> list:
+    """Every segment the workspace now holds, its per-source map flattened."""
+    from clear_record.pipeline.workspace import Workspace
+
+    per_source, _ = Workspace.at(wd).load_segments()
+    return [seg for segs in per_source.values() for seg in segs]
+
+
+#: The roles the field tape's sources need: the two room microphones witness, the
+#: two lavaliers nobody wore and the phone memo do neither.
+_FIELD_ROLES = {
+    "roomMic1": "mixed",
+    "roomMic2": "mixed",
+    "roomLavA": "excluded",
+    "roomLavB": "excluded",
+    "memo": "excluded",
+}
+
+
+def test_attribute_gates_on_every_multiple_reference(tmp_path) -> None:
+    """Ticket 222: a capture carries more than one non-speaker source, and the
+    ``role`` a manifest source carries is how it says which is which.
+
+    Left candidates, the two room lavaliers nobody wore and the phone memo take
+    the worn speakers' own speech with them (the ticket measured 27-33 % of the
+    record's segments to a microphone nobody wore, and a memo named as a speaker
+    19 times) — here not one covered utterance reaches its own lav. Declared by
+    role they are not emitted at all, the covered speech is corrected, and the
+    unmiked speech is left unnamed rather than pinned on a mic. The two room
+    microphones are **witnesses**: each hears one room, so each is needed — with
+    only one of them declared, the other room's unmiked speech is claimed by a
+    microphone nobody wore again.
+    """
+    not_worn = {
+        "roomLavA",
+        "roomLavB",
+        "roomMic1",
+        "roomMic2",
+        "memo",
+    }
+
+    # 1. the manifest as it stands before anyone declares a role: every source is
+    #    a speaker candidate, so the mics nobody wore win the windows they sit in.
+    wd, labels, truth = _field_capture(tmp_path, "unroled", {})
+    stages.attribute(str(wd))
+    emitted = _emitted(wd)
+    labels_not_worn = {labels[sid] for sid in not_worn}
+    assert labels_not_worn & {seg.speaker for seg in emitted}
+    assert not any(seg.speaker == truth[seg.text] for seg in emitted if truth[seg.text])
+
+    # 2. the roles declared: the rest of the capture stops being a speaker.
+    wd, labels, truth = _field_capture(tmp_path, "roled", _FIELD_ROLES)
+    report = stages.attribute(str(wd))
+    emitted = _emitted(wd)
+    labels_not_worn = {labels[sid] for sid in not_worn}
+    assert all(seg.speaker not in labels_not_worn for seg in emitted)
+    covered = [seg for seg in emitted if truth[seg.text]]
+    assert covered and all(seg.speaker == truth[seg.text] for seg in covered)
+    assert all(not seg.speaker for seg in emitted if not truth[seg.text])
+    # ... and the file holds what the pass returned, un-namings included.
+    from clear_record.pipeline.workspace import Workspace
+
+    disk, _ = Workspace.at(wd).load_segments()
+    assert {sid: [seg.speaker for seg in segs] for sid, segs in disk.items()} == {
+        sid: [seg.speaker for seg in segs] for sid, segs in report.per_source.items()
+    }
+    # and the pass says which references it gated with.
+    assert report.mixed_references == ("roomMic1", "roomMic2")
+
+    # 3. one witness instead of two is not enough: a room's witness cannot refuse
+    #    a claim about speech in the other room, so that room's speech is claimed
+    #    by the mic nobody wore once more.
+    wd, labels, truth = _field_capture(
+        tmp_path, "one-witness", {**_FIELD_ROLES, "roomMic2": "candidate"}
+    )
+    report = stages.attribute(str(wd))
+    assert report.mixed_references == ("roomMic1",)
+    assert labels["roomMic2"] in {seg.speaker for seg in _emitted(wd)}
+
+
+def test_attribute_refuses_a_declaration_it_cannot_honour(tmp_path) -> None:
+    """A hand-edited manifest is the normal input to this field, so the pass
+    refuses what it cannot read instead of guessing: a role outside the three is
+    not a candidate (silently reading it as one would emit the very source the
+    operator tried to silence), a name that is no source is still refused, and a
+    source declared ``excluded`` cannot be a pass's ``mixed`` reference — the two
+    roles say different things.
+    """
+    wd, _labels, _truth = _field_capture(tmp_path, "refuse", {})
+    manifest = wd / "manifest.json"
+    import json
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "muted"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with pytest.raises(
+        stages.PipelineError, match="not one of: candidate, mixed, excluded"
+    ):
+        stages.attribute(str(wd))
+
+    data["sources"][0]["role"] = "excluded"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with pytest.raises(stages.PipelineError, match="declared role 'excluded'"):
+        stages.attribute(str(wd), mixed_source="lavA")
+    with pytest.raises(stages.PipelineError, match="no source 'nobody' in manifest"):
+        stages.attribute(str(wd), mixed_source="nobody")
+
+
+def test_ingest_carries_a_hand_declared_role_forward(tmp_path) -> None:
+    """`run` ingests every time, so a role written into ``manifest.json`` by hand
+    has to survive the manifest ``ingest`` rebuilds — otherwise the documented
+    declare-then-run flow loses the declaration exactly where it is needed. The
+    declaration is what the pass reads; a value it cannot honour is carried too,
+    so it is refused where a role means something rather than dropped here."""
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "carry"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0, gain=0.4)
+    _write_tone(wd / "b.wav", freq=221.0, gain=0.3)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    import json
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "mixed"
+    data["sources"][1]["role"] = "muted"  # a value this build refuses, kept for it
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    stages.ingest(str(wd))
+    written = json.loads(manifest.read_text(encoding="utf-8"))
+    roles = {
+        entry["id"]: entry.get("role", "candidate") for entry in written["sources"]
+    }
+    assert roles == {"a": "mixed", "b": "muted"}
+
+
+def test_ingest_keeps_a_declared_role_across_a_fold(tmp_path) -> None:
+    """A byte-identical copy is the same audio, so a role the manifest holds for
+    the copy's id is one about the surviving source — the rule ticket 221's
+    declared start already follows through ticket 218's fold. Left behind there, a
+    role would silently re-promote the very microphone the operator declared not to
+    be a speaker.
+
+    The copy sorts before the file it copies (``take-copy.wav`` < ``take.wav``), so
+    the fold makes it the source and the id the hand-declared role lives under is
+    the one that leaves the manifest."""
+    import json
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "fold-role"
+    wd.mkdir()
+    _write_tone(wd / "take.wav", freq=220.0, gain=0.4)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "excluded"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    shutil.copyfile(wd / "take.wav", wd / "take-copy.wav")
+
+    again = stages.ingest(str(wd)).sources
+    assert [source.id for source in again] == ["take-copy"]
+    assert [source.role for source in again] == ["excluded"]
+
+
+def test_ingest_drops_a_declared_role_whose_source_id_is_not_a_name(
+    tmp_path,
+) -> None:
+    """A hand-edit can put a list where the manifest names a source, and a role is
+    carried under that id — an unhashable one raised ``TypeError`` out of
+    ``ingest`` (and so out of every ``run``, which ingests every time) for exactly
+    the manifests that carried a role, where the pass's own contract is that a
+    manifest it cannot take a declaration out of declares nothing. The twin reader
+    ``_manifest_starts`` drops that shape; the role has to be dropped with it.
+
+    The same manifest with the default role stages normally, which pins the trigger
+    to the declaration and not to the id."""
+    import json
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "unhashable-id"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0, gain=0.4)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["id"] = ["a"]
+    data["sources"][0]["role"] = "mixed"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert [source.role for source in stages.ingest(str(wd)).sources] == ["candidate"]
+
+    data["sources"][0]["role"] = "candidate"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert [source.role for source in stages.ingest(str(wd)).sources] == ["candidate"]
+
+
+def test_reconcile_leaves_a_non_candidate_source_unnamed(tmp_path) -> None:
+    """The record must not name a microphone as an attendee. ``reconcile`` falls
+    back to its source's label for a segment nobody diarized — right for a
+    person's microphone, and the one thing that can put a room microphone's name
+    into the record for the speech no candidate claimed. A role says the source is
+    not a candidate, so those segments stay unnamed while their transcript stays
+    in the record.
+
+    The unmiked speech here exists only in the room microphone's transcript, which
+    is how a room mic's segment survives to the record at all."""
+
+    def run(name, roles):
+        wd, labels, _truth = _field_capture(
+            tmp_path, name, roles, unmiked_from_room_only=True
+        )
+        stages.align(str(wd))
+        stages.attribute(str(wd))
+        return labels, stages.reconcile(str(wd))
+
+    not_worn = ("roomLavA", "roomLavB", "roomMic1", "roomMic2", "memo")
+
+    # 1. no roles: a microphone nobody wore is named in the record.
+    labels, record = run("named", {})
+    assert record.segments
+    assert {labels[sid] for sid in not_worn} & {seg.speaker for seg in record.segments}
+
+    # 2. the capture declared by role: the same speech is in the record, unnamed.
+    labels, record = run("unnamed", _FIELD_ROLES)
+    assert record.segments
+    assert not {labels[sid] for sid in not_worn} & {
+        seg.speaker for seg in record.segments
+    }
+    assert any(not seg.speaker for seg in record.segments)
+
+
+def test_attribute_writes_a_label_it_only_removed(tmp_path) -> None:
+    """The un-naming is a change the pass has to write.
+
+    A segment from a source the manifest declares is not a candidate enters the
+    pass unnamed, and when no candidate carries its window it stays unnamed — so
+    if that is the pass's *only* effect, ``segments.json`` has to change too.
+    Left alone, the file kept the microphone's label while the pass's own return
+    and ``reconcile`` had none, and a transcript read straight off
+    ``segments.json`` (no record yet) named a microphone the operator declared not
+    to be a speaker."""
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.engine import SYNTH_SR, mix_crosstalk
+    from clear_record.engine.synth import make_speaker_stems
+    from clear_record.pipeline.workspace import Workspace
+
+    stems, events = make_speaker_stems(
+        duration_s=20.0, n_speakers=2, seed=13, non_overlapping=True
+    )
+    wd = tmp_path / "unnamed-only"
+    wd.mkdir()
+    sf.write(str(wd / "micA.wav"), mix_crosstalk(stems, 0, bleed_db=-6.0), SYNTH_SR)
+    sf.write(str(wd / "room.wav"), mix_crosstalk(stems, 1, bleed_db=0.0), SYNTH_SR)
+    stages.ingest(str(wd))
+    sources, _ = Workspace.at(wd).load_manifest()
+    labels = {src.id: src.label for src in sources}
+    # One utterance of the speaker no mic carries, transcribed by the room alone:
+    # the pass has nothing to correct and nothing to claim.
+    other = next(event for event in events if event["speaker"] == 1)
+    Workspace.at(wd).write_segments(
+        {
+            "room": [
+                Segment(other["start"], other["end"], "one", "room", labels["room"])
+            ]
+        },
+        {"backend": "none", "model": "none"},
+    )
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in data["sources"]:
+        entry["role"] = "mixed" if entry["id"] == "room" else "candidate"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    report = stages.attribute(str(wd))
+
+    returned = {
+        sid: [seg.speaker for seg in segs] for sid, segs in report.per_source.items()
+    }
+    assert returned == {"room": [""]}
+    written, _ = Workspace.at(wd).load_segments()
+    assert {
+        sid: [seg.speaker for seg in segs] for sid, segs in written.items()
+    } == returned  # the file holds what the pass returned
+    assert labels["room"] not in {seg.speaker for seg in written["room"]}
+    assert report.changed == 1  # the un-naming is a change, and it is counted
+
+
+def test_attribute_reports_the_references_it_was_asked_for(tmp_path) -> None:
+    """``mixed_references`` names what the pass was **asked** to gate with, in the
+    order it builds them: the ids the caller named for the pass, in the order
+    named, then the manifest's declared ``mixed`` roles in manifest order. Naming
+    a source that is no reference by role is the older one-off, and still works;
+    every source either form names is out of the candidate set."""
+    wd, labels, _truth = _field_capture(
+        tmp_path, "order", {"roomMic2": "mixed", "roomLavA": "excluded"}
+    )
+
+    report = stages.attribute(str(wd), mixed_source=("roomMic1", "memo"))
+
+    assert report.mixed_references == ("roomMic1", "memo", "roomMic2")
+    asked_not_to_speak = {
+        labels[sid] for sid in ("roomMic1", "roomMic2", "memo", "roomLavA")
+    }
+    assert not asked_not_to_speak & {seg.speaker for seg in _emitted(wd)}
+
+
 def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""

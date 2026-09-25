@@ -15,6 +15,31 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+#: The roles a source can play in attribution, by the name the manifest carries.
+#:
+#: - ``candidate`` (the default): a recording of one person, so it may be named
+#:   as a speaker. Every source is one until something says otherwise.
+#: - ``mixed``: a **mixed reference** — a source that hears the whole room
+#:   (a room microphone, a mixer's sum) rather than one person. It is a *witness*:
+#:   it gates a candidate's claim and is never itself a speaker.
+#: - ``excluded``: not a speaker and not a witness either. A microphone nobody
+#:   wore picks up whoever is nearest instead of the room, and a duplicate feed
+#:   (a phone memo fed by the receiver's downmix of the same mics) carries no
+#:   evidence the sources it copies do not already carry — so neither may claim a
+#:   segment or refuse one.
+#:
+#: ``candidate`` and ``mixed`` are the two jobs a source can do — be a speaker, or
+#: witness the room — and ``excluded`` is the absence of both: a source that is
+#: neither. ``clear_record.core`` does not police the value: a manifest is a
+#: document an operator edits, and ``attribute`` — the pass that decides who may be
+#: a speaker — refuses a name it does not know rather than quietly treating it as
+#: one, while the passes that only carry or honour the value take it as written
+#: (``ingest`` carries it across the manifest it rebuilds, ``reconcile`` drops the
+#: label fallback for a source that is not a candidate). A run that does not
+#: attribute — ``run`` without ``--attribute-energy`` — refuses nothing.
+SOURCE_ROLES = ("candidate", "mixed", "excluded")
+
+
 @dataclass(frozen=True)
 class Source:
     """A single recording that contributes to a record."""
@@ -35,6 +60,14 @@ class Source:
     # decide when they can overlap, and falls back to the declaration when the
     # audio has no verdict.
     start_s: float | None = None
+    #: What this recording is to the record, when it is not simply a person's
+    #: microphone (see :data:`SOURCE_ROLES`). The default keeps a manifest that
+    #: names no role — every workspace written before this field existed — reading
+    #: exactly as before: every source a speaker candidate. A **role**, not a
+    #: per-pass flag, because what a source *is* does not change between passes:
+    #: the room microphone was a witness in the field and is a witness in the
+    #: record, whatever a caller names on one command line.
+    role: str = "candidate"
 
 
 @dataclass(frozen=True)
@@ -175,6 +208,7 @@ def load_json(path: Path) -> Any:
 
 
 __all__ = [
+    "SOURCE_ROLES",
     "Source",
     "Alignment",
     "UnplacedSource",

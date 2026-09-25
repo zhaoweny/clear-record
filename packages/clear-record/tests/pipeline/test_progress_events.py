@@ -264,7 +264,7 @@ def test_the_channel_carries_the_lines_and_the_data_items(tmp_path) -> None:
         # attribute: what the pass measured.
         f"[attribute] {attribute_report.segments} segment(s), "
         f"{attribute_report.speakers} speaker(s), "
-        f"{attribute_report.changed} re-attributed",
+        f"{attribute_report.changed} re-attributed or unnamed",
         # reconcile: the record, then its opening segments.
         f"[reconcile] {len(record.segments)} segment(s), "
         f"{len({seg.speaker for seg in record.segments})} attributed speaker(s) -> "

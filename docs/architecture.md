@@ -515,7 +515,12 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   `[ingest] cannot read <file>: <reason>`. Bytes that decode but are not the
   encoding meant (a BOM-less UTF-16 file) are not detectable — the read takes the
   file as `utf-8-sig`, so a byte-order mark is fine — and such a declaration
-  simply names nothing.
+  simply names nothing. A source's declared **role** — the room microphone, the
+  duplicate feed a capture carries beside its speakers (see `attribute`) — is read
+  off the manifest and carried into the manifest this pass rebuilds, and follows a
+  folded copy to the source the fold kept, as a declared start does: `run` ingests
+  every time, so a declaration written by hand would otherwise be lost by the run
+  that needs it.
 - `align` → `clear_record.engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback. A source that declares its own start, against a
@@ -543,8 +548,20 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
 - `attribute` → cross-talk-aware per-segment attribution by **relative,
-  gain-normalized source energy** (`clear_record.engine.attribute`), with an optional
-  mixed/room reference as a presence gate (never a speaker itself). Each source is
+  gain-normalized source energy** (`clear_record.engine.attribute`), with mixed/room
+  reference(s) as a presence gate (never speakers themselves). **Which sources are
+  not speakers is the manifest's `role`**: `candidate` (the default, a person's
+  microphone), `mixed` (a witness that hears the whole room and only gates) and
+  `excluded` (a microphone nobody wore, a duplicate feed such as a phone memo
+  carrying the receiver's downmix of the same mics — neither a candidate nor a
+  witness). A capture can carry several non-speaker sources, and every `mixed`
+  reference that **reads back** gates (one whose audio cannot be read raises no
+  floor, though the pass still reports it as asked for), so a claim must be one
+  every witness that heard the window can account for; `--mixed-source` still
+  names one source for a single pass. A segment whose own source is not a
+  candidate is attributed like any other and left **unnamed** when no candidate
+  carries its window — a change the pass counts and writes — so no microphone's
+  label reaches the record. Each source is
   normalized against its **own** level; `--window-s` switches from one static
   whole-recording level to a **causal rolling window** (≈15 s default) that tracks
   **drifting** gain and writes a calibrated per-segment confidence, while a

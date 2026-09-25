@@ -126,6 +126,33 @@ Python package (they are no-op markers). `clear-record backends` shows what is
 available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
 
+**Chinese script — the two families do not agree on one, so the choice matters.**
+`whisper-cli`'s `-l zh` writes Mandarin in **Traditional** characters (measured:
+685 Traditional-only characters in a 600 s Mandarin slice); `apple-speech` writes
+**Simplified**. For `zh` the whisper-cli adapters put a hand-written
+Simplified-Chinese sentence in the decoder's initial prompt — a bias on the
+decoder's own context, no converter and no new dependency — and send it only to a
+CLI whose own usage text advertises `--prompt`, so no flag is assumed to exist; a
+CLI that hides the flag keeps writing Traditional.
+
+Nothing rewrites a transcript's script. What the record can do is say which scripts
+each source came out in: `transcribe` reads the Han text of each source and records
+the scripts it shows in `segments.json` (under `meta.sources.<id>.scripts`, e.g.
+`["traditional"]`; nothing where the text settles neither), and whenever that is
+not uniform it names the sources on the run's channel — a `script=` column on the
+per-source rows plus one warning, with `script=simplified+traditional` for a source
+holding both. A difference between two sources (`--rerun-source` against another
+backend; a future ensemble would need the same rule) and a difference inside one
+source are both named: the two scripts are never *silently* interleaved.
+
+The bias is a decode hint built inside the adapter, so no cache key carries it: a
+`zh` workspace re-run under unchanged options re-decodes nothing and keeps the text
+it already had. A partial re-decode (a range scope, a scope with a glossary edit
+behind it, an interrupted run) leaves that source holding chunks decoded on either
+side of it; its record carries **both** scripts only where those decodes wrote
+different scripts — a single entry says what the source's text shows, not that it
+was decoded in one pass.
+
 **Installing a `whisper-cli` GPU backend** (`apple` / `nvidia` / `amd`):
 
 - macOS: `brew install whisper-cpp` (pulls `ggml`; the Metal plugin is a

@@ -215,6 +215,22 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   known sizes are checked against a pinned SHA-256 before being installed
   (`providers.ggml_hashes`; `CR_MODEL_CHECKSUM=off` opts out), and offline the
   actionable `hf download …` error is raised.
+- [DESIGN] The `whisper-cli` backends and `apple-speech` **do not agree on the
+  Han script**: whisper.cpp's `-l zh` writes Mandarin in Traditional characters
+  (measured: 685 Traditional-only characters in a 600 s Mandarin slice) where the
+  native transcriber writes Simplified. For `zh` the whisper-cli adapters bias
+  the decode to Simplified with a hand-written Simplified initial prompt, sent
+  only to a CLI whose usage text advertises `--prompt` — no converter, no new
+  dependency, and no flag assumed to exist. The bias is built inside the adapter,
+  so **no cache key carries it**: a `zh` run under unchanged options re-decodes
+  nothing, and its cached chunks keep the script they were decoded in.
+  Nothing rewrites a transcript's script, so the transcribe stage reads each
+  source's Han text, records the scripts it shows in `segments.json`
+  (`meta.sources.<id>.scripts`, both of them only where a partial re-decode left
+  chunks whose decodes wrote *different* scripts, none where the text settles
+  neither) and names the sources on the run's channel whenever that is not uniform
+  (`engine.text.han_scripts`): a difference between sources *or inside one* is
+  never silent.
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is
   driven as a subprocess in the providers layer, so a plain dev/CI environment
   needs no GPU framework.

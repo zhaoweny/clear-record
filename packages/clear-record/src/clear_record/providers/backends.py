@@ -398,6 +398,87 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
     return result
 
 
+# --------------------------------------------------------------------------- #
+# Chinese script: the decoder's initial prompt
+# --------------------------------------------------------------------------- #
+#
+# whisper.cpp's ``-l zh`` decodes Mandarin to **Traditional** characters (measured
+# on a 600 s Mandarin slice: 685 Traditional-only characters, where the same audio
+# through Apple's on-device transcriber is Simplified). The decoder's initial
+# prompt is the one lever over the script that needs no converter and no new
+# dependency: a Simplified prompt becomes part of the decoder's context and biases
+# the decode to Simplified. It is a *bias*, not a rewrite — it is asked for, never
+# assumed effective — and it is only ever sent to a CLI that advertises
+# ``--prompt`` (never assume a flag exists). What the bias cannot guarantee, the
+# transcribe stage records and names: the scripts each source's Han text shows go
+# in the record, and every source is named whenever that is not uniform — an
+# in-source mix included (``engine.text.han_scripts``).
+
+#: A short Simplified-Chinese sentence (hand-written, not field content) used as
+#: the initial prompt for ``zh``, so the decoder's own context is Simplified.
+_ZH_SIMPLIFIED_PROMPT = "以下是普通话的句子。"
+
+#: Punctuation a usage-text token can carry (``[--prompt],``, ``--prompt,``),
+#: stripped before the token is read as a flag name.
+_CLI_FLAG_STRIP = "[](),.:`'\""
+
+# One-shot cache, like the plugin-load probe: which flags the installed CLI
+# advertises is a property of that binary, so it costs one ``--help`` per CLI per
+# process — never once per chunk.
+_CLI_FLAGS_CACHE: dict[str, frozenset[str]] = {}
+_CLI_FLAGS_CACHE_LOCK = threading.Lock()
+
+
+def _clear_cli_flags_cache() -> None:
+    """Drop the cached advertised-flag sets (tests only)."""
+    with _CLI_FLAGS_CACHE_LOCK:
+        _CLI_FLAGS_CACHE.clear()
+
+
+def _advertised_flags(text: str) -> frozenset[str]:
+    """The long ``--flags`` ``text`` names (a usage text, punctuation stripped)."""
+    return frozenset(
+        token.strip(_CLI_FLAG_STRIP).split("=")[0]
+        for token in text.split()
+        if token.startswith("--")
+    )
+
+
+def _cli_advertises_flag(cli: str, flag: str) -> bool:
+    """True when ``cli``'s own usage text names ``flag``.
+
+    A caller must never *assume* a flag exists on the installed binary, so the
+    question is put to the binary itself: ``--help`` is run once (whisper.cpp
+    prints its usage on stderr and exits 0, and the text is read whatever the exit
+    code — a build that exits non-zero still printed its usage) and the answer
+    cached per CLI path for the process. Every failure — no binary, a timeout,
+    output that names no such flag — reads as "not advertised", which is the safe
+    answer: the flag is then never added to a command.
+    """
+    with _CLI_FLAGS_CACHE_LOCK:
+        cached = _CLI_FLAGS_CACHE.get(cli)
+    if cached is not None:
+        return flag in cached
+    try:
+        proc = _RUNNER.run([cli, "--help"], capture_output=True, text=True, timeout=30)
+        advertised = _advertised_flags(f"{proc.stdout or ''}\n{proc.stderr or ''}")
+    except (OSError, subprocess.SubprocessError):
+        advertised = frozenset()
+    with _CLI_FLAGS_CACHE_LOCK:
+        _CLI_FLAGS_CACHE[cli] = advertised
+    return flag in advertised
+
+
+def _is_chinese(language: str) -> bool:
+    """True when ``language`` asks ``whisper-cli`` for Chinese (``zh``/``zh-*``).
+
+    Only the primary subtag is read, so ``zh-Hant`` counts as Chinese: whisper.cpp's
+    own language table holds ``zh`` alone, and a script-marked variant is a caller's
+    error the CLI rejects — never a way to ask this adapter for Traditional.
+    """
+    return language.split("-")[0].lower() == "zh"
+
+
 _AMD_VENDOR_ID = "0x1002"
 
 
@@ -809,6 +890,13 @@ class _WhisperCliBackend(BackendBase):
         each is what keeps this adapter from restating the table, so a new knob
         is a row there and nothing here. A keyword that is not a declared decoder
         knob is a caller's error and is rejected, never ignored.
+
+        For Chinese (``language`` ``zh``/``zh-*``) the command carries a
+        Simplified-Chinese initial prompt after any caller glossary, when the
+        installed CLI advertises ``--prompt``: ``whisper-cli`` otherwise writes
+        Mandarin in Traditional characters (see the section above). The bias is
+        best-effort by nature, so it never replaces the caller's glossary and is
+        never sent to a CLI that does not advertise the flag.
         """
         unknown = sorted(set(decoder_knobs) - set(DECODER_KNOB_FIELDS))
         if unknown:
@@ -822,6 +910,12 @@ class _WhisperCliBackend(BackendBase):
         name = model or self.info.default_model
         model_path = self.prepare(name, model_dir)
         lang = language if language and language not in ("", "auto") else "auto"
+        # Chinese script: ask the decoder for Simplified through the initial
+        # prompt, only from a CLI that advertises the flag, and after the
+        # caller's own glossary so the bias sits nearest the first window.
+        prompt = (initial_prompt or "").strip()
+        if _is_chinese(lang) and _cli_advertises_flag(cli, "--prompt"):
+            prompt = f"{prompt} {_ZH_SIMPLIFIED_PROMPT}".strip()
         runner = process_runner or self._runner
 
         with tempfile.TemporaryDirectory(prefix="cr-whisper-") as tmp:
@@ -845,8 +939,8 @@ class _WhisperCliBackend(BackendBase):
                 value = decoder_knobs.get(knob_name)
                 if value is not None:
                     cmd += [flag, str(value)]
-            if initial_prompt:
-                cmd += ["--prompt", initial_prompt]
+            if prompt:
+                cmd += ["--prompt", prompt]
             proc = runner.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
                 tail = (proc.stderr or "").strip()[-800:]

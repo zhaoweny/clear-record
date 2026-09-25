@@ -82,6 +82,7 @@ from clear_record.engine import (
     attribute_by_source,
     channel_count,
     diarize as diarize_segments,
+    han_scripts,
     prepare_16k_wav,
     reconcile as reconcile_segments,
     source_speaker_names,
@@ -697,6 +698,16 @@ def download_ggml_model(model: str, model_dir: str | None = None) -> str:
     return _providers_download_ggml_model(model, model_dir)
 
 
+def _scripts_label(shown: tuple[str, ...]) -> str:
+    """The scripts one source's text shows, as the pass names them.
+
+    ``"simplified+traditional"`` for a source whose own chunks hold both, and
+    ``"unknown"`` for one the classifier could not settle -- the two cases a
+    reader needs to tell apart from a source that is plainly one script.
+    """
+    return "+".join(shown) if shown else "unknown"
+
+
 def transcribe(
     directory: str,
     backend_id: str,
@@ -727,6 +738,16 @@ def transcribe(
     The decoder knobs (``beam_size`` … ``threads``) are passed through to the
     backend only when set; unset means "add no flag", so the built command is
     unchanged for a caller that does not ask for tuning.
+
+    Chinese comes back in whichever **script** the backend writes — whisper.cpp's
+    ``-l zh`` in Traditional characters, the native transcriber in Simplified —
+    and nothing here rewrites it. The pass therefore records, per source, the
+    scripts the source's text actually shows (``engine.text.han_scripts``: both of
+    them only where a partial re-decode left chunks whose decodes wrote *different*
+    scripts — a single entry says what the text shows, not how many passes wrote
+    it — and nothing where the text settles neither), and names the sources
+    whenever that is not uniform — a difference between two sources or inside one
+    is never silent.
 
     ``rerun_sources``/``rerun_range`` are an explicit **re-run scope**: only the
     chunks they select are re-decoded, and every other chunk is reused from the
@@ -906,6 +927,27 @@ def transcribe(
         ]
         for sid, segs in result.per_source.items()
     }
+    # Han script, per source. Nothing in the pipeline rewrites a script, and the
+    # paths do not agree on one: whisper.cpp's ``-l zh`` writes Mandarin in
+    # Traditional characters where Apple's on-device transcriber writes
+    # Simplified, so a workspace that mixes backends across sources
+    # (``--rerun-source``) would otherwise interleave the two with no marker at
+    # all. What each source's text *shows* is recorded -- both scripts where it
+    # shows both, since one source can hold chunks from before and after a
+    # re-decode -- and the pass names the sources whenever that is not uniform,
+    # whether the difference is between two sources or inside one.
+    scripts = {
+        sid: han_scripts(" ".join(seg.text for seg in segs))
+        for sid, segs in per_source.items()
+    }
+    for sid, shown in scripts.items():
+        if shown:
+            meta["sources"].setdefault(sid, {})["scripts"] = list(shown)
+    # Uniform means: every source shows the same, single script. A source showing
+    # both is already not uniform on its own, and an undetermined source (empty)
+    # is never counted as agreeing or disagreeing.
+    shown_sets = {shown for shown in scripts.values() if shown}
+    named_scripts = any(len(shown) > 1 for shown in shown_sets) or len(shown_sets) > 1
     w.write_segments(per_source, meta)
     # The pass as a whole, on the run's one channel: what decoded and where the
     # transcript went, then one line per source. Transcribe's own closing report
@@ -917,13 +959,37 @@ def transcribe(
     for sid, segs in per_source.items():
         info = meta["sources"].get(sid, {})
         duration = info.get("duration")
+        # Where the scripts are not uniform, each row names what that source
+        # shows -- both scripts where it shows both: the mix is exactly the case
+        # a reader must be able to see, and a uniform pass needs no column (the
+        # record's meta still carries it).
+        script = (
+            f"  script={_scripts_label(scripts.get(sid, ()))}" if named_scripts else ""
+        )
         rows.append(
             (
                 f"  {sid:24s} segments={len(segs):4d}  "
                 f"duration={duration if duration is not None else '?'}  "
-                f"chunks={info.get('chunks', '?')}",
+                f"chunks={info.get('chunks', '?')}{script}",
                 sid,
             )
+        )
+    if named_scripts:
+        # This line is the newest event on the run's stream, so it carries the
+        # pass's own tally: a line that states no counters of its stage's base
+        # would move the console's bar backwards (``report_line``'s contract).
+        report_line(
+            w,
+            on_event,
+            "transcribe",
+            "[transcribe] Han script is not uniform: "
+            + ", ".join(
+                f"{sid}={_scripts_label(scripts.get(sid, ()))}" for sid in per_source
+            ),
+            index=chunked,
+            total=chunked,
+            reused=reused,
+            level="warn",
         )
     _report_pass(
         w,

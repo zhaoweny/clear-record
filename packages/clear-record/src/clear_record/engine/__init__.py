@@ -36,6 +36,7 @@ from clear_record.engine.text import (
     clean_segments,
     collapse_repetitions,
     glossary_terms,
+    han_scripts,
     is_non_speech,
     term_could_affect,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "diarize",
     "estimate_offset",
     "glossary_terms",
+    "han_scripts",
     "is_non_speech",
     "make_scene",
     "mix_crosstalk",

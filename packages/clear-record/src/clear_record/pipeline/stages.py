@@ -94,7 +94,7 @@ from clear_record.providers import (
 
 from clear_record.pipeline import eval as _eval
 from clear_record.pipeline import transcription
-from clear_record.pipeline.workspace import Workspace, discover_audio, report_line
+from clear_record.pipeline.workspace import Workspace, discover_inputs, report_line
 
 
 # --------------------------------------------------------------------------- #
@@ -325,6 +325,17 @@ def ingest(
     No audio to ingest is an actionable :class:`PipelineError`, not an empty
     report: a run that discovered nothing has nothing to say.
 
+    A file discovery could not use is *named* on the sink as one line per file
+    (:func:`report_line`, level ``warn``) — a tape the operator meant to hand
+    over must not go unnamed — and the line arrives before the pass's bar opens,
+    so it carries no counters. What is named is what the walk
+    (:func:`~clear_record.pipeline.workspace.discover_inputs`) passed over: a
+    regular file whose suffix is outside ``AUDIO_SUFFIXES``, less the
+    workspace's own state — its output dirs, its bookkeeping files and the
+    app's own ``agent/`` drafts — and hidden entries, none of which is a tape.
+    Only a discovered walk names anything: an explicit ``audio_files`` list
+    declares its inputs, and nothing beside them was looked at.
+
     Each input's decode line is reported on the sink (:func:`report_line`) as
     that decode begins — one line per decode, before normalizing that input, not
     batched after the pass — so a caller watching a long ingest sees every file
@@ -332,7 +343,22 @@ def ingest(
     """
     w = Workspace.at(directory)
     d = w.root
-    files = [Path(a) for a in audio_files] if audio_files else discover_audio(d)
+    if audio_files:
+        files, skipped = [Path(a) for a in audio_files], []
+    else:
+        files, skipped = discover_inputs(d)
+    # Where discovery happens, so the operator reads what was left out beside
+    # the files that were taken — and before the refusal below, so a directory
+    # of nothing but unusable files still says which ones they were.
+    for p in skipped:
+        report_line(
+            w,
+            on_event,
+            Step.INGEST.value,
+            f"[ingest] cannot use {p.relative_to(d)}: not a recognized audio "
+            f"file ({p.suffix or 'no suffix'})",
+            level="warn",
+        )
     if not files:
         raise PipelineError(f"[ingest] no audio files found in {d}")
     audio_dir = w.audio_dir

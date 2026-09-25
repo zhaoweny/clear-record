@@ -71,6 +71,11 @@ AUDIO_SUFFIXES = {
     ".m4a",
     ".mp3",
     ".aac",
+    # WavPack — what an Audacity export ships. libsndfile refuses it, so it
+    # decodes through the ffmpeg fallback (``engine.audio.read_audio``); absent
+    # from this set, a field tape's five tracks were invisible to `ingest`/`run`
+    # while the same file named as an explicit input decoded fine.
+    ".wv",
 }
 
 
@@ -81,6 +86,20 @@ def is_audio(path: Path) -> bool:
 # Workspace-managed subdirectories that must never be re-discovered as sources
 # (they hold our own normalized/derived output).
 SKIP_DIRS = {AUDIO_DIR, EXPORT_DIR, CHUNKS_DIR}
+
+#: The workspace's own bookkeeping files, by name, wherever the walk meets them.
+#: They are not inputs: naming them as files discovery "cannot use" would
+#: narrate the workspace's own state back at the operator on every ingest.
+WORKSPACE_FILES = {MANIFEST, SEGMENTS, RECORD, GLOSSARY, TRANSCRIBE_LOG, GROUND_TRUTH}
+
+#: The app's own agent-artifact directory under a meeting workspace
+#: (``service.agent_review.AGENT_DIRNAME``, ADR-0031): the drafts, locks and
+#: promoted minutes the console's agent flow keeps there. It is not a tape
+#: either, and its name is spelled out here because ``pipeline`` may not import
+#: ``service`` (``tests/test_layering.py``). Only the *naming* walk is kept off
+#: it — joining :data:`SKIP_DIRS` instead would also drop any audio beneath it
+#: from :func:`discover_audio`, which is not this rule.
+AGENT_DIRNAME = "agent"
 
 # `transcribe.log` is append-only and shared by the stage and its worker pool.
 _log_lock = threading.Lock()
@@ -96,21 +115,53 @@ def _cache_key(root: Path) -> str:
     return hashlib.sha1(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
 
 
-def discover_audio(directory: Path) -> list[Path]:
-    """Recursively list *input* audio files under ``directory`` (sorted, stable).
+def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
+    """Recursively classify *directory*: ``(audio inputs, files walked past)``.
 
-    Excludes the workspace's own output dirs (``audio/``, ``export/``) so that
-    re-running `ingest` is idempotent.
+    One walk, two lists. The first is the audio inputs of :func:`discover_audio`
+    (same selection, same order). The second is what the walk could not use: a
+    regular file whose suffix is outside :data:`AUDIO_SUFFIXES`. A format the
+    decoder handles but the set did not list — WavPack ``.wv`` was one — used to
+    vanish here without a word, so a tape the operator meant to hand over went
+    unnamed; this list is what lets `ingest` name it.
+
+    Not every other file is narrated, because not every other file is a tape:
+    the workspace's own output dirs (:data:`SKIP_DIRS`), its bookkeeping files
+    (:data:`WORKSPACE_FILES`) and the app's own agent-artifact directory
+    (:data:`AGENT_DIRNAME`) are its own state, and a hidden entry (a checkout's
+    ``.git``, a stray ``.DS_Store``, the upload scratch file
+    ``.cr-upload-*.part``) is machinery, not an input. Only *this* walk is kept
+    off the agent directory: audio beneath it still discovers, so it is not in
+    :data:`SKIP_DIRS`.
     """
-    found: list[Path] = []
+    audio: list[Path] = []
+    skipped: list[Path] = []
     for p in sorted(directory.rglob("*")):
-        if not p.is_file() or not is_audio(p):
+        if not p.is_file():
             continue
         rel = p.relative_to(directory).parts
         if rel and rel[0] in SKIP_DIRS:
             continue
-        found.append(p)
-    return found
+        if is_audio(p):
+            audio.append(p)
+        elif rel and rel[0] == AGENT_DIRNAME:
+            continue
+        elif p.name not in WORKSPACE_FILES and not any(
+            part.startswith(".") for part in rel
+        ):
+            skipped.append(p)
+    return audio, skipped
+
+
+def discover_audio(directory: Path) -> list[Path]:
+    """Recursively list *input* audio files under ``directory`` (sorted, stable).
+
+    Excludes the workspace's own output dirs (``audio/``, ``export/``) so that
+    re-running `ingest` is idempotent. The walk itself is
+    :func:`discover_inputs`', which returns the files it could not use beside
+    these.
+    """
+    return discover_inputs(directory)[0]
 
 
 def _publish_json(path: Path, payload) -> None:
@@ -552,6 +603,7 @@ __all__ = [
     "chunk_cache_key",
     "chunk_glossary",
     "discover_audio",
+    "discover_inputs",
     "glossary_digest",
     "is_audio",
     "plan_matches",

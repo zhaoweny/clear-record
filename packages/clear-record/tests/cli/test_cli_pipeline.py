@@ -8,7 +8,11 @@ backend is available (see the @skip conditions in test_transcriber).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+
 import numpy as np
+import pytest
 import soundfile as sf
 
 from clear_record.cli.calibrate import calibrate_report
@@ -111,6 +115,139 @@ def test_a_stage_failure_is_a_pipeline_error_the_cli_exits_on(tmp_path) -> None:
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["ingest", str(wd)])
     assert str(exit_info.value.code).startswith("[ingest] no audio files found in")
+
+
+#: ffmpeg is both halves of the WavPack round trip: libsndfile cannot write
+#: WavPack, and it cannot read it either, so the encode below goes through
+#: ffmpeg the way the decode does (``engine.audio.read_audio``'s fallback).
+_FFMPEG = shutil.which("ffmpeg")
+
+requires_ffmpeg = pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg is not installed")
+
+
+@requires_ffmpeg
+def test_a_wavpack_tape_is_discovered_and_decoded(tmp_path) -> None:
+    """``.wv`` is a source `ingest` *finds*, not a file it walks past.
+
+    Audacity exports WavPack, and a field tape's five-track room microphone
+    arrived as ``.wv`` files: outside ``AUDIO_SUFFIXES`` they were invisible to
+    `ingest`/`run` — while the same file named as an explicit input decoded
+    fine — so the record lost its run's independent witness. The tape is the
+    only audio left in the workspace, so discovery is the only way to it, and
+    the staged audio holds the tone: the decode went through the ffmpeg
+    fallback libsndfile cannot provide.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    tone = (0.4 * np.sin(2 * np.pi * 330.0 * t)).astype(np.float32)
+    sf.write(str(wd / "take.wav"), tone, sr)
+    subprocess.run(
+        [
+            _FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(wd / "take.wav"),
+            "-c:a",
+            "wavpack",
+            str(wd / "take.wv"),
+        ],
+        check=True,
+    )
+    (wd / "take.wav").unlink()
+
+    sources = stages.ingest(str(wd)).sources
+
+    assert [s.id for s in sources] == ["take"]
+    assert _peak_hz(sources[0].path) == 330
+
+
+def test_ingest_names_a_file_discovery_cannot_use(tmp_path) -> None:
+    """A file with a suffix outside the set is *named* at ingest, not dropped.
+
+    Discovery walked past anything it could not use and said nothing, so a tape
+    in a container the set did not list left no trace at all. The line states
+    the file where discovery happens — before the first decode, and before a
+    discovery of nothing usable refuses — and the workspace's own state stays
+    out of it: ``glossary.txt`` is the workspace's bookkeeping file and
+    ``.DS_Store`` is a hidden entry, and neither is a tape the operator meant to
+    hand over.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    (wd / "take.aup").write_bytes(b"<audacity project>")
+    (wd / "glossary.txt").write_text("Clear Record\n", encoding="utf-8")
+    (wd / ".DS_Store").write_bytes(b"\x00")
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    assert [e.message for e in events if e.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)",
+        "[ingest] decode a.wav -> a.wav",
+        f"[ingest] {len(sources)} source(s) -> {wd / 'manifest.json'}",
+        *[f"  {source.id:24s} {source.path}" for source in sources],
+    ]
+    assert [
+        (e.source, e.level) for e in events if e.message.startswith("[ingest] cannot")
+    ] == [(None, "warn")]
+
+
+def test_ingest_names_what_it_cannot_use_before_it_refuses(tmp_path) -> None:
+    """A directory of nothing but unusable files still says which they were.
+
+    The field tape's whole set was WavPack: discovery found no audio at all and
+    `ingest` refused with the directory, which named nothing. The files are
+    reported before that refusal, so the operator reads what was walked past
+    even when the pass has nothing else to say.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    (wd / "take.aup").write_bytes(b"<audacity project>")
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    with pytest.raises(stages.PipelineError, match="no audio files"):
+        stages.ingest(str(wd), on_event=events.append)
+
+    assert [e.message for e in events if e.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)"
+    ]
+
+
+def test_ingest_leaves_the_apps_own_agent_drafts_unnamed(tmp_path) -> None:
+    """The console's agent drafts live under ``<ws>/agent`` (ADR-0031), and that
+    directory is the workspace's own state, not a tape: a pass does not narrate
+    a meeting's drafts, locks or promoted minutes back at the operator.
+
+    Only the *naming* walk is kept off it — the audio beneath it is still
+    discovered, which is why it is not a :data:`SKIP_DIRS` entry.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    drafts = wd / "agent" / "draft-1"
+    drafts.mkdir(parents=True)
+    (drafts / "draft.json").write_text("{}", encoding="utf-8")
+    (drafts / "draft.lock").touch()
+    (drafts / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
+    _write_tone(wd / "agent" / "room.wav")
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a", "agent__room"]
+    assert [e.message for e in events if e.message.startswith("[ingest] cannot")] == []
 
 
 def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:

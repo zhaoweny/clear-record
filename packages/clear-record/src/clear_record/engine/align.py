@@ -358,11 +358,11 @@ def _usable_start(value: object) -> float | None:
     ``Source.start_s`` is a number when ``ingest`` reads it off a file name, and
     whatever a hand-edit put in the field when an operator declares one in the
     manifest — the flow this feature exists for. ``align`` places a declared pair
-    by the difference of the two declarations, so it can take any number a clock
-    can render (the same measure ``ingest`` keeps, so both layers read the field
-    alike) and nothing else: a name
-    (``"noon"``), a bool, or ``nan``/``inf`` is no declaration at all, dropped
-    here rather than raising out of the stage over a field a user typed.
+    by the difference of the two declarations, so what it takes is any number a
+    clock can render (the same measure ``ingest`` keeps, so both layers read the
+    field alike) and nothing else: a name (``"noon"``), a bool, or ``nan``/``inf``
+    is no declaration at all, dropped here rather than raising out of the stage
+    over a field a user typed.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None

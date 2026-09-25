@@ -1374,6 +1374,75 @@ def test_align_places_a_declared_pair_inside_one_window_of_the_earlier_part(
     assert alignment.method == "declared-start"
 
 
+@requires_ffmpeg
+def test_align_measures_a_declared_pair_libsndfile_cannot_read(
+    tmp_path, monkeypatch
+) -> None:
+    """A declared pair in a container libsndfile refuses (WavPack here; m4a/aac
+    read the same way) is still measured, and still read as sequential.
+
+    Ticket 223 put those suffixes in the walk because ``read_audio`` reaches them
+    through ffmpeg, and a manifest may name the recording itself rather than
+    ingest's staged copy — so the length this rule reads is the length of a file
+    whose header libsndfile cannot open. Read from the header alone, that length
+    was unknown, which left the pair to the audio; over two parts that cannot
+    overlap the estimator answers with two unrelated passages matching (the
+    reviewer's repro: +21.3330 s, conf 0.505, against the true +90 s), the
+    misplacement ticket 221 is about. The estimator is stubbed to that reading
+    here, and must not be asked at all.
+    """
+    from datetime import datetime, timezone
+
+    from clear_record.core import Source
+    from clear_record.engine import align as engine_align
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name in ("REC_20260101_120000", "REC_20260101_120130"):
+        _write_tone(wd / f"{name}.wav", seconds=90.0)
+        subprocess.run(
+            [
+                _FFMPEG,
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(wd / f"{name}.wav"),
+                "-c:a",
+                "wavpack",
+                str(wd / f"{name}.wv"),
+            ],
+            check=True,
+        )
+        (wd / f"{name}.wav").unlink()
+
+    asked: list[str] = []
+
+    def spurious(reference_path, source_path, **kwargs):
+        asked.append(source_path)
+        return 21.333, 0.505
+
+    monkeypatch.setattr(engine_align, "estimate_offset", spurious)
+
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    Workspace.at(wd).write_manifest(
+        [
+            Source(id="part-1", path=str(wd / "REC_20260101_120000.wv"), start_s=noon),
+            Source(
+                id="part-2",
+                path=str(wd / "REC_20260101_120130.wv"),
+                start_s=noon + 90.0,
+            ),
+        ]
+    )
+    alignment = stages.align(str(wd))
+    assert asked == []  # nothing for the audio to answer: the pair is sequential
+    assert alignment.unresolved == ()
+    assert alignment.offsets["part-2"] == pytest.approx(90.0)
+    assert alignment.method == "declared-start"
+
+
 def test_align_lets_the_audio_place_a_stamped_pair_that_can_overlap(tmp_path) -> None:
     """The other side of the same rule: two *simultaneous* devices whose names
     disagree with their audio. A whole-second stamp does not resolve an arming

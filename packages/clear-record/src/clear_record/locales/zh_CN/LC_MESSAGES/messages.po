@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-25 07:48+0800\n"
+"POT-Creation-Date: 2026-09-25 08:08+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -977,33 +977,33 @@ msgstr ""
 "注册表带有一个名为 {index} 的索引，它并非修订版本 0009 "
 "创建或声明的：{ddl}。无法在该索引之上声明每个会议仅一个进行中的运行的规则——请删除该对象并重新打开注册表。"
 
-#: packages/clear-record/src/clear_record/tray/app.py:47
+#: packages/clear-record/src/clear_record/tray/app.py:51
 #, python-brace-format
 msgid "Running at {url}"
 msgstr "运行于 {url}"
 
-#: packages/clear-record/src/clear_record/tray/app.py:49
+#: packages/clear-record/src/clear_record/tray/app.py:53
 msgid "Not responding"
 msgstr "无响应"
 
-#: packages/clear-record/src/clear_record/tray/app.py:50
+#: packages/clear-record/src/clear_record/tray/app.py:54
 msgid "Server not running"
 msgstr "服务器未运行"
 
-#: packages/clear-record/src/clear_record/tray/app.py:88
+#: packages/clear-record/src/clear_record/tray/app.py:92
 msgid "Open console"
 msgstr "打开控制台"
 
-#: packages/clear-record/src/clear_record/tray/app.py:98
+#: packages/clear-record/src/clear_record/tray/app.py:102
 msgid "Restart server"
 msgstr "重启服务器"
 
-#: packages/clear-record/src/clear_record/tray/app.py:109
+#: packages/clear-record/src/clear_record/tray/app.py:113
 #: packages/clear-record/src/clear_record/web/templates/base.html:60
 msgid "Quit"
 msgstr "退出"
 
-#: packages/clear-record/src/clear_record/tray/app.py:126
+#: packages/clear-record/src/clear_record/tray/app.py:133
 #, python-brace-format
 msgid "clear-record console — {status}"
 msgstr "clear-record 控制台 — {status}"
@@ -1275,9 +1275,9 @@ msgstr "并发任务"
 #: packages/clear-record/src/clear_record/web/views.py:279
 msgid ""
 "how many transcription workers may run at once; 0 lets the node choose — "
-"process-isolated backends only, so the native `apple-speech` path always "
+"process-isolated backends only, so the native apple-speech path always "
 "runs one"
-msgstr "可同时运行的转写工作进程数；0 表示由节点决定——仅限进程隔离的后端，因此原生 `apple-speech` 路径始终只运行一个"
+msgstr "可同时运行的转写工作进程数；0 表示由节点决定——仅限进程隔离的后端，因此原生 apple-speech 路径始终只运行一个"
 
 #: packages/clear-record/src/clear_record/web/views.py:631
 msgid "Not configured"

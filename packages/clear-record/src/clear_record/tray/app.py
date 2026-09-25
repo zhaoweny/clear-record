@@ -35,17 +35,21 @@ from clear_record.tray.service import ServiceController, ServiceState
 STATE_POLL_MS = 2000
 
 
-def status_text(controller: ServiceController) -> str:
+def status_text(
+    controller: ServiceController, state: ServiceState | None = None
+) -> str:
     """The live status line for a fresh state read — never a cached snapshot.
 
     The state is the node's own health (:meth:`ServiceController.state`), which
     is the same question whether this tray started that node or joined one that
-    was already up.
+    was already up. A caller that has already read it — the poll tick, which needs
+    the same read to decide whether to offer a restart — passes it as ``state``,
+    so one tick costs one health request rather than one per reader.
     """
-    state = controller.state()
-    if state is ServiceState.RUNNING:
+    live = controller.state() if state is None else state
+    if live is ServiceState.RUNNING:
         return tr("Running at {url}", url=controller.url)
-    if state is ServiceState.UNREACHABLE:
+    if live is ServiceState.UNREACHABLE:
         return tr("Not responding")
     return tr("Server not running")
 
@@ -113,6 +117,8 @@ def main(
     def refresh() -> None:
         """Repaint the live state; called once now, then on every poll tick.
 
+        The state is read **once** and handed to both readers — the status line and
+        the restart item — so a tick costs one health request, not one per reader.
         Restart is offered for the node this tray started, and for the node it
         only joined once that node has stopped — a click then **starts** one of
         its own, which is the only way back for a tray whose joined node went
@@ -120,9 +126,10 @@ def main(
         not this tray's to restart, so the tick only reads: no surface starts a
         node the user did not ask for.
         """
-        status = status_text(controller)
+        live = controller.state()
+        status = status_text(controller, state=live)
         status_action.setText(status)
-        restart_action.setEnabled(controller.offers_restart)
+        restart_action.setEnabled(controller.offers_restart(state=live))
         tray.setToolTip(tr("clear-record console — {status}", status=status))
 
     tray.setContextMenu(menu)

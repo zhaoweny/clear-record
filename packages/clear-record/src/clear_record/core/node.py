@@ -1,7 +1,7 @@
 """Where the running node is: one record, one resolver, one answer.
 
 The API server — the **node** — is the centre of the v0.4.0 direction: the
-surfaces reach *it* rather than running the pipeline in their own process — the
+surfaces reach *it* rather than owning a pipeline of their own — the
 command line and the tray complete a request against the address it names, the
 console answers with it in process, and the MCP adapter dials it only to ask
 whether it is there — and the tray **attaches first**: the node that answers the

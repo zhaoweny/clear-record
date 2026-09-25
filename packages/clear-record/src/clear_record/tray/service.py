@@ -120,8 +120,7 @@ class ServiceController:
             self._server is not None or self._thread is not None
         )
 
-    @property
-    def offers_restart(self) -> bool:
+    def offers_restart(self, *, state: ServiceState | None = None) -> bool:
         """Whether the menu's Restart item can act right now.
 
         True for the node this tray started — restart is its act — and for the one
@@ -129,10 +128,15 @@ class ServiceController:
         then a click *starts* a node of its own (:meth:`restart_or_start`), the
         only way back for a tray whose joined node went away. A joined node that
         still answers is not this tray's to restart, so nothing is offered there.
+
+        A caller that has already read the live state — the poll tick reads it once
+        and shows it in the status line — passes it as ``state`` rather than paying
+        a second health request.
         """
         if self.supervises:
             return True
-        return self.state() is ServiceState.UNREACHABLE
+        live = self.state() if state is None else state
+        return live is ServiceState.UNREACHABLE
 
     def start(self) -> None:
         """Become a client of a node: join the one that answers, or start one.

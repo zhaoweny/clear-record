@@ -328,9 +328,34 @@ def test_a_tray_that_joined_a_node_that_stopped_can_start_one_again(
         answering_node.stop()
         assert controller.state() is ServiceState.UNREACHABLE
         assert controller.restart() is False, "restart stays the owner's act"
-        assert controller.offers_restart is True, "but the item must be offered"
+        assert controller.offers_restart() is True, "but the item must be offered"
         assert controller.restart_or_start(timeout=15), "the click did not start one"
         assert controller.supervises is True, "the tray now owns a node"
         assert controller.state() is ServiceState.RUNNING
     finally:
         assert controller.stop(timeout=15) is True
+
+
+def test_the_status_line_and_the_restart_offer_share_one_live_read(
+    tmp_path, monkeypatch
+) -> None:
+    """One poll tick reads the node's health once, and both readers use that read.
+
+    The tick shows the status line and decides whether to offer a restart from the
+    same live state; were each to read the node again, a node that accepts but does
+    not answer would cost the whole poll interval twice. A pre-read ``state``
+    therefore reaches both consumers without a second probe.
+    """
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path))
+    reads: list[ServiceState] = []
+
+    def counted() -> ServiceState:
+        reads.append(ServiceState.UNREACHABLE)
+        return ServiceState.UNREACHABLE
+
+    monkeypatch.setattr(controller, "state", counted)
+
+    live = controller.state()  # what refresh reads once
+    assert status_text(controller, state=live) == "Not responding"
+    assert controller.offers_restart(state=live) is True
+    assert len(reads) == 1, "a reader probed the node again"

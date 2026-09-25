@@ -451,8 +451,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   visitor is unchanged by this batch.
 - [OPEN] **A reference transcript has no way to reach the node** — not by upload
   and not as a registry object. Tapes alone have an upload route (ADR-0024), and
-  the census line that named this stands; the reference transcript's carriers on
-  the command line are the machine-local `calibrate --reference-transcript` and
+  the census line that named this stands; the reference transcript's carriers are
+  the command line's own `calibrate --reference-transcript` and the machine-local
   `bench --reference`, neither of which has a node route (a run's `--reference` is
   an **alignment source id**, not a transcript), so that noun remains to be named
   by whichever ticket gives it a route. The **glossary** half of this bullet is

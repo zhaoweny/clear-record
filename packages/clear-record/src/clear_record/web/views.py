@@ -277,7 +277,7 @@ CONSOLE_KNOB_WORDS: dict[str, tuple[str, str]] = {
         deferred("jobs"),
         deferred(
             "how many transcription workers may run at once; 0 lets the node "
-            "choose — process-isolated backends only, so the native `apple-speech` "
+            "choose — process-isolated backends only, so the native apple-speech "
             "path always runs one"
         ),
     ),

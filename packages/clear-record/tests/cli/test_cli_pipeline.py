@@ -35,6 +35,13 @@ def _workspace(tmp_path) -> str:
     return str(wd)
 
 
+def _peak_hz(path) -> int:
+    """A staged file's dominant tone, so a test can tell whose audio it holds."""
+    data, sr = sf.read(str(path))
+    spec = np.abs(np.fft.rfft(data))
+    return int(round(float(np.fft.rfftfreq(len(data), 1.0 / sr)[int(np.argmax(spec))])))
+
+
 def test_ingest_align_reconcile_export(tmp_path) -> None:
     wd = _workspace(tmp_path)
     sources = stages.ingest(wd).sources
@@ -181,6 +188,107 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     mixed = stages.ingest(str(wd), split="mix").sources
     assert len(mixed) == 1
     assert not mixed[0].id.endswith("ch1")
+
+
+def test_ingest_gives_colliding_ids_their_own_staged_audio(tmp_path) -> None:
+    """Two inputs whose ids would read alike each get their own staged file.
+
+    ``_source_id`` folds separators to ``__``, so splitting a four-channel
+    ``x.wav`` proposes ``x__ch1``… for its channels while an ordinary top-level
+    ``x__ch1.wav`` proposes that very same ``x__ch1``. Before this, the second
+    decode overwrote the first's ``audio/x__ch1.wav`` while the manifest kept two
+    sources naming one id **and** one path: five sources staged into four files,
+    and a record that looked complete. The unit that stages an id first keeps it;
+    one that meets a taken id — a slug another unit proposed, or a ``-N`` id this
+    pass handed out — is disambiguated, and the collision is said out loud on the
+    pass's own channel.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    chans = [
+        (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        for f in (200.0, 300.0, 400.0, 500.0)
+    ]
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "x.wav"), np.stack(chans, axis=1), sr)
+    mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
+    sf.write(str(wd / "x__ch1.wav"), mono, sr)
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import Workspace
+
+    events: list[JobEvent] = []
+    report = stages.ingest(str(wd), on_event=events.append)
+
+    ids = [s.id for s in report.sources]
+    paths = [s.path for s in report.sources]
+    # The four channels keep the ids their slugs proposed; only the fifth input,
+    # whose slug the quad's first channel already holds, is disambiguated.
+    assert ids == ["x__ch1", "x__ch2", "x__ch3", "x__ch4", "x__ch1-2"]
+    assert len(set(paths)) == len(paths) == 5
+    # Each staged file holds its own input's audio — in particular the collided
+    # id's file is the mono tone, not the quad's first channel, which is what the
+    # silent overwrite used to leave there.
+    assert [_peak_hz(p) for p in paths] == [200, 300, 400, 500, 700]
+    # The manifest a later stage reads carries the same five.
+    assert [s.id for s in Workspace.at(wd).load_manifest()[0]] == ids
+    # And the collision is reported, not taken silently.
+    collisions = [e for e in events if e.message.startswith("[ingest] id collision")]
+    assert [e.message for e in collisions] == [
+        "[ingest] id collision: 'x__ch1' already taken by x.wav ch1/4; "
+        "x__ch1.wav staged as 'x__ch1-2'"
+    ]
+    assert [(e.source, e.level) for e in collisions] == [("x__ch1-2", "warn")]
+
+
+def test_ingest_holds_a_handed_out_id_against_a_later_slug(tmp_path) -> None:
+    """The ids a pass hands out are held like the slugs it proposes.
+
+    So an input can meet an id no other input's slug reads. Declared as
+    ``[y__ch1.wav, y.wav (4-channel, split), y__ch1-2.wav]``, the quad's first
+    channel is disambiguated onto ``y__ch1-2``, and the last input — whose own
+    slug nothing else reads — stages as ``y__ch1-2-2`` rather than land on the
+    channel's file. And it is one *channel* that gets renamed on a split input, so
+    the line names that channel, not the whole tape.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    chans = [
+        (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        for f in (200.0, 300.0, 400.0, 500.0)
+    ]
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "y.wav"), np.stack(chans, axis=1), sr)
+    mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
+    sf.write(str(wd / "y__ch1.wav"), mono, sr)
+    sf.write(str(wd / "y__ch1-2.wav"), mono, sr)
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    report = stages.ingest(
+        str(wd),
+        audio_files=[
+            str(wd / "y__ch1.wav"),
+            str(wd / "y.wav"),
+            str(wd / "y__ch1-2.wav"),
+        ],
+        on_event=events.append,
+    )
+
+    ids = [s.id for s in report.sources]
+    assert ids == ["y__ch1", "y__ch1-2", "y__ch2", "y__ch3", "y__ch4", "y__ch1-2-2"]
+    assert len({s.path for s in report.sources}) == len(ids)
+    assert [
+        e.message for e in events if e.message.startswith("[ingest] id collision")
+    ] == [
+        "[ingest] id collision: 'y__ch1' already taken by y__ch1.wav; "
+        "y.wav ch1/4 staged as 'y__ch1-2'",
+        "[ingest] id collision: 'y__ch1-2' already taken by y.wav ch1/4; "
+        "y__ch1-2.wav staged as 'y__ch1-2-2'",
+    ]
 
 
 def test_diarize_hands_back_what_each_source_yielded(tmp_path) -> None:

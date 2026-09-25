@@ -40,8 +40,8 @@ rendering it.
 Left out on purpose: ``PipelineOptions``, a re-export of ``core``'s, and
 everything private — the ``_run_*`` body one per stage and ``_STAGE_RUNNERS``,
 ``_report_pass`` / ``_report_written`` (the pass's own words on the channel), the
-export serializers, ``_load_glossary``, ``_source_id`` and the ``_eval``
-alias. They are machinery the module runs on, not what a caller comes here for.
+export serializers, ``_load_glossary``, ``_source_id`` / ``_staged_id`` and the
+``_eval`` alias. They are machinery the module runs on, not what a caller comes here for.
 
 Everything here is the thin wiring layer: it reads/writes the workspace files
 and delegates the real work to ``clear_record.core`` (domain),
@@ -252,11 +252,57 @@ def _report_pass(
 # ingest
 # --------------------------------------------------------------------------- #
 def _source_id(path: Path, directory: Path) -> str:
+    """Slug one input into a source id: its path under *directory*, suffix
+    dropped, every separator folded to ``__`` — or, for an input outside
+    *directory*, its bare stem, unfolded.
+
+    Neither shape is injective, so the slug is a *proposal* for an id rather than
+    the pass's final word: ``sub/meeting.wav`` and ``sub__meeting.wav`` both read
+    ``sub__meeting``, ``/a/x.wav`` and ``/b/x.wav`` both read ``x``, and the
+    multichannel split's ``<base>__chN`` meets an ordinary top-level
+    ``<base>__chN.wav``. :func:`_staged_id` is what settles a proposal against
+    the ids the pass has already staged.
+    """
     try:
         rel = path.relative_to(directory)
     except ValueError:
         return path.stem
     return str(rel.with_suffix("")).replace("/", "__").replace("\\", "__")
+
+
+def _staged_id(
+    desired: str, taken: dict[str, str], subject: str
+) -> tuple[str, str | None]:
+    """Settle one proposed id (*desired*) against the ids already staged.
+
+    ``taken`` maps every id this pass has staged to the unit holding it — an
+    input, or one channel of one — and is updated here. The first unit staged
+    under an id **keeps** it; a unit that meets a taken id, whether the id was
+    :func:`_source_id`'s proposal for it or a ``-N`` id this function handed out
+    earlier, takes the next free ``-N`` suffix. Holding the handed-out ids too is
+    what keeps the *next* proposal off them (holding the proposals alone would let
+    a later input land on an id already staged). So a unit nobody meets keeps
+    exactly the id its slug read, and a disambiguated one can itself be
+    disambiguated again: of ``[x.wav (4-channel), x__ch1.wav, x__ch1-2.wav]``, the
+    last stages as ``x__ch1-2-2``. Staged audio is named after the id
+    (``audio/<id>.wav``), so two units settling on one id means the second decode
+    overwrites the first's audio while the manifest keeps two entries naming that
+    one path.
+
+    Returns ``(id, holder)``: ``holder`` is the unit whose id the later one
+    collided with, or ``None`` when there was no collision, so the caller can
+    report the collision rather than take the file silently.
+    """
+    holder = taken.get(desired)
+    if holder is None:
+        taken[desired] = subject
+        return desired, None
+    number = 2
+    while f"{desired}-{number}" in taken:
+        number += 1
+    sid = f"{desired}-{number}"
+    taken[sid] = subject
+    return sid, holder
 
 
 def ingest(
@@ -294,6 +340,31 @@ def ingest(
 
     progress = Progress(Step.INGEST.value, len(files), on_event)
     progress.start()
+    # Every id this pass has staged, and the unit holding it: the slug alone is
+    # not injective (:func:`_source_id`), and the staged audio is named after the
+    # id — so without this a second unit that slugs alike would decode onto the
+    # first's ``audio/<id>.wav`` while the manifest kept two sources naming one
+    # path. The first unit staged under an id keeps it; one that meets a taken id
+    # — a slug another unit proposed, or a ``-N`` id this pass handed out — is
+    # disambiguated, and the collision is reported where its decode line arrives.
+    taken: dict[str, str] = {}
+
+    def stage_id(desired: str, subject: str, index: int) -> str:
+        sid, holder = _staged_id(desired, taken, subject)
+        if holder is not None:
+            report_line(
+                w,
+                on_event,
+                Step.INGEST.value,
+                f"[ingest] id collision: {desired!r} already taken by {holder}; "
+                f"{subject} staged as {sid!r}",
+                level="warn",
+                source=sid,
+                index=index,
+                total=len(files),
+            )
+        return sid
+
     # A source's ``label`` is the speaker name ``reconcile``/``attribute`` fall
     # back to. Never derive it from the file name: a tape's name is not a person,
     # and the minutes must not list one as an attendee. Channels are speaker-like,
@@ -302,13 +373,16 @@ def ingest(
     sources: list[Source] = []
     for number, p in enumerate(files, start=1):
         base = _source_id(p, d)
+        advance_source = base
         nch = channel_count(p)
         do_split = (split == "split") or (split == "auto" and nch > 2)
         if do_split and nch > 1:
             # One source per channel: this is the multi-mic meeting case, where
             # each speaker is nearest one channel and diarization is nearly free.
             for ch in range(nch):
-                sid = f"{base}__ch{ch + 1}"
+                sid = stage_id(
+                    f"{base}__ch{ch + 1}", f"{p.name} ch{ch + 1}/{nch}", number - 1
+                )
                 norm = audio_dir / f"{sid}.wav"
                 # The line announces this decode, where the pre-move CLI printed
                 # it: before normalizing that input, not batched after the pass.
@@ -331,26 +405,28 @@ def ingest(
                     )
                 )
         else:
-            norm = audio_dir / f"{base}.wav"
+            sid = stage_id(base, p.name, number - 1)
+            advance_source = sid
+            norm = audio_dir / f"{sid}.wav"
             report_line(
                 w,
                 on_event,
                 Step.INGEST.value,
                 f"[ingest] decode {p.name} -> {norm.name}",
-                source=base,
+                source=sid,
                 index=number - 1,
                 total=len(files),
             )
             prepare_16k_wav(p, norm)
             sources.append(
                 Source(
-                    id=base,
+                    id=sid,
                     path=str(norm),
                     label=f"Speaker {len(sources) + 1}",
                     clock_domain="wall",
                 )
             )
-        closing = progress.advance(source=base)
+        closing = progress.advance(source=advance_source)
     w.write_manifest(sources)
     # The pass as a whole: the summary and the source table, reported on the same
     # channel as the decode lines above and carrying the pass's closing

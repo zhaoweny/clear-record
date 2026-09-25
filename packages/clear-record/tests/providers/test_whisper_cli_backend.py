@@ -1011,9 +1011,9 @@ def test_the_bias_follows_the_callers_glossary(tmp_path, monkeypatch) -> None:
 def test_a_cli_that_hides_prompt_gets_the_glossary_but_no_bias(
     tmp_path, monkeypatch
 ) -> None:
-    """The flag is never assumed to exist: a CLI whose usage text does not name
-    ``--prompt`` is asked for nothing beyond the glossary it already received —
-    the script stays what that binary writes, which the transcribe stage names."""
+    """The bias's flag is never assumed to exist: a CLI whose usage text does not
+    name ``--prompt`` is asked for nothing beyond the glossary it already received
+    — the script stays what that binary writes, which the transcribe stage names."""
     captured: list[list[str]] = []
     _install_fake_cli(monkeypatch, captured, usage=_USAGE_WITHOUT_PROMPT)
 

@@ -17,8 +17,8 @@ from clear_record.engine import han_scripts
 TRADITIONAL = "這個對象規則標籤"
 SIMPLIFIED = "这个对象规则标签"
 # A genuinely mixed text: the Traditional forms 這/個 beside the Simplified-only
-# 对 (Simplified for 對) — what one source's text holds when some of its chunks
-# were decoded before a re-decode and the rest after it.
+# 对 (Simplified for 對) — a text holding one of each, which is what a source shows
+# whether one decode wrote both or its chunks' decodes wrote different scripts.
 MIXED = "這個对象"
 
 

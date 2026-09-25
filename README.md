@@ -133,26 +133,31 @@ available on this machine. See
 **Simplified**. For `zh` the whisper-cli adapters put a hand-written
 Simplified-Chinese sentence in the decoder's initial prompt — a bias on the
 decoder's own context, no converter and no new dependency — and send it only to a
-CLI whose own usage text advertises `--prompt`, so no flag is assumed to exist; a
-CLI that hides the flag keeps writing Traditional.
+CLI whose own usage text advertises `--prompt`, so the bias assumes no flag
+exists (the caller's own glossary is sent either way); a CLI that hides the flag
+keeps writing Traditional.
 
 Nothing rewrites a transcript's script. What the record can do is say which scripts
 each source came out in: `transcribe` reads the Han text of each source and records
 the scripts it shows in `segments.json` (under `meta.sources.<id>.scripts`, e.g.
-`["traditional"]`; nothing where the text settles neither), and whenever that is
-not uniform it names the sources on the run's channel — a `script=` column on the
-per-source rows plus one warning, with `script=simplified+traditional` for a source
-holding both. A difference between two sources (`--rerun-source` against another
-backend; a future ensemble would need the same rule) and a difference inside one
-source are both named: the two scripts are never *silently* interleaved.
+`["traditional"]`; nothing where the text settles neither), and `reconcile` carries
+the same lists into the record's own metadata (`metadata.scripts`), so the artifact
+a reader opens names the scripts it holds and not only the run that made it.
+Whenever the scripts are not uniform the pass names the sources on the run's
+channel — a `script=` column on the per-source rows plus one warning, with
+`script=simplified+traditional` for a source holding both. A difference between
+two sources (`--rerun-source` against another backend; a future ensemble would
+need the same rule) and a difference inside one source are both named: the two
+scripts are never *silently* interleaved.
 
 The bias is a decode hint built inside the adapter, so no cache key carries it: a
 `zh` workspace re-run under unchanged options re-decodes nothing and keeps the text
 it already had. A partial re-decode (a range scope, a scope with a glossary edit
 behind it, an interrupted run) leaves that source holding chunks decoded on either
-side of it; its record carries **both** scripts only where those decodes wrote
-different scripts — a single entry says what the source's text shows, not that it
-was decoded in one pass.
+side of it. The rule reads the text and not that history: a source shows **both**
+scripts wherever its own text holds one of each, whether one decode wrote both or
+two wrote one apiece — and a single entry says what the source's text shows, not
+that one pass wrote it.
 
 **Installing a `whisper-cli` GPU backend** (`apple` / `nvidia` / `amd`):
 

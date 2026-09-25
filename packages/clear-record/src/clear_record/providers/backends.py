@@ -409,10 +409,12 @@ def probe_ggml_plugin_load(backend) -> PluginLoadProbe:
 # dependency: a Simplified prompt becomes part of the decoder's context and biases
 # the decode to Simplified. It is a *bias*, not a rewrite — it is asked for, never
 # assumed effective — and it is only ever sent to a CLI that advertises
-# ``--prompt`` (never assume a flag exists). What the bias cannot guarantee, the
-# transcribe stage records and names: the scripts each source's Han text shows go
-# in the record, and every source is named whenever that is not uniform — an
-# in-source mix included (``engine.text.han_scripts``).
+# ``--prompt``; the bias assumes no flag exists, while the caller's own glossary
+# goes out as it always did. What the bias cannot guarantee, the transcribe stage
+# records and names: the scripts each source's Han text shows go in the stage's
+# ``segments.json`` meta and, carried through by ``reconcile``, in the record's own
+# metadata, and every source is named whenever that is not uniform — an in-source
+# mix included (``engine.text.han_scripts``).
 
 #: A short Simplified-Chinese sentence (hand-written, not field content) used as
 #: the initial prompt for ``zh``, so the decoder's own context is Simplified.
@@ -447,13 +449,14 @@ def _advertised_flags(text: str) -> frozenset[str]:
 def _cli_advertises_flag(cli: str, flag: str) -> bool:
     """True when ``cli``'s own usage text names ``flag``.
 
-    A caller must never *assume* a flag exists on the installed binary, so the
+    The bias must never *assume* a flag exists on the installed binary, so the
     question is put to the binary itself: ``--help`` is run once (whisper.cpp
     prints its usage on stderr and exits 0, and the text is read whatever the exit
     code — a build that exits non-zero still printed its usage) and the answer
     cached per CLI path for the process. Every failure — no binary, a timeout,
     output that names no such flag — reads as "not advertised", which is the safe
-    answer: the flag is then never added to a command.
+    answer: the Simplified sentence is then left out of the command, while a
+    caller's own glossary goes out as it always did.
     """
     with _CLI_FLAGS_CACHE_LOCK:
         cached = _CLI_FLAGS_CACHE.get(cli)

@@ -221,14 +221,16 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   native transcriber writes Simplified. For `zh` the whisper-cli adapters bias
   the decode to Simplified with a hand-written Simplified initial prompt, sent
   only to a CLI whose usage text advertises `--prompt` — no converter, no new
-  dependency, and no flag assumed to exist. The bias is built inside the adapter,
-  so **no cache key carries it**: a `zh` run under unchanged options re-decodes
-  nothing, and its cached chunks keep the script they were decoded in.
+  dependency, and no flag assumed for the bias itself (the caller's glossary goes
+  out as it always did). The bias is built inside the adapter, so **no cache key
+  carries it**: a `zh` run under unchanged options re-decodes nothing, and its
+  cached chunks keep the script they were decoded in.
   Nothing rewrites a transcript's script, so the transcribe stage reads each
   source's Han text, records the scripts it shows in `segments.json`
-  (`meta.sources.<id>.scripts`, both of them only where a partial re-decode left
-  chunks whose decodes wrote *different* scripts, none where the text settles
-  neither) and names the sources on the run's channel whenever that is not uniform
+  (`meta.sources.<id>.scripts`, both of them wherever the text itself holds one of
+  each, whatever wrote it, none where the text settles neither), carries the same
+  lists into the record's own metadata (`metadata.scripts`) and names the sources
+  on the run's channel whenever that is not uniform
   (`engine.text.han_scripts`): a difference between sources *or inside one* is
   never silent.
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is

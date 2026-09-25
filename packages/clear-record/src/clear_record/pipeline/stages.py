@@ -973,10 +973,11 @@ def transcribe(
     Chinese comes back in whichever **script** the backend writes — whisper.cpp's
     ``-l zh`` in Traditional characters, the native transcriber in Simplified —
     and nothing here rewrites it. The pass therefore records, per source, the
-    scripts the source's text actually shows (``engine.text.han_scripts``: both of
-    them only where a partial re-decode left chunks whose decodes wrote *different*
-    scripts — a single entry says what the text shows, not how many passes wrote
-    it — and nothing where the text settles neither), and names the sources
+    scripts the source's text actually shows in ``segments.json``'s meta
+    (``engine.text.han_scripts``: both of them wherever the text itself holds one
+    of each, whatever wrote it — a single entry says what the text shows, not how
+    many passes wrote it — and nothing where the text settles neither), and names
+    the sources
     whenever that is not uniform — a difference between two sources or inside one
     is never silent.
 
@@ -1164,8 +1165,8 @@ def transcribe(
     # Simplified, so a workspace that mixes backends across sources
     # (``--rerun-source``) would otherwise interleave the two with no marker at
     # all. What each source's text *shows* is recorded -- both scripts where it
-    # shows both, since one source can hold chunks from before and after a
-    # re-decode -- and the pass names the sources whenever that is not uniform,
+    # shows both, whether one decode wrote them or several did -- and the pass
+    # names the sources whenever that is not uniform,
     # whether the difference is between two sources or inside one.
     scripts = {
         sid: han_scripts(" ".join(seg.text for seg in segs))
@@ -1474,6 +1475,16 @@ def reconcile(
     # stage time. The summary goes in the record and on the channel both.
     unplaced = unplaced_segments(per_source, alignment, sources)
     closing = progress.advance()
+    # The Han scripts each source's text shows, as the transcribe stage read them
+    # (``segments.json``'s ``meta.sources.<id>.scripts``). The record carries the
+    # same lists, so a reader who opens only the artifact -- not the stage's own
+    # meta beside it -- sees which scripts sit side by side in it. A source whose
+    # text settles neither is absent, exactly as the stage recorded it.
+    scripts = {
+        sid: list(info["scripts"])
+        for sid, info in meta.get("sources", {}).items()
+        if isinstance(info, dict) and info.get("scripts")
+    }
 
     record = RecordDocument(
         sources=tuple(sources),
@@ -1484,6 +1495,7 @@ def reconcile(
             "backend": meta.get("backend"),
             "model": meta.get("model"),
             "language": meta.get("language"),
+            "scripts": scripts,
             "prefer": prefer,
             "unplaced": [dataclasses.asdict(u) for u in unplaced],
         },

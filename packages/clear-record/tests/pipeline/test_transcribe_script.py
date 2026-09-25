@@ -6,8 +6,9 @@ where Apple's on-device transcriber writes Simplified. A workspace that changes
 backend between sources (``--rerun-source``), or re-decodes part of a source
 (``--rerun-range``, an interrupted run), therefore used to interleave the two
 with no marker at all. The stage now records the scripts each source's text
-actually shows in the record and names them on the console whenever that is not
-uniform — a difference between two sources or inside one.
+actually shows in ``segments.json``'s meta, ``reconcile`` carries the same lists
+into the record's own metadata, and the console names the sources whenever that
+is not uniform — a difference between two sources or inside one.
 
 The Mandarin below is hand-written, never field content (ADR-0006).
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from clear_record.core import JobEvent, Segment, TranscriptionResult
+from clear_record.core import JobEvent, Segment, TranscriptionResult, load_json
 from clear_record.pipeline import stages
 from clear_record.pipeline.workspace import Workspace
 from clear_record.providers import BackendBase, BackendInfo
@@ -113,8 +114,8 @@ def _transcribe(tmp_path, text_by_source: dict[str, str], monkeypatch):
 
 
 def test_two_sources_in_different_scripts_are_named(tmp_path, monkeypatch) -> None:
-    """The mixed case: what each source shows is in the record, and the console
-    names them — a column on the per-source rows and one warning."""
+    """The mixed case: what each source shows is in ``segments.json``'s meta, and the
+    console names them — a column on the per-source rows and one warning."""
     wd, events = _transcribe(tmp_path, {"a": TRADITIONAL, "b": SIMPLIFIED}, monkeypatch)
 
     _per_source, meta = Workspace.at(wd).load_segments()
@@ -141,8 +142,9 @@ def test_two_sources_in_different_scripts_are_named(tmp_path, monkeypatch) -> No
 def test_sources_in_one_script_are_recorded_without_a_column(
     tmp_path, monkeypatch
 ) -> None:
-    """The common case stays quiet: what each source shows is in the record, no
-    row grows a column and no warning is raised — only a *difference* is news."""
+    """The common case stays quiet: what each source shows is in ``segments.json``'s
+    meta, no row grows a column and no warning is raised — only a *difference* is
+    news."""
     wd, events = _transcribe(
         tmp_path, {"a": SIMPLIFIED, "b": "这个规则对象"}, monkeypatch
     )
@@ -163,7 +165,8 @@ def test_a_source_whose_script_is_unknown_is_not_a_disagreement(
 ) -> None:
     """A source the classifier cannot settle (Latin text, shared characters)
     records nothing rather than being counted as the other script: the stage only
-    claims a difference it can show, and the record carries what it does know."""
+    claims a difference it can show, and ``segments.json``'s meta carries what it
+    does know."""
     wd, events = _transcribe(
         tmp_path, {"a": TRADITIONAL, "b": "hello world"}, monkeypatch
     )
@@ -250,3 +253,37 @@ def test_one_source_holding_both_scripts_is_named_on_its_own(
         event for event in events if "Han script is not uniform" in event.message
     ]
     assert "a=simplified+traditional" in warning.message
+
+
+def test_one_decode_writing_both_scripts_is_named_without_any_rerun(
+    tmp_path, monkeypatch
+) -> None:
+    """The rule reads the text and not the decode history: nothing here is re-run
+    or scoped, and no chunk predates anything — one backend's own answer holds one
+    of each script, and the pass names the source for it."""
+    wd, events = _transcribe(tmp_path, {"a": "這個对象", "b": TRADITIONAL}, monkeypatch)
+
+    _per_source, meta = Workspace.at(wd).load_segments()
+    assert meta["sources"]["a"]["scripts"] == ["simplified", "traditional"]
+    (warning,) = [
+        event for event in events if "Han script is not uniform" in event.message
+    ]
+    assert "a=simplified+traditional" in warning.message
+
+
+def test_the_records_metadata_carries_the_scripts_the_pass_read(
+    tmp_path, monkeypatch
+) -> None:
+    """The record is the artifact a reader opens on its own, so the scripts the pass
+    read travel into it: ``reconcile`` carries the stage's per-source lists into
+    ``metadata.scripts``, keyed by source id, where the record's own source list
+    sits beside them — both of them, an undetermined source absent."""
+    wd, _events = _transcribe(
+        tmp_path, {"a": TRADITIONAL, "b": SIMPLIFIED}, monkeypatch
+    )
+
+    record = stages.reconcile(str(wd))
+
+    assert record.metadata["scripts"] == {"a": ["traditional"], "b": ["simplified"]}
+    written = load_json(Workspace.at(wd).record_path)
+    assert written["metadata"]["scripts"] == record.metadata["scripts"]

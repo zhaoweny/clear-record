@@ -109,6 +109,13 @@ class RecordDocument:
     the alignment's own ``unresolved`` list does not, how much transcript went
     with each. A source with nothing to place is named by
     ``alignment.unresolved`` alone.
+
+    ``metadata["scripts"]`` is the Han scripts each source's text shows, as the
+    transcribe stage read them and ``reconcile`` carried them through:
+    ``{"<source id>": ["simplified"]}``, both scripts for a source holding one of
+    each, and no entry for a source whose text settles neither. It is the list the
+    stage recorded in ``segments.json`` (``meta.sources.<id>.scripts``), carried
+    into the record so a reader who opens only the artifact sees it too.
     """
 
     sources: tuple[Source, ...]

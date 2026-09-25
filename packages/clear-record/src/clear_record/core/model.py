@@ -96,7 +96,8 @@ class UnplacedSource:
     which sources those are; what this adds is **how much** went with each of
     them, in the artifact a reader opens rather than only in the pass's output at
     stage time, and only for a source that actually had segments to drop — one
-    with nothing to place stays named by the alignment alone.
+    with nothing to place is named by the alignment alone, and by nothing when the
+    manifest carries no alignment at all.
     ``segments`` is how many of its segments were dropped and ``speech_s`` the
     speaking time they covered.
     """
@@ -140,8 +141,9 @@ class RecordDocument:
     :class:`UnplacedSource` (as a plain dict) per source left out for having no
     alignment offset **and holding segments to drop** — so the artifact says what
     the alignment's own ``unresolved`` list does not, how much transcript went
-    with each. A source with nothing to place is named by
-    ``alignment.unresolved`` alone.
+    with each. A source with nothing to place is named by the alignment itself —
+    in its ``unresolved`` list, or as a null offset — and by nothing at all when
+    the manifest carries no alignment.
 
     ``metadata["scripts"]`` is the Han scripts each source's text shows, as the
     transcribe stage read them and ``reconcile`` carried them through:

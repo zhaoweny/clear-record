@@ -16,7 +16,7 @@ never read as a zero offset and merged in at the reference's start. The
 alignment's ``unresolved`` list already named the sources themselves;
 :func:`unplaced_sources` adds what it did not say — how much transcript went with
 each one that had segments — and the record carries that in
-``metadata["unplaced"]``, beside the segments they did not contribute.
+``metadata["unplaced"]``, beside the segments they did not contribute to.
 """
 
 from __future__ import annotations
@@ -131,7 +131,8 @@ def unplaced_sources(
     rule :func:`reconcile` does (``_placements``), so a caller can write the
     record's drop summary without reconciling twice and a source dropped by one
     is always named by the other. A source with no segments drops nothing and is
-    not listed: it is named by the alignment, not here.
+    not listed: it is named by the alignment, not here — and by nothing at all when
+    the manifest carries no alignment.
     """
     offsets = _placements(alignment, sources)
     out: list[UnplacedSource] = []

@@ -62,7 +62,8 @@ cross-talk (near 0 dB), can still misclassify -- attribution then keeps the
 incoming speaker rather than invent a room identity. A reference that hears one
 speaker far better than the rest is not a room-eye view and does not belong in
 that role: as a witness it would refuse honest claims about the speakers it hears
-quietly, which is why the vocabulary separates it from ``excluded``.
+quietly, which is why the vocabulary sends it to ``excluded`` rather than to
+``mixed``.
 """
 
 from __future__ import annotations

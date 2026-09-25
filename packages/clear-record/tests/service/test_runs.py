@@ -2444,9 +2444,40 @@ def test_the_runs_exclusion_line_never_names_a_tape_the_run_takes(tmp_path) -> N
     )
     assert events == []
 
-    # And with no declaration there is nothing to walk for at all.
+    # With no declaration the walk still runs, and still stands this narration
+    # down: what it refuses is the meeting whose inputs were never the walk's.
     (workspace / ".clear-record-ignore").unlink()
     report_declaration_exclusions(
         meeting, PipelineOptions(audio_files=(str(workspace / "a.wav"),)), events.append
     )
     assert events == []
+
+
+def test_the_run_names_a_file_discovery_cannot_use(tmp_path) -> None:
+    """The walk's other answer has a line on the run path too (ticket 223).
+
+    A run's ``ingest`` is handed a declared list and never walks, so a file the
+    walk could not use — a tape in a container ``AUDIO_SUFFIXES`` does not list —
+    left no trace at all on the documented ``run <dir>`` path while
+    ``ingest <dir>`` named it. It is said here, in the same words and at the same
+    level the pass uses when it walks for itself.
+    """
+    from types import SimpleNamespace
+
+    from clear_record.service.runs import report_declaration_exclusions
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.wav").write_bytes(b"RIFFa")
+    (workspace / "take.aup").write_bytes(b"<audacity project>")
+    (workspace / "glossary.txt").write_text("Clear Record\n", encoding="utf-8")
+    meeting = SimpleNamespace(workspace_path=str(workspace))
+    events: list[JobEvent] = []
+
+    report_declaration_exclusions(
+        meeting, PipelineOptions(audio_files=(str(workspace / "a.wav"),)), events.append
+    )
+    assert [event.message for event in events if event.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)"
+    ]
+    assert [(event.level, event.stage) for event in events] == [("warn", "ingest")]

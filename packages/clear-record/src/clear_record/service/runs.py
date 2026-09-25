@@ -616,14 +616,17 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
 def report_declaration_exclusions(
     meeting: Meeting, options: PipelineOptions, sink: EventSink
 ) -> None:
-    """Name, on the run's channel, the inputs the folder's declaration kept out.
+    """Name, on the run's channel, what the folder's walk handed on and did not.
 
     A run's ``ingest`` is handed a **declared** list (the meeting's tapes), so it
-    never walks and cannot report an exclusion itself — while a directory run's
-    list *is* the walk's output (:func:`workspace_run_meeting`), and an input the
-    folder's ``.clear-record-ignore`` named was dropped with no line where every
-    fold is named. This is where that is said, on the same channel and in the
-    same words ``ingest`` uses when it walks for itself.
+    never walks and cannot report either line itself — while a directory run's
+    list *is* the walk's output (:func:`workspace_run_meeting`). Two kinds of
+    file are left unnamed that way: the audio input the folder's
+    ``.clear-record-ignore`` kept out, dropped with no line where every fold is
+    named, and the file discovery could not use at all (a suffix outside
+    ``AUDIO_SUFFIXES`` — a tape in a container the set does not list, which used
+    to leave no trace). This is where both are said, on the same channel and in
+    the same words ``ingest`` uses when it walks for itself.
 
     It speaks only when it knows it is right: the walk's own output must be
     **exactly** this run's inputs, which is the directory-run shape. A meeting
@@ -632,14 +635,12 @@ def report_declaration_exclusions(
     simply did not select — would be the same misdescription from two sides. The
     guard is what keeps this narration off those meetings, and a declaration that
     cannot be **read** stands it down for the same reason rather than failing a
-    run whose inputs it never governed (the walk that does govern inputs — the
-    pipeline's own ``ingest`` — reads the same file, and fails loudly there).
+    run whose inputs it never governed (the command whose walk does govern inputs
+    — ``ingest <directory>`` — reads the same file, and fails loudly there).
     """
     assert meeting.workspace_path is not None
     workspace = Workspace.at(meeting.workspace_path)
     try:
-        if not workspace.ignore_patterns():
-            return
         kept, walked_past = discover_inputs(workspace.root)
     except DeclarationUnreadable:
         return
@@ -647,14 +648,27 @@ def report_declaration_exclusions(
     if taken != {path.resolve() for path in kept}:
         return
     for path in walked_past:
+        shown = path.relative_to(workspace.root)
         if is_audio(path):
+            # An audio file reaches this list only when the folder's own
+            # declaration named it: nothing else takes an input out of the walk,
+            # so the suffix is what tells an exclusion from a file the walk
+            # could not use at all.
             report_line(
                 workspace,
                 sink,
                 Step.INGEST.value,
-                f"[ingest] excluded {path.relative_to(workspace.root)}: "
-                f"named in {IGNORE_FILE}",
+                f"[ingest] excluded {shown}: named in {IGNORE_FILE}",
                 level="info",
+            )
+        else:
+            report_line(
+                workspace,
+                sink,
+                Step.INGEST.value,
+                f"[ingest] cannot use {shown}: not a recognized audio file "
+                f"({path.suffix or 'no suffix'})",
+                level="warn",
             )
 
 

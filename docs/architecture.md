@@ -506,7 +506,8 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   holding no audio at all still does) — and byte-identical inputs collapse to
   **one** source (a copy, never a processed `_edit`, whose bytes differ and which
   the declaration above is for), each fold and exclusion named on the run's
-  channel. A declaration the walk cannot **read** — a mode nothing may open, or
+  channel — as is a file discovery could not use. A declaration the walk cannot
+  **read** — a mode nothing may open, or
   bytes it cannot decode — is refused rather than silently unapplied: the run edge
   answers `CANNOT_READ_DECLARATION` (one sentence, naming the file and the edit),
   and the pass refuses with `[ingest] cannot read <file>: <reason>`. Bytes that

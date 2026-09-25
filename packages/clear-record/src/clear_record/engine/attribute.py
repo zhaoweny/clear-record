@@ -226,15 +226,16 @@ def _read_candidates(
     references: Sequence[Source],
     target_sr: int,
     frame_s: float,
-) -> tuple[dict[str, tuple[np.ndarray, int]], list[tuple[np.ndarray, int, float]]]:
+) -> tuple[dict[str, tuple[np.ndarray, int]], list[tuple[str, np.ndarray, int, float]]]:
     """Read every candidate source plus the witnesses that gate them.
 
     A source whose id is one of the *references* is not read as a candidate — it
-    is a witness. Every reference that reads back is returned with its own robust
-    speech level (``_level``), so the gate compares a candidate's window against
-    the witness's own normal without a second read; an unreadable or empty one is
-    absent, and a witness that cannot be read does not gate. Candidates that
-    cannot be read are skipped, as before.
+    is a witness. Every reference that reads back is returned with its id and its
+    own robust speech level (``_level``), so the gate compares a candidate's
+    window against the witness's own normal without a second read, and can read
+    the witness on the timebase its offset places it on; an unreadable or empty
+    one is absent, and a witness that cannot be read does not gate. Candidates
+    that cannot be read are skipped, as before.
     """
     ref_ids = {ref.id for ref in references}
     loaded: dict[str, tuple[np.ndarray, int]] = {}
@@ -249,7 +250,7 @@ def _read_candidates(
             continue
         loaded[src.id] = (data, sr)
 
-    witnesses: list[tuple[np.ndarray, int, float]] = []
+    witnesses: list[tuple[str, np.ndarray, int, float]] = []
     for ref in references:
         try:
             data, sr = read_audio(ref.path, target_sr)
@@ -257,7 +258,7 @@ def _read_candidates(
             continue  # a witness that cannot be read simply does not gate
         if data.size == 0:
             continue
-        witnesses.append((data, sr, _level(data, sr, frame_s)))
+        witnesses.append((ref.id, data, sr, _level(data, sr, frame_s)))
     return loaded, witnesses
 
 
@@ -275,8 +276,10 @@ def attribute_segments(
     """Assign each segment a speaker from the highest relative-energy source.
 
     ``segments`` carry **source-local** times (as produced by ``transcribe``);
-    ``offsets`` maps a source id to ``reference_time - source_time`` so every
-    candidate can be read in the segment's reference window. ``sources`` supplies
+    ``offsets`` maps a source id to ``reference_time - source_time``, so every
+    source — candidate and witness alike — is read in its own window: the
+    candidate's window is where its speaker would be, the witness's where it
+    would have heard that speaker. ``sources`` supplies
     the caller-provided source -> speaker identity via ``Source.label`` (a
     source with no speaker label gets a generic ``Speaker N``). With ``mixed``
     given — one reference or several — each reference's room energy gates weak
@@ -312,8 +315,11 @@ def attribute_segments(
                 best_ratio, best_id = ratio, sid
 
         floor = silence_ratio
-        for data, sr, level in witnesses:
-            room_ratio = _window_energy(data, sr, ref_start, ref_end) / level
+        for ref_id, data, sr, level in witnesses:
+            off = offsets.get(ref_id, 0.0)
+            room_ratio = (
+                _window_energy(data, sr, ref_start - off, ref_end - off) / level
+            )
             floor = max(floor, room_share * room_ratio)
 
         if best_id is None or best_ratio < floor:
@@ -424,8 +430,11 @@ def attribute_segments_windowed(
             scores[i] = (obs_db - level_db) / max(scale_db, _EPS)
 
         floor = silence_ratio
-        for data, sr, level in witnesses:
-            room_ratio = _window_energy(data, sr, ref_start, ref_end) / level
+        for ref_id, data, sr, level in witnesses:
+            off = offsets.get(ref_id, 0.0)
+            room_ratio = (
+                _window_energy(data, sr, ref_start - off, ref_end - off) / level
+            )
             floor = max(floor, room_share * room_ratio)
 
         # The presence gate deliberately keeps the *static* ratio/level (the

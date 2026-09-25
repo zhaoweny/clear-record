@@ -239,6 +239,68 @@ def test_attribute_segments_uses_source_local_to_reference_offsets(tmp_path) -> 
     assert without[0].speaker == "Alice"  # the mapping is what corrects this
 
 
+@pytest.mark.parametrize("window_s", [None, 15.0])
+def test_a_witness_is_read_on_its_own_clock(tmp_path, window_s: float | None) -> None:
+    """A witness that is not the alignment reference still gates.
+
+    The offset is the alignment's measurement of the witness's clock, and a
+    witness's own file need not start where the reference's does: the room here
+    was armed first and its file opens with a lead-in. Reading the segment's
+    window at reference times reads that lead-in instead of the room, so the gate
+    raises no floor and the mic claims speech the room had already refused. The
+    same capture, written on the reference clock and on its own clock with the
+    matching offset, must decide alike -- and the room-only speech must stay with
+    its incoming speaker either way.
+    """
+    stems, events = make_speaker_stems(
+        duration_s=20.0, n_speakers=3, seed=5, non_overlapping=True
+    )
+    lead_s = 60.0  # the witness's file starts this long before the reference
+    room = np.sum(stems, axis=0).astype(np.float32)
+    sf.write(
+        str(tmp_path / "mic.wav"), mix_crosstalk(stems, 0, bleed_db=-6.0), SYNTH_SR
+    )
+    sf.write(str(tmp_path / "room.wav"), room, SYNTH_SR)
+    sf.write(
+        str(tmp_path / "room_early.wav"),
+        np.concatenate([np.zeros(int(lead_s * SYNTH_SR), dtype=np.float32), room]),
+        SYNTH_SR,
+    )
+    segments = [
+        Segment(
+            start=e["start"],
+            end=e["end"],
+            text=f"w{i}",
+            source="mic",
+            speaker=f"Speaker {e['speaker']}",
+        )
+        for i, e in enumerate(events)
+    ]
+
+    def speakers(room_file: str, offset: float) -> list[str]:
+        sources = [
+            Source(id="mic", path=str(tmp_path / "mic.wav"), label="Mic"),
+            Source(id="room", path=str(tmp_path / room_file), label="Room"),
+        ]
+        args = {"offsets": {"mic": 0.0, "room": offset}, "mixed": sources[1]}
+        got = (
+            attribute_segments(segments, sources, **args)
+            if window_s is None
+            else attribute_segments_windowed(
+                segments, sources, window_s=window_s, **args
+            )
+        )
+        return [s.speaker for s in got]
+
+    same_clock = speakers("room.wav", 0.0)
+    own_clock = speakers("room_early.wav", -lead_s)
+
+    assert own_clock == same_clock, "one capture must decide alike on either clock"
+    unmiked = [i for i, e in enumerate(events) if e["speaker"] == 2]
+    assert unmiked, "the scene must hold speech no mic carries"
+    assert all(own_clock[i] == f"Speaker {events[i]['speaker']}" for i in unmiked)
+
+
 def test_attribute_segments_short_or_bad_sources_are_safe(tmp_path) -> None:
     """Missing/short sources are skipped, never fatal; a segment no source can
     carry keeps its incoming speaker."""

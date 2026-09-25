@@ -518,9 +518,11 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback. A source that declares its own start, against a
   reference that declares one, is placed by that declaration when the two cannot
-  overlap or are further apart than the search band; a pair that can overlap is
-  the audio's to place, and the declaration is the fallback when it has no
-  verdict.
+  overlap (their distance is at least the length of the recording that began
+  first, less one correlation window — the pre-roll a rotating recorder may keep,
+  its parts meeting inside it) or when that distance is wider than the search
+  band; a pair that can overlap is the audio's to place, and the declaration is
+  the fallback when it has no verdict.
 - `transcribe` → real ASR via `clear_record.providers`; **Apple/macOS (system
   `whisper-cli` + `ggml-metal`) is hot-tested end-to-end on an Apple M4** (164
   segments, no wheel installed), with auto language detection and per-segment

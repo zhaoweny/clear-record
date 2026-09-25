@@ -1223,6 +1223,107 @@ def test_ingest_keeps_a_start_declared_in_the_manifest(tmp_path, split_take) -> 
     assert stages.align(str(wd)).offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
 
 
+def test_ingest_keeps_a_declared_start_across_a_fold(tmp_path, split_take) -> None:
+    """A byte-identical copy is the same audio, so a declaration the manifest
+    holds for the copy's id is one about the surviving source (ticket 218's fold
+    meets ticket 221's carry).
+
+    The copy sorts before the file it copies (``rec-A-copy.wav`` <
+    ``rec-A.wav``), so the fold makes it the source — and the id the operator's
+    hand-declared start lives under is the one that leaves the manifest. The
+    declaration follows the audio: the survivor keeps the start and `align`
+    places the pair from the declarations. Left to the audio the pair is
+    unplaceable — the parts share no passage, which is the field symptom 221
+    exists for.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    w = Workspace.at(wd)
+    sources = stages.ingest(str(wd)).sources
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # The operator's folder gains the copy, and discovery order hands it the
+    # source: the declaration on ``rec-A`` is the one that has to travel.
+    shutil.copyfile(wd / "rec-A.wav", wd / "rec-A-copy.wav")
+
+    events: list[JobEvent] = []
+    again = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.id for source in again] == ["rec-A-copy", "rec-B"]
+    assert [source.start_s for source in again] == [
+        pytest.approx(noon),
+        pytest.approx(noon + _SPLIT_PART_S),
+    ]
+    assert (
+        "[ingest] rec-A-copy.wav keeps declared start 2026-01-01 12:00:00: "
+        "declared in the manifest"
+    ) in [event.message for event in events]
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.method == "declared-start"
+    assert alignment.offsets["rec-B"] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_ingest_keeps_a_name_declared_start_across_a_fold(tmp_path) -> None:
+    """A folded copy is the same audio, so the start its *name* states is not lost
+    with it: the survivor carries it (ticket 218's fold meets ticket 221's name).
+
+    Two 90 s parts of one recorder, 90 s apart, are placed by their names — they
+    share no passage, so nothing else can place them. A byte-identical copy of the
+    first, named ``REC-copy.wav`` (``-`` sorts before ``_``, so the copy is what
+    survives the fold), states no start in its own name at all: without the
+    inheritance the only evidence that the pair is sequential leaves with the
+    folded name, and the second part is left to whatever two unrelated passages
+    correlate at.
+    """
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+    shutil.copyfile(wd / "REC_20260101_120000.wav", wd / "REC-copy.wav")
+
+    events: list[JobEvent] = []
+    first, second = stages.ingest(str(wd), on_event=events.append).sources
+
+    # The copy is the survivor; the declaration travels with it, and the line
+    # names the file whose name declared it.
+    assert [first.id, second.id] == ["REC-copy", "REC_20260101_120130"]
+    assert first.start_s is not None and second.start_s is not None
+    assert second.start_s - first.start_s == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert (
+        "[ingest] REC_20260101_120000.wav declares start 2026-01-01 12:00:00 "
+        "(from its filename): carried into the manifest"
+    ) in [event.message for event in events]
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.method == "declared-start"
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+
+
 def test_align_places_an_in_band_declared_split_by_its_declaration(
     tmp_path,
 ) -> None:

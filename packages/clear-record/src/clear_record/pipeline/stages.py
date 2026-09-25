@@ -374,9 +374,10 @@ def _declared_start(path: Path) -> float | None:
             tzinfo=timezone.utc,
         ).timestamp()
     except ValueError:
-        # A run of digits shaped like a stamp but not a date or a clock time
-        # (2026-13-45, 12-99-00): the name declares nothing, and inventing a
-        # start from it would place the source on a timeline it never saw.
+        # A run of digits shaped like a full stamp but not a date or a clock
+        # time (2026-13-45_12-03-20, 20260101_126099): the name declares
+        # nothing, and inventing a start from it would place the source on a
+        # timeline it never saw.
         return None
 
 
@@ -397,7 +398,7 @@ def _usable_start(value: object) -> float | None:
     only a value a clock can **render** — the pass reports every declaration it
     keeps as a date and a time, and a value it cannot say is a value it cannot
     back. A name (``"noon"``), a bool, ``nan``/``inf``, or a number no
-    ``datetime`` holds (``1767000000000.0``, year 57 970) is therefore **no
+    ``datetime`` holds (``1767000000000.0``, year 57964) is therefore **no
     declaration at all**: dropped where it is read, never raised over.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -427,12 +428,13 @@ def _manifest_starts(w: Workspace) -> dict[str, float]:
     declarations and nothing else. **The shapes a hand-edit produces are exactly
     what that has to cover** — an operator editing ``manifest.json`` to declare a
     start is who this function is for — so every way the read can fail is named
-    here: bytes that cannot be read (``OSError``), bytes that are not JSON or not
-    a mapping (``ValueError``), a mapping with no ``sources`` key (``KeyError``),
-    a ``sources`` that is not a list or an entry without ``path`` or ``id``
-    (``TypeError``), an entry that is not a mapping at all (``AttributeError``,
-    which is also what iterating a plain string yields), and a ``start_s`` no
-    clock can render (:func:`_usable_start`).
+    here: bytes that cannot be read (``OSError``), bytes that are not JSON
+    (``ValueError``), a body that is not a mapping (``TypeError``), a mapping
+    with no ``sources`` key (``KeyError``), a ``sources`` that is not a list or
+    an entry without ``path`` or ``id`` (``TypeError``), an entry that is not a
+    mapping at all (``AttributeError``, which is also what iterating a plain
+    string yields), and a ``start_s`` no clock can render
+    (:func:`_usable_start`).
     """
     try:
         sources, _ = w.load_manifest()
@@ -473,7 +475,10 @@ def _collapse_copies(
     sources naming them means the same audio is decoded, transcribed and merged
     twice. One input per content is kept here, the first in discovery order: the
     operator already names files to force discovery order, so which of a pair
-    survives is a choice that stays theirs.
+    survives is a choice that stays theirs. What the copy declared is not lost
+    with it — a start its name states, or one the manifest declares for its id,
+    is a start about the survivor's audio too, and ``ingest`` hands it to the
+    survivor's units.
 
     What is folded is a **byte** copy, and only that. A *processed* twin — a
     DJI-style export's ``_edit`` beside the ``_orig`` it was made from carries a
@@ -541,13 +546,15 @@ def ingest(
     A file discovery could not use is *named* on the sink as one line per file
     (:func:`report_line`, level ``warn``) — a tape the operator meant to hand
     over must not go unnamed — and the line arrives before the pass's bar opens,
-    so it carries no counters. What is named is what the walk
-    (:func:`~clear_record.pipeline.workspace.discover_inputs`) passed over: a
-    regular file whose suffix is outside ``AUDIO_SUFFIXES``, less the
-    workspace's own state — its output dirs, its bookkeeping files and the
+    so it carries no counters. What is named *this way* is what the walk
+    (:func:`~clear_record.pipeline.workspace.discover_inputs`) could not use as
+    an input: a regular file whose suffix is outside ``AUDIO_SUFFIXES``, less
+    the workspace's own state — its output dirs, its bookkeeping files and the
     app's own ``agent/`` drafts — and hidden entries, none of which is a tape.
-    Only a discovered walk names anything: an explicit ``audio_files`` list
-    declares its inputs, and nothing beside them was looked at.
+    (The walk's other name — an audio file the workspace's own declaration takes
+    out — is the paragraph below.) Only a discovered walk names anything: an
+    explicit ``audio_files`` list declares its inputs, and nothing beside them
+    was looked at.
 
     An input the workspace's own ``.clear-record-ignore`` declaration names is
     named the same way, at level ``info`` — "excluded …, named in
@@ -575,7 +582,11 @@ def ingest(
     parts share no passage, so ``align`` places a declared pair from the
     difference of the declarations rather than correlating two recordings that
     never overlap. A name that states no start time (or only a date, or only
-    minutes) declares nothing, and that input is staged exactly as it was before.
+    minutes) declares nothing, and that input is staged exactly as it was
+    before — unless a byte-identical copy of it was folded away, in which case
+    the survivor carries the start that copy's name states (the line names the
+    file whose name declares it), as it carries one the manifest declares for
+    the copy's id.
 
     A start the manifest **already** declares is not lost to this pass: the
     manifest it rebuilds is read first, and a source whose name declares nothing
@@ -683,6 +694,26 @@ def ingest(
     # declared there (by an operator by hand, or by an earlier pass off a name) is
     # part of the record, and a source whose name declares none keeps it.
     carried = _manifest_starts(w)
+    # A folded copy is the same audio under another name, so a start it states is
+    # a start about *this* input's audio, and the survivor inherits it where its
+    # own name and its own id state nothing. The copy can be the survivor — the
+    # fold keeps the first in discovery order — and then the name that declares a
+    # rotation seam, or the id a hand-written declaration lives under, is exactly
+    # what leaves the manifest: dropped silently, with only the audio left to
+    # place a source its own name had already placed.
+    folded_names: dict[Path, tuple[str, float]] = {}
+    inherited: dict[str, float] = {}
+    for copy, kept_file in copies:
+        copy_name_start = _declared_start(copy)
+        if copy_name_start is not None:
+            folded_names.setdefault(kept_file, (copy.name, copy_name_start))
+        copy_base = _source_id(copy, d)
+        kept_base = _source_id(kept_file, d)
+        for unit_id, unit_start in carried.items():
+            if unit_id == copy_base:
+                inherited.setdefault(kept_base, unit_start)
+            elif unit_id.startswith(f"{copy_base}__ch"):
+                inherited.setdefault(kept_base + unit_id[len(copy_base) :], unit_start)
 
     def kept_line(sid: str, subject: str, start: float, number: int) -> None:
         """Name a start this input **keeps** from the manifest (its name declared
@@ -709,12 +740,18 @@ def ingest(
         # with it: whether the reference declares a start, and whether the two
         # can overlap, is not known here.
         from_name = _declared_start(p)
+        named = p.name
+        folded_name = folded_names.get(p)
+        if from_name is None and folded_name is not None:
+            # The copy's name is where the start comes from — and the fold's own
+            # line above has already said the two files are one source.
+            named, from_name = folded_name
         if from_name is not None:
             report_line(
                 w,
                 on_event,
                 Step.INGEST.value,
-                f"[ingest] {p.name} declares start {_stamp_text(from_name)} "
+                f"[ingest] {named} declares start {_stamp_text(from_name)} "
                 f"(from its filename): carried into the manifest",
                 level="info",
                 source=base,
@@ -731,6 +768,8 @@ def ingest(
                 subject = f"{p.name} ch{ch + 1}/{nch}"
                 sid = stage_id(f"{base}__ch{ch + 1}", subject, number - 1)
                 declared = from_name if from_name is not None else carried.get(sid)
+                if declared is None:
+                    declared = inherited.get(f"{base}__ch{ch + 1}")
                 if from_name is None and declared is not None:
                     kept_line(sid, subject, declared, number)
                 norm = audio_dir / f"{sid}.wav"
@@ -758,6 +797,8 @@ def ingest(
         else:
             sid = stage_id(base, p.name, number - 1)
             declared = from_name if from_name is not None else carried.get(sid)
+            if declared is None:
+                declared = inherited.get(base)
             if from_name is None and declared is not None:
                 kept_line(sid, p.name, declared, number)
             advance_source = sid

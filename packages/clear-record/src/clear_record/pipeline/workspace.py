@@ -9,10 +9,11 @@ artifacts. It is intentionally not a database::
         segments.json       Per-source ASR segments (one file, all sources) + meta.
         record.json         The reconciled RecordDocument.
         glossary.txt        Decoder initial prompt (one term/line).
-        transcribe.log      Durable append-only transcription log.
+        transcribe.log      Durable append-only log of every stage's lines.
         audio/              Normalized 16 kHz mono copies of the sources.
         export/             Markdown/SRT/VTT/JSON artifacts from `export`.
-        .clear-record-ignore  Inputs discovery must not take (one glob/line).
+        .clear-record-ignore  Inputs discovery must not take (one glob per
+                            line, relative to the workspace).
 
 The resumable per-source chunk cache is **not** part of the workspace: it is
 app-owned *cache* (ADR-0007/ADR-0025) under the platform cache directory, keyed
@@ -148,7 +149,7 @@ def _ignored(relative: str, patterns: Iterable[str]) -> bool:
 #: beside the declaration it is about, because every reader of the declaration
 #: needs it (:func:`clear_record.pipeline.stages.ingest` in its own words,
 #: ``service.runs.workspace_run_meeting``, ``service.auto.resolve_run`` and
-#: ``cli.cli._apply_auto`` at their own edges).
+#: ``cli.cli._probe_auto_or_exit`` at their own edges).
 CANNOT_READ_DECLARATION = deferred(
     "the workspace's .clear-record-ignore cannot be read, so which of its files "
     "are inputs is unknown; make it readable or remove it"
@@ -599,13 +600,14 @@ class Workspace:
         is a *report* of a run it already knows: it says nothing when it cannot
         read the file, while the walk that picks the run's inputs is where the
         refusal belongs. It is read as ``utf-8-sig``: an editor that saves "UTF-8
-        with BOM" (the default of some field tooling) would otherwise put ``\ufeff``
-        at the head of the **first line** — and on the one-line declaration the
-        README documents, whose first line *is* the pattern, that pattern then
-        matches nothing and the declaration stops applying *silently*, the one
-        answer this read must never give. (On a declaration that opens with a
-        comment the mark only spoils that comment: the patterns below it still
-        apply.) Blank lines and ``#`` comments declare nothing.
+        with BOM" (the default of some field tooling) would otherwise put the
+        byte-order mark (``U+FEFF``) at the head of the **first line** — and on
+        the one-line declaration the README documents, whose first line *is* the
+        pattern, that pattern then matches nothing and the declaration stops
+        applying *silently*, the one answer this read must never give. (On a
+        declaration that opens with a comment the mark only spoils that comment:
+        the patterns below it still apply.) Blank lines and ``#`` comments
+        declare nothing.
         """
         try:
             lines = self.ignore_path.read_text(encoding="utf-8-sig").splitlines()

@@ -67,9 +67,17 @@ def client(tmp_path) -> TestClient:
 
 @pytest.fixture()
 def console(tmp_path) -> SimpleNamespace:
-    """A test client over a registry with an injected, gated fake pipeline."""
+    """A test client over a registry with an injected, gated fake pipeline.
+
+    The fake pipeline parks inside the run until the test releases ``gate``, and
+    sets ``parked`` when it gets there: a test synchronises on the run's own
+    lifecycle, never on a clock, before it asks anything of the row. The teardown
+    releases the gate and joins the manager, so a test that never gets there
+    cannot leave a pipeline parked.
+    """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     gate = threading.Event()
+    parked = threading.Event()
     seen: list = []
 
     def fake_pipeline(directory, options, on_event) -> None:
@@ -86,7 +94,8 @@ def console(tmp_path) -> SimpleNamespace:
             )
         )
         progress.advance(source="a")
-        gate.wait(10)
+        parked.set()
+        gate.wait()
         on_event(
             JobEvent(
                 stage="transcribe",
@@ -102,13 +111,20 @@ def console(tmp_path) -> SimpleNamespace:
         (export / "record.md").write_text("# record\n", encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    return SimpleNamespace(
-        client=TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN),
-        registry=registry,
-        manager=manager,
-        gate=gate,
-        seen=seen,
-    )
+    try:
+        yield SimpleNamespace(
+            client=TestClient(
+                create_app(registry, runs=manager), base_url=LOCAL_ORIGIN
+            ),
+            registry=registry,
+            manager=manager,
+            gate=gate,
+            parked=parked,
+            seen=seen,
+        )
+    finally:
+        gate.set()
+        manager.shutdown(timeout=10)
 
 
 def _make_meeting(console, tmp_path, title: str = "Kickoff") -> dict:
@@ -761,6 +777,12 @@ def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
     )
     run_id = console.registry.list_runs(meeting["id"])[0].id
     assert f'hx-post="/ui/runs/{run_id}/cancel"' in started.text
+
+    # Wait for the run's own lifecycle before cancelling: a cancel that arrives
+    # while the run is still queued is RUN-04's *other* arm (a decisive stop), not
+    # the request this test asserts. The fixture parks the pipeline until the test
+    # releases it, so ``parked`` is the run, not a clock.
+    assert console.parked.wait(10), "the run never reached its pipeline"
 
     # The run is parked in its pipeline (the fixture's gate): the cancel is
     # recorded, and the fragment says so rather than pretending it stopped.

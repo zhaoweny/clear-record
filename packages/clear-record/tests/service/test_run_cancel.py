@@ -141,6 +141,27 @@ def _meeting(registry: Registry, directory: Path, tape: Path):
     return meeting
 
 
+def _wait_for_stage(
+    registry: Registry, run_id: int, stage: str, timeout: float = 10.0
+) -> None:
+    """Wait until the run has persisted a report from ``stage``.
+
+    The run path reports an ``ingest`` line — the folder's discovery warns —
+    *before* the pipeline starts, so waiting for any recorded event is satisfied
+    while the run is still in ingest. A test that means to stop a run inside a
+    stage waits for that stage's own line, never for a clock.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(event.stage == stage for event in registry.list_run_events(run_id)):
+            return
+        time.sleep(0.005)
+    seen = sorted({event.stage for event in registry.list_run_events(run_id)})
+    raise AssertionError(
+        f"run {run_id} never reported stage {stage!r} in {timeout:g}s (saw {seen})"
+    )
+
+
 def _reporting_pipeline(directory, options, on_event, *, cancel=None) -> None:
     """Report until the run is cancelled: the shape a long stage has."""
     progress = Progress("transcribe", 1, on_event)
@@ -221,14 +242,12 @@ def test_a_cancel_mid_run_stops_at_the_next_report(tmp_path) -> None:
 
     manager = RunManager(registry, pipeline=_reporting_pipeline)
     run = manager.start(meeting, origin="console")
-    # Wait for the first *persisted* report rather than for the claim: the queue's
-    # channel raises before it records anything, so a cancel that wins the race
-    # against the pipeline's first event leaves a run that stopped without
-    # reporting, and the assertion below has no event to read.
-    for _ in range(1000):
-        if registry.count_run_events(run.id) > 0:
-            break
-        time.sleep(0.005)
+    # Wait for the pipeline's own report — a ``transcribe`` line — rather than for
+    # the first recorded event: the run path's ``ingest`` line lands before the
+    # pipeline starts, and a cancel that lands there stops the run before the
+    # stage this test means to stop inside. The queue's channel raises before it
+    # records anything, so the report waited for is always a *persisted* one.
+    _wait_for_stage(registry, run.id, "transcribe")
 
     requested = manager.cancel(run.id)
 

@@ -40,7 +40,9 @@ landing_authority = "human"
 
 [limits]
 # Refusals, not targets: a run stops dispatching at these.
-# Raised 4 -> 21 on 2026-09-25 at the owner's direction: four integration trees,
-# sixteen feature/ticket trees, plus the control-plane main checkout.
+# Went 4 -> 21 on 2026-09-25 at the owner's direction (four integration trees,
+# sixteen feature/ticket trees, plus the control-plane main checkout), then back
+# to 6 that same day once the pressure showed: one integration tree and four
+# concurrent feature branches, plus the control-plane main checkout.
 min_free_gb   = 5
-max_worktrees = 21
+max_worktrees = 6

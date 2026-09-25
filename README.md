@@ -36,7 +36,24 @@ DJI Mic 3   ─┘
 - **ingest** — decode/normalize every source to 16 kHz mono WAV (handles
   wav/flac/ogg and, via ffmpeg, mp3/m4a/etc.). **Multi-channel files are split
   per channel by default** (e.g. a 4-channel DJI file → 4 sources), so
-  per-speaker isolation is preserved; `--mix-down` forces a downmix.
+  per-speaker isolation is preserved; `--mix-down` forces a downmix. A recording
+  folder is not one event, so it can say which of its files are not today's:
+  `.clear-record-ignore` (one glob per line, relative to the workspace) names the
+  inputs discovery must **not** take, and `run <dir>` honours it as `ingest` does
+  — a run over a folder whose *every* audio file is declared is refused rather
+  than run against what it ran last time, while a folder holding no audio at all
+  keeps its last tape set, as before. A declaration that cannot be **read** — a
+  mode nothing may open, or bytes this read cannot decode (a file in another
+  encoding) — is refused, never ignored: a run answers one sentence naming the
+  file and the edit that fixes it, and `ingest` refuses in its own words, naming
+  the file and the reason the OS (or the codec) gave. Write the file as UTF-8,
+  with or without a byte-order mark: bytes that *are* valid UTF-8 in an encoding
+  not meant (a BOM-less UTF-16 file) decode to patterns that match nothing, which
+  no read can tell from a declaration that simply names nothing.
+  **Byte-identical** inputs collapse to one source — a copy such as `cp take.wav
+  take-copy.wav`, never a processed `_edit`, whose bytes differ and which the
+  declaration above is for — each fold (and each exclusion) reported rather than
+  ingested twice in silence.
 - **align** — place every source onto a common timebase (windowed
   cross-correlation; *approximate*, not precision clock-sync).
 - **transcribe** — run a chosen local ASR backend (see *Backends*), with

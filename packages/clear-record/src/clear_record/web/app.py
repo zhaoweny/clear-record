@@ -2524,12 +2524,37 @@ def create_app(
         resolved, so a refused request registers no meeting (see
         :func:`_require_model_name`); a blank ``directory`` is refused beside it,
         for the same reason — a request that names nothing runs nothing.
+
+        A directory whose own ``.clear-record-ignore`` names **every** audio file
+        it holds is refused here too — 400, with the sentence
+        (``service.runs.NO_INPUTS_LEFT_BY_DECLARATION``), raised before a meeting
+        is registered for the directory; a declaration the node cannot **read** is
+        the same answer with its own sentence
+        (:data:`~clear_record.pipeline.workspace.CANNOT_READ_DECLARATION`), either
+        from that same walk (nothing registered yet) or from ``auto``'s probe,
+        which ``enqueue_run`` resolves once this call has already resolved the
+        folder's meeting. This is the only edge whose walk *is* the run's tape
+        set; the meeting route does not consult the folder's declaration for its
+        inputs — which readers it has there, and which of them stands down rather
+        than answer, is the census in ``service.runs.workspace_run_meeting``.
         """
         _require_local_client(request)
         _require_model_name(body.model)
         if not body.directory.strip():
             raise HTTPException(status_code=400, detail=BLANK_DIRECTORY)
-        meeting = workspace_run_meeting(registry, body.directory)
+        try:
+            meeting = workspace_run_meeting(registry, body.directory)
+        except ValueError as exc:
+            # Both directory-path refusals: a folder whose own
+            # ``.clear-record-ignore`` names every audio file it holds (so the
+            # run would have no inputs), and one whose declaration cannot be read
+            # (so which files are inputs is unknown). The first is raised before
+            # ``workspace_run_meeting`` registers anything, which is why this route
+            # answers it with no meeting left behind. The second also arrives from
+            # ``auto``'s probe, which ``enqueue_run`` resolves *after* this call —
+            # so by then the folder's meeting exists, and it is the probe's own
+            # resolver that decides to answer it. Same sentence either way.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return enqueue_run(meeting, body)
 
     @app.get("/api/runs/{run_id}")

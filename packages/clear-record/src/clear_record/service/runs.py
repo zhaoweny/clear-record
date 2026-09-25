@@ -44,8 +44,22 @@ from typing import NoReturn
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from clear_record.pipeline import stages
-from clear_record.pipeline.workspace import Workspace, discover_audio
-from clear_record.core import EventSink, JobEvent, PipelineOptions, RunCancelled
+from clear_record.pipeline.workspace import (
+    CANNOT_READ_DECLARATION,
+    IGNORE_FILE,
+    DeclarationUnreadable,
+    Workspace,
+    discover_inputs,
+    is_audio,
+    report_line,
+)
+from clear_record.core import (
+    EventSink,
+    JobEvent,
+    PipelineOptions,
+    RunCancelled,
+    Step,
+)
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
@@ -510,6 +524,28 @@ class RunState:
         )
 
 
+#: The refusal for a run over a directory that holds audio and **declares all of
+#: it out**: the walk has no inputs, and the meeting's remembered tape set is
+#: exactly the files the declaration excluded, so running with it would ingest
+#: them anyway (measured: two ``run <dir>`` over a two-tape folder with ``*.wav``
+#: declared, the second decoding both). The sentence names the declaration, so
+#: the operator's one edit is to that file — and it replaces the tape-set refusal
+#: for the case, which would misdescribe a folder that holds audio.
+#:
+#: It is raised by :func:`workspace_run_meeting` — **the directory path**, where
+#: the walk *is* the run's tape set — and never by :meth:`RunManager.start`, so a
+#: meeting whose inputs come from the registry (an upload, a client's typed
+#: paths) is not refused over a declaration that does not govern it.
+#:
+#: It is a **message ID**: the surfaces that show it (``cli.runs``) translate it,
+#: and it carries no values, because a refusal that reaches the command line is
+#: rendered there from this sentence alone.
+NO_INPUTS_LEFT_BY_DECLARATION = deferred(
+    "every audio file in this workspace is named in .clear-record-ignore, so this "
+    "run would have no inputs; remove a line from that declaration"
+)
+
+
 def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     """The meeting a run over workspace *directory* is a run of, tapes and all.
 
@@ -522,9 +558,35 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     holds are a run's inputs, re-read on every such run, which is what makes a
     tape added since the last run part of the next one
     (``pipeline.workspace.discover_audio``; a workspace's own output dirs are not
-    inputs). A directory that holds no audio keeps whatever tape set it had, and
-    a run with none is refused by :meth:`RunManager.start` the way any tape-less
-    meeting is.
+    inputs, and an input the folder's own ``.clear-record-ignore`` names is not
+    one either). A directory that holds no audio keeps whatever tape set it had,
+    and a run with none is refused by :meth:`RunManager.start` the way any
+    tape-less meeting is.
+
+    The two are *not* the same case, and this function must not blur them: a
+    folder that holds audio and **declares all of it out** has no inputs the walk
+    can see, and the remembered tape set it would otherwise fall back to is
+    exactly the files the declaration excluded. That case is refused **here** —
+    where the walk is the run's tape set, and only here — with the declaration's
+    own sentence (:data:`NO_INPUTS_LEFT_BY_DECLARATION`), before the meeting is
+    even resolved, so a refused run writes nothing and never reaches the queue.
+    The refusal is deliberately not in :meth:`RunManager.start`: a meeting whose
+    inputs come from the registry (an upload, a client's typed paths) never
+    *walks* for its inputs, so this folder's declaration does not govern them and
+    must not be consulted for them. Two readers of it remain on that path, and the
+    census is theirs, not one thing's: ``auto``'s probe reads the folder to measure
+    its tapes (through ``service.auto.resolve_run``, which answers
+    :data:`CANNOT_READ_DECLARATION` for it like this function does), and
+    :func:`report_declaration_exclusions` reads it to narrate the exclusions of a
+    run it already knows are the walk's — **standing down** when it cannot read
+    it, because that one is a report and not a decision: it says nothing rather
+    than refuse a run whose inputs it never governed, while the probe, which does
+    decide, refuses.
+
+    A declaration that cannot be **read** is refused beside it
+    (:data:`CANNOT_READ_DECLARATION`) rather than let through as the read's own
+    exception, which the edge would answer with a 500: the walk is where the file
+    is read, so this is where the operator's sentence belongs.
 
     The caller then enqueues this meeting through :meth:`RunManager.start` like
     any other run: one queue, one claim, one registry row. A *path sent by a
@@ -535,11 +597,66 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     by its registry id. So this function is only ever reached with a path the
     node can mean.
     """
+    try:
+        kept, walked_past = discover_inputs(Path(directory))
+    except DeclarationUnreadable as exc:
+        # The walk reads the folder's own declaration, and nothing else in it can
+        # fail this way (``rglob`` skips a subdirectory it cannot list): which of
+        # the folder's files are inputs is unknown, and taking every one of them
+        # would be the silent wrong answer the declaration exists to prevent.
+        raise ValueError(CANNOT_READ_DECLARATION) from exc
+    if not kept and any(is_audio(path) for path in walked_past):
+        raise ValueError(NO_INPUTS_LEFT_BY_DECLARATION)
     meeting = registry.meeting_for_workspace(directory)
-    tapes = [str(path) for path in discover_audio(Path(directory))]
+    tapes = [str(path) for path in kept]
     if tapes:
         registry.set_recording_set(meeting.id, tapes)
     return meeting
+
+
+def report_declaration_exclusions(
+    meeting: Meeting, options: PipelineOptions, sink: EventSink
+) -> None:
+    """Name, on the run's channel, the inputs the folder's declaration kept out.
+
+    A run's ``ingest`` is handed a **declared** list (the meeting's tapes), so it
+    never walks and cannot report an exclusion itself — while a directory run's
+    list *is* the walk's output (:func:`workspace_run_meeting`), and an input the
+    folder's ``.clear-record-ignore`` named was dropped with no line where every
+    fold is named. This is where that is said, on the same channel and in the
+    same words ``ingest`` uses when it walks for itself.
+
+    It speaks only when it knows it is right: the walk's own output must be
+    **exactly** this run's inputs, which is the directory-run shape. A meeting
+    the registry hands tapes to is not walked for its inputs, so naming one of
+    those "excluded" while the run decoded it — or naming a file the registry
+    simply did not select — would be the same misdescription from two sides. The
+    guard is what keeps this narration off those meetings, and a declaration that
+    cannot be **read** stands it down for the same reason rather than failing a
+    run whose inputs it never governed (the walk that does govern inputs — the
+    pipeline's own ``ingest`` — reads the same file, and fails loudly there).
+    """
+    assert meeting.workspace_path is not None
+    workspace = Workspace.at(meeting.workspace_path)
+    try:
+        if not workspace.ignore_patterns():
+            return
+        kept, walked_past = discover_inputs(workspace.root)
+    except DeclarationUnreadable:
+        return
+    taken = {Path(path).resolve() for path in options.audio_files or ()}
+    if taken != {path.resolve() for path in kept}:
+        return
+    for path in walked_past:
+        if is_audio(path):
+            report_line(
+                workspace,
+                sink,
+                Step.INGEST.value,
+                f"[ingest] excluded {path.relative_to(workspace.root)}: "
+                f"named in {IGNORE_FILE}",
+                level="info",
+            )
 
 
 class RunManager:
@@ -1567,6 +1684,14 @@ class RunManager:
         )
 
         try:
+            # The folder's declaration, where discovery happened: this run's
+            # ingest is handed a declared list and never walks, so the exclusions
+            # the walk made are named here (see `report_declaration_exclusions`).
+            # Inside the try, with the pipeline: the report goes through the
+            # run's channel, so a cancel that has already landed makes *it* raise
+            # ``RunCancelled`` — and a stop is an outcome, not a failure, whether
+            # it arrives before the first stage line or during one.
+            report_declaration_exclusions(meeting, options, sink)
             self._pipeline(meeting.workspace_path, options, sink)
         except RunCancelled:
             # A cancel is an outcome, not a failure (RUN-04): the run stopped

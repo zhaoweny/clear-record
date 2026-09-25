@@ -52,6 +52,7 @@ and delegates the real work to ``clear_record.core`` (domain),
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -94,7 +95,14 @@ from clear_record.providers import (
 
 from clear_record.pipeline import eval as _eval
 from clear_record.pipeline import transcription
-from clear_record.pipeline.workspace import Workspace, discover_inputs, report_line
+from clear_record.pipeline.workspace import (
+    IGNORE_FILE,
+    DeclarationUnreadable,
+    Workspace,
+    discover_inputs,
+    is_audio,
+    report_line,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -305,6 +313,86 @@ def _staged_id(
     return sid, holder
 
 
+def _shown(path: Path, directory: Path) -> str:
+    """*path* as the pass names it: relative to the workspace when it is under
+    it, the path as given when it is not (a declared input, which may live
+    anywhere the caller names)."""
+    try:
+        return str(path.relative_to(directory))
+    except ValueError:
+        return str(path)
+
+
+#: One read block of the copy check below: a copy is compared as a stream, so a
+#: folder of long takes is never held in memory to compare them.
+_DIGEST_BLOCK = 1 << 20
+
+
+def _digest(path: Path) -> str:
+    """The sha256 of one input's bytes."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(_DIGEST_BLOCK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _collapse_copies(
+    files: Sequence[Path],
+) -> tuple[list[Path], list[tuple[Path, Path]]]:
+    """Fold byte-identical inputs into one: ``(kept, [(copy, kept_file), ...])``.
+
+    A recording folder is not one event. It accumulates earlier sessions, a case
+    copied in brings its own copies along, and an operator's
+    ``cp take.wav take-copy.wav`` is the same bytes under a second name — so two
+    sources naming them means the same audio is decoded, transcribed and merged
+    twice. One input per content is kept here, the first in discovery order: the
+    operator already names files to force discovery order, so which of a pair
+    survives is a choice that stays theirs.
+
+    What is folded is a **byte** copy, and only that. A *processed* twin — a
+    DJI-style export's ``_edit`` beside the ``_orig`` it was made from carries a
+    tone preset and gain the original does not — is not byte-identical, so this
+    pass never folds it; a folder that means to leave such a file out says so in
+    its own declaration (``.clear-record-ignore``).
+
+    The inputs are grouped by size first — two byte-identical files always share
+    one — so only the files that *could* be copies of each other are read: taking
+    a digest of every input would read a whole folder twice for nothing. An
+    input that cannot be read is left where it is, for the decode to refuse; it
+    is not this pass's business to drop it silently.
+    """
+    sizes: dict[Path, int] = {}
+    shared: dict[int, int] = {}
+    for p in files:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        sizes[p] = size
+        shared[size] = shared.get(size, 0) + 1
+    kept: list[Path] = []
+    copies: list[tuple[Path, Path]] = []
+    first_by_digest: dict[str, Path] = {}
+    for p in files:
+        size = sizes.get(p)
+        if size is None or shared[size] < 2:
+            # Unreadable, or a size no other input has: cannot be a copy.
+            kept.append(p)
+            continue
+        try:
+            digest = _digest(p)
+        except OSError:
+            kept.append(p)
+            continue
+        first = first_by_digest.setdefault(digest, p)
+        if first is p:
+            kept.append(p)
+        else:
+            copies.append((p, first))
+    return kept, copies
+
+
 def ingest(
     directory: str,
     audio_files: list[str] | None = None,
@@ -336,6 +424,21 @@ def ingest(
     Only a discovered walk names anything: an explicit ``audio_files`` list
     declares its inputs, and nothing beside them was looked at.
 
+    An input the workspace's own ``.clear-record-ignore`` declaration names is
+    named the same way, at level ``info`` — "excluded …, named in
+    ``.clear-record-ignore``" — because a file the declaration takes out is not
+    a file the pass silently forgot. A declaration that cannot be **read** is the
+    pass's refusal (:class:`PipelineError`, naming the file and the reason — the
+    OS's words, or a codec's): the folder's exclusions are unknown, and taking
+    every file would be the silent wrong answer the declaration exists to
+    prevent.
+
+    Byte-identical inputs are **one** source, not two: the same bytes decoded,
+    transcribed and merged twice is one session counted twice. The first input
+    in discovery order keeps the source and every later copy is named on the
+    sink as folded into it (level ``warn``), before the bar opens. Which of a
+    pair survives is discovery order, which the operator names files to control.
+
     Each input's decode line is reported on the sink (:func:`report_line`) as
     that decode begins — one line per decode, before normalizing that input, not
     batched after the pass — so a caller watching a long ingest sees every file
@@ -346,17 +449,51 @@ def ingest(
     if audio_files:
         files, skipped = [Path(a) for a in audio_files], []
     else:
-        files, skipped = discover_inputs(d)
+        try:
+            files, skipped = discover_inputs(d)
+        except DeclarationUnreadable as exc:
+            # The walk reads the workspace's own declaration, and nothing else in
+            # it can fail this way (``rglob`` skips a subdirectory it cannot
+            # list): the pass cannot know which files the folder excludes, and
+            # taking every one of them would be the silent wrong answer the
+            # declaration exists to prevent. Refused in the pass's own voice —
+            # naming the file and the reason — rather than as a traceback.
+            raise PipelineError(f"[ingest] {exc}") from exc
     # Where discovery happens, so the operator reads what was left out beside
     # the files that were taken — and before the refusal below, so a directory
-    # of nothing but unusable files still says which ones they were.
+    # of nothing but unusable files still says which ones they were. A file with
+    # an audio suffix reaches this list only when the workspace's own
+    # ``.clear-record-ignore`` named it: nothing else takes an input out of the
+    # walk, so the two are told apart by the suffix, and each gets its own words.
     for p in skipped:
+        if is_audio(p):
+            report_line(
+                w,
+                on_event,
+                Step.INGEST.value,
+                f"[ingest] excluded {_shown(p, d)}: named in {IGNORE_FILE}",
+                level="info",
+            )
+        else:
+            report_line(
+                w,
+                on_event,
+                Step.INGEST.value,
+                f"[ingest] cannot use {_shown(p, d)}: not a recognized audio "
+                f"file ({p.suffix or 'no suffix'})",
+                level="warn",
+            )
+    # The same bytes twice is the same audio: one input per content is staged,
+    # and the copies discovery took are named here — before the bar opens, like
+    # the lines above — rather than dropped in silence.
+    files, copies = _collapse_copies(files)
+    for p, kept_file in copies:
         report_line(
             w,
             on_event,
             Step.INGEST.value,
-            f"[ingest] cannot use {p.relative_to(d)}: not a recognized audio "
-            f"file ({p.suffix or 'no suffix'})",
+            f"[ingest] duplicate of {_shown(kept_file, d)}: {_shown(p, d)} is "
+            f"byte-identical, folded into one source",
             level="warn",
         )
     if not files:

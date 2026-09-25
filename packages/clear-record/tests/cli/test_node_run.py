@@ -100,12 +100,18 @@ class _FakeBackend(BackendBase):
         )
 
 
-def _chirp(path: Path) -> None:
-    """Six seconds of aperiodic tone — audio the pipeline can actually align."""
+def _chirp(path: Path, *, from_hz: float = 100.0) -> None:
+    """Six seconds of aperiodic tone — audio the pipeline can actually align.
+
+    ``from_hz`` differs per tape so two tapes of one workspace are two files,
+    not one file under two names: ingest folds byte-identical inputs into one
+    source (ticket 218), which is exactly what a fixture writing the *same*
+    bytes twice would ask for.
+    """
     sample_rate = 8000
     seconds = np.arange(int(6.0 * sample_rate), dtype=np.float64) / sample_rate
     sweep = (400.0 - 100.0) / (2.0 * 6.0)
-    phase = 2 * np.pi * (100.0 * seconds + sweep * seconds * seconds)
+    phase = 2 * np.pi * (from_hz * seconds + sweep * seconds * seconds)
     sf.write(str(path), (0.4 * np.sin(phase)).astype(np.float32), sample_rate)
 
 
@@ -113,7 +119,7 @@ def _workspace(root: Path, name: str, *, tapes: int = 2) -> Path:
     workspace = root / name
     workspace.mkdir()
     for index in range(tapes):
-        _chirp(workspace / f"{chr(ord('a') + index)}.wav")
+        _chirp(workspace / f"{chr(ord('a') + index)}.wav", from_hz=100.0 + 100 * index)
     return workspace
 
 
@@ -423,6 +429,100 @@ def test_a_run_over_a_local_directory_works_when_client_and_node_agree(
     assert f"{workspace.resolve()}/export" in printed
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [b"# the copy a previous session left here\nb.wav\n", b"\xef\xbb\xbfb.wav\n"],
+    ids=["plain", "bom"],
+)
+def test_a_run_honours_the_workspaces_exclusion_declaration(
+    node_in_this_process, tmp_path, monkeypatch, capsys, declaration
+) -> None:
+    """The folder's own declaration binds the documented path, not only `ingest`.
+
+    ``run <dir>`` resolves a directory's sources through the same walk `ingest`
+    uses (``workspace_run_meeting`` reads ``discover_audio``), so a recording
+    folder that says which of its files are an earlier session's has that
+    honoured here too: the run's tape set is the files discovery kept, and the
+    manifest the pipeline wrote holds one source — nothing was decoded for the
+    file the folder excluded.
+
+    The exclusion is also **said** on the run's own channel: a run's ingest is
+    handed a declared list and never walks, so the line the walk owes belongs to
+    the run path (``service.runs.report_declaration_exclusions``) — the follower
+    prints it with the rest of the run's words, in the same wording the `ingest`
+    command uses.
+    """
+    from clear_record.pipeline.workspace import Workspace
+
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    workspace = _workspace(tmp_path, "declared")
+    # The declared bytes themselves are the parameter: a plain declaration with a
+    # comment line, and the one-line declaration the README documents as saved
+    # "UTF-8 with BOM" — whose mark the read must strip, or the pattern would
+    # match nothing and the folder would decode what it declared out in silence.
+    (workspace / ".clear-record-ignore").write_bytes(declaration)
+    with node_in_this_process() as node_here:
+        assert _cli_run(workspace) == 0
+        meeting = node_here.registry.meeting_for_workspace(str(workspace))
+        assert meeting is not None
+        tape_set = node_here.registry.latest_recording_set(meeting.id)
+    assert tape_set is not None
+    assert {Path(path).name for path in tape_set.paths} == {"a.wav"}
+    sources, _ = Workspace.at(workspace).load_manifest()
+    assert [source.id for source in sources] == ["a"]
+    printed = capsys.readouterr().out
+    assert "[run] #1 done" in printed
+    assert "[ingest] excluded b.wav: named in .clear-record-ignore" in printed
+    assert "[ingest] decode b.wav" not in printed, "an excluded input was decoded"
+
+
+def test_a_run_refuses_a_folder_that_declares_away_every_tape(
+    node_in_this_process, tmp_path, monkeypatch
+) -> None:
+    """A declaration that names *every* audio file cannot run the remembered set.
+
+    ``run <dir>`` resolves a directory's sources through the walk, so a folder
+    that declares all of its audio out has no inputs — while the meeting's
+    remembered tape set is exactly the files the declaration excluded, and
+    falling through to it decoded them again (measured: the second of two runs
+    over a two-tape folder with ``*.wav`` declared ingested both). The run is
+    refused instead, in one sentence naming the declaration, and nothing is
+    written: no second run row, and no re-ingest over the manifest the first run
+    left.
+
+    The same sentence answers a folder whose **first** run is already
+    all-declared, where "meeting has no tape set" would misdescribe a directory
+    holding two audio files: what is wrong there is the declaration, and the
+    sentence says so.
+    """
+    from clear_record.pipeline.workspace import Workspace
+    from clear_record.service.runs import NO_INPUTS_LEFT_BY_DECLARATION
+
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    workspace = _workspace(tmp_path, "declared-away")
+    fresh = _workspace(tmp_path, "declared-fresh")
+    with node_in_this_process() as node_here:
+        assert _cli_run(workspace) == 0
+        ran = [source.id for source in Workspace.at(workspace).load_manifest()[0]]
+        for wd in (workspace, fresh):
+            (wd / ".clear-record-ignore").write_text("*.wav\n", encoding="utf-8")
+        refused: list[str] = []
+        for wd in (workspace, fresh):
+            with pytest.raises(SystemExit) as ended:
+                _cli_run(wd)
+            refused.append(str(ended.value))
+        first = node_here.registry.meeting_for_workspace(str(workspace))
+        fresh_meeting = node_here.registry.meeting_for_workspace(str(fresh))
+        runs = node_here.registry.list_runs(first.id)
+        fresh_runs = node_here.registry.list_runs(fresh_meeting.id)
+
+    assert ran == ["a", "b"]
+    assert refused == [NO_INPUTS_LEFT_BY_DECLARATION, NO_INPUTS_LEFT_BY_DECLARATION]
+    assert len(runs) == 1, "the refusal wrote a second run row"
+    assert fresh_runs == [], "the refusal wrote a run row for a fresh meeting"
+    assert [source.id for source in Workspace.at(workspace).load_manifest()[0]] == ran
+
+
 def test_a_relative_glossary_is_the_clients_file_not_the_nodes_cwd(
     node_in_this_process, tmp_path, monkeypatch
 ) -> None:
@@ -686,3 +786,33 @@ def test_a_model_named_as_a_path_is_refused_in_the_nodes_own_words(
         # Refused before anything was asked of the registry.
         assert node_here.registry.list_meetings() == []
     assert str(ended.value) == MODEL_IS_THE_NODES
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_a_run_refuses_a_declaration_it_cannot_read(
+    node_in_this_process, tmp_path, monkeypatch, shape
+) -> None:
+    """A declaration the node cannot read is refused, not a 500.
+
+    The walk is where the folder's own ``.clear-record-ignore`` is read
+    (``workspace_run_meeting``), so a file the node cannot read is an input shape
+    there: which of the folder's files are inputs is unknown, and the one edit
+    that resolves it is the file itself. Both ways a file refuses to be read are
+    the same refusal — a mode nothing may read, and a declaration saved in the
+    machine's own encoding — answered as a sentence the edge carries and the
+    command line prints, with nothing written.
+    """
+    from clear_record.pipeline.workspace import CANNOT_READ_DECLARATION
+
+    monkeypatch.setattr(stages, "get_backend", lambda _backend_id: _FakeBackend())
+    workspace = _workspace(tmp_path, "unreadable", tapes=1)
+    declaration = workspace / ".clear-record-ignore"
+    declaration.write_bytes(b"caf\xe9\n" if shape == "not-utf8" else b"*.wav\n")
+    if shape == "permission":
+        declaration.chmod(0o000)
+
+    with node_in_this_process() as node_here:
+        with pytest.raises(SystemExit) as ended:
+            _cli_run(workspace)
+        assert node_here.registry.list_meetings() == [], "a refused run wrote nothing"
+    assert str(ended.value) == CANNOT_READ_DECLARATION

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -21,13 +22,24 @@ from clear_record.providers import BackendBase
 
 
 def _write_tone(
-    path, sr: int = 8000, seconds: float = 6.0, freq: float = 220.0
+    path,
+    sr: int = 8000,
+    seconds: float = 6.0,
+    freq: float = 220.0,
+    gain: float = 0.4,
 ) -> None:
+    """One device's recording of the chirp.
+
+    A second source of the *same* scene is the same chirp at another ``gain``:
+    two recordings correlate, so ``align`` places them, while their bytes differ
+    — ingest folds byte-identical inputs into one source (ticket 218), so a
+    fixture writing one waveform twice would describe one device, twice.
+    """
     # aperiodic chirp so cross-correlation alignment is unambiguous
     t = np.arange(int(seconds * sr), dtype=np.float64) / sr
     f1 = freq * 6.0
     phase = 2 * np.pi * (freq * t + (f1 - freq) * t * t / (2.0 * seconds))
-    sig = (0.4 * np.sin(phase)).astype(np.float32)
+    sig = (gain * np.sin(phase)).astype(np.float32)
     sf.write(str(path), sig, sr)
 
 
@@ -35,7 +47,7 @@ def _workspace(tmp_path) -> str:
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav", freq=220.0)
-    _write_tone(wd / "b.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=220.0, gain=0.25)
     return str(wd)
 
 
@@ -239,7 +251,7 @@ def test_ingest_leaves_the_apps_own_agent_drafts_unnamed(tmp_path) -> None:
     (drafts / "draft.json").write_text("{}", encoding="utf-8")
     (drafts / "draft.lock").touch()
     (drafts / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
-    _write_tone(wd / "agent" / "room.wav")
+    _write_tone(wd / "agent" / "room.wav", gain=0.25)
 
     from clear_record.core import JobEvent
 
@@ -248,6 +260,98 @@ def test_ingest_leaves_the_apps_own_agent_drafts_unnamed(tmp_path) -> None:
 
     assert [s.id for s in sources] == ["a", "agent__room"]
     assert [e.message for e in events if e.message.startswith("[ingest] cannot")] == []
+
+
+def test_ingest_excludes_an_input_the_workspace_names(tmp_path) -> None:
+    """A recording folder accumulates earlier sessions, so the folder carries the
+    one declaration of which of its files are **not** today's.
+
+    ``.clear-record-ignore`` is that declaration: one glob per line, matched
+    against the path under the workspace root, with blank lines and ``#``
+    comments declaring nothing. Discovery takes the named inputs out of the walk
+    — for `ingest` and for `run` alike, since both walk through it — and *names*
+    what it took out, because an exclusion nobody can see is the silent drop
+    this walk exists to end.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=330.0)
+    (wd / "old").mkdir()
+    _write_tone(wd / "old" / "b.wav", freq=440.0)
+    (wd / ".clear-record-ignore").write_text(
+        "# yesterday's session, and the whole copied-in folder\nb.wav\nold/*\n",
+        encoding="utf-8",
+    )
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import discover_audio
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    # The walk the run path resolves a directory's sources through honours the
+    # same declaration, so the two surfaces cannot disagree about what is in
+    # the folder.
+    assert [p.name for p in discover_audio(wd)] == ["a.wav"]
+    excluded = [e for e in events if "excluded" in (e.message or "")]
+    assert [e.message for e in excluded] == [
+        "[ingest] excluded b.wav: named in .clear-record-ignore",
+        "[ingest] excluded old/b.wav: named in .clear-record-ignore",
+    ]
+    assert [(e.level, e.source) for e in excluded] == [("info", None), ("info", None)]
+
+
+def test_ingest_folds_a_byte_identical_copy_into_one_source(tmp_path) -> None:
+    """The acceptance on one real workspace: a copy is not a second session, and
+    the fold is reported, never silent.
+
+    A recording folder accumulates copies — ``cp take.wav take-copy.wav`` — and a
+    copied-in case brings whole earlier sessions again: on one field folder 39
+    files became 39 sources, several of them md5-identical pairs, so the same
+    audio was decoded, transcribed and merged twice and the record was built from
+    three sessions at once. (An *editor's* twin is not this case: a DJI export's
+    ``_edit`` beside its ``_orig`` is processed, so it is not byte-identical and
+    is never folded — a folder leaves that out through its declaration.) The
+    workspace here is a synthesised scene (``synth``) plus the copies an
+    operator's folder would hold: the copy of today's take, and an earlier
+    session its declaration excludes.
+
+    The fold keeps the first input in discovery order, and the copy's ``-`` sorts
+    before the take's ``.``, so the copy is the source and the take folds into it;
+    the line names both files either way.
+    """
+    from clear_record.cli.synth import synth
+    from clear_record.core import JobEvent
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    synth(str(wd), devices=2, duration_s=2.0, speakers=2)
+    # The devices land under the workspace's own ``audio/`` (derived output,
+    # never discovered): the take and yesterday's session are named beside it.
+    shutil.copyfile(wd / "audio" / "device_0.wav", wd / "take.wav")
+    shutil.copyfile(wd / "audio" / "device_1.wav", wd / "take_old.wav")
+    shutil.copyfile(wd / "take.wav", wd / "take-copy.wav")
+    (wd / ".clear-record-ignore").write_text("take_old.wav\n", encoding="utf-8")
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["take-copy"]
+    assert [e.message for e in events if e.message] == [
+        "[ingest] excluded take_old.wav: named in .clear-record-ignore",
+        "[ingest] duplicate of take-copy.wav: take.wav is byte-identical, "
+        "folded into one source",
+        "[ingest] decode take-copy.wav -> take-copy.wav",
+        f"[ingest] 1 source(s) -> {wd / 'manifest.json'}",
+        f"  {'take-copy':24s} {sources[0].path}",
+    ]
+    assert [
+        (e.level, e.source)
+        for e in events
+        if e.message and e.message.startswith("[ingest] ")
+    ] == [("info", None), ("warn", None), ("info", "take-copy"), ("info", None)]
 
 
 def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
@@ -400,7 +504,10 @@ def test_ingest_holds_a_handed_out_id_against_a_later_slug(tmp_path) -> None:
     sf.write(str(wd / "y.wav"), np.stack(chans, axis=1), sr)
     mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
     sf.write(str(wd / "y__ch1.wav"), mono, sr)
-    sf.write(str(wd / "y__ch1-2.wav"), mono, sr)
+    # A different tone: the two files are one id-collision fixture, and ingest
+    # folds byte-identical inputs into one source (ticket 218).
+    other = (0.4 * np.sin(2 * np.pi * 900.0 * t)).astype(np.float32)
+    sf.write(str(wd / "y__ch1-2.wav"), other, sr)
 
     from clear_record.core import JobEvent
 
@@ -1606,3 +1713,104 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     for wd in (wd1, wd2):
         per_source, _ = Workspace.at(wd).load_segments()
         assert per_source
+
+
+def _unreadable_declaration(workspace: Path, shape: str) -> Path:
+    """Plant a declaration nothing can read, and return it.
+
+    Two shapes, because a file refuses to be read in two ways and the code that
+    says so must not care which: ``permission`` (a mode nothing may read) and
+    ``not-utf8`` (a declaration saved in the machine's own encoding — GBK,
+    cp1252 — which is a plausible field file, not a corrupt one).
+    """
+    declaration = workspace / ".clear-record-ignore"
+    declaration.write_bytes(b"caf\xe9\n" if shape == "not-utf8" else b"*.wav\n")
+    if shape == "permission":
+        declaration.chmod(0o000)
+    return declaration
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_ingest_refuses_a_declaration_it_cannot_read(tmp_path, shape) -> None:
+    """A declaration the pass cannot read is its refusal, in its own words.
+
+    The walk reads the workspace's own ``.clear-record-ignore``, so a file the
+    pass cannot read leaves it unable to know which of the folder's files are
+    inputs — and taking every one of them would be exactly the silent wrong
+    answer the declaration exists to prevent. It says so as the pipeline does:
+    one ``[ingest] cannot read …`` line naming the file and the reason, and the
+    command surface exits on it — never a traceback through the walk, and never a
+    codec's own text as the whole answer.
+    """
+    from clear_record.cli import cli
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    declaration = _unreadable_declaration(wd, shape)
+
+    with pytest.raises(stages.PipelineError, match="cannot read") as refused:
+        stages.ingest(str(wd))
+    # The file it could not read, and the reason (the OS's text follows the
+    # machine's locale, so only the shape is pinned here).
+    assert str(refused.value).startswith(f"[ingest] cannot read {declaration}: ")
+    assert str(refused.value) != f"[ingest] cannot read {declaration}: "
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["ingest", str(wd)])
+    assert str(exit_info.value.code) == str(refused.value)
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_the_commands_own_auto_probe_refuses_an_unreadable_declaration(
+    tmp_path, shape
+) -> None:
+    """``--auto``'s probe walks the folder in this process, and it says the same.
+
+    The probe measures the tapes to choose a profile, so it reads the folder's
+    own declaration before anything is decoded. A declaration the command cannot
+    read is the declaration's own refusal — the same id the run edges answer —
+    rendered where a person reads it, not a traceback out of the walk.
+    """
+    from clear_record.cli import cli
+    from clear_record.pipeline.workspace import CANNOT_READ_DECLARATION
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    _unreadable_declaration(wd, shape)
+
+    with pytest.raises(SystemExit) as ended:
+        cli.main(["transcribe", str(wd), "--auto"])
+
+    assert str(ended.value) == CANNOT_READ_DECLARATION
+
+
+def test_ingest_applies_a_declaration_saved_with_a_byte_order_mark(tmp_path) -> None:
+    """A declaration saved "UTF-8 with BOM" still names what it names.
+
+    An editor that writes the mark puts ``\\ufeff`` in front of the first line, so
+    a declaration read as plain utf-8 yields ``"\\ufeffb.wav"`` for its pattern,
+    matches nothing, and the file the operator declared out is decoded with **no
+    refusal and no line** — the silent non-application this read exists to
+    prevent. The mark is stripped (a no-op when it is absent), so the one-line
+    declaration the README documents keeps applying; the no-mark, comment and
+    blank-line shapes are covered by the tests either side of this one.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=330.0)
+    (wd / ".clear-record-ignore").write_bytes(b"\xef\xbb\xbfb.wav\n")
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import discover_audio
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    assert [p.name for p in discover_audio(wd)] == ["a.wav"]
+    assert [e.message for e in events if "excluded" in (e.message or "")] == [
+        "[ingest] excluded b.wav: named in .clear-record-ignore"
+    ]

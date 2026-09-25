@@ -20,6 +20,10 @@ import dataclasses
 from pathlib import Path
 
 from clear_record.pipeline import auto as _auto
+from clear_record.pipeline.workspace import (
+    CANNOT_READ_DECLARATION,
+    DeclarationUnreadable,
+)
 from clear_record.core import PipelineOptions, resolve_options
 from clear_record.core.i18n import deferred
 
@@ -148,9 +152,15 @@ def resolve_run(
             )
         )
 
-    choice = resolve_auto(
-        probe_auto(directory, model_dir=model_dir, language=options.language)
-    )
+    try:
+        probe = probe_auto(directory, model_dir=model_dir, language=options.language)
+    except DeclarationUnreadable as exc:
+        # The probe measures the folder's tapes, so it walks it — and the walk
+        # reads the folder's own declaration. Which files are inputs is unknown
+        # when that cannot be read, so the same refusal the directory run's tape
+        # resolution answers with: one sentence, one id, at every edge.
+        raise ValueError(CANNOT_READ_DECLARATION) from exc
+    choice = resolve_auto(probe)
     explanations.append(choice.explanation)
 
     chose: list[str] = []

@@ -258,10 +258,11 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   and `ingest` carries such a declaration forward across its own passes instead
   of losing it to the manifest it rebuilds. Of a pair that both declare one,
   `align` places them from the difference of the declarations when the two
-  **cannot overlap** (their distance is at least as long as the recording that
-  began first, so the later one begins after the earlier one ended) or when that
-  distance is wider than its search band — and otherwise lets the audio decide,
-  falling back to the declaration only when the audio has no verdict. The parts
+  **cannot overlap** (their distance is at least the length of the recording
+  that began first, less one correlation window — the pre-roll a rotating
+  recorder may keep, its parts meeting inside it) or when that distance is
+  wider than its search band — and otherwise lets the audio decide, falling
+  back to the declaration only when the audio has no verdict. The parts
   stay separate sources at their declared starts: the rotation seam is **not**
   sample-continuous, so splicing them into one waveform would invent a continuity
   the recorder never wrote, and the record shows each part and its start.

@@ -573,15 +573,14 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     The refusal is deliberately not in :meth:`RunManager.start`: a meeting whose
     inputs come from the registry (an upload, a client's typed paths) never
     *walks* for its inputs, so this folder's declaration does not govern them and
-    must not be consulted for them. Two readers of it remain on that path, and the
-    census is theirs, not one thing's: ``auto``'s probe reads the folder to measure
-    its tapes (through ``service.auto.resolve_run``, which answers
-    :data:`CANNOT_READ_DECLARATION` for it like this function does), and
-    :func:`report_declaration_exclusions` reads it to narrate the exclusions of a
-    run it already knows are the walk's — **standing down** when it cannot read
-    it, because that one is a report and not a decision: it says nothing rather
-    than refuse a run whose inputs it never governed, while the probe, which does
-    decide, refuses.
+    must not be consulted for them. On that path the declaration has two readers,
+    and the two answer differently because they are asked different things:
+    ``auto``'s probe measures the folder's tapes by walking it, so it cannot
+    answer without the file and refuses it (:data:`CANNOT_READ_DECLARATION`,
+    through ``service.auto.resolve_run``, which answers it for the probe like this
+    function does), while :func:`report_declaration_exclusions` only narrates
+    exclusions it already knows are the walk's — so it says nothing when it cannot
+    read the file, rather than refuse a run whose inputs it never governed.
 
     A declaration that cannot be **read** is refused beside it
     (:data:`CANNOT_READ_DECLARATION`) rather than let through as the read's own

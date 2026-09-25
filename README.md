@@ -47,9 +47,10 @@ DJI Mic 3   ─┘
   encoding) — is refused, never ignored: a run answers one sentence naming the
   file and the edit that fixes it, and `ingest` refuses in its own words, naming
   the file and the reason the OS (or the codec) gave. Write the file as UTF-8,
-  with or without a byte-order mark: bytes that *are* valid UTF-8 in an encoding
-  not meant (a BOM-less UTF-16 file) decode to patterns that match nothing, which
-  no read can tell from a declaration that simply names nothing.
+  with or without a byte-order mark: a declaration saved in another encoding
+  whose bytes are still valid UTF-8 (a BOM-less UTF-16 file's ASCII text is
+  NUL-padded) decodes without an error and yields patterns that match nothing,
+  which no read can tell from a declaration that simply names nothing.
   **Byte-identical** inputs collapse to one source — a copy such as `cp take.wav
   take-copy.wav`, never a processed `_edit`, whose bytes differ and which the
   declaration above is for — each fold (and each exclusion) reported rather than

@@ -942,7 +942,14 @@ def test_diarize_leaves_a_declared_one_off_reference_unnamed(tmp_path) -> None:
     stayed in the record as speakers: a microphone a caller declared not to be a
     person, printed as one. The declaration reaches this pass too, and such a
     source is left exactly as it came in, as a declared role already was.
+
+    Which reason the line gives is the *source's* own: the recorded gate set holds
+    the manifest's declared ``mixed`` roles as well as the caller's ids, so a
+    source the manifest declares keeps "(declared mixed: …)" — the caller named
+    nothing for this pass — and only a source the manifest leaves a ``candidate``
+    is the one-off's.
     """
+    import dataclasses
     from clear_record.core import JobEvent, Segment
     from clear_record.pipeline.workspace import Workspace
 
@@ -991,6 +998,18 @@ def test_diarize_leaves_a_declared_one_off_reference_unnamed(tmp_path) -> None:
     ) in [event.message for event in events]
     # The declaration survives for the pass that honours it.
     assert Workspace.at(wd).load_segments()[1]["mixed_references"] == [sid]
+
+    # The same source with a *manifest* role keeps its own reason: the recorded
+    # gate set names it too, and the role is what the record's reader is owed —
+    # naming a `--mixed-source` flag the caller never passed sends them after it.
+    Workspace.at(wd).write_manifest([dataclasses.replace(sources[0], role="mixed")])
+    events = []
+    report = stages.diarize(str(wd), speakers=2, on_event=events.append)
+
+    assert report.per_source[sid] == seeded[sid]
+    assert (
+        f"[diarize] {sid}: 2 speaker(s) over 4 segment(s) (declared mixed: left unnamed)"
+    ) in [event.message for event in events]
 
 
 def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -> None:

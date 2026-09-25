@@ -753,7 +753,7 @@ def ingest(
     # first's ``audio/<id>.wav`` while the manifest kept two sources naming one
     # path. The first unit staged under an id keeps it; one that meets a taken id
     # — a slug another unit proposed, or a ``-N`` id this pass handed out — is
-    # disambiguated, and the collision is reported where its decode line arrives.
+    # disambiguated, and the collision is reported where its id is settled.
     taken: dict[str, str] = {}
 
     def stage_id(desired: str, subject: str, index: int) -> str:
@@ -1448,10 +1448,14 @@ def diarize(
             ]
             applied = True
         facts.append(DiarizedSource(id=sid, segments=len(segs), speakers=n_found))
-        if sid in declared:
-            note = " (named a reference for this pass: left unnamed)"
-        elif src.role != "candidate":
+        # The source's own declared role is the reason that describes it when it
+        # has one: a caller's one-off is for a source the manifest leaves a
+        # candidate (that is how a name the caller gives for one pass is told from
+        # a durable role), and the recorded gate set holds both.
+        if src.role != "candidate":
             note = f" (declared {src.role}: left unnamed)"
+        elif sid in declared:
+            note = " (named a reference for this pass: left unnamed)"
         else:
             note = ""
         report_line(

@@ -507,13 +507,13 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   **one** source (a copy, never a processed `_edit`, whose bytes differ and which
   the declaration above is for), each fold and exclusion named on the run's
   channel — as is a file discovery could not use. A declaration the walk cannot
-  **read** — a mode nothing may open, or
-  bytes it cannot decode — is refused rather than silently unapplied: the run edge
-  answers `CANNOT_READ_DECLARATION` (one sentence, naming the file and the edit),
-  and the pass refuses with `[ingest] cannot read <file>: <reason>`. Bytes that
-  decode but are not the encoding meant (a BOM-less UTF-16 file) are not
-  detectable — the read takes the file as `utf-8-sig`, so a byte-order mark is
-  fine — and such a declaration simply names nothing.
+  **read** — a mode nothing may open, or bytes it cannot decode — is refused
+  rather than silently unapplied: the run edge answers `CANNOT_READ_DECLARATION`
+  (one sentence, naming the file and the edit), and the pass refuses with
+  `[ingest] cannot read <file>: <reason>`. Bytes that decode but are not the
+  encoding meant (a BOM-less UTF-16 file) are not detectable — the read takes the
+  file as `utf-8-sig`, so a byte-order mark is fine — and such a declaration
+  simply names nothing.
 - `align` → `clear_record.engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
   simultaneous-start fallback. A source that declares its own start, against a

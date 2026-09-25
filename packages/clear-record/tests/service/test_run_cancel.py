@@ -394,3 +394,41 @@ def test_a_resume_refuses_a_run_that_is_still_in_flight(tmp_path) -> None:
         release.set()
         assert manager.wait(run.id, timeout=10).status == "done"
         manager.shutdown(timeout=5)
+
+
+def test_a_cancel_that_lands_before_the_first_line_is_a_stop(
+    tmp_path, monkeypatch
+) -> None:
+    """A cancel arriving at the run's start is an outcome, not a failure.
+
+    The run's channel raises ``RunCancelled`` on its next report once the signal
+    is set, and the run path reports the folder's declaration exclusions through
+    that channel **before** the pipeline starts. With that first report outside
+    the try that owns a stop, a cancel landing there was recorded ``failed`` and
+    failed the meeting, where the same interleaving on the pre-fix revision was
+    ``stopped`` — the one thing RUN-04's two outcomes must not be.
+
+    The run's own signal is pre-set, which is exactly the interleaving "a cancel
+    that arrived before the run reported anything": the run's first report *is*
+    the cancel.
+    """
+    registry = _registry(tmp_path)
+    directory, tape = _workspace(tmp_path)
+    # An exclusion the folder declares, so the report has a line to send: the
+    # workspace keeps ``a.wav`` (the run's tape) and the declaration names
+    # ``b.wav`` out of the walk.
+    (directory / "b.wav").write_bytes(b"RIFFb")
+    (directory / ".clear-record-ignore").write_text("b.wav\n", encoding="utf-8")
+    meeting = _meeting(registry, directory, tape)
+
+    manager = RunManager(registry, pipeline=lambda *args: None)
+    arrived = threading.Event()
+    arrived.set()
+    monkeypatch.setattr(manager, "_signal_for", lambda run_id: arrived)
+
+    run = manager.start(meeting, origin="console")
+    state = manager.wait(run.id, timeout=10)
+
+    assert state.status == "stopped"
+    assert registry.get_run(run.id).error is None
+    assert registry.meeting_by_id(meeting.id).status == "ready"

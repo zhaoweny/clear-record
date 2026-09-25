@@ -569,8 +569,12 @@ class ServiceTools:
 
         Returns one ``HH:MM:SS.mmm [speaker] text`` line per segment, the total
         segment count, and a ``next`` cursor (pass it back as ``offset``) — so an
-        agent can page a multi-hour tape without reading it whole. Prefers the
-        reconciled ``record``; falls back to the raw ``transcript`` segments.
+        agent can page a multi-hour tape without reading it whole. A time is
+        signed when it is negative: the reconciled ``record`` is on the reference
+        clock, so a source that started before the reference reads
+        ``-00:01:54.365``. Prefers the ``record``; falls back to the raw
+        ``transcript`` segments, whose times are each source's own (``reconcile``
+        is what shifts them onto the reference).
         """
         found = self._meeting(project, meeting)
         try:

@@ -1323,3 +1323,109 @@ def test_ui_archive_without_a_root_explains_itself(client, tmp_path) -> None:
     assert refused.status_code == 200
     assert "no archive root" in refused.text
     assert "No archives yet." in refused.text
+
+
+def test_a_meeting_run_is_never_refused_by_the_workspaces_declaration(
+    console, tmp_path
+) -> None:
+    """The folder's declaration governs discovery, not a meeting's registry tapes.
+
+    A directory run resolves its tapes through the walk, so the folder's
+    ``.clear-record-ignore`` governs it (``service.runs.workspace_run_meeting``,
+    the directory edge). A **meeting** run — this route, the console's own button,
+    an agent's tool — is handed the registry's tape set and never walks, so the
+    declaration does not govern it. Answering it with the declaration's refusal
+    would be false about a run that does have inputs (measured: 400 with the
+    sentence while the same submission ran to ``done`` with the check bypassed),
+    and reading the file at all would turn an **unreadable** declaration into a
+    500 for a submission that never needed it.
+
+    The run's own stream is checked too: naming one of these tapes "excluded"
+    while the pipeline decoded it would be the same misdescription from the other
+    side (``service.runs.report_declaration_exclusions``).
+    """
+    client = console.client
+    workspace = tmp_path / "ws"
+    tapes = workspace / "tapes"
+    tapes.mkdir(parents=True)
+    for name in ("a.wav", "b.wav"):
+        (tapes / name).write_bytes(b"RIFF" + name.encode())
+    meeting = _make_meeting(console, workspace)
+    taken = [str(tapes / "a.wav"), str(tapes / "b.wav")]
+    assert (
+        client.put(
+            f"/api/meetings/{meeting['id']}/tapes", json={"paths": taken}
+        ).status_code
+        == 201
+    )
+    declaration = workspace / ".clear-record-ignore"
+    declaration.write_text("tapes/*.wav\n", encoding="utf-8")
+
+    started = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    assert started.status_code == 202
+    run_id = started.json()["run"]["id"]
+    console.gate.set()
+    assert console.manager.wait(run_id, timeout=10).status == "done"
+    assert list(console.seen[-1].audio_files) == taken, "the registry's tapes ran"
+    events = client.get(f"/api/runs/{run_id}/events?after=0").json()
+    assert [
+        event["message"]
+        for event in events["events"]
+        if "excluded" in (event["message"] or "")
+    ] == []
+
+    # A declaration that cannot be read is nobody's business on this edge either:
+    # the submission is answered and the run finishes exactly as it did above.
+    declaration.chmod(0o000)
+    second = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    assert second.status_code == 202
+    second_id = second.json()["run"]["id"]
+    console.gate.set()
+    assert console.manager.wait(second_id, timeout=10).status == "done"
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_an_auto_run_reads_the_declaration_and_says_when_it_cannot(
+    console, tmp_path, shape
+) -> None:
+    """``auto`` measures the folder, so it reads the declaration — and answers it.
+
+    The probe needs the workspace's tapes to choose a profile, so every run that
+    asks for ``auto`` walks the folder (this route, the console's button, an
+    agent's tool) and the walk reads the folder's own ``.clear-record-ignore``.
+    That read is a decision — the probe cannot pick a profile without it — and the
+    submission is answered with the declaration's own sentence, the id the
+    directory path answers with too, with nothing written. (The only other reader
+    on this path is ``service.runs.report_declaration_exclusions``, which
+    *stands down* rather than decide: it is a report, and the run's inputs were
+    already settled by the registry.) Both ways a file refuses to be read are the
+    same answer: a mode nothing may read (measured: 500 with the raw
+    ``PermissionError`` before this) and a declaration saved in the machine's own
+    encoding (which reached the client as the codec's own text).
+    """
+    from clear_record.pipeline.workspace import CANNOT_READ_DECLARATION
+
+    client = console.client
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.wav").write_bytes(b"RIFFa")
+    meeting = _make_meeting(console, workspace)
+    assert (
+        client.put(
+            f"/api/meetings/{meeting['id']}/tapes",
+            json={"paths": [str(workspace / "a.wav")]},
+        ).status_code
+        == 201
+    )
+    declaration = workspace / ".clear-record-ignore"
+    declaration.write_bytes(b"caf\xe9\n" if shape == "not-utf8" else b"*.wav\n")
+    if shape == "permission":
+        declaration.chmod(0o000)
+
+    refused = client.post(f"/api/meetings/{meeting['id']}/runs", json={"auto": True})
+
+    assert refused.status_code == 400
+    assert refused.json()["detail"] == CANNOT_READ_DECLARATION
+    assert console.registry.list_runs(meeting["id"]) == [], (
+        "a refused run wrote nothing"
+    )

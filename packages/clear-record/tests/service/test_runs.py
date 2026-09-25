@@ -2399,3 +2399,85 @@ def test_a_claim_that_fails_does_not_stop_the_queue(tmp_path, monkeypatch) -> No
     assert attempts["n"] >= 2
     assert manager._scheduler is not None and manager._scheduler.is_alive()
     manager.shutdown()
+
+
+# --- the workspace declaration on the run path ------------------------------ #
+def test_the_runs_exclusion_line_never_names_a_tape_the_run_takes(tmp_path) -> None:
+    """The run path says what the folder's declaration took out — and only that.
+
+    A run's ``ingest`` is handed a **declared** list and never walks, so the
+    folder's ``.clear-record-ignore`` is invisible to it; the walk that produced a
+    directory run's list is ``service.runs``', and it is where the exclusions are
+    named. It speaks only for the case it knows: the walk's output must be exactly
+    this run's inputs (``workspace_run_meeting`` sets a directory run's tapes from
+    that walk).
+
+    Both misdescriptions are refused here. A file the run *does* take — a meeting
+    the registry hands tapes to, so the declaration never governed its inputs — is
+    not called excluded while it is decoded; and neither is a file the registry
+    simply did not select, because the declaration was not what took it out.
+    """
+    from types import SimpleNamespace
+
+    from clear_record.service.runs import report_declaration_exclusions
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.wav").write_bytes(b"RIFFa")
+    (workspace / "b.wav").write_bytes(b"RIFFb")
+    (workspace / ".clear-record-ignore").write_text("b.wav\n", encoding="utf-8")
+    meeting = SimpleNamespace(workspace_path=str(workspace))
+    events: list[JobEvent] = []
+
+    report_declaration_exclusions(
+        meeting, PipelineOptions(audio_files=(str(workspace / "a.wav"),)), events.append
+    )
+    assert [event.message for event in events if event.message] == [
+        "[ingest] excluded b.wav: named in .clear-record-ignore"
+    ]
+    assert [(event.level, event.stage) for event in events] == [("info", "ingest")]
+
+    # The declaration names a file this run *takes*: nothing to report.
+    events.clear()
+    report_declaration_exclusions(
+        meeting, PipelineOptions(audio_files=(str(workspace / "b.wav"),)), events.append
+    )
+    assert events == []
+
+    # With no declaration the walk still runs, and still stands this narration
+    # down: what it refuses is the meeting whose inputs were never the walk's.
+    (workspace / ".clear-record-ignore").unlink()
+    report_declaration_exclusions(
+        meeting, PipelineOptions(audio_files=(str(workspace / "a.wav"),)), events.append
+    )
+    assert events == []
+
+
+def test_the_run_names_a_file_discovery_cannot_use(tmp_path) -> None:
+    """The walk's other answer has a line on the run path too (ticket 223).
+
+    A run's ``ingest`` is handed a declared list and never walks, so a file the
+    walk could not use — a tape in a container ``AUDIO_SUFFIXES`` does not list —
+    left no trace at all on the documented ``run <dir>`` path while
+    ``ingest <dir>`` named it. It is said here, in the same words and at the same
+    level the pass uses when it walks for itself.
+    """
+    from types import SimpleNamespace
+
+    from clear_record.service.runs import report_declaration_exclusions
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.wav").write_bytes(b"RIFFa")
+    (workspace / "take.aup").write_bytes(b"<audacity project>")
+    (workspace / "glossary.txt").write_text("Clear Record\n", encoding="utf-8")
+    meeting = SimpleNamespace(workspace_path=str(workspace))
+    events: list[JobEvent] = []
+
+    report_declaration_exclusions(
+        meeting, PipelineOptions(audio_files=(str(workspace / "a.wav"),)), events.append
+    )
+    assert [event.message for event in events if event.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)"
+    ]
+    assert [(event.level, event.stage) for event in events] == [("warn", "ingest")]

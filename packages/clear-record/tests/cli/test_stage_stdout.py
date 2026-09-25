@@ -109,13 +109,15 @@ $ clear-record diarize
 [diarize] b: 1 speaker(s) over 1 segment(s)
 [diarize] c: 1 speaker(s) over 1 segment(s)
 $ clear-record attribute
-[attribute] 3 segment(s), 1 speaker(s), 2 re-attributed
+[attribute] 3 segment(s), 1 speaker(s), 2 re-attributed or unnamed
 $ clear-record glossary
 [glossary] $FIXTURE/tape/glossary.txt (2 term(s))
   Clear Record
   Oh My Pi
 $ clear-record reconcile
 [reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/tape/record.json
+[reconcile] 1 unplaced source(s) left out: 1 segment(s), 6.0s of transcript
+  c                        UNPLACED (no alignment offset)
   00:00:00.000 [Speaker 3] chunk
 $ clear-record export
 [export] md   -> $FIXTURE/tape/export/record.md
@@ -147,6 +149,8 @@ $ clear-record run
   b                        segments=   1  duration=6.0  chunks=1
   c                        segments=   1  duration=6.0  chunks=1
 [reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/record.json
+[reconcile] 1 unplaced source(s) left out: 1 segment(s), 6.0s of transcript
+  c                        UNPLACED (no alignment offset)
   00:00:00.000 [Speaker 1] chunk
 [export] md   -> $FIXTURE/run/export/record.md
 [export] srt  -> $FIXTURE/run/export/record.srt
@@ -179,6 +183,8 @@ $ clear-record calibrate
   b                        segments=   1  duration=6.0  chunks=1
   c                        segments=   1  duration=6.0  chunks=1
 [reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/calibrate/record.json
+[reconcile] 1 unplaced source(s) left out: 1 segment(s), 6.0s of transcript
+  c                        UNPLACED (no alignment offset)
   00:00:00.000 [Speaker 1] chunk
 [export] md   -> $FIXTURE/calibrate/export/record.md
 [export] srt  -> $FIXTURE/calibrate/export/record.srt

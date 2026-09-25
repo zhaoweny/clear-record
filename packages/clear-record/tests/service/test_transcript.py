@@ -53,6 +53,58 @@ def test_reads_the_reconciled_record_as_text(tmp_path: Path) -> None:
     assert page.text == ("00:00:00.000 [Alice] hello\n00:01:05.500 [b] world")
 
 
+def test_a_pre_roll_reads_as_a_negative_time(tmp_path: Path) -> None:
+    """The text reads the record's own clock, sign and all.
+
+    A source started before the reference — the phone first, the ordinary case —
+    has negative reference times, and the record page must say so: clamping them
+    to `00:00:00.000` is the same fold the SRT/VTT renderers dropped (their cues
+    came out zero-length) and would here name the wrong instant for the tape's
+    first cues. This page is the reconciled record's, so its clock is the
+    reference one — unlike the raw fallback, pinned below.
+    """
+    _, meeting, workspace = _meeting(tmp_path)
+    _write_record(
+        workspace,
+        [
+            Segment(start=-114.365, end=-112.0, text="before", source="phone"),
+            Segment(start=1.0, end=3.5, text="after", source="room"),
+        ],
+    )
+
+    page = read_transcript(meeting)
+
+    assert page.source == "record"
+    assert page.text == "-00:01:54.365 [phone] before\n00:00:01.000 [room] after"
+
+
+def test_the_raw_page_keeps_each_source_own_clock(tmp_path: Path) -> None:
+    """The fallback page is source-local, not the reference clock.
+
+    `reconcile` is what shifts a source onto the reference, so a workspace read
+    before it — or without a record — holds each source's own times: the same
+    cue reads ``00:00:04.000`` on the raw page and ``00:00:01.500`` on the
+    record, whose alignment moved it by -2.5 s. Both are read as the page holds
+    them, which is why the module names the page's clock rather than one clock.
+    """
+    _, meeting, workspace = _meeting(tmp_path)
+    raw_segment = Segment(start=4.0, end=5.0, text="hello", source="b")
+    write_json(
+        workspace / "segments.json",
+        {"sources": {"b": [to_dict(raw_segment)]}, "meta": {"backend": "apple"}},
+    )
+
+    raw = read_transcript(meeting)
+    assert raw.source == "transcript"
+    assert raw.text == "00:00:04.000 [b] hello"
+
+    _write_record(workspace, [Segment(start=1.5, end=2.5, text="hello", source="b")])
+
+    record = read_transcript(meeting)
+    assert record.source == "record"
+    assert record.text == "00:00:01.500 [b] hello"
+
+
 def test_a_slice_pages_a_long_tape(tmp_path: Path) -> None:
     _, meeting, workspace = _meeting(tmp_path)
     _write_record(

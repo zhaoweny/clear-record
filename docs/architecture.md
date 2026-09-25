@@ -215,6 +215,24 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   known sizes are checked against a pinned SHA-256 before being installed
   (`providers.ggml_hashes`; `CR_MODEL_CHECKSUM=off` opts out), and offline the
   actionable `hf download …` error is raised.
+- [DESIGN] The `whisper-cli` backends and `apple-speech` **do not agree on the
+  Han script**: whisper.cpp's `-l zh` writes Mandarin in Traditional characters
+  (measured: 685 Traditional-only characters in a 600 s Mandarin slice) where the
+  native transcriber writes Simplified. For `zh` the whisper-cli adapters bias
+  the decode to Simplified with a hand-written Simplified initial prompt, sent
+  only to a CLI whose usage text advertises `--prompt` — no converter, no new
+  dependency, and no flag assumed for the bias itself (the caller's glossary goes
+  out as it always did). The bias is built inside the adapter, so **no cache key
+  carries it**: a `zh` run under unchanged options re-decodes nothing, and its
+  cached chunks keep the script they were decoded in.
+  Nothing rewrites a transcript's script, so the transcribe stage reads each
+  source's Han text, records the scripts it shows in `segments.json`
+  (`meta.sources.<id>.scripts`, both of them wherever the text itself holds one of
+  each, whatever wrote it, none where the text settles neither), carries the same
+  lists into the record's own metadata (`metadata.scripts`) and names the sources
+  on the run's channel whenever that is not uniform
+  (`engine.text.han_scripts`): a difference between sources *or inside one* is
+  never silent.
 - The vendor stacks are **not imported by the core layer**; the CLI adapter is
   driven as a subprocess in the providers layer, so a plain dev/CI environment
   needs no GPU framework.
@@ -232,6 +250,24 @@ instead of locking to a vendor. [FACT] The relevant ecosystem facts:
   are split per channel by default** (when >2 channels) so a 4-channel DJI
   file becomes four sources and per-speaker isolation is preserved
   (`--split-channels` / `--mix-down` override).
+- [DESIGN] **A recorder's sequential segment files carry their own start.**
+  Some recorders rotate the internal file every 30 minutes and write each part's
+  start time into the file name. Those files are *sequential*, not simultaneous,
+  and `ingest` reads the start off the name into `Source.start_s` — **seconds
+  since the epoch, read as UTC** (only differences between two of them are ever
+  taken, so the zone cancels). The manifest is where a declared per-source start
+  lives, so an operator may declare one there by hand when a name states none,
+  and `ingest` carries such a declaration forward across its own passes instead
+  of losing it to the manifest it rebuilds. Of a pair that both declare one,
+  `align` places them from the difference of the declarations when the two
+  **cannot overlap** (their distance is at least the length of the recording
+  that began first, less one correlation window — the pre-roll a rotating
+  recorder may keep, its parts meeting inside it) or when that distance is
+  wider than its search band — and otherwise lets the audio decide, falling
+  back to the declaration only when the audio has no verdict. The parts
+  stay separate sources at their declared starts: the rotation seam is **not**
+  sample-continuous, so splicing them into one waveform would invent a continuity
+  the recorder never wrote, and the record shows each part and its start.
 - [DESIGN] The `whisper-cli` adapter reads millisecond `offsets` from its `-ojf`
   JSON (`clear_record.providers.backends._whispercli_segments`).
   Note: cross-device clock sync is still **out of scope** (§7).
@@ -463,10 +499,37 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
-  per-speaker channels; re-ingest is idempotent.
+  per-speaker channels; re-ingest is idempotent. A recording folder accumulates
+  earlier sessions and copies, so its own `.clear-record-ignore` (one glob per
+  line, relative to the workspace) names the files discovery must not take — a
+  `run <dir>` resolves its sources through the same walk, so it honours the
+  declaration too, and **refuses** a folder whose every audio file it excludes
+  rather than reusing the meeting's last tape set (which is what a directory
+  holding no audio at all still does) — and byte-identical inputs collapse to
+  **one** source (a copy, never a processed `_edit`, whose bytes differ and which
+  the declaration above is for), each fold and exclusion named on the run's
+  channel — as is a file discovery could not use. A declaration the walk cannot
+  **read** — a mode nothing may open, or bytes it cannot decode — is refused
+  rather than silently unapplied: the run edge answers `CANNOT_READ_DECLARATION`
+  (one sentence, naming the file and the edit), and the pass refuses with
+  `[ingest] cannot read <file>: <reason>`. Bytes that decode but are not the
+  encoding meant (a BOM-less UTF-16 file) are not detectable — the read takes the
+  file as `utf-8-sig`, so a byte-order mark is fine — and such a declaration
+  simply names nothing. A source's declared **role** — the room microphone, the
+  duplicate feed a capture carries beside its speakers (see `attribute`) — is read
+  off the manifest and carried into the manifest this pass rebuilds, and follows a
+  folded copy to the source the fold kept, as a declared start does: `run` ingests
+  every time, so a declaration written by hand would otherwise be lost by the run
+  that needs it.
 - `align` → `clear_record.engine.align_sources`, windowed cross-correlation at 1 kHz
   (~1 ms; memory scales to multi-hour tapes), approximate offset with a
-  simultaneous-start fallback.
+  simultaneous-start fallback. A source that declares its own start, against a
+  reference that declares one, is placed by that declaration when the two cannot
+  overlap (their distance is at least the length of the recording that began
+  first, less one correlation window — the pre-roll a rotating recorder may keep,
+  its parts meeting inside it) or when that distance is wider than the search
+  band; a pair that can overlap is the audio's to place, and the declaration is
+  the fallback when it has no verdict.
 - `transcribe` → real ASR via `clear_record.providers`; **Apple/macOS (system
   `whisper-cli` + `ggml-metal`) is hot-tested end-to-end on an Apple M4** (164
   segments, no wheel installed), with auto language detection and per-segment
@@ -485,8 +548,20 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   (log-mel + F0 fingerprint, k-means; dependency-free), preserving per-channel
   attribution when channels are already split.
 - `attribute` → cross-talk-aware per-segment attribution by **relative,
-  gain-normalized source energy** (`clear_record.engine.attribute`), with an optional
-  mixed/room reference as a presence gate (never a speaker itself). Each source is
+  gain-normalized source energy** (`clear_record.engine.attribute`), with mixed/room
+  reference(s) as a presence gate (never speakers themselves). **Which sources are
+  not speakers is the manifest's `role`**: `candidate` (the default, a person's
+  microphone), `mixed` (a witness that hears the whole room and only gates) and
+  `excluded` (a microphone nobody wore, a duplicate feed such as a phone memo
+  carrying the receiver's downmix of the same mics — neither a candidate nor a
+  witness). A capture can carry several non-speaker sources, and every `mixed`
+  reference that **reads back** gates (one whose audio cannot be read raises no
+  floor, though the pass still reports it as asked for), so a claim must be one
+  every witness that heard the window can account for; `--mixed-source` still
+  names one source for a single pass. A segment whose own source is not a
+  candidate is attributed like any other and left **unnamed** when no candidate
+  carries its window — a change the pass counts and writes — so no microphone's
+  label reaches the record. Each source is
   normalized against its **own** level; `--window-s` switches from one static
   whole-recording level to a **causal rolling window** (≈15 s default) that tracks
   **drifting** gain and writes a calibrated per-segment confidence, while a
@@ -495,7 +570,14 @@ optional `just agent-drive` stands in for a harness over the MCP tools.
   --attribute-energy` opts in without changing the default `diarize` path, and
   the corrected speaker is preserved by `reconcile`. See `docs/test-corpus.md`.
 - `reconcile` → `clear_record.engine.reconcile`; shift by alignment, collapse overlaps,
-  join only same-speaker runs, attribute speaker per source or diarizer.
+  join only same-speaker runs, attribute speaker per source or diarizer. A source
+  `align` could not place is **left out**: rather than merging its segments at the
+  reference's zero point, where the artifact could not tell them from a source that
+  really starts there, the record's `metadata.unplaced` names each such source that
+  had segments and how much of it went — the alignment's own `unresolved` list names
+  the sources but not the transcript that goes with them, and a source with nothing
+  to place is named by the alignment itself, in its `unresolved` list or as a null
+  offset, and by nothing at all when the manifest carries no alignment.
 - `export` → Markdown / SRT / VTT / JSON.
 - `calibrate` → coverage, mean confidence, WER/similarity vs an optional
   reference transcript.

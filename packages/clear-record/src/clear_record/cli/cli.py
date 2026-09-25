@@ -88,6 +88,10 @@ from clear_record.cli.runs import start as start_run
 from clear_record.cli.synth import synth
 from clear_record.pipeline import auto
 from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import (
+    CANNOT_READ_DECLARATION,
+    DeclarationUnreadable,
+)
 
 #: Entry-point group for optional subcommand providers. The bundled web console
 #: registers here (ADR-0013) so this module never imports it, keeping the
@@ -638,6 +642,27 @@ def _backend_option_kwargs(args: Any) -> dict:
     }
 
 
+def _probe_auto_or_exit(
+    directory: str, *, model_dir: str | None, language: str | None
+) -> auto.AutoProbe:
+    """Probe the machine and the tape, or end the command on an unreadable folder.
+
+    The probe measures the workspace's tapes, which means walking it — and the
+    walk reads the folder's own ``.clear-record-ignore``. A declaration the
+    command cannot read leaves it unable to know which files are inputs, so the
+    command ends with the declaration's own sentence
+    (:data:`CANNOT_READ_DECLARATION`), rendered here where a person reads it,
+    rather than with a traceback out of the walk. Only this command's own path
+    probes in its process: a ``run`` is the node's, and the node's own probe
+    answers the same id.
+    """
+    try:
+        return auto.probe_auto(directory, model_dir=model_dir, language=language)
+    except DeclarationUnreadable as exc:
+        log_event("error", "cli", "cli.auto.failed", reason=str(exc))
+        raise SystemExit(tr(CANNOT_READ_DECLARATION)) from exc
+
+
 def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
     """Resolve ``--backend auto`` and ``--auto`` on top of the explicit options.
 
@@ -660,7 +685,7 @@ def _apply_auto(args: Any, options: PipelineOptions) -> PipelineOptions:
         return resolve_options(options, profile=args.profile)
 
     choice = auto.resolve_auto(
-        auto.probe_auto(
+        _probe_auto_or_exit(
             args.directory,
             model_dir=args.models_dir,
             language=args.language,

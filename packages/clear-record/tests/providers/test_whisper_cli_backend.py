@@ -912,3 +912,151 @@ def test_transcribe_rejects_a_keyword_that_is_not_a_declared_knob() -> None:
 def test_all_whisper_cli_backends_advertise_the_decoder_knobs() -> None:
     for backend in (AppleBackend(), AmdBackend(), NvidiaBackend()):
         assert backend.info.decoder_knobs == DECODER_KNOB_FIELDS
+
+
+# --------------------------------------------------------------------------- #
+# Chinese script: the Simplified initial prompt for `-l zh`
+# --------------------------------------------------------------------------- #
+# Hand-written usage texts (no real CLI output, no field content) and a
+# hand-written Simplified fixture: whisper.cpp's `-l zh` writes Traditional
+# characters, and a Simplified initial prompt is the one lever over the script
+# that needs no converter.
+_USAGE_WITH_PROMPT = (
+    "usage: whisper-cli [options] file0 file1 ...\n"
+    "  -p FNAME, --prompt FNAME   initial prompt\n"
+    "  -l LANG, --language LANG   spoken language ['auto']\n"
+)
+_USAGE_WITHOUT_PROMPT = (
+    "usage: whisper-cli [options] file0 file1 ...\n"
+    "  -l LANG, --language LANG   spoken language ['auto']\n"
+)
+_SIMPLIFIED_PROMPT_FIXTURE = "以下是普通话的句子。"
+
+
+def _install_fake_cli(
+    monkeypatch, captured: list[list[str]], *, usage: str = _USAGE_WITH_PROMPT
+) -> None:
+    """A fake CLI that records every command and answers ``--help`` with *usage*.
+
+    whisper.cpp prints its usage on stderr and exits 0, so a test can present a
+    CLI that advertises ``--prompt`` and one that does not — the two cases the
+    bias must tell apart.
+    """
+    # Each test states the CLI's own usage text, so the advertised-flag cache
+    # (keyed by CLI path) must not answer for a previous test's fake.
+    backends._clear_cli_flags_cache()
+
+    def behavior(cmd):
+        captured.append(list(cmd))
+        if "--help" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "", usage)
+        out_prefix = cmd[cmd.index("-of") + 1]
+        with open(out_prefix + ".json", "w", encoding="utf-8") as fh:
+            json.dump({"result": {"language": "zh"}, "transcription": []}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    _install_fake_run(monkeypatch, behavior)
+
+
+def _decode_command(captured: list[list[str]]) -> list[str]:
+    """The one recorded command that transcribed (not the ``--help`` probe)."""
+    (cmd,) = [command for command in captured if "-ojf" in command]
+    return cmd
+
+
+def test_the_advertised_flags_are_read_off_a_usage_text() -> None:
+    """The probe's parse: long flags, punctuation and any ``=value`` stripped."""
+    assert backends._advertised_flags(_USAGE_WITH_PROMPT) == {"--prompt", "--language"}
+    assert backends._advertised_flags("") == frozenset()
+
+
+def test_transcribe_biases_chinese_to_simplified(tmp_path, monkeypatch) -> None:
+    """``-l zh`` must not ship Mandarin in Traditional characters.
+
+    The adapter cannot rewrite the decode, so it asks for the script: for
+    Chinese it puts a Simplified initial prompt on the command, which the decoder
+    carries into its own context. The fixture is hand-written, and the prompt is
+    only ever sent to a CLI whose own usage text advertises ``--prompt``.
+    """
+    captured: list[list[str]] = []
+    _install_fake_cli(monkeypatch, captured)
+
+    AmdBackend().transcribe(
+        str(tmp_path / "a.wav"), model=_stub_model(tmp_path), language="zh"
+    )
+
+    cmd = _decode_command(captured)
+    assert cmd[cmd.index("-l") + 1] == "zh"
+    assert cmd[cmd.index("--prompt") + 1] == _SIMPLIFIED_PROMPT_FIXTURE
+
+
+def test_the_bias_follows_the_callers_glossary(tmp_path, monkeypatch) -> None:
+    """The caller's glossary is never replaced by the bias: the prompt carries
+    both, the bias last, so the operator's terms still bias the decode and the
+    Simplified sentence sits nearest the decoder's first window."""
+    captured: list[list[str]] = []
+    _install_fake_cli(monkeypatch, captured)
+
+    AmdBackend().transcribe(
+        str(tmp_path / "a.wav"),
+        model=_stub_model(tmp_path),
+        language="zh",
+        initial_prompt="ACME, 张三",
+    )
+
+    cmd = _decode_command(captured)
+    assert cmd[cmd.index("--prompt") + 1] == f"ACME, 张三 {_SIMPLIFIED_PROMPT_FIXTURE}"
+
+
+def test_a_cli_that_hides_prompt_gets_the_glossary_but_no_bias(
+    tmp_path, monkeypatch
+) -> None:
+    """The bias's flag is never assumed to exist: a CLI whose usage text does not
+    name ``--prompt`` is asked for nothing beyond the glossary it already received
+    — the script stays what that binary writes, which the transcribe stage names."""
+    captured: list[list[str]] = []
+    _install_fake_cli(monkeypatch, captured, usage=_USAGE_WITHOUT_PROMPT)
+
+    AmdBackend().transcribe(
+        str(tmp_path / "a.wav"),
+        model=_stub_model(tmp_path),
+        language="zh",
+        initial_prompt="ACME",
+    )
+
+    cmd = _decode_command(captured)
+    assert cmd[cmd.index("--prompt") + 1] == "ACME"
+    assert _SIMPLIFIED_PROMPT_FIXTURE not in cmd
+
+
+def test_another_language_is_not_biased_and_does_not_probe(
+    tmp_path, monkeypatch
+) -> None:
+    """Only Chinese has the script defect, so only Chinese pays for the probe:
+    a non-Chinese run adds no prompt and never launches ``--help``."""
+    captured: list[list[str]] = []
+    _install_fake_cli(monkeypatch, captured)
+
+    AmdBackend().transcribe(
+        str(tmp_path / "a.wav"), model=_stub_model(tmp_path), language="en"
+    )
+
+    cmd = _decode_command(captured)
+    assert "--prompt" not in cmd
+    assert not [command for command in captured if "--help" in command]
+
+
+def test_the_chinese_bias_probe_runs_once_per_cli(tmp_path, monkeypatch) -> None:
+    """The probe answers a property of the installed binary, so it is cached per
+    CLI path: one ``--help`` for the run, never one per chunk."""
+    captured: list[list[str]] = []
+    _install_fake_cli(monkeypatch, captured)
+
+    for _ in range(2):
+        AmdBackend().transcribe(
+            str(tmp_path / "a.wav"), model=_stub_model(tmp_path), language="zh"
+        )
+
+    assert len([command for command in captured if "--help" in command]) == 1
+    for command in (c for c in captured if "-ojf" in c):
+        assert command[command.index("--prompt") + 1] == _SIMPLIFIED_PROMPT_FIXTURE

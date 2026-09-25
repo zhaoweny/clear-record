@@ -2,9 +2,10 @@
 
 Uses ``soundfile`` for formats libsndfile understands (wav, flac, ogg, opus,
 aiff…); for phone/handheld formats soundfile cannot decode (m4a, mp3 in some
-builds) it shells out to ``ffmpeg`` and re-reads the resulting wav. Everything
-is still environment-local; nothing is written to audio unless a decode helper
-explicitly asks for it.
+builds) it shells out to ``ffmpeg`` and re-reads the resulting wav — and to the
+``ffprobe`` beside it when a container libsndfile refuses must be *counted*
+rather than decoded (``channel_count``). Everything is still environment-local;
+nothing is written to audio unless a decode helper explicitly asks for it.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ import soundfile as sf
 from clear_record.core.process import SubprocessRunner
 
 _FFMPEG = shutil.which("ffmpeg")
+#: The count-only probe beside ``ffmpeg``, from the same install: a container
+#: ``soundfile`` refuses is counted through the decoder that reads it at all.
+_FFPROBE = shutil.which("ffprobe")
 
 #: The seam ``ffmpeg`` is launched through: a one-shot decode with no grace or
 #: cancellation of its own, whose non-zero exit stays a ``CalledProcessError``.
@@ -29,7 +33,9 @@ class AudioDecodeError(RuntimeError):
     """Raised when a file cannot be decoded to PCM."""
 
 
-def _decode_with_ffmpeg(path: Path, target_sr: int | None) -> tuple[np.ndarray, int]:
+def _decode_with_ffmpeg(
+    path: Path, target_sr: int | None, channel: int | None = None
+) -> tuple[np.ndarray, int]:
     if _FFMPEG is None:
         raise AudioDecodeError(
             f"cannot decode {path.name!r}: no decoder available. "
@@ -37,7 +43,15 @@ def _decode_with_ffmpeg(path: Path, target_sr: int | None) -> tuple[np.ndarray, 
         )
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "decoded.wav"
-        cmd = [_FFMPEG, "-v", "error", "-y", "-i", str(path), "-ac", "1"]
+        cmd = [_FFMPEG, "-v", "error", "-y", "-i", str(path)]
+        if channel is None:
+            cmd += ["-ac", "1"]
+        else:
+            # Select one channel instead of downmixing, the way ``sf.read``'s own
+            # ``channel`` does for the containers it opens: a multichannel tape
+            # in a container libsndfile refuses must still split per channel,
+            # rather than be silently collapsed to a mono mix of them all.
+            cmd += ["-af", f"pan=mono|c0=c{channel}"]
         if target_sr:
             cmd += ["-ar", str(target_sr)]
         cmd += [str(out)]
@@ -66,11 +80,17 @@ def read_audio(
         data, sr = sf.read(str(path), dtype="float32", always_2d=False)
     except (RuntimeError, sf.LibsndfileError):  # libsndfile can't read it
         if channel is not None:
-            raise AudioDecodeError(
-                f"cannot select channel {channel} of {path.name!r}: only "
-                "soundfile-readable containers support per-channel decode"
-            )
-        return _decode_with_ffmpeg(path, target_sr)
+            # The range check ``sf.read`` would have made, against the count the
+            # decoder's own probe reports — a container libsndfile refuses has a
+            # channel count too, and selecting one of its channels is what the
+            # split path asks for.
+            channels = channel_count(path)
+            if channel < 0 or channel >= channels:
+                raise AudioDecodeError(
+                    f"channel {channel} out of range for {path.name!r} "
+                    f"({channels} channel(s))"
+                )
+        return _decode_with_ffmpeg(path, target_sr, channel)
 
     if data.ndim > 1:
         if channel is not None:
@@ -91,12 +111,54 @@ def read_audio(
 
 
 def channel_count(path: str | Path) -> int:
-    """Number of channels in an audio file (1 on any probe failure)."""
+    """Number of channels in an audio file (1 on any probe failure).
+
+    A container libsndfile opens is counted from its header, which costs nothing.
+    A container it **refuses** — WavPack, m4a/aac, the field tapes ``read_audio``
+    decodes through ffmpeg — is counted through that same decoder, whose probe
+    reports what the container really holds. Counting those as one is what let a
+    multichannel WavPack be silently downmixed: the split decision (and
+    ``resolve_auto``'s ``max_channels``) read a mono that was never there, so a
+    four-channel tape became one source and `--split-channels` did nothing.
+    """
     try:
         info = sf.info(str(path))
         return int(info.channels)
     except Exception:
-        return 1
+        try:
+            return _ffmpeg_channel_count(Path(path))
+        except Exception:
+            return 1
+
+
+def _ffmpeg_channel_count(path: Path) -> int:
+    """The channel count of a container libsndfile refuses, from the decoder's
+    own probe (the ``ffprobe`` beside the ``ffmpeg`` ``read_audio`` shells out
+    to). Raises ``AudioDecodeError`` when that probe is not installed, and any
+    ``CalledProcessError``/parse failure the caller's fallback catches."""
+    if _FFPROBE is None:
+        raise AudioDecodeError(
+            f"cannot count the channels of {path.name!r}: no prober available. "
+            "Install FFmpeg (or use wav/flac/ogg which soundfile reads natively)."
+        )
+    probe = _RUNNER.run(
+        [
+            _FFPROBE,
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channels",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(probe.stdout.strip().splitlines()[0])
 
 
 def _resample(x: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:

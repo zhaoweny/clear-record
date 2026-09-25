@@ -32,7 +32,10 @@ the peak lag is the source position of that window, giving
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import numpy as np
+import soundfile as sf
 
 from clear_record.core import Alignment
 from clear_record.engine.audio import AudioDecodeError, read_audio
@@ -285,27 +288,167 @@ def estimate_offset(
     return float(offset), float(min(1.0, max(0.0, confidence)))
 
 
+def _length_s(path: str) -> float | None:
+    """A recording's length in seconds, from its header, or ``None`` when the
+    recording cannot be read at all (the estimator's own verdict is then all the
+    evidence there is).
+
+    A header read, not a decode, for every container libsndfile opens: it costs
+    nothing on a long tape. A container libsndfile *refuses* — WavPack, m4a/aac,
+    the field tapes ``read_audio`` decodes through ffmpeg — is measured from that
+    same decode at the alignment rate instead. Its length is not unknown: it is
+    one this function would otherwise miss, and reading it as unknown is what
+    leaves a sequential pair's question open for the estimator's spurious peak to
+    answer, the misplacement this bound exists to prevent. The decode costs what
+    the estimator's own read of the same file costs, and only a pair whose
+    declarations reach this path pays it.
+    """
+    try:
+        info = sf.info(str(path))
+    except (OSError, RuntimeError):
+        try:
+            data, sr = read_audio(str(path), _ALIGN_SR)
+        except Exception:  # not decodable either: no length, and no new refusal
+            return None
+        if sr <= 0 or data.size <= 0:
+            return None
+        return float(data.size) / float(sr)
+    if info.samplerate <= 0 or info.frames <= 0:
+        return None
+    return float(info.frames) / float(info.samplerate)
+
+
+def _cannot_overlap(reference_path: str, source_path: str, gap_s: float) -> bool:
+    """Whether two recordings declared *gap_s* apart hold no passage a
+    correlation could find — ``True`` for the sequential parts of one recorder,
+    ``False`` where only the audio can say.
+
+    *gap_s* is the source's start **after** the reference's (``ref_time =
+    source_time + gap_s``, so ``gap_s`` is ``source.start - reference.start``), and
+    the two windows on the timeline are ``[0, ref_s]`` and ``[gap_s, gap_s +
+    src_s]``. They touch only if the gap is shorter than the recording that began
+    **first** — the earlier one's tail is what a later start can land inside,
+    whatever the later one's own length. So the bound is the *earlier* length, not
+    the shorter: a 20 s take beginning 40 s into a 60 s one is inside it and
+    shares 20 s of passage, while two 90 s parts 90 s apart share none.
+
+    Two parts of one recorder are the second kind — **sequential**: the later one
+    begins no earlier than the earlier one lasts, so there is no common passage
+    for a correlation to find, and a peak it reports over such a pair is two
+    unrelated passages matching, the spurious small offset this module refuses to
+    trust. Two devices armed within the same minute are the first kind: they
+    overlap, and the audio measures their arming skew better than a whole-second
+    name does. A rotating recorder that keeps a little pre-roll meets *inside* a
+    correlation window of its own length, so that much is allowed here: the bound
+    is the earlier length **less ``_WINDOW_S``**, and a pair whose gap reaches
+    that is called sequential. A header either side cannot be read leaves the
+    question open (``False``): the audio, not the length, then decides.
+    """
+    ref_s = _length_s(reference_path)
+    src_s = _length_s(source_path)
+    if ref_s is None or src_s is None:
+        return False
+    earlier_s = ref_s if gap_s >= 0 else src_s
+    return abs(gap_s) >= earlier_s - _WINDOW_S
+
+
+def _usable_start(value: object) -> float | None:
+    """*value* as a declared start this module can use, or ``None``.
+
+    ``Source.start_s`` is a number when ``ingest`` reads it off a file name, and
+    whatever a hand-edit put in the field when an operator declares one in the
+    manifest — the flow this feature exists for. ``align`` places a declared pair
+    by the difference of the two declarations, so what it takes is any number a
+    clock can render (the same measure ``ingest`` keeps, so both layers read the
+    field alike) and nothing else: a name (``"noon"``), a bool, or ``nan``/``inf``
+    is no declaration at all, dropped here rather than raising out of the stage
+    over a field a user typed.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+        datetime.fromtimestamp(number, tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+    return number
+
+
 def align_sources(sources, reference_id: str | None = None) -> Alignment:
     """Align a list of ``Source`` objects against a reference.
 
     The first source is the reference by default. Sources that cannot be placed
     are recorded in ``Alignment.unresolved`` and omitted from ``offsets`` (no fake
-    zero); ``confidence`` is the mean over the sources that were aligned.
+    zero); ``confidence`` is the mean over the sources whose offset the estimator
+    found, so an alignment made only of declarations reports ``None`` — a declared
+    start carries no correlation evidence, and inventing a confidence for it
+    would be exactly the fake number this module refuses to write.
+
+    **A declared start places a source the estimator cannot reach.** A recorder
+    that splits one long capture into numbered files writes each part's start
+    time into its name, and ``ingest`` carries it as ``Source.start_s``. For a
+    pair that both declare one, the declaration places it in either of two cases:
+
+    - the two **cannot overlap** (:func:`_cannot_overlap`): the distance between
+      their declared starts reaches the recording that began first, less one
+      correlation window (``_WINDOW_S``, 4 s) — a rotating recorder's pre-roll
+      meets *inside* a window of its own length, and that much overlap is still a
+      rotation, holding no passage a correlation window can land in. The parts
+      are sequential, and a peak the estimator reports over such a pair is two
+      unrelated passages matching, which is how a part at a length-multiple
+      offset used to be accepted at a spurious small one;
+    - the distance is **wider than ``_MAX_LAG_S``**, outside anything the
+      estimator can express, and it is not asked.
+
+    A pair that *can* overlap is the audio's to decide, and its verdict is kept
+    whenever it has one: two devices armed within the same minute carry a real
+    skew a filename's whole-second stamp does not resolve. When the audio has no
+    verdict — no shared passage it can reach, an input it could not read, or a
+    source too short for its own band — the declaration places the source, since
+    the alternative is a part the record cannot place at all.
+
+    So a declared source is reported unresolved only when it has nothing to be
+    placed against: a declaration on one side alone is not a placement, and
+    ``unresolved`` says so. A start reaches a source two ways — ``ingest`` reads
+    it off the file name, or an operator declares it in the manifest.
     """
     if not sources:
         raise ValueError("no sources to align")
     reference = reference_id if reference_id else sources[0].id
-    ref_path = next((s.path for s in sources if s.id == reference), sources[0].path)
+    # One fallback for both, not two: when *reference* names no source the first
+    # source stands in as the reference, and it must stand in for its declared
+    # start too — otherwise every declaration on the other side is silently
+    # dropped, and `clear-record align --reference <typo>` reads as "nothing
+    # declared".
+    ref_source = next((s for s in sources if s.id == reference), sources[0])
+    ref_path = ref_source.path
+    ref_start = _usable_start(ref_source.start_s)
 
     offsets: dict[str, float] = {}
     unresolved: list[str] = []
     confs: list[float] = []
+    declared: list[str] = []
     for src in sources:
         if src.id == reference:
             offsets[src.id] = 0.0
             continue
+        src_start = _usable_start(src.start_s)
+        declared_gap = (
+            None if src_start is None or ref_start is None else src_start - ref_start
+        )
+        if declared_gap is not None and (
+            abs(declared_gap) > _MAX_LAG_S
+            or _cannot_overlap(ref_path, src.path, declared_gap)
+        ):
+            offsets[src.id] = round(declared_gap, 4)
+            declared.append(src.id)
+            continue
         off, conf = estimate_offset(reference_path=ref_path, source_path=src.path)
         if conf is None:
+            if declared_gap is not None:
+                offsets[src.id] = round(declared_gap, 4)
+                declared.append(src.id)
+                continue
             unresolved.append(src.id)
             continue
         offsets[src.id] = round(off, 4)
@@ -315,7 +458,12 @@ def align_sources(sources, reference_id: str | None = None) -> Alignment:
     return Alignment(
         reference=reference,
         offsets=offsets,
-        method="windowed-cross-correlation",
+        # Every offset came from a declaration and none from the audio: the
+        # record must not name a method that never ran. A mixed alignment keeps
+        # the estimator's name, which is what its confidence is the mean of.
+        method=(
+            "declared-start" if declared and not confs else "windowed-cross-correlation"
+        ),
         confidence=mean_conf,
         unresolved=tuple(unresolved),
     )

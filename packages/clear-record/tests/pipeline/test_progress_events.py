@@ -19,12 +19,23 @@ from clear_record.pipeline.stages import format_timestamp
 
 
 def _write_tone(
-    path, sr: int = 8000, seconds: float = 6.0, freq: float = 220.0
+    path,
+    sr: int = 8000,
+    seconds: float = 6.0,
+    freq: float = 220.0,
+    gain: float = 0.4,
 ) -> None:
+    """One device's recording of the chirp.
+
+    A second source is the *same* chirp at another ``gain``: two recordings of
+    one scene correlate (so ``align`` places them) while their bytes differ, so
+    ingest does not fold the pair into one source (ticket 218 — byte-identical
+    inputs are one source).
+    """
     t = np.arange(int(seconds * sr), dtype=np.float64) / sr
     f1 = freq * 6.0
     phase = 2 * np.pi * (freq * t + (f1 - freq) * t * t / (2.0 * seconds))
-    sf.write(str(path), (0.4 * np.sin(phase)).astype(np.float32), sr)
+    sf.write(str(path), (gain * np.sin(phase)).astype(np.float32), sr)
 
 
 def test_stages_emit_progress_and_leave_stdout_to_the_command_surface(
@@ -33,7 +44,7 @@ def test_stages_emit_progress_and_leave_stdout_to_the_command_surface(
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav")
-    _write_tone(wd / "b.wav")
+    _write_tone(wd / "b.wav", gain=0.25)
 
     events: list[JobEvent] = []
     sources = stages.ingest(str(wd), on_event=events.append).sources
@@ -87,8 +98,10 @@ def test_each_ingest_decode_line_arrives_before_its_own_work(
     """
     wd = tmp_path / "rec"
     wd.mkdir()
-    for name in ("a.wav", "b.wav", "c.wav"):
-        _write_tone(wd / name)
+    for index, name in enumerate(("a.wav", "b.wav", "c.wav")):
+        # A different tone each: ingest folds byte-identical inputs into one
+        # source (ticket 218), and this pins one decode line *per file*.
+        _write_tone(wd / name, freq=220.0 + 110.0 * index)
 
     timeline: list[str] = []
     work = stages.prepare_16k_wav
@@ -205,7 +218,7 @@ def test_the_channel_carries_the_lines_and_the_data_items(tmp_path) -> None:
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav")
-    _write_tone(wd / "b.wav")
+    _write_tone(wd / "b.wav", gain=0.25)
 
     events: list[JobEvent] = []
     ingest_report = stages.ingest(str(wd), on_event=events.append)
@@ -251,7 +264,7 @@ def test_the_channel_carries_the_lines_and_the_data_items(tmp_path) -> None:
         # attribute: what the pass measured.
         f"[attribute] {attribute_report.segments} segment(s), "
         f"{attribute_report.speakers} speaker(s), "
-        f"{attribute_report.changed} re-attributed",
+        f"{attribute_report.changed} re-attributed or unnamed",
         # reconcile: the record, then its opening segments.
         f"[reconcile] {len(record.segments)} segment(s), "
         f"{len({seg.speaker for seg in record.segments})} attributed speaker(s) -> "
@@ -283,10 +296,14 @@ def test_a_row_carries_the_source_it_is_about(tmp_path) -> None:
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav")
-    _write_tone(wd / "b.wav")
+    _write_tone(wd / "b.wav", gain=0.25)
 
     events: list[JobEvent] = []
     sources = stages.ingest(str(wd), on_event=events.append).sources
+    # Align the pair first: the record's rows below are the segments reconcile
+    # placed, and a source with no alignment offset is left out, not stacked on
+    # the reference's zero point (ticket 220).
+    stages.align(str(wd), on_event=events.append)
     Workspace.at(wd).write_segments(
         {
             source.id: [Segment(start=0.0, end=1.0, text="hello", source=source.id)]

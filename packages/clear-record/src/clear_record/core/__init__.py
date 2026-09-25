@@ -23,11 +23,13 @@ from clear_record.core.diagnostics import (
 )
 from clear_record.core.events import EventSink, JobEvent, Progress, emit
 from clear_record.core.model import (
+    SOURCE_ROLES,
     Alignment,
     RecordDocument,
     Segment,
     Source,
     TranscriptionResult,
+    UnplacedSource,
     alignment_from_dict,
     load_json,
     record_from_dict,
@@ -86,6 +88,7 @@ __all__ = [
     "PROFILES",
     "RESOLVABLE_FIELDS",
     "RUN_KNOBS",
+    "SOURCE_ROLES",
     "SUPERSEDED_KEYS",
     "PipelineOptions",
     "PipelineSpec",
@@ -100,6 +103,7 @@ __all__ = [
     "Step",
     "SupersededKey",
     "TranscriptionResult",
+    "UnplacedSource",
     "alignment_from_dict",
     "effective_level",
     "emit",

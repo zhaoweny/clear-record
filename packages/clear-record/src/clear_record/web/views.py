@@ -152,7 +152,8 @@ ACTIVITY_HISTORY = 20
 
 #: How many transcript segments the meeting view shows per page. The transcript
 #: is paged rather than rendered whole: a multi-hour tape is tens of thousands of
-#: ``HH:MM:SS.mmm [speaker] text`` lines, which no reviewer reads in one scroll.
+#: ``HH:MM:SS.mmm [speaker] text`` lines — signed, so a pre-roll reads
+#: ``-00:01:54.365`` — which no reviewer reads in one scroll.
 TRANSCRIPT_PAGE = 500
 
 #: The stage whose units are audio chunks — the economy the cost record's

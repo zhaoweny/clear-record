@@ -82,16 +82,34 @@ neutral, speaker-independent witness: it shows that a segment was spoken even
 when no identified per-mic channel is loud in that window, so attribution can
 keep the incoming speaker instead of guessing a bleed channel. This is implemented
 by `clear-record attribute` → `clear_record.engine.attribute.attribute_segments` (relative,
-gain-normalized per-source energy). The room is excluded from the candidate set
-even when it is also listed in the manifest, so it is never emitted as a speaker.
-The gate is calibrated for a room reference that carries every speaker at a
-comparable level, for cross-talk down to about −6 dB (weaker bleed is easier), and
-for **non-overlapping** speech — overlapping utterances blur the level comparison,
-so the fence is scoped to that regime. A room mic far below the per-mic level can
+gain-normalized per-source energy). A capture carries **more than one** source
+that is not a speaker, so the manifest says what each one **is**: a source's
+`role` is `candidate` (a person's microphone, the default when nothing says
+otherwise), `mixed` (a witness that gates and is never a speaker) or `excluded`
+(a microphone nobody wore — it hears whoever is nearest, not the room — or a
+duplicate feed such as a phone memo carrying the receiver's downmix of the same
+mics: neither a candidate nor a witness). Every `mixed` source in the manifest
+gates **if it reads back** — a reference whose file cannot be read, or which
+decodes to no frames, is skipped and raises no floor, though the pass still
+reports it as asked for — so a claim must be one **each** witness that heard the
+window can account for: with two rooms, a witness in one cannot refuse a claim
+about speech in the
+other, which is why the field tape's second room microphone had to be nameable.
+A non-candidate source is never emitted as a speaker, and its own segments (a
+room's transcript of speech no per-mic channel carried) stay unnamed rather than
+borrowing the microphone's label. `--mixed-source` names one such source for a
+single pass. The role is a manifest field an operator writes; `ingest` carries it
+forward so the declare-then-`run` flow keeps it. The gate is calibrated for a room
+reference that carries every speaker at a comparable level, for cross-talk down to
+about −6 dB (weaker bleed is easier), and for **non-overlapping** speech —
+overlapping utterances blur the level comparison, so the fence is scoped to that
+regime. A room mic far below the per-mic level can
 leave a covered speaker uncorrected, in which case attribution conservatively keeps
 the incoming speaker. The badness is synthesized with exact ground truth by
 `clear_record.engine.synth.make_crosstalk_scene` (`non_overlapping=True` for the calibrated
-regime). `[FACT]` A synthetic ground-truth study found **per-source level
+regime); mixing the same scene's stems with a per-speaker gain renders the
+sources a room reference cannot stand in for — a room lavalier nobody wore (near
+one speaker, faint for the rest) or a duplicate feed. `[FACT]` A synthetic ground-truth study found **per-source level
 normalization** does the work, not pitch: stateless closest-mic collapses to ~0.5
 accuracy once the hot device's bleed wins, while normalizing each source against
 its own level stays 0.94–0.995. A **constant** gain imbalance is handled by a

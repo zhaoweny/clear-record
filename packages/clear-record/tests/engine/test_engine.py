@@ -97,6 +97,114 @@ def test_reconcile_shifts_and_prefers_best(tmp_path) -> None:
     assert merged[0].start == 0.0
 
 
+def test_reconcile_leaves_an_unplaced_source_out() -> None:
+    """Ticket 220: a source the alignment could not place is *absent* from the
+    record.
+
+    ``align_sources`` writes no offset for a source it cannot place and records
+    it in ``Alignment.unresolved``. Reading that missing offset as ``0.0``
+    stacked the tape on the reference's zero point, indistinguishable from a
+    source that really starts there — on a field tape an earlier session's file
+    appeared at 10.9-33.7 s labelled as a speaker. The artifact did name the
+    source (``record.json`` carried ``unresolved: ["stray"]``) and still showed
+    its segments in the timeline beside that name; what it had no way to say was
+    the drop *summary* — how much transcript the misplacement had actually put
+    into the record.
+    """
+    sources = [
+        Source(id="ref", path="", label="Alice"),
+        Source(id="stray", path="", label="Bob"),
+    ]
+    alignment = Alignment(reference="ref", offsets={"ref": 0.0}, unresolved=("stray",))
+    per_source = {
+        "ref": [Segment(0.0, 5.0, "the reference speaks", "ref", confidence=0.9)],
+        "stray": [Segment(10.0, 15.0, "an unrelated tape", "stray", confidence=0.9)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+
+    assert [s.text for s in merged] == ["the reference speaks"]
+    assert {s.source for s in merged} == {"ref"}
+
+
+def test_unplaced_sources_names_what_reconcile_dropped() -> None:
+    """The drop summary: one entry per unplaceable source that held segments,
+    with how many and how much speaking time went with them."""
+    from clear_record.engine.merge import unplaced_sources
+
+    sources = [
+        Source(id="ref", path="", label="Alice"),
+        Source(id="stray", path="", label="Bob"),
+        Source(id="quiet", path="", label="Carol"),
+    ]
+    alignment = Alignment(
+        reference="ref", offsets={"ref": 0.0}, unresolved=("stray", "quiet")
+    )
+    per_source = {
+        "ref": [Segment(0.0, 5.0, "the reference speaks", "ref", confidence=0.9)],
+        "stray": [
+            Segment(10.0, 15.0, "an unrelated tape", "stray", confidence=0.9),
+            Segment(20.0, 21.5, "and more of it", "stray", confidence=0.9),
+        ],
+        "quiet": [],
+    }
+
+    drops = unplaced_sources(per_source, alignment, sources)
+
+    assert [(d.id, d.segments, d.speech_s) for d in drops] == [("stray", 2, 6.5)]
+    # Nothing placeable was dropped, and a source with no segments drops nothing.
+    assert unplaced_sources({"ref": per_source["ref"]}, alignment, sources) == ()
+
+
+def test_reconcile_without_an_alignment_keeps_only_the_reference() -> None:
+    """No alignment at all: the first source is the reference ``align_sources``
+    would have chosen and defines the timeline; nothing else has a position."""
+    from clear_record.engine.merge import unplaced_sources
+
+    sources = [
+        Source(id="first", path="", label="Alice"),
+        Source(id="second", path="", label="Bob"),
+    ]
+    per_source = {
+        "first": [Segment(0.0, 5.0, "the first tape speaks", "first")],
+        "second": [Segment(0.0, 5.0, "the second tape speaks", "second")],
+    }
+
+    merged = reconcile(per_source, None, sources)
+
+    assert [s.text for s in merged] == ["the first tape speaks"]
+    assert [d.id for d in unplaced_sources(per_source, None, sources)] == ["second"]
+
+
+def test_a_null_offset_is_unplaced_to_both_readers() -> None:
+    """A present-but-null offset is no position either, and both readers agree.
+
+    A hand-written (or foreign) manifest can carry ``"stray": null``. The key is
+    there, so a membership test alone called that source placed while
+    ``reconcile``'s lookup dropped everything it held — the transcript gone, the
+    drop summary empty, no line printed: the silent-drop class this ticket
+    closes, on the path the summary's own "same rule" promise covers.
+    """
+    from clear_record.engine.merge import unplaced_sources
+
+    sources = [
+        Source(id="ref", path="", label="Alice"),
+        Source(id="stray", path="", label="Bob"),
+    ]
+    alignment = Alignment(reference="ref", offsets={"ref": 0.0, "stray": None})
+    per_source = {
+        "ref": [Segment(0.0, 5.0, "the reference speaks", "ref", confidence=0.9)],
+        "stray": [Segment(10.0, 15.0, "an unrelated tape", "stray", confidence=0.9)],
+    }
+
+    merged = reconcile(per_source, alignment, sources)
+    drops = unplaced_sources(per_source, alignment, sources)
+
+    assert [s.text for s in merged] == ["the reference speaks"]
+    assert not any(s.source == "stray" for s in merged)
+    assert [(d.id, d.segments, d.speech_s) for d in drops] == [("stray", 1, 5.0)]
+
+
 def test_synth_align_recovers_true_offsets(tmp_path) -> None:
     """Owner strategy: synthesize 4-device badness with known ground truth, then
     confirm `align` recovers the offsets within a reasonable tolerance."""

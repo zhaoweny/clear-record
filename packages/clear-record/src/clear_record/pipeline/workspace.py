@@ -9,9 +9,11 @@ artifacts. It is intentionally not a database::
         segments.json       Per-source ASR segments (one file, all sources) + meta.
         record.json         The reconciled RecordDocument.
         glossary.txt        Decoder initial prompt (one term/line).
-        transcribe.log      Durable append-only transcription log.
+        transcribe.log      Durable append-only log of every stage's lines.
         audio/              Normalized 16 kHz mono copies of the sources.
         export/             Markdown/SRT/VTT/JSON artifacts from `export`.
+        .clear-record-ignore  Inputs discovery must not take (one glob per
+                            line, relative to the workspace).
 
 The resumable per-source chunk cache is **not** part of the workspace: it is
 app-owned *cache* (ADR-0007/ADR-0025) under the platform cache directory, keyed
@@ -31,6 +33,7 @@ import hashlib
 import os
 import threading
 from collections.abc import Iterable, Mapping
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from clear_record.core import (
@@ -50,6 +53,7 @@ from clear_record.core import (
     write_json,
 )
 from clear_record.core.paths import CHUNKS_DIRNAME, resolve_cache_dir
+from clear_record.core.i18n import deferred
 
 MANIFEST = "manifest.json"
 SEGMENTS = "segments.json"
@@ -71,6 +75,11 @@ AUDIO_SUFFIXES = {
     ".m4a",
     ".mp3",
     ".aac",
+    # WavPack — what an Audacity export ships. libsndfile refuses it, so it
+    # decodes through the ffmpeg fallback (``engine.audio.read_audio``); absent
+    # from this set, a field tape's five tracks were invisible to `ingest`/`run`
+    # while the same file named as an explicit input decoded fine.
+    ".wv",
 }
 
 
@@ -81,6 +90,31 @@ def is_audio(path: Path) -> bool:
 # Workspace-managed subdirectories that must never be re-discovered as sources
 # (they hold our own normalized/derived output).
 SKIP_DIRS = {AUDIO_DIR, EXPORT_DIR, CHUNKS_DIR}
+
+#: The workspace's own bookkeeping files, by name, wherever the walk meets them.
+#: They are not inputs: naming them as files discovery "cannot use" would
+#: narrate the workspace's own state back at the operator on every ingest.
+WORKSPACE_FILES = {MANIFEST, SEGMENTS, RECORD, GLOSSARY, TRANSCRIBE_LOG, GROUND_TRUTH}
+
+#: The workspace's own ignore declaration, read by discovery: one glob per line,
+#: matched against a path relative to the workspace root (``old/take.wav``,
+#: ``*_edit.wav``), with a blank line or a ``#`` comment declaring nothing. A
+#: recording folder is not one event — it accumulates earlier sessions, a case
+#: copied in brings its own along, and a DJI-style export ships an ``_edit``
+#: beside the ``_orig`` it was made from — so the folder itself carries the one
+#: declaration of which files discovery must not take. The name is hidden (a
+#: leading dot), which is what keeps the declaration out of its own walk: it is
+#: neither an input nor a file :func:`discover_inputs` narrates back.
+IGNORE_FILE = ".clear-record-ignore"
+
+#: The app's own agent-artifact directory under a meeting workspace
+#: (``service.agent_review.AGENT_DIRNAME``, ADR-0031): the drafts, locks and
+#: promoted minutes the console's agent flow keeps there. It is not a tape
+#: either, and its name is spelled out here because ``pipeline`` may not import
+#: ``service`` (``tests/test_layering.py``). Only the *naming* walk is kept off
+#: it — joining :data:`SKIP_DIRS` instead would also drop any audio beneath it
+#: from :func:`discover_audio`, which is not this rule.
+AGENT_DIRNAME = "agent"
 
 # `transcribe.log` is append-only and shared by the stage and its worker pool.
 _log_lock = threading.Lock()
@@ -96,21 +130,115 @@ def _cache_key(root: Path) -> str:
     return hashlib.sha1(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
 
 
-def discover_audio(directory: Path) -> list[Path]:
-    """Recursively list *input* audio files under ``directory`` (sorted, stable).
+def _ignored(relative: str, patterns: Iterable[str]) -> bool:
+    """Whether any of *patterns* names the workspace-relative *relative*.
 
-    Excludes the workspace's own output dirs (``audio/``, ``export/``) so that
-    re-running `ingest` is idempotent.
+    ``fnmatch`` runs against the whole relative path, so ``*`` matches a
+    separator too: ``old/*`` names everything under a directory, ``*_edit.wav``
+    the copy an editor left beside the file it was made from.
     """
-    found: list[Path] = []
+    return any(fnmatchcase(relative, pattern) for pattern in patterns)
+
+
+#: The refusal for a workspace whose own declaration cannot be **read**: the walk
+#: cannot know which of the folder's files it is meant to leave out, and taking
+#: every one of them would be exactly the silent wrong answer the declaration
+#: exists to prevent. One edit resolves it — the file itself.
+#:
+#: It is a **message ID** for the surfaces that show refusals; it lives here,
+#: beside the declaration it is about, because every reader of the declaration
+#: needs it (:func:`clear_record.pipeline.stages.ingest` in its own words,
+#: ``service.runs.workspace_run_meeting``, ``service.auto.resolve_run`` and
+#: ``cli.cli._probe_auto_or_exit`` at their own edges).
+CANNOT_READ_DECLARATION = deferred(
+    "the workspace's .clear-record-ignore cannot be read, so which of its files "
+    "are inputs is unknown; make it readable or remove it"
+)
+
+
+class DeclarationUnreadable(ValueError):
+    """The workspace's own declaration could not be read.
+
+    Raised by :meth:`Workspace.ignore_patterns` — the one place the file is read —
+    so every walker that consults the declaration fails the same way, and no
+    caller has to know how a file can refuse to be read: an ``OSError`` for
+    permissions, a ``UnicodeDecodeError`` for a declaration saved in another
+    encoding (a plausible field file: GBK, cp1252).
+
+    It is a :class:`ValueError`, because the surfaces that answer a bad value with
+    a sentence already catch that: the run edges answer
+    :data:`CANNOT_READ_DECLARATION` for it, and ``str(exc)`` carries the file and
+    the reason for a caller that wants to say it in its own words.
+    """
+
+    def __init__(self, path: Path, reason: BaseException) -> None:
+        detail = getattr(reason, "strerror", None) or str(reason)
+        self.path = path
+        #: The OS's (or the codec's) own words for the reason, without the path —
+        #: the *reason* half of :attr:`path`, for a sentence that already names it.
+        self.reason = str(detail)
+        super().__init__(f"cannot read {path}: {detail}")
+
+
+def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
+    """Recursively classify *directory*: ``(audio inputs, files walked past)``.
+
+    One walk, two lists. The first is the audio inputs of :func:`discover_audio`
+    (same selection, same order). The second is what the walk did **not** take as
+    an input, and it names both kinds, because both are a file the operator may
+    have meant to hand over:
+
+    - a regular file whose suffix is outside :data:`AUDIO_SUFFIXES`. A format the
+      decoder handles but the set did not list — WavPack ``.wv`` was one — used
+      to vanish here without a word;
+    - an **audio** file the workspace's own :data:`IGNORE_FILE` declaration
+      names. It would have been an input; the folder's declaration is what says
+      it is not today's. That a file reaches this list with an audio suffix is
+      therefore the mark of an exclusion, and nothing else.
+
+    Not every other file is narrated, because not every other file is a tape:
+    the workspace's own output dirs (:data:`SKIP_DIRS`), its bookkeeping files
+    (:data:`WORKSPACE_FILES`) and the app's own agent-artifact directory
+    (:data:`AGENT_DIRNAME`) are its own state, and a hidden entry (a checkout's
+    ``.git``, a stray ``.DS_Store``, the upload scratch file
+    ``.cr-upload-*.part``) is machinery, not an input. Only *this* walk is kept
+    off the agent directory: audio beneath it still discovers, so it is not in
+    :data:`SKIP_DIRS`.
+    """
+    audio: list[Path] = []
+    skipped: list[Path] = []
+    patterns = Workspace.at(directory).ignore_patterns()
     for p in sorted(directory.rglob("*")):
-        if not p.is_file() or not is_audio(p):
+        if not p.is_file():
             continue
         rel = p.relative_to(directory).parts
         if rel and rel[0] in SKIP_DIRS:
             continue
-        found.append(p)
-    return found
+        if is_audio(p):
+            if _ignored("/".join(rel), patterns):
+                skipped.append(p)
+            else:
+                audio.append(p)
+        elif rel and rel[0] == AGENT_DIRNAME:
+            continue
+        elif p.name not in WORKSPACE_FILES and not any(
+            part.startswith(".") for part in rel
+        ):
+            skipped.append(p)
+    return audio, skipped
+
+
+def discover_audio(directory: Path) -> list[Path]:
+    """Recursively list *input* audio files under ``directory`` (sorted, stable).
+
+    Excludes the workspace's own output dirs (``audio/``, ``export/``) so that
+    re-running `ingest` is idempotent, and whichever inputs the workspace's own
+    :data:`IGNORE_FILE` declaration names — so `run`, which resolves a
+    directory's sources through here, honours the same declaration `ingest` does.
+    The walk itself is :func:`discover_inputs`', which returns the files it
+    walked past beside these.
+    """
+    return discover_inputs(directory)[0]
 
 
 def _publish_json(path: Path, payload) -> None:
@@ -362,6 +490,11 @@ class Workspace:
     def ground_truth_path(self) -> Path:
         return self.root / GROUND_TRUTH
 
+    @property
+    def ignore_path(self) -> Path:
+        """The workspace's own ignore declaration (:data:`IGNORE_FILE`)."""
+        return self.root / IGNORE_FILE
+
     def export_file(self, name: str) -> Path:
         return self.export_dir / name
 
@@ -446,6 +579,48 @@ class Workspace:
             for line in self.glossary_path.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
+
+    # --- ignore declaration ------------------------------------------------ #
+    def ignore_patterns(self) -> tuple[str, ...]:
+        """The globs :data:`IGNORE_FILE` declares, in file order (``()`` if none).
+
+        The declaration's own reader, beside the glossary's: an **absent** file
+        declares nothing, so a workspace without one is discovered exactly as it
+        was before the declaration existed — while a file that is there and
+        cannot be read raises :class:`DeclarationUnreadable`, never read as
+        empty, because a declaration that silently stops applying means files the
+        operator excluded ingested into the record against their word. That
+        exception is the *only* failure this read has, and the readers that make a
+        **decision** from what they read all name it: a stage
+        (:func:`~clear_record.pipeline.stages.ingest`, its own sentence), a
+        directory run's tape resolution and ``auto``'s probe
+        (:data:`CANNOT_READ_DECLARATION`, mapped by the run edges), and the
+        command line's own probe (the same id, rendered). The one reader that
+        stands down is ``service.runs.report_declaration_exclusions``, whose line
+        is a *report* of a run it already knows: it says nothing when it cannot
+        read the file, while the walk that picks the run's inputs is where the
+        refusal belongs. It is read as ``utf-8-sig``: an editor that saves "UTF-8
+        with BOM" (the default of some field tooling) would otherwise put the
+        byte-order mark (``U+FEFF``) at the head of the **first line** — and on
+        the one-line declaration the README documents, whose first line *is* the
+        pattern, that pattern then matches nothing and the declaration stops
+        applying *silently*, the one answer this read must never give. (On a
+        declaration that opens with a comment the mark only spoils that comment:
+        the patterns below it still apply.) Blank lines and ``#`` comments
+        declare nothing.
+        """
+        try:
+            lines = self.ignore_path.read_text(encoding="utf-8-sig").splitlines()
+        except FileNotFoundError:
+            return ()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise DeclarationUnreadable(self.ignore_path, exc) from exc
+        patterns: list[str] = []
+        for line in lines:
+            pattern = line.strip()
+            if pattern and not pattern.startswith("#"):
+                patterns.append(pattern)
+        return tuple(patterns)
 
     # --- log --------------------------------------------------------------- #
     def log(self, message: str) -> None:
@@ -545,13 +720,17 @@ def report_line(
 
 __all__ = [
     "AUDIO_SUFFIXES",
+    "CANNOT_READ_DECLARATION",
     "CHUNK_GLOSSARY",
     "ChunkCache",
+    "DeclarationUnreadable",
+    "IGNORE_FILE",
     "Workspace",
     "cache_plan",
     "chunk_cache_key",
     "chunk_glossary",
     "discover_audio",
+    "discover_inputs",
     "glossary_digest",
     "is_audio",
     "plan_matches",

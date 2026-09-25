@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-25 08:08+0800\n"
+"POT-Creation-Date: 2026-09-25 10:53+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -28,19 +28,19 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:102
+#: packages/clear-record/src/clear_record/cli/cli.py:106
 msgid "clear-record: from many recordings to one clear record."
 msgstr "clear-record：从众多录音到一份清晰的记录。"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#: packages/clear-record/src/clear_record/cli/cli.py:105
+#: packages/clear-record/src/clear_record/cli/cli.py:109
 msgid ""
 "raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
 "log is written to the app state directory, never to stdout"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/cli/cli.py:234
+#: packages/clear-record/src/clear_record/cli/cli.py:238
 msgid ""
 "Machine-local verb: `synth`, `backends`, `bench` and `diagnose` take the "
 "machine you are running them on as their subject, never the node, and are"
@@ -51,24 +51,24 @@ msgstr ""
 "的主题是你运行它们的这台机器，而不是节点；它们刻意不做成门面 —— 若经由节点转发，`backends` "
 "会悄悄回答节点所在的那台机器，而不是你的。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:300
+#: packages/clear-record/src/clear_record/cli/cli.py:304
 msgid ""
 "--split-channels and --mix-down are mutually exclusive; pass one or "
 "neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:316
+#: packages/clear-record/src/clear_record/cli/cli.py:320
 msgid "--diarize and --no-diarize are mutually exclusive; pass one or neither."
 msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:336
+#: packages/clear-record/src/clear_record/cli/cli.py:340
 #, python-brace-format
 msgid ""
 "{path} is a file, not a directory: this command expects a directory of "
 "audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:681
+#: packages/clear-record/src/clear_record/cli/cli.py:706
 #, python-brace-format
 msgid ""
 "[auto] the recommended model {model!r} is not in the models directory, "
@@ -80,7 +80,7 @@ msgstr ""
 "  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
 "dir {models_dir}`，或显式指定 `--model`。"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:825
+#: packages/clear-record/src/clear_record/cli/cli.py:850
 msgid ""
 "clear-record's work needs a node, and this command could not start one; "
 "start one with `clear-record serve`, or from the tray app — `serve` "
@@ -89,61 +89,61 @@ msgstr ""
 "clear-record 的工作需要节点，而本命令无法启动节点；请用 `clear-record serve` 启动一个，或从托盘应用启动 —— "
 "`serve` 会把日志写入诊断接收器"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:839
+#: packages/clear-record/src/clear_record/cli/cli.py:864
 #, python-brace-format
 msgid ""
 "a node started as pid {pid} but this command cannot reach it; it is left "
 "running, and its log is in the diagnostics sink"
 msgstr "节点已以进程 {pid} 启动，但本命令无法访问它；该进程保持运行，其日志位于诊断接收器"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:954
+#: packages/clear-record/src/clear_record/cli/cli.py:979
 #, python-brace-format
 msgid "the node is listening at {url}"
 msgstr "节点正在监听 {url}"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1134
+#: packages/clear-record/src/clear_record/cli/cli.py:1159
 #, python-brace-format
 msgid ""
 "a node run cannot set {flags} yet: it runs with what the node's run API "
 "declares, and nothing is dropped"
 msgstr "节点运行尚不能设置 {flags}：它只按节点运行 API 声明的参数执行，不会丢弃任何选项"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1259
+#: packages/clear-record/src/clear_record/cli/cli.py:1284
 #, python-brace-format
 msgid ""
 "[next] the record is in {directory}/export; review it and accept the "
 "minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1343
+#: packages/clear-record/src/clear_record/cli/cli.py:1368
 msgid ""
 "run the pipeline and report transcript quality against a reference if "
 "given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1358
+#: packages/clear-record/src/clear_record/cli/cli.py:1383
 msgid "assign speaker labels to already-transcribed segments"
 msgstr "为已转写的片段分配说话人标签"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1365
+#: packages/clear-record/src/clear_record/cli/cli.py:1390
 msgid "re-attribute speakers by relative source energy (close-mic cross-talk)"
 msgstr "按相对声源能量重新归属说话人（近距麦克风串音）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1372
+#: packages/clear-record/src/clear_record/cli/cli.py:1397
 msgid "show or append to the workspace glossary (ASR initial prompt)"
 msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1379
+#: packages/clear-record/src/clear_record/cli/cli.py:1404
 msgid ""
 "generate a clean scene + degraded per-device recordings with exact ground"
 " truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1386
+#: packages/clear-record/src/clear_record/cli/cli.py:1411
 msgid "list which ASR backends are currently available"
 msgstr "列出当前可用的 ASR 后端"
 
-#: packages/clear-record/src/clear_record/cli/cli.py:1392
+#: packages/clear-record/src/clear_record/cli/cli.py:1417
 msgid "print where the running node is listening, and whether it answers"
 msgstr "打印正在运行的节点所监听的地址，并检查它是否响应"
 
@@ -380,6 +380,12 @@ msgid ""
 "{unsupported}. It supports: {supported}."
 msgstr "[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupported}。它支持：{supported}。"
 
+#: packages/clear-record/src/clear_record/pipeline/workspace.py:153
+msgid ""
+"the workspace's .clear-record-ignore cannot be read, so which of its "
+"files are inputs is unknown; make it readable or remove it"
+msgstr "无法读取工作区的 .clear-record-ignore，因此无法确定其中哪些文件是输入；请使其可读或将其删除"
+
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:243
 #, python-brace-format
 msgid "Apple SpeechTranscriber ({source}) returned non-list 'segments': {type}."
@@ -597,14 +603,14 @@ msgstr "无法采纳 {kind} 草稿：{detail}"
 msgid "no promotion is defined for draft kind {kind}"
 msgstr "草稿类型 {kind} 未定义采纳规则"
 
-#: packages/clear-record/src/clear_record/service/auto.py:69
+#: packages/clear-record/src/clear_record/service/auto.py:73
 #, python-brace-format
 msgid ""
 "the recommended model {model!r} is not on disk, and --auto never "
 "downloads one; pre-fetch it or pass an explicit model"
 msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型；请预先获取，或显式指定模型"
 
-#: packages/clear-record/src/clear_record/service/auto.py:147
+#: packages/clear-record/src/clear_record/service/auto.py:151
 msgid "a run needs a workspace directory before --auto can probe the tape"
 msgstr "在 --auto 探测录音之前，运行需要一个工作区目录"
 
@@ -876,23 +882,29 @@ msgstr ""
 "\n"
 "本构建无法读取的已存选项按原文保留如下：\n"
 
-#: packages/clear-record/src/clear_record/service/runs.py:930
+#: packages/clear-record/src/clear_record/service/runs.py:544
+msgid ""
+"every audio file in this workspace is named in .clear-record-ignore, so "
+"this run would have no inputs; remove a line from that declaration"
+msgstr "此工作区中的每个音频文件都已在 .clear-record-ignore 中列出，本次运行将没有输入；请从该声明中删除一行"
+
+#: packages/clear-record/src/clear_record/service/runs.py:1047
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:936
+#: packages/clear-record/src/clear_record/service/runs.py:1053
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1095
+#: packages/clear-record/src/clear_record/service/runs.py:1212
 msgid "this run is still in flight; cancel it first"
 msgstr "该运行仍在进行中；请先取消它"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1100
+#: packages/clear-record/src/clear_record/service/runs.py:1217
 msgid "this run did not record the options it ran with, so it cannot be resumed"
 msgstr "该运行未记录其运行参数，无法继续"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1106
+#: packages/clear-record/src/clear_record/service/runs.py:1223
 msgid "the run's meeting no longer exists"
 msgstr "该运行所属的会议已不存在"
 

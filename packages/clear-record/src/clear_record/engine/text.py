@@ -9,6 +9,11 @@ It also owns the **glossary near-match** used by scoped re-runs: whether a chang
 glossary term could plausibly appear in a cached transcript. That predicate is
 deliberately one-way — a ``True`` only ever causes *more* re-decoding — so it can
 widen an explicit scope but can never skip a chunk that should have changed.
+
+Finally it owns the **Han-script classifier** (Traditional vs Simplified), which
+the transcribe stage uses to name the script a source came out in: nothing
+rewrites a script, so a workspace that mixes backends would otherwise interleave
+the two without a marker.
 """
 
 from __future__ import annotations
@@ -83,6 +88,65 @@ def clean_segments(segments: Iterable[Segment]) -> list[Segment]:
     tidied = [dataclasses.replace(seg, text=_tidy(seg.text)) for seg in segments]
     kept = [s for s in tidied if not is_non_speech(s.text)]
     return collapse_repetitions(kept)
+
+
+# --- Han script (Traditional vs Simplified) -------------------------------- #
+#
+# A Mandarin source can arrive in either script: whisper.cpp's ``-l zh`` writes
+# Traditional, Apple's on-device transcriber writes Simplified, and a workspace
+# that mixes backends across sources (``--rerun-source``, an ensemble path) then
+# interleaves them. Nothing downstream rewrites a script, so the record has to
+# *name* it instead of silently mixing -- and that needs a classifier that adds
+# no dependency.
+#
+# The two sets below hold characters whose counterpart in the other script is a
+# **different character** (個/个, 這/这, 標/标). The sets are disjoint, so a text
+# is Traditional when it carries a left-hand form, Simplified when it carries a
+# right-hand one -- and *both* when it carries one of each, which is exactly the
+# interleaving this classifier exists to catch. Characters that exist in both
+# scripts with a different meaning (里, 后, 干, 几, 系) are deliberately absent:
+# they would make the answer a guess. Neither list has to be complete to be
+# useful -- one distinctive character settles a script -- so a text made only of
+# shared characters reports the empty set ("undetermined") rather than a coin
+# flip.
+_TRADITIONAL_ONLY = frozenset(
+    "個這們為說時對開會學習書語議論記認識試應該讓請謝誰買賣貴費資產業務員團"
+    "國圖場報導轉邊過進運遠遲適錯錢鐘長門陽難靜頁頭顯風飛飯館馬驗體點齊龍沒"
+    "問題麼樣標籤規據與讀寫聽親愛關車東見現間電話機錄銀鐵鏡鍵憂慮擔練樂藥醫"
+    "數網壞實際內兩並從來決兒結總裡裏"
+)
+_SIMPLIFIED_ONLY = frozenset(
+    "个这们为说时对开会学习书语议论记认识试应该让请谢谁买卖贵费资产业务员团"
+    "国图场报导转边过进运远迟适错钱钟长门阳难静页头显风飞饭馆马验体点齐龙没"
+    "问题么样标签规据与读写听亲爱关车东见现间电话机录银铁镜键忧虑担练乐药医"
+    "数网坏实际内两并从来决儿结总"
+)
+
+
+def han_scripts(text: str) -> tuple[str, ...]:
+    """The Han scripts ``text`` carries, ordered: ``()`` when it carries no
+    distinctive character, else one or both of ``"simplified"``/``"traditional"``.
+
+    The rule is the two sets above and nothing else: a character of the
+    simplified set puts Simplified in the answer, one of the traditional set puts
+    Traditional in it, and a text holding one of each holds **both**. Collapsing
+    that to a single label would hide half of what the text shows -- the mixed
+    decode is the case this exists to catch -- so a caller is handed the set and
+    decides what its own comparison means.
+
+    ``()`` is *undetermined*, never a guess: a couple of digits, a Latin name, or
+    a run of characters both scripts spell settles nothing. Reading it as either
+    script would invent evidence; reading it as "no difference" is what a caller
+    must not do when it is comparing descriptions of two sources.
+    """
+    if not text:
+        return ()
+    found: list[str] = []
+    if any(char in _SIMPLIFIED_ONLY for char in text):
+        found.append("simplified")
+    if any(char in _TRADITIONAL_ONLY for char in text):
+        found.append("traditional")
+    return tuple(found)
 
 
 # --- glossary near-match (scoped re-runs) ---------------------------------- #
@@ -196,6 +260,7 @@ __all__ = [
     "clean_segments",
     "collapse_repetitions",
     "glossary_terms",
+    "han_scripts",
     "is_non_speech",
     "term_could_affect",
 ]

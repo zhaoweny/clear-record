@@ -36,7 +36,25 @@ DJI Mic 3   ─┘
 - **ingest** — decode/normalize every source to 16 kHz mono WAV (handles
   wav/flac/ogg and, via ffmpeg, mp3/m4a/etc.). **Multi-channel files are split
   per channel by default** (e.g. a 4-channel DJI file → 4 sources), so
-  per-speaker isolation is preserved; `--mix-down` forces a downmix.
+  per-speaker isolation is preserved; `--mix-down` forces a downmix. A recording
+  folder is not one event, so it can say which of its files are not today's:
+  `.clear-record-ignore` (one glob per line, relative to the workspace) names the
+  inputs discovery must **not** take, and `run <dir>` honours it as `ingest` does
+  — a run over a folder whose *every* audio file is declared is refused rather
+  than run against what it ran last time, while a folder holding no audio at all
+  keeps its last tape set, as before. A declaration that cannot be **read** — a
+  mode nothing may open, or bytes this read cannot decode (a file in another
+  encoding) — is refused, never ignored: a run answers one sentence naming the
+  file and the edit that fixes it, and `ingest` refuses in its own words, naming
+  the file and the reason the OS (or the codec) gave. Write the file as UTF-8,
+  with or without a byte-order mark: a declaration saved in another encoding
+  whose bytes are still valid UTF-8 (a BOM-less UTF-16 file's ASCII text is
+  NUL-padded) decodes without an error and yields patterns that match nothing,
+  which no read can tell from a declaration that simply names nothing.
+  **Byte-identical** inputs collapse to one source — a copy such as `cp take.wav
+  take-copy.wav`, never a processed `_edit`, whose bytes differ and which the
+  declaration above is for — each fold (and each exclusion) reported rather than
+  ingested twice in silence.
 - **align** — place every source onto a common timebase (windowed
   cross-correlation; *approximate*, not precision clock-sync).
 - **transcribe** — run a chosen local ASR backend (see *Backends*), with
@@ -108,6 +126,38 @@ system `whisper-cli`
 Python package (they are no-op markers). `clear-record backends` shows what is
 available on this machine. See
 [ADR-0005](docs/adr/0005-transcription-backend-strategy.md).
+
+**Chinese script — the two families do not agree on one, so the choice matters.**
+`whisper-cli`'s `-l zh` writes Mandarin in **Traditional** characters (measured:
+685 Traditional-only characters in a 600 s Mandarin slice); `apple-speech` writes
+**Simplified**. For `zh` the whisper-cli adapters put a hand-written
+Simplified-Chinese sentence in the decoder's initial prompt — a bias on the
+decoder's own context, no converter and no new dependency — and send it only to a
+CLI whose own usage text advertises `--prompt`, so the bias assumes no flag
+exists (the caller's own glossary is sent either way); a CLI that hides the flag
+keeps writing Traditional.
+
+Nothing rewrites a transcript's script. What the record can do is say which scripts
+each source came out in: `transcribe` reads the Han text of each source and records
+the scripts it shows in `segments.json` (under `meta.sources.<id>.scripts`, e.g.
+`["traditional"]`; nothing where the text settles neither), and `reconcile` carries
+the same lists into the record's own metadata (`metadata.scripts`), so the artifact
+a reader opens names the scripts it holds and not only the run that made it.
+Whenever the scripts are not uniform the pass names the sources on the run's
+channel — a `script=` column on the per-source rows plus one warning, with
+`script=simplified+traditional` for a source holding both. A difference between
+two sources (`--rerun-source` against another backend; a future ensemble would
+need the same rule) and a difference inside one source are both named: the two
+scripts are never *silently* interleaved.
+
+The bias is a decode hint built inside the adapter, so no cache key carries it: a
+`zh` workspace re-run under unchanged options re-decodes nothing and keeps the text
+it already had. A partial re-decode (a range scope, a scope with a glossary edit
+behind it, an interrupted run) leaves that source holding chunks decoded on either
+side of it. The rule reads the text and not that history: a source shows **both**
+scripts wherever its own text holds one of each, whether one decode wrote both or
+two wrote one apiece — and a single entry says what the source's text shows, not
+that one pass wrote it.
 
 **Installing a `whisper-cli` GPU backend** (`apple` / `nvidia` / `amd`):
 

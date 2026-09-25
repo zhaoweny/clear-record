@@ -8,7 +8,12 @@ backend is available (see the @skip conditions in test_transcriber).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+from pathlib import Path
+
 import numpy as np
+import pytest
 import soundfile as sf
 
 from clear_record.cli.calibrate import calibrate_report
@@ -17,13 +22,24 @@ from clear_record.providers import BackendBase
 
 
 def _write_tone(
-    path, sr: int = 8000, seconds: float = 6.0, freq: float = 220.0
+    path,
+    sr: int = 8000,
+    seconds: float = 6.0,
+    freq: float = 220.0,
+    gain: float = 0.4,
 ) -> None:
+    """One device's recording of the chirp.
+
+    A second source of the *same* scene is the same chirp at another ``gain``:
+    two recordings correlate, so ``align`` places them, while their bytes differ
+    — ingest folds byte-identical inputs into one source (ticket 218), so a
+    fixture writing one waveform twice would describe one device, twice.
+    """
     # aperiodic chirp so cross-correlation alignment is unambiguous
     t = np.arange(int(seconds * sr), dtype=np.float64) / sr
     f1 = freq * 6.0
     phase = 2 * np.pi * (freq * t + (f1 - freq) * t * t / (2.0 * seconds))
-    sig = (0.4 * np.sin(phase)).astype(np.float32)
+    sig = (gain * np.sin(phase)).astype(np.float32)
     sf.write(str(path), sig, sr)
 
 
@@ -31,8 +47,15 @@ def _workspace(tmp_path) -> str:
     wd = tmp_path / "rec"
     wd.mkdir()
     _write_tone(wd / "a.wav", freq=220.0)
-    _write_tone(wd / "b.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=220.0, gain=0.25)
     return str(wd)
+
+
+def _peak_hz(path) -> int:
+    """A staged file's dominant tone, so a test can tell whose audio it holds."""
+    data, sr = sf.read(str(path))
+    spec = np.abs(np.fft.rfft(data))
+    return int(round(float(np.fft.rfftfreq(len(data), 1.0 / sr)[int(np.argmax(spec))])))
 
 
 def test_ingest_align_reconcile_export(tmp_path) -> None:
@@ -106,6 +129,442 @@ def test_a_stage_failure_is_a_pipeline_error_the_cli_exits_on(tmp_path) -> None:
     assert str(exit_info.value.code).startswith("[ingest] no audio files found in")
 
 
+#: ffmpeg is both halves of the WavPack round trip: libsndfile cannot write
+#: WavPack, and it cannot read it either, so the encode below goes through
+#: ffmpeg the way the decode does (``engine.audio.read_audio``'s fallback).
+_FFMPEG = shutil.which("ffmpeg")
+
+requires_ffmpeg = pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg is not installed")
+
+
+@requires_ffmpeg
+def test_a_wavpack_tape_is_discovered_and_decoded(tmp_path) -> None:
+    """``.wv`` is a source `ingest` *finds*, not a file it walks past.
+
+    Audacity exports WavPack, and a field tape's five-track room microphone
+    arrived as ``.wv`` files: outside ``AUDIO_SUFFIXES`` they were invisible to
+    `ingest`/`run` — while the same file named as an explicit input decoded
+    fine — so the record lost its run's independent witness. The tape is the
+    only audio left in the workspace, so discovery is the only way to it, and
+    the staged audio holds the tone: the decode went through the ffmpeg
+    fallback libsndfile cannot provide.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    tone = (0.4 * np.sin(2 * np.pi * 330.0 * t)).astype(np.float32)
+    sf.write(str(wd / "take.wav"), tone, sr)
+    subprocess.run(
+        [
+            _FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(wd / "take.wav"),
+            "-c:a",
+            "wavpack",
+            str(wd / "take.wv"),
+        ],
+        check=True,
+    )
+    (wd / "take.wav").unlink()
+
+    sources = stages.ingest(str(wd)).sources
+
+    assert [s.id for s in sources] == ["take"]
+    assert _peak_hz(sources[0].path) == 330
+
+
+@requires_ffmpeg
+def test_a_multichannel_wavpack_tape_splits_per_channel(tmp_path) -> None:
+    """A multichannel container libsndfile refuses is counted, and split, by the
+    decoder that reads it at all.
+
+    The channel count came from ``soundfile`` alone, which answers 1 for a
+    container it refuses — so the four-channel WavPack tape `ingest` had just
+    learned to *discover* was silently downmixed into one source,
+    `--split-channels` and the >2-channel default both did nothing to it, and
+    ``resolve_auto`` measured a mono. The count (and each channel's decode) now
+    come from the ffmpeg seam ``read_audio`` already falls back to, so the quad
+    becomes four sources holding one channel each.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    quad = np.stack(
+        [
+            (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+            for f in (200.0, 300.0, 400.0, 500.0)
+        ],
+        axis=1,
+    )
+    sf.write(str(wd / "quad.wav"), quad, sr)
+    subprocess.run(
+        [
+            _FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(wd / "quad.wav"),
+            "-c:a",
+            "wavpack",
+            str(wd / "quad.wv"),
+        ],
+        check=True,
+    )
+    (wd / "quad.wav").unlink()
+
+    sources = stages.ingest(str(wd)).sources
+
+    assert [s.id for s in sources] == [
+        "quad__ch1",
+        "quad__ch2",
+        "quad__ch3",
+        "quad__ch4",
+    ]
+    # Each source holds its own channel, not a downmix of all four.
+    assert [_peak_hz(s.path) for s in sources] == [200, 300, 400, 500]
+
+
+def test_ingest_names_a_file_discovery_cannot_use(tmp_path) -> None:
+    """A file with a suffix outside the set is *named* at ingest, not dropped.
+
+    Discovery walked past anything it could not use and said nothing, so a tape
+    in a container the set did not list left no trace at all. The line states
+    the file where discovery happens — before the first decode, and before a
+    discovery of nothing usable refuses — and the workspace's own state stays
+    out of it: ``glossary.txt`` is the workspace's bookkeeping file and
+    ``.DS_Store`` is a hidden entry, and neither is a tape the operator meant to
+    hand over.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    (wd / "take.aup").write_bytes(b"<audacity project>")
+    (wd / "glossary.txt").write_text("Clear Record\n", encoding="utf-8")
+    (wd / ".DS_Store").write_bytes(b"\x00")
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    assert [e.message for e in events if e.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)",
+        "[ingest] decode a.wav -> a.wav",
+        f"[ingest] {len(sources)} source(s) -> {wd / 'manifest.json'}",
+        *[f"  {source.id:24s} {source.path}" for source in sources],
+    ]
+    assert [
+        (e.source, e.level) for e in events if e.message.startswith("[ingest] cannot")
+    ] == [(None, "warn")]
+
+
+def test_ingest_names_what_it_cannot_use_before_it_refuses(tmp_path) -> None:
+    """A directory of nothing but unusable files still says which they were.
+
+    The field tape's whole set was WavPack: discovery found no audio at all and
+    `ingest` refused with the directory, which named nothing. The files are
+    reported before that refusal, so the operator reads what was walked past
+    even when the pass has nothing else to say.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    (wd / "take.aup").write_bytes(b"<audacity project>")
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    with pytest.raises(stages.PipelineError, match="no audio files"):
+        stages.ingest(str(wd), on_event=events.append)
+
+    assert [e.message for e in events if e.message] == [
+        "[ingest] cannot use take.aup: not a recognized audio file (.aup)"
+    ]
+
+
+def test_ingest_leaves_the_apps_own_agent_drafts_unnamed(tmp_path) -> None:
+    """The console's agent drafts live under ``<ws>/agent`` (ADR-0031), and that
+    directory is the workspace's own state, not a tape: a pass does not narrate
+    a meeting's drafts, locks or promoted minutes back at the operator.
+
+    Only the *naming* walk is kept off it — the audio beneath it is still
+    discovered, which is why it is not a :data:`SKIP_DIRS` entry.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    drafts = wd / "agent" / "draft-1"
+    drafts.mkdir(parents=True)
+    (drafts / "draft.json").write_text("{}", encoding="utf-8")
+    (drafts / "draft.lock").touch()
+    (drafts / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
+    _write_tone(wd / "agent" / "room.wav", gain=0.25)
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a", "agent__room"]
+    assert [e.message for e in events if e.message.startswith("[ingest] cannot")] == []
+
+
+def test_ingest_excludes_an_input_the_workspace_names(tmp_path) -> None:
+    """A recording folder accumulates earlier sessions, so the folder carries the
+    one declaration of which of its files are **not** today's.
+
+    ``.clear-record-ignore`` is that declaration: one glob per line, matched
+    against the path under the workspace root, with blank lines and ``#``
+    comments declaring nothing. Discovery takes the named inputs out of the walk
+    — for `ingest` and for `run` alike, since both walk through it — and *names*
+    what it took out, because an exclusion nobody can see is the silent drop
+    this walk exists to end.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=330.0)
+    (wd / "old").mkdir()
+    _write_tone(wd / "old" / "b.wav", freq=440.0)
+    (wd / ".clear-record-ignore").write_text(
+        "# yesterday's session, and the whole copied-in folder\nb.wav\nold/*\n",
+        encoding="utf-8",
+    )
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import discover_audio
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    # The walk the run path resolves a directory's sources through honours the
+    # same declaration, so the two surfaces cannot disagree about what is in
+    # the folder.
+    assert [p.name for p in discover_audio(wd)] == ["a.wav"]
+    excluded = [e for e in events if "excluded" in (e.message or "")]
+    assert [e.message for e in excluded] == [
+        "[ingest] excluded b.wav: named in .clear-record-ignore",
+        "[ingest] excluded old/b.wav: named in .clear-record-ignore",
+    ]
+    assert [(e.level, e.source) for e in excluded] == [("info", None), ("info", None)]
+
+
+def test_ingest_folds_a_byte_identical_copy_into_one_source(tmp_path) -> None:
+    """The acceptance on one real workspace: a copy is not a second session, and
+    the fold is reported, never silent.
+
+    A recording folder accumulates copies — ``cp take.wav take-copy.wav`` — and a
+    copied-in case brings whole earlier sessions again: on one field folder 39
+    files became 39 sources, several of them md5-identical pairs, so the same
+    audio was decoded, transcribed and merged twice and the record was built from
+    three sessions at once. (An *editor's* twin is not this case: a DJI export's
+    ``_edit`` beside its ``_orig`` is processed, so it is not byte-identical and
+    is never folded — a folder leaves that out through its declaration.) The
+    workspace here is a synthesised scene (``synth``) plus the copies an
+    operator's folder would hold: the copy of today's take, and an earlier
+    session its declaration excludes.
+
+    The fold keeps the first input in discovery order, and the copy's ``-`` sorts
+    before the take's ``.``, so the copy is the source and the take folds into it;
+    the line names both files either way.
+    """
+    from clear_record.cli.synth import synth
+    from clear_record.core import JobEvent
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    synth(str(wd), devices=2, duration_s=2.0, speakers=2)
+    # The devices land under the workspace's own ``audio/`` (derived output,
+    # never discovered): the take and yesterday's session are named beside it.
+    shutil.copyfile(wd / "audio" / "device_0.wav", wd / "take.wav")
+    shutil.copyfile(wd / "audio" / "device_1.wav", wd / "take_old.wav")
+    shutil.copyfile(wd / "take.wav", wd / "take-copy.wav")
+    (wd / ".clear-record-ignore").write_text("take_old.wav\n", encoding="utf-8")
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["take-copy"]
+    assert [e.message for e in events if e.message] == [
+        "[ingest] excluded take_old.wav: named in .clear-record-ignore",
+        "[ingest] duplicate of take-copy.wav: take.wav is byte-identical, "
+        "folded into one source",
+        "[ingest] decode take-copy.wav -> take-copy.wav",
+        f"[ingest] 1 source(s) -> {wd / 'manifest.json'}",
+        f"  {'take-copy':24s} {sources[0].path}",
+    ]
+    assert [
+        (e.level, e.source)
+        for e in events
+        if e.message and e.message.startswith("[ingest] ")
+    ] == [("info", None), ("warn", None), ("info", "take-copy"), ("info", None)]
+
+
+def _write_noise(path, sr: int = 8000, seconds: float = 6.0, seed: int = 11) -> None:
+    """A tape from another session: noise shares nothing with the chirp, so
+    ``align`` cannot place it (the align suite's own unplaceable fixture)."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * sr)
+    sf.write(str(path), (0.2 * rng.standard_normal(n)).astype(np.float32), sr)
+
+
+def test_reconcile_leaves_out_a_tape_align_could_not_place(tmp_path) -> None:
+    """Ticket 220, on the ticket's reproduction: two unrelated tapes in one
+    workspace, with the segments seeded by hand so no backend is needed.
+
+    ``align`` reports the noise tape UNRESOLVED and writes no offset for it; the
+    record writer then read that missing offset as 0.0 and merged the stray
+    tape's segments in as if they belonged at the reference's start. Now they are
+    left out, and ``record.json`` carries the drop summary the alignment's own
+    ``unresolved`` id list did not — the source, and how much of it went with it.
+    """
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace, load_json
+
+    wd = tmp_path / "sess"
+    wd.mkdir()
+    _write_tone(wd / "meeting.wav")
+    _write_noise(wd / "stray.wav")
+    sources = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+
+    stray = sources[-1].id
+    assert alignment.unresolved == (stray,), "the fixture must be unplaceable"
+    assert stray not in alignment.offsets
+
+    per_source = {
+        sources[0].id: [
+            Segment(
+                start=0.0,
+                end=5.0,
+                text="the reference recording speaks here",
+                source=sources[0].id,
+                confidence=0.9,
+            )
+        ],
+        stray: [
+            Segment(
+                start=10.0,
+                end=15.0,
+                text="an unrelated tape that could not be placed",
+                source=stray,
+                confidence=0.9,
+            )
+        ],
+    }
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
+
+    record = stages.reconcile(str(wd))
+
+    assert [s.text for s in record.segments] == ["the reference recording speaks here"]
+    assert record.metadata["unplaced"] == [
+        {"id": stray, "segments": 1, "speech_s": 5.0}
+    ]
+    # The artifact a reader opens carries it, not only the stages' lines.
+    written = load_json(Workspace.at(wd).record_path)
+    assert written["metadata"]["unplaced"] == record.metadata["unplaced"]
+    assert [seg["text"] for seg in written["segments"]] == [
+        "the reference recording speaks here"
+    ]
+
+
+def test_reconcile_names_a_null_offset_source_it_drops(tmp_path) -> None:
+    """The same silent drop, reached through a manifest rather than a dataclass.
+
+    A hand-written or foreign manifest can carry ``"stray": null`` in
+    ``offsets``. The key is present, so the drop summary's membership test called
+    that source placed while the placement lookup dropped everything it held: its
+    segments left the record with ``metadata.unplaced == []`` and nothing on the
+    channel, which is exactly the silence this ticket exists to end.
+    """
+    from clear_record.core import JobEvent, Segment, load_json, write_json
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = _workspace(tmp_path)
+    sources = stages.ingest(wd).sources
+    stages.align(wd)
+
+    ws = Workspace.at(wd)
+    manifest = load_json(ws.manifest_path)
+    manifest["alignment"]["offsets"] = {sources[0].id: 0.0, sources[1].id: None}
+    manifest["alignment"]["unresolved"] = []
+    write_json(ws.manifest_path, manifest)
+    ws.write_segments(
+        {
+            sources[0].id: [
+                Segment(0.0, 1.5, "kept line", sources[0].id, confidence=0.9)
+            ],
+            sources[1].id: [
+                Segment(0.0, 2.5, "dropped line", sources[1].id, confidence=0.6)
+            ],
+        },
+        {"backend": "none", "model": "none"},
+    )
+
+    events: list[JobEvent] = []
+    record = stages.reconcile(wd, on_event=events.append)
+
+    assert [s.text for s in record.segments] == ["kept line"]
+    assert record.metadata["unplaced"] == [
+        {"id": sources[1].id, "segments": 1, "speech_s": 2.5}
+    ]
+    # The record is not the only place it is said: the channel carries the row.
+    assert [e.message for e in events if e.message and "UNPLACED" in e.message] == [
+        f"  {sources[1].id:24s} UNPLACED (no alignment offset)"
+    ]
+    assert (
+        load_json(ws.record_path)["metadata"]["unplaced"] == record.metadata["unplaced"]
+    )
+
+
+def test_attribute_reads_a_null_offset_as_no_position(tmp_path) -> None:
+    """The same null entry does not abort the pass that reads the offsets.
+
+    ``attribute`` places each source's window on the record's clock from the
+    alignment map. A foreign manifest's ``"stray": null`` was subtracted raw
+    (``segment.start + offset``), so the pass died with a bare ``TypeError``
+    while ``reconcile`` read the same entry through ``merge._placements`` as no
+    position — the two stages disagreeing about one manifest.
+    """
+    from clear_record.core import Segment, load_json, write_json
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = _workspace(tmp_path)
+    sources = stages.ingest(wd).sources
+    stages.align(wd)
+
+    ws = Workspace.at(wd)
+    manifest = load_json(ws.manifest_path)
+    manifest["alignment"]["offsets"] = {sources[0].id: 0.0, sources[1].id: None}
+    manifest["alignment"]["unresolved"] = []
+    write_json(ws.manifest_path, manifest)
+    ws.write_segments(
+        {
+            sources[0].id: [Segment(0.0, 1.5, "kept line", sources[0].id, speaker="A")],
+            sources[1].id: [
+                Segment(0.0, 1.5, "stray line", sources[1].id, speaker="B")
+            ],
+        },
+        {"backend": "none", "model": "none"},
+    )
+
+    report = stages.attribute(wd)
+
+    assert report.segments == 2
+    per_source, _ = ws.load_segments()
+    assert sorted(seg.text for segs in per_source.values() for seg in segs) == [
+        "kept line",
+        "stray line",
+    ]
+
+
 def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
     """The workspace directory name travels into the record metadata and becomes
     the exported H1, so a qmd index can tell recordings apart."""
@@ -135,6 +594,8 @@ def test_reconcile_sets_title_and_markdown_h1(tmp_path) -> None:
 
     record = stages.reconcile(wd)
     assert record.metadata["title"] == "rec"
+    # Both tapes were placed, so nothing was left out — and the artifact says so.
+    assert record.metadata["unplaced"] == []
 
     written = stages.export(wd)
     first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
@@ -156,6 +617,133 @@ def test_markdown_without_title_keeps_bare_h1(tmp_path) -> None:
     written = stages.export(str(wd))
     first_line = written["md"].read_text(encoding="utf-8").splitlines()[0]
     assert first_line == "# Record"
+
+
+def test_a_pre_roll_export_keeps_every_cue(tmp_path) -> None:
+    """A source started before the reference keeps its negative reference times,
+    and the exports say so rather than folding them onto 00:00:00.
+
+    `reconcile` shifts every source onto the reference clock, so a tape whose
+    phone was started first holds cues before zero (measured: -114.365 s on a
+    field tape). Both formatters clamped, so those cues came out as
+    `00:00:00.000 --> 00:00:00.000` — zero-length — and as
+    `[00:00:00.000-00:00:00.000]` headers. The text formats keep the clock, sign
+    and all; the subtitle timecode has no sign to carry, so its timeline is
+    translated by the pre-roll and every cue keeps its length.
+    """
+    import json
+
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(
+                Segment(
+                    start=-114.365,
+                    end=-112.0,
+                    text="before the clock",
+                    source="phone",
+                ),
+                Segment(start=1.0, end=3.5, text="after it", source="room"),
+            ),
+        )
+    )
+
+    written = stages.export(str(wd))
+
+    md = written["md"].read_text(encoding="utf-8")
+    assert "[-00:01:54.365–-00:01:52.000] phone" in md
+
+    srt = written["srt"].read_text(encoding="utf-8")
+    assert srt.splitlines()[:3] == [
+        "1",
+        "00:00:00,000 --> 00:00:02,365",
+        "before the clock",
+    ]
+    assert "00:00:00,000 --> 00:00:00,000" not in srt
+    assert "00:01:55,365 --> 00:01:57,865" in srt
+
+    vtt = written["vtt"].read_text(encoding="utf-8")
+    assert "00:00:00.000 --> 00:00:02.365" in vtt
+    assert "00:00:00.000 --> 00:00:00.000" not in vtt
+    assert "00:01:55.365 --> 00:01:57.865" in vtt
+
+    # The machine artifact keeps the record's own clock: the pre-roll is real.
+    exported = json.loads(written["json"].read_text(encoding="utf-8"))
+    assert exported["segments"][0]["start"] == -114.365
+
+
+def test_a_record_that_starts_after_zero_keeps_its_times(tmp_path) -> None:
+    """Only a pre-roll moves the subtitle timeline; a record whose first cue is
+    already at or after zero is exported at the times it holds."""
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=5.0, end=7.0, text="later", source="room"),),
+        )
+    )
+
+    written = stages.export(str(wd))
+    srt = written["srt"].read_text(encoding="utf-8")
+    md = written["md"].read_text(encoding="utf-8")
+
+    assert "00:00:05,000 --> 00:00:07,000" in srt
+    assert "[00:00:05.000–00:00:07.000] room" in md
+
+
+def test_a_time_just_before_zero_is_not_signed() -> None:
+    """The last half-millisecond before zero is zero, not a signed zero.
+
+    `reconcile` rounds to 4 decimals and the aligner's offsets are whole
+    samples, so a source placed one sample early whose first cue starts at local
+    0.0 lands on -0.0001 s: rendering that as ``-00:00:00.000`` would be a sign
+    that is not real, and one the subtitles' plain ``00:00:00,000`` would not
+    share. The sign comes from the millisecond the time prints as, so a *real*
+    sub-millisecond negative keeps it.
+    """
+    from clear_record.pipeline.stages import format_timestamp
+
+    assert format_timestamp(-0.0001) == "00:00:00.000"
+    assert format_timestamp(-0.0006) == "-00:00:00.001"
+
+
+def test_a_cue_a_hair_short_of_a_minute_reads_as_the_minute(tmp_path) -> None:
+    """``00:01:00,000``, not ``00:00:60,000`` — no player reads the latter.
+
+    The subtitle renderer rounds a cue to the millisecond it prints before
+    splitting it into fields, the same rule `format_timestamp` follows, so a
+    second past 59.9999 s carries into the minute on both surfaces instead of
+    leaving a timecode whose seconds field runs to 60.
+    """
+    from clear_record.core import RecordDocument, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    Workspace.at(wd).write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=59.9999, end=61.0, text="edge", source="a"),),
+        )
+    )
+
+    written = stages.export(str(wd))
+    srt = written["srt"].read_text(encoding="utf-8")
+
+    assert "00:01:00,000 --> 00:01:01,000" in srt
+    assert "00:00:60" not in srt
 
 
 def test_ingest_splits_multichannel_sources(tmp_path) -> None:
@@ -181,6 +769,110 @@ def test_ingest_splits_multichannel_sources(tmp_path) -> None:
     mixed = stages.ingest(str(wd), split="mix").sources
     assert len(mixed) == 1
     assert not mixed[0].id.endswith("ch1")
+
+
+def test_ingest_gives_colliding_ids_their_own_staged_audio(tmp_path) -> None:
+    """Two inputs whose ids would read alike each get their own staged file.
+
+    ``_source_id`` folds separators to ``__``, so splitting a four-channel
+    ``x.wav`` proposes ``x__ch1``… for its channels while an ordinary top-level
+    ``x__ch1.wav`` proposes that very same ``x__ch1``. Before this, the second
+    decode overwrote the first's ``audio/x__ch1.wav`` while the manifest kept two
+    sources naming one id **and** one path: five sources staged into four files,
+    and a record that looked complete. The unit that stages an id first keeps it;
+    one that meets a taken id — a slug another unit proposed, or a ``-N`` id this
+    pass handed out — is disambiguated, and the collision is said out loud on the
+    pass's own channel.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    chans = [
+        (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        for f in (200.0, 300.0, 400.0, 500.0)
+    ]
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "x.wav"), np.stack(chans, axis=1), sr)
+    mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
+    sf.write(str(wd / "x__ch1.wav"), mono, sr)
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import Workspace
+
+    events: list[JobEvent] = []
+    report = stages.ingest(str(wd), on_event=events.append)
+
+    ids = [s.id for s in report.sources]
+    paths = [s.path for s in report.sources]
+    # The four channels keep the ids their slugs proposed; only the fifth input,
+    # whose slug the quad's first channel already holds, is disambiguated.
+    assert ids == ["x__ch1", "x__ch2", "x__ch3", "x__ch4", "x__ch1-2"]
+    assert len(set(paths)) == len(paths) == 5
+    # Each staged file holds its own input's audio — in particular the collided
+    # id's file is the mono tone, not the quad's first channel, which is what the
+    # silent overwrite used to leave there.
+    assert [_peak_hz(p) for p in paths] == [200, 300, 400, 500, 700]
+    # The manifest a later stage reads carries the same five.
+    assert [s.id for s in Workspace.at(wd).load_manifest()[0]] == ids
+    # And the collision is reported, not taken silently.
+    collisions = [e for e in events if e.message.startswith("[ingest] id collision")]
+    assert [e.message for e in collisions] == [
+        "[ingest] id collision: 'x__ch1' already taken by x.wav ch1/4; "
+        "x__ch1.wav staged as 'x__ch1-2'"
+    ]
+    assert [(e.source, e.level) for e in collisions] == [("x__ch1-2", "warn")]
+
+
+def test_ingest_holds_a_handed_out_id_against_a_later_slug(tmp_path) -> None:
+    """The ids a pass hands out are held like the slugs it proposes.
+
+    So an input can meet an id no other input's slug reads. Declared as
+    ``[y__ch1.wav, y.wav (4-channel, split), y__ch1-2.wav]``, the quad's first
+    channel is disambiguated onto ``y__ch1-2``, and the last input — whose own
+    slug nothing else reads — stages as ``y__ch1-2-2`` rather than land on the
+    channel's file. And it is one *channel* that gets renamed on a split input, so
+    the line names that channel, not the whole tape.
+    """
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    chans = [
+        (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        for f in (200.0, 300.0, 400.0, 500.0)
+    ]
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "y.wav"), np.stack(chans, axis=1), sr)
+    mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
+    sf.write(str(wd / "y__ch1.wav"), mono, sr)
+    # A different tone: the two files are one id-collision fixture, and ingest
+    # folds byte-identical inputs into one source (ticket 218).
+    other = (0.4 * np.sin(2 * np.pi * 900.0 * t)).astype(np.float32)
+    sf.write(str(wd / "y__ch1-2.wav"), other, sr)
+
+    from clear_record.core import JobEvent
+
+    events: list[JobEvent] = []
+    report = stages.ingest(
+        str(wd),
+        audio_files=[
+            str(wd / "y__ch1.wav"),
+            str(wd / "y.wav"),
+            str(wd / "y__ch1-2.wav"),
+        ],
+        on_event=events.append,
+    )
+
+    ids = [s.id for s in report.sources]
+    assert ids == ["y__ch1", "y__ch1-2", "y__ch2", "y__ch3", "y__ch4", "y__ch1-2-2"]
+    assert len({s.path for s in report.sources}) == len(ids)
+    assert [
+        e.message for e in events if e.message.startswith("[ingest] id collision")
+    ] == [
+        "[ingest] id collision: 'y__ch1' already taken by y__ch1.wav; "
+        "y.wav ch1/4 staged as 'y__ch1-2'",
+        "[ingest] id collision: 'y__ch1-2' already taken by y.wav ch1/4; "
+        "y__ch1-2.wav staged as 'y__ch1-2-2'",
+    ]
 
 
 def test_diarize_hands_back_what_each_source_yielded(tmp_path) -> None:
@@ -238,6 +930,86 @@ def test_diarize_hands_back_what_each_source_yielded(tmp_path) -> None:
     assert all(label and label.startswith("Speaker ") for label in labels)
     # A source that could not be decoded keeps its segments and its old labels.
     assert report.per_source["broken"] == seeded["broken"]
+
+
+def test_diarize_leaves_a_declared_one_off_reference_unnamed(tmp_path) -> None:
+    """A `--mixed-source` declaration made for the attribute pass is not undone by
+    a later diarize.
+
+    The one-off lives in ``segments.json``'s meta, and this pass relabels every
+    candidate it clusters — the source the declaration names included. Reconcile
+    strips only a label equal to the source's *own*, so the reference's clusters
+    stayed in the record as speakers: a microphone a caller declared not to be a
+    person, printed as one. The declaration reaches this pass too, and such a
+    source is left exactly as it came in, as a declared role already was.
+
+    Which reason the line gives is the *source's* own: the recorded gate set holds
+    the manifest's declared ``mixed`` roles as well as the caller's ids, so a
+    source the manifest declares keeps "(declared mixed: …)" — the caller named
+    nothing for this pass — and only a source the manifest leaves a ``candidate``
+    is the one-off's.
+    """
+    import dataclasses
+    from clear_record.core import JobEvent, Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 16000
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(sr, dtype=np.float64) / sr
+        return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    voices = np.concatenate(seq)
+    voices /= np.max(np.abs(voices)) or 1.0
+    sf.write(str(wd / "mixed.wav"), voices.astype(np.float32), sr)
+
+    sources = stages.ingest(str(wd)).sources
+    sid = sources[0].id
+    seeded = {
+        sid: [
+            Segment(
+                start=float(i),
+                end=i + 1.0,
+                text="line",
+                source=sid,
+                speaker="Speaker 9",
+            )
+            for i in range(4)
+        ]
+    }
+    Workspace.at(wd).write_segments(
+        seeded, {"backend": "none", "model": "none", "mixed_references": [sid]}
+    )
+
+    events: list[JobEvent] = []
+    report = stages.diarize(str(wd), speakers=2, on_event=events.append)
+
+    # The clustering still ran and heard both voices ...
+    assert [fact.speakers for fact in report.sources] == [2]
+    # ... but the source a caller declared a reference is named by nobody, and the
+    # line says which decision left it that way.
+    assert report.per_source[sid] == seeded[sid]
+    assert (
+        f"[diarize] {sid}: 2 speaker(s) over 4 segment(s) "
+        "(named a reference for this pass: left unnamed)"
+    ) in [event.message for event in events]
+    # The declaration survives for the pass that honours it.
+    assert Workspace.at(wd).load_segments()[1]["mixed_references"] == [sid]
+
+    # The same source with a *manifest* role keeps its own reason: the recorded
+    # gate set names it too, and the role is what the record's reader is owed —
+    # naming a `--mixed-source` flag the caller never passed sends them after it.
+    Workspace.at(wd).write_manifest([dataclasses.replace(sources[0], role="mixed")])
+    events = []
+    report = stages.diarize(str(wd), speakers=2, on_event=events.append)
+
+    assert report.per_source[sid] == seeded[sid]
+    assert (
+        f"[diarize] {sid}: 2 speaker(s) over 4 segment(s) (declared mixed: left unnamed)"
+    ) in [event.message for event in events]
 
 
 def test_attribute_stage_corrects_crosstalk_then_reconcile_preserves(tmp_path) -> None:
@@ -384,6 +1156,533 @@ def test_attribute_stage_never_emits_room_as_speaker(tmp_path) -> None:
     assert all(s.speaker == expected[s.text] for s in emitted)
 
 
+#: The field tape's source shape (ticket 222): two worn lavaliers, the two room
+#: lavaliers nobody wore, the two room microphones that witness the rooms, and a
+#: phone memo carrying the receiver's downmix of the same lavaliers. Each entry is
+#: the gain its device gives each of the four stems. Speakers 0 and 1 wear
+#: ``lavA``/``lavB``; speakers 2 and 3 are unmiked — 2 in the room the lavaliers
+#: sit in, 3 in the room next door, so only ``roomMic2`` hears them at all.
+_FIELD_DEVICES = {
+    "lavA": (1.0, 0.5, 0.12, 0.06),
+    "lavB": (0.5, 1.0, 0.12, 0.06),
+    "roomLavA": (1.0, 0.12, 0.2, 0.06),
+    "roomLavB": (0.12, 1.0, 0.2, 0.06),
+    "roomMic1": (0.6, 0.6, 0.6, 0.06),
+    "roomMic2": (0.06, 0.06, 0.06, 0.7),
+    "memo": (0.4, 0.4, 0.4, 0.06),
+}
+
+
+def _field_capture(tmp_path, name, roles, *, unmiked_from_room_only=False):
+    """Build the field capture above, with ``roles`` written into its manifest.
+
+    ``roles`` is keyed by source id and written **by hand** into ``manifest.json``
+    — the operator's route, and the one the pass has to read — with every other
+    source left a candidate. An empty ``roles`` leaves the manifest exactly as
+    ``ingest`` wrote it (no role field at all), which is a workspace from before
+    this field existed.
+
+    The transcript is placed the way the tape's was: a covered utterance's
+    surviving segment came from the **bleed-dominated** lav (the closest-mic-wins
+    wrongness the pass must undo), an unmiked one from a lav with no speaker name
+    at all, and both room mics transcribed the unmiked speech too — unless
+    ``unmiked_from_room_only``, where the only transcript of it is the room mic's
+    (a lav barely hears that speaker, so its decoder wrote nothing).
+
+    Returns ``(workspace, labels, truth)``: each source's speaker label, and the
+    speaker each utterance must end up with (``""`` for an unmiked one, which no
+    candidate can justify claiming).
+    """
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.engine import SYNTH_SR
+    from clear_record.engine.synth import make_speaker_stems
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / name
+    wd.mkdir()
+    stems, events = make_speaker_stems(
+        duration_s=30.0, n_speakers=4, seed=11, non_overlapping=True
+    )
+    for sid, gains in _FIELD_DEVICES.items():
+        device = sum(g * stem for g, stem in zip(gains, stems)).astype(np.float32)
+        sf.write(str(wd / f"{sid}.wav"), device, SYNTH_SR)
+    stages.ingest(str(wd))
+
+    sources, _ = Workspace.at(wd).load_manifest()
+    labels = {src.id: src.label for src in sources}
+    per_source: dict[str, list[Segment]] = {src.id: [] for src in sources}
+    truth: dict[str, str] = {}
+    for i, event in enumerate(events):
+        speaker = event["speaker"]
+        text = f"u{i}"
+        wrong = "lavB" if speaker == 0 else "lavA"  # the bleed-dominated channel
+        if speaker < 2:
+            per_source[wrong].append(
+                Segment(event["start"], event["end"], text, wrong, labels[wrong])
+            )
+            truth[text] = labels["lavA" if speaker == 0 else "lavB"]
+            continue
+        # Unmiked speech: nobody wore a mic for it, and no diarizer named it.
+        truth[text] = ""
+        if unmiked_from_room_only:
+            mic = "roomMic1" if speaker == 2 else "roomMic2"
+            per_source[mic].append(
+                Segment(event["start"], event["end"], text, mic, labels[mic])
+            )
+            continue
+        per_source[wrong].append(Segment(event["start"], event["end"], text, wrong, ""))
+        for mic in ("roomMic1", "roomMic2"):
+            per_source[mic].append(
+                Segment(event["start"], event["end"], text, mic, labels[mic])
+            )
+    Workspace.at(wd).write_segments(per_source, {"backend": "none", "model": "none"})
+
+    if roles:
+        manifest = Workspace.at(wd).manifest_path
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for entry in data["sources"]:
+            entry["role"] = roles.get(entry["id"], "candidate")
+        manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return wd, labels, truth
+
+
+def _emitted(wd) -> list:
+    """Every segment the workspace now holds, its per-source map flattened."""
+    from clear_record.pipeline.workspace import Workspace
+
+    per_source, _ = Workspace.at(wd).load_segments()
+    return [seg for segs in per_source.values() for seg in segs]
+
+
+#: The roles the field tape's sources need: the two room microphones witness, the
+#: two lavaliers nobody wore and the phone memo do neither.
+_FIELD_ROLES = {
+    "roomMic1": "mixed",
+    "roomMic2": "mixed",
+    "roomLavA": "excluded",
+    "roomLavB": "excluded",
+    "memo": "excluded",
+}
+
+
+def test_attribute_gates_on_every_multiple_reference(tmp_path) -> None:
+    """Ticket 222: a capture carries more than one non-speaker source, and the
+    ``role`` a manifest source carries is how it says which is which.
+
+    Left candidates, the two room lavaliers nobody wore and the phone memo take
+    the worn speakers' own speech with them (the ticket measured 27-33 % of the
+    record's segments to a microphone nobody wore, and a memo named as a speaker
+    19 times) — here not one covered utterance reaches its own lav. Declared by
+    role they are not emitted at all, the covered speech is corrected, and the
+    unmiked speech is left unnamed rather than pinned on a mic. The two room
+    microphones are **witnesses**: each hears one room, so each is needed — with
+    only one of them declared, the other room's unmiked speech is claimed by a
+    microphone nobody wore again.
+    """
+    not_worn = {
+        "roomLavA",
+        "roomLavB",
+        "roomMic1",
+        "roomMic2",
+        "memo",
+    }
+
+    # 1. the manifest as it stands before anyone declares a role: every source is
+    #    a speaker candidate, so the mics nobody wore win the windows they sit in.
+    wd, labels, truth = _field_capture(tmp_path, "unroled", {})
+    stages.attribute(str(wd))
+    emitted = _emitted(wd)
+    labels_not_worn = {labels[sid] for sid in not_worn}
+    assert labels_not_worn & {seg.speaker for seg in emitted}
+    assert not any(seg.speaker == truth[seg.text] for seg in emitted if truth[seg.text])
+
+    # 2. the roles declared: the rest of the capture stops being a speaker.
+    wd, labels, truth = _field_capture(tmp_path, "roled", _FIELD_ROLES)
+    report = stages.attribute(str(wd))
+    emitted = _emitted(wd)
+    labels_not_worn = {labels[sid] for sid in not_worn}
+    assert all(seg.speaker not in labels_not_worn for seg in emitted)
+    covered = [seg for seg in emitted if truth[seg.text]]
+    assert covered and all(seg.speaker == truth[seg.text] for seg in covered)
+    assert all(not seg.speaker for seg in emitted if not truth[seg.text])
+    # ... and the file holds what the pass returned, un-namings included.
+    from clear_record.pipeline.workspace import Workspace
+
+    disk, _ = Workspace.at(wd).load_segments()
+    assert {sid: [seg.speaker for seg in segs] for sid, segs in disk.items()} == {
+        sid: [seg.speaker for seg in segs] for sid, segs in report.per_source.items()
+    }
+    # and the pass says which references it gated with.
+    assert report.mixed_references == ("roomMic1", "roomMic2")
+
+    # 3. one witness instead of two is not enough: a room's witness cannot refuse
+    #    a claim about speech in the other room, so that room's speech is claimed
+    #    by the mic nobody wore once more.
+    wd, labels, truth = _field_capture(
+        tmp_path, "one-witness", {**_FIELD_ROLES, "roomMic2": "candidate"}
+    )
+    report = stages.attribute(str(wd))
+    assert report.mixed_references == ("roomMic1",)
+    assert labels["roomMic2"] in {seg.speaker for seg in _emitted(wd)}
+
+
+def test_attribute_refuses_a_declaration_it_cannot_honour(tmp_path) -> None:
+    """A hand-edited manifest is the normal input to this field, so the pass
+    refuses what it cannot read instead of guessing: a role outside the three is
+    not a candidate (silently reading it as one would emit the very source the
+    operator tried to silence), a name that is no source is still refused, and a
+    source declared ``excluded`` cannot be a pass's ``mixed`` reference — the two
+    roles say different things.
+    """
+    wd, _labels, _truth = _field_capture(tmp_path, "refuse", {})
+    manifest = wd / "manifest.json"
+    import json
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "muted"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with pytest.raises(
+        stages.PipelineError, match="not one of: candidate, mixed, excluded"
+    ):
+        stages.attribute(str(wd))
+
+    data["sources"][0]["role"] = "excluded"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with pytest.raises(stages.PipelineError, match="declared role 'excluded'"):
+        stages.attribute(str(wd), mixed_source="lavA")
+    with pytest.raises(stages.PipelineError, match="no source 'nobody' in manifest"):
+        stages.attribute(str(wd), mixed_source="nobody")
+
+
+def test_a_named_reference_stays_unnamed_in_the_record(tmp_path) -> None:
+    """Ticket 222: a source the caller names with ``--mixed-source`` is declared
+    not a speaker, and the declaration reaches the record, not only the pass.
+
+    ``attribute`` leaves a reference's own segments unnamed in ``segments.json``;
+    ``reconcile`` is what names an unnamed segment from its source's label, and a
+    source named for one pass carries no manifest role — so the pass records the
+    ids it was asked to gate with, and reconcile reads that declaration. Without
+    it the microphone's own label comes back, while the same workspace with the
+    source declared ``role: "mixed"`` in the manifest stays unnamed: the asymmetry
+    this pins. No audio is needed: an unreadable candidate is skipped, and the
+    labels the pass writes are the ones it was handed.
+    """
+    import json
+
+    from clear_record.core import Alignment, Segment, Source
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "named"
+    wd.mkdir()
+    Workspace.at(wd).write_manifest(
+        [
+            Source(id="room", path=str(wd / "room.wav"), label="Speaker 2"),
+            Source(id="lavA", path=str(wd / "lavA.wav"), label="Speaker 1"),
+        ],
+        Alignment(reference="lavA", offsets={"room": 0.0, "lavA": 0.0}, method="hand"),
+    )
+    Workspace.at(wd).write_segments(
+        {
+            "room": [Segment(0.0, 1.0, "room line", "room", "Speaker 2")],
+            "lavA": [Segment(2.0, 3.0, "lav line", "lavA", "Speaker 1")],
+        },
+        {"backend": "none", "model": "none"},
+    )
+
+    assert stages.attribute(str(wd), mixed_source="room").mixed_references == ("room",)
+
+    disk, meta = Workspace.at(wd).load_segments()
+    assert [seg.speaker for seg in disk["room"]] == [""], "the pass un-names it"
+
+    record = stages.reconcile(str(wd))
+    by_source = {seg.source: seg for seg in record.segments}
+    assert by_source["room"].speaker == "", "the one-off declaration reaches the record"
+    assert by_source["lavA"].speaker == "Speaker 1", "a candidate is untouched"
+    assert json.loads(Workspace.at(wd).segments_path.read_text(encoding="utf-8"))[
+        "meta"
+    ]["mixed_references"] == ["room"], "and the pass recorded what it was asked"
+
+
+def test_diarize_does_not_name_a_declared_non_candidate(tmp_path) -> None:
+    """Ticket 222: a room microphone's diarized clusters are not the record's
+    speakers.
+
+    ``diarize`` clusters **one source's own audio**, so the ``Speaker N`` it finds
+    belongs to that source's index, not to a person: read in the record it names a
+    speaker the microphone merely heard, and the microphone's first cluster
+    collides with the first candidate's label. A source the manifest does not
+    declare a candidate is therefore left exactly as it came in — ``attribute``,
+    which reads every candidate's mic in the segment's window, is the pass that may
+    name one — while the counts still say what the split found.
+    """
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 16000
+
+    def harmonic(f0: float) -> np.ndarray:
+        t = np.arange(sr, dtype=np.float64) / sr
+        return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6))
+
+    wd = tmp_path / "room"
+    wd.mkdir()
+    seq = [harmonic(110.0), harmonic(220.0), harmonic(110.0), harmonic(220.0)]
+    voices = np.concatenate(seq)
+    voices /= np.max(np.abs(voices)) or 1.0
+    sf.write(str(wd / "roomMic.wav"), voices.astype(np.float32), sr)
+    _write_tone(wd / "lavA.wav")
+    stages.ingest(str(wd))
+
+    seeded = {
+        "roomMic": [
+            Segment(start=float(i), end=i + 1.0, text=f"u{i}", source="roomMic")
+            for i in range(4)
+        ],
+        "lavA": [Segment(start=10.0, end=11.0, text="u4", source="lavA")],
+    }
+    Workspace.at(wd).write_segments(seeded, {"backend": "none", "model": "none"})
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in data["sources"]:
+        entry["role"] = "mixed" if entry["id"] == "roomMic" else "candidate"
+    data["alignment"] = {
+        "reference": "lavA",
+        "offsets": {entry["id"]: 0.0 for entry in data["sources"]},
+        "method": "hand",
+        "confidence": 1.0,
+        "unresolved": [],
+    }
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    events: list = []
+    report = stages.diarize(str(wd), speakers=2, on_event=events.append)
+
+    facts = {fact.id: fact for fact in report.sources}
+    assert facts["roomMic"].speakers == 2, "the split is real; it just may not name"
+    assert all(seg.speaker == "" for seg in report.per_source["roomMic"])
+    # The pass says why it left them alone: the artifact alone cannot tell that
+    # from a source it found one speaker in.
+    line = next(e.message for e in events if e.source == "roomMic" and e.message)
+    assert line.startswith("[diarize] roomMic: 2 speaker(s) over 4 segment(s)")
+    assert "declared mixed" in line
+
+    record = stages.reconcile(str(wd))
+    room = [seg for seg in record.segments if seg.source == "roomMic"]
+    assert len(room) == 4
+    assert all(not seg.speaker for seg in room), "no cluster name reaches the record"
+    assert all(seg.speaker for seg in record.segments if seg.source == "lavA")
+
+
+def test_ingest_carries_a_hand_declared_role_forward(tmp_path) -> None:
+    """`run` ingests every time, so a role written into ``manifest.json`` by hand
+    has to survive the manifest ``ingest`` rebuilds — otherwise the documented
+    declare-then-run flow loses the declaration exactly where it is needed. The
+    declaration is what the pass reads; a value it cannot honour is carried too,
+    so it is refused where a role means something rather than dropped here."""
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "carry"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0, gain=0.4)
+    _write_tone(wd / "b.wav", freq=221.0, gain=0.3)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    import json
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "mixed"
+    data["sources"][1]["role"] = "muted"  # a value this build refuses, kept for it
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    stages.ingest(str(wd))
+    written = json.loads(manifest.read_text(encoding="utf-8"))
+    roles = {
+        entry["id"]: entry.get("role", "candidate") for entry in written["sources"]
+    }
+    assert roles == {"a": "mixed", "b": "muted"}
+
+
+def test_ingest_keeps_a_declared_role_across_a_fold(tmp_path) -> None:
+    """A byte-identical copy is the same audio, so a role the manifest holds for
+    the copy's id is one about the surviving source — the rule ticket 221's
+    declared start already follows through ticket 218's fold. Left behind there, a
+    role would silently re-promote the very microphone the operator declared not to
+    be a speaker.
+
+    The copy sorts before the file it copies (``take-copy.wav`` < ``take.wav``), so
+    the fold makes it the source and the id the hand-declared role lives under is
+    the one that leaves the manifest."""
+    import json
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "fold-role"
+    wd.mkdir()
+    _write_tone(wd / "take.wav", freq=220.0, gain=0.4)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["role"] = "excluded"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    shutil.copyfile(wd / "take.wav", wd / "take-copy.wav")
+
+    again = stages.ingest(str(wd)).sources
+    assert [source.id for source in again] == ["take-copy"]
+    assert [source.role for source in again] == ["excluded"]
+
+
+def test_ingest_drops_a_declared_role_whose_source_id_is_not_a_name(
+    tmp_path,
+) -> None:
+    """A hand-edit can put a list where the manifest names a source, and a role is
+    carried under that id — an unhashable one raised ``TypeError`` out of
+    ``ingest`` (and so out of every ``run``, which ingests every time) for exactly
+    the manifests that carried a role, where the pass's own contract is that a
+    manifest it cannot take a declaration out of declares nothing. The twin reader
+    ``_manifest_starts`` drops that shape; the role has to be dropped with it.
+
+    The same manifest with the default role stages normally, which pins the trigger
+    to the declaration and not to the id."""
+    import json
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "unhashable-id"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0, gain=0.4)
+    stages.ingest(str(wd))
+
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["sources"][0]["id"] = ["a"]
+    data["sources"][0]["role"] = "mixed"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert [source.role for source in stages.ingest(str(wd)).sources] == ["candidate"]
+
+    data["sources"][0]["role"] = "candidate"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert [source.role for source in stages.ingest(str(wd)).sources] == ["candidate"]
+
+
+def test_reconcile_leaves_a_non_candidate_source_unnamed(tmp_path) -> None:
+    """The record must not name a microphone as an attendee. ``reconcile`` falls
+    back to its source's label for a segment nobody diarized — right for a
+    person's microphone, and the one thing that can put a room microphone's name
+    into the record for the speech no candidate claimed. A role says the source is
+    not a candidate, so those segments stay unnamed while their transcript stays
+    in the record.
+
+    The unmiked speech here exists only in the room microphone's transcript, which
+    is how a room mic's segment survives to the record at all."""
+
+    def run(name, roles):
+        wd, labels, _truth = _field_capture(
+            tmp_path, name, roles, unmiked_from_room_only=True
+        )
+        stages.align(str(wd))
+        stages.attribute(str(wd))
+        return labels, stages.reconcile(str(wd))
+
+    not_worn = ("roomLavA", "roomLavB", "roomMic1", "roomMic2", "memo")
+
+    # 1. no roles: a microphone nobody wore is named in the record.
+    labels, record = run("named", {})
+    assert record.segments
+    assert {labels[sid] for sid in not_worn} & {seg.speaker for seg in record.segments}
+
+    # 2. the capture declared by role: the same speech is in the record, unnamed.
+    labels, record = run("unnamed", _FIELD_ROLES)
+    assert record.segments
+    assert not {labels[sid] for sid in not_worn} & {
+        seg.speaker for seg in record.segments
+    }
+    assert any(not seg.speaker for seg in record.segments)
+
+
+def test_attribute_writes_a_label_it_only_removed(tmp_path) -> None:
+    """The un-naming is a change the pass has to write.
+
+    A segment from a source the manifest declares is not a candidate enters the
+    pass unnamed, and when no candidate carries its window it stays unnamed — so
+    if that is the pass's *only* effect, ``segments.json`` has to change too.
+    Left alone, the file kept the microphone's label while the pass's own return
+    and ``reconcile`` had none, and a transcript read straight off
+    ``segments.json`` (no record yet) named a microphone the operator declared not
+    to be a speaker."""
+    import json
+
+    from clear_record.core import Segment
+    from clear_record.engine import SYNTH_SR, mix_crosstalk
+    from clear_record.engine.synth import make_speaker_stems
+    from clear_record.pipeline.workspace import Workspace
+
+    stems, events = make_speaker_stems(
+        duration_s=20.0, n_speakers=2, seed=13, non_overlapping=True
+    )
+    wd = tmp_path / "unnamed-only"
+    wd.mkdir()
+    sf.write(str(wd / "micA.wav"), mix_crosstalk(stems, 0, bleed_db=-6.0), SYNTH_SR)
+    sf.write(str(wd / "room.wav"), mix_crosstalk(stems, 1, bleed_db=0.0), SYNTH_SR)
+    stages.ingest(str(wd))
+    sources, _ = Workspace.at(wd).load_manifest()
+    labels = {src.id: src.label for src in sources}
+    # One utterance of the speaker no mic carries, transcribed by the room alone:
+    # the pass has nothing to correct and nothing to claim.
+    other = next(event for event in events if event["speaker"] == 1)
+    Workspace.at(wd).write_segments(
+        {
+            "room": [
+                Segment(other["start"], other["end"], "one", "room", labels["room"])
+            ]
+        },
+        {"backend": "none", "model": "none"},
+    )
+    manifest = Workspace.at(wd).manifest_path
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in data["sources"]:
+        entry["role"] = "mixed" if entry["id"] == "room" else "candidate"
+    manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    report = stages.attribute(str(wd))
+
+    returned = {
+        sid: [seg.speaker for seg in segs] for sid, segs in report.per_source.items()
+    }
+    assert returned == {"room": [""]}
+    written, _ = Workspace.at(wd).load_segments()
+    assert {
+        sid: [seg.speaker for seg in segs] for sid, segs in written.items()
+    } == returned  # the file holds what the pass returned
+    assert labels["room"] not in {seg.speaker for seg in written["room"]}
+    assert report.changed == 1  # the un-naming is a change, and it is counted
+
+
+def test_attribute_reports_the_references_it_was_asked_for(tmp_path) -> None:
+    """``mixed_references`` names what the pass was **asked** to gate with, in the
+    order it builds them: the ids the caller named for the pass, in the order
+    named, then the manifest's declared ``mixed`` roles in manifest order. Naming
+    a source that is no reference by role is the older one-off, and still works;
+    every source either form names is out of the candidate set."""
+    wd, labels, _truth = _field_capture(
+        tmp_path, "order", {"roomMic2": "mixed", "roomLavA": "excluded"}
+    )
+
+    report = stages.attribute(str(wd), mixed_source=("roomMic1", "memo"))
+
+    assert report.mixed_references == ("roomMic1", "memo", "roomMic2")
+    asked_not_to_speak = {
+        labels[sid] for sid in ("roomMic1", "roomMic2", "memo", "roomLavA")
+    }
+    assert not asked_not_to_speak & {seg.speaker for seg in _emitted(wd)}
+
+
 def test_merge_chunk_segments_dedupes_by_coverage() -> None:
     """A fully-covered duplicate is dropped; a boundary straddler keeps its
     unique tail; a later unique segment is kept whole."""
@@ -438,6 +1737,759 @@ def test_align_reports_unresolved_source(tmp_path) -> None:
     assert "  b                        UNRESOLVED (could not place this source)" in [
         event.message for event in events
     ]
+
+
+#: The ticket's split-capture shape: one long `synth` scene cut into the parts a
+#: recorder that rotates hands over. The parts are 200 s because a gap that wide
+#: is outside the estimator's whole search band (`_MAX_LAG_S`, 120 s) — the shape
+#: the field tape failed on, and the one placed without asking the audio at all
+#: (a split *inside* the band is the narrow-declaration test's).
+_SPLIT_TAKE_S = 400.0
+_SPLIT_PART_S = _SPLIT_TAKE_S / 2.0
+
+#: A take split the same way but inside the estimator's own search band: 90 s
+#: parts 90 s apart. On the reviewer's repro — the `synth` verb's degraded 400 s
+#: device (seed 7) cut at 0-90 / 90-180 and named by its start — the audio placed
+#: the pair at +21.3330 s, conf 0.505, against a true +90 s: two unrelated
+#: passages matching. 90 s of recording 90 s apart cannot overlap, so the
+#: declaration places them (`_cannot_overlap`).
+_SHORT_SPLIT_TAKE_S = 180.0
+
+#: Two *simultaneous* stamped devices: long enough that their 30 s name gap is
+#: far inside both recordings, so the audio — which measures the arming skew a
+#: whole-second name cannot — is the evidence that counts.
+_OVERLAP_TAKE_S = 60.0
+
+
+@pytest.fixture(scope="module")
+def split_take() -> tuple[np.ndarray, np.ndarray]:
+    """One capture as two *sequential* parts of one recorder.
+
+    Built straight from ``engine.synth`` (the ticket's repro cuts a ``synth``
+    scene with ffmpeg; this is the same two halves without a subprocess). The
+    parts share no passage — the join is a rotation, not an overlap — which is
+    what makes them unreachable by correlation and reachable only by the start
+    time each name states.
+    """
+    from clear_record.engine import make_scene
+
+    scene, _ = make_scene(_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    return scene[:half], scene[half:]
+
+
+def test_ingest_reads_a_split_recorders_starts_off_its_names(
+    tmp_path, split_take
+) -> None:
+    """A recorder that splits one capture into numbered files hands `ingest` files
+    that are *sequential*, not simultaneous (ticket 221).
+
+    The start written into each name is what places them. The parts share no
+    passage, so no correlation could ever find the 200 s between them: it is
+    further than the estimator's whole search band, and the pair used to come
+    back UNRESOLVED — or worse, accepted at a spurious small offset — with
+    `reconcile` then stacking the two halves into one window.
+    """
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (
+        ("REC_20260101_120000.wav", split_take[0]),
+        ("REC_20260101_120320.wav", split_take[1]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    events: list[JobEvent] = []
+    first, second = stages.ingest(str(wd), on_event=events.append).sources
+
+    alignment = stages.align(str(wd))
+    # Placed from the declaration, and never reported unplaceable: a declared
+    # start is a placement, not an estimate.
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SPLIT_PART_S)
+    assert alignment.method == "declared-start"
+
+    # ... and the declaration travelled: into the manifest, and onto the channel.
+    assert first.start_s is not None and second.start_s is not None
+    assert second.start_s - first.start_s == pytest.approx(_SPLIT_PART_S)
+    assert (
+        "[ingest] REC_20260101_120320.wav declares start 2026-01-01 12:03:20 "
+        "(from its filename): carried into the manifest"
+    ) in [event.message for event in events]
+    reopened, _ = Workspace.at(wd).load_manifest()
+    assert reopened[1].start_s == second.start_s
+
+    # The field symptom itself: `reconcile` tiles the two halves end to end
+    # instead of stacking them into one window (the ticket's five-way collage).
+    from clear_record.core import Segment
+
+    Workspace.at(wd).write_segments(
+        {
+            source.id: [Segment(start=0.0, end=1.0, text=source.id, source=source.id)]
+            for source in (first, second)
+        },
+        {"backend": "none", "model": "none"},
+    )
+    assert [seg.start for seg in stages.reconcile(str(wd)).segments] == [
+        0.0,
+        pytest.approx(_SPLIT_PART_S),
+    ]
+
+
+def test_align_places_a_start_the_manifest_declares(tmp_path, split_take) -> None:
+    """The ticket's repro names — `rec-A.wav`, `rec-B.wav` — state no start time,
+    so the operator declares it where the record can carry it: ``start_s`` in the
+    manifest. `align` places the pair from that declaration, the only evidence
+    that reaches across a gap wider than its band — and keeps placing it when the
+    named reference does not exist and the first source stands in (its declared
+    start stands in with it).
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    sources = stages.ingest(str(wd)).sources
+    # the names state no start time, so nothing was declared from them
+    assert [source.id for source in sources] == ["rec-A", "rec-B"]
+
+    # The declaration a user may make by hand: this file began at 12:00:00, that
+    # one 200 s later.
+    w = Workspace.at(wd)
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+    # --reference <a name no source has>: the first source stands in (its path
+    # *and* its declared start together), so the declarations are still honoured
+    # rather than silently dropped.
+    fallback = stages.align(str(wd), reference="nosuch")
+    assert fallback.unresolved == ()
+    assert fallback.offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_ingest_keeps_a_start_declared_in_the_manifest(tmp_path, split_take) -> None:
+    """This pass rebuilds the manifest it reads, and `run` ingests every time, so
+    a declaration has to survive the re-ingest: a source whose *name* declares
+    nothing keeps the start the manifest held for its id — named on the sink,
+    because a start that appears in the record without a word is how an operator
+    loses track of which parts are placed by a declaration."""
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    w = Workspace.at(wd)
+    sources = stages.ingest(str(wd)).sources
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    events: list[JobEvent] = []
+    again = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.start_s for source in again] == [
+        pytest.approx(noon),
+        pytest.approx(noon + _SPLIT_PART_S),
+    ]
+    assert (
+        "[ingest] rec-B.wav keeps declared start 2026-01-01 12:03:20: "
+        "declared in the manifest"
+    ) in [event.message for event in events]
+    assert stages.align(str(wd)).offsets[sources[1].id] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_ingest_keeps_a_declared_start_across_a_fold(tmp_path, split_take) -> None:
+    """A byte-identical copy is the same audio, so a declaration the manifest
+    holds for the copy's id is one about the surviving source (ticket 218's fold
+    meets ticket 221's carry).
+
+    The copy sorts before the file it copies (``rec-A-copy.wav`` <
+    ``rec-A.wav``), so the fold makes it the source — and the id the operator's
+    hand-declared start lives under is the one that leaves the manifest. The
+    declaration follows the audio: the survivor keeps the start and `align`
+    places the pair from the declarations. Left to the audio the pair is
+    unplaceable — the parts share no passage, which is the field symptom 221
+    exists for.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name, part in (("rec-A.wav", split_take[0]), ("rec-B.wav", split_take[1])):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    w = Workspace.at(wd)
+    sources = stages.ingest(str(wd)).sources
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    declared = {sources[0].id: noon, sources[1].id: noon + _SPLIT_PART_S}
+    for entry in manifest["sources"]:
+        entry["start_s"] = declared[entry["id"]]
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # The operator's folder gains the copy, and discovery order hands it the
+    # source: the declaration on ``rec-A`` is the one that has to travel.
+    shutil.copyfile(wd / "rec-A.wav", wd / "rec-A-copy.wav")
+
+    events: list[JobEvent] = []
+    again = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.id for source in again] == ["rec-A-copy", "rec-B"]
+    assert [source.start_s for source in again] == [
+        pytest.approx(noon),
+        pytest.approx(noon + _SPLIT_PART_S),
+    ]
+    assert (
+        "[ingest] rec-A-copy.wav keeps declared start 2026-01-01 12:00:00: "
+        "declared in the manifest"
+    ) in [event.message for event in events]
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.method == "declared-start"
+    assert alignment.offsets["rec-B"] == pytest.approx(_SPLIT_PART_S)
+
+
+def test_ingest_keeps_a_name_declared_start_across_a_fold(tmp_path) -> None:
+    """A folded copy is the same audio, so the start its *name* states is not lost
+    with it: the survivor carries it (ticket 218's fold meets ticket 221's name).
+
+    Two 90 s parts of one recorder, 90 s apart, are placed by their names — they
+    share no passage, so nothing else can place them. A byte-identical copy of the
+    first, named ``REC-copy.wav`` (``-`` sorts before ``_``, so the copy is what
+    survives the fold), states no start in its own name at all: without the
+    inheritance the only evidence that the pair is sequential leaves with the
+    folded name, and the second part is left to whatever two unrelated passages
+    correlate at.
+    """
+    from clear_record.core import JobEvent
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+    shutil.copyfile(wd / "REC_20260101_120000.wav", wd / "REC-copy.wav")
+
+    events: list[JobEvent] = []
+    first, second = stages.ingest(str(wd), on_event=events.append).sources
+
+    # The copy is the survivor; the declaration travels with it, and the line
+    # names the file whose name declared it.
+    assert [first.id, second.id] == ["REC-copy", "REC_20260101_120130"]
+    assert first.start_s is not None and second.start_s is not None
+    assert second.start_s - first.start_s == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert (
+        "[ingest] REC_20260101_120000.wav declares start 2026-01-01 12:00:00 "
+        "(from its filename): carried into the manifest"
+    ) in [event.message for event in events]
+
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.method == "declared-start"
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+
+
+def test_ingest_keeps_a_folded_copy_declaration_under_its_settled_id(
+    tmp_path,
+) -> None:
+    """A declaration filed under the id the settling *produced* travels with the
+    copy's audio.
+
+    The four-channel ``x.wav`` splits onto ``x__ch1``–``x__ch4``, so the mono
+    ``x__ch1.wav`` — whose slug the quad's first channel already holds — settles
+    on ``x__ch1-2``, and that is where a hand-written declaration for it is
+    filed. The byte-identical ``x__ch1-copy.wav`` sorts first and survives the
+    fold: resolved off the copy's *slug*, the declaration stayed in the manifest
+    with the file it describes, and the survivor came back a candidate with no
+    start.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    chans = [
+        (0.4 * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        for f in (200.0, 300.0, 400.0, 500.0)
+    ]
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "x.wav"), np.stack(chans, axis=1), sr)
+    mono = (0.4 * np.sin(2 * np.pi * 700.0 * t)).astype(np.float32)
+    sf.write(str(wd / "x__ch1.wav"), mono, sr)
+
+    w = Workspace.at(wd)
+    assert [s.id for s in stages.ingest(str(wd)).sources] == [
+        "x__ch1",
+        "x__ch2",
+        "x__ch3",
+        "x__ch4",
+        "x__ch1-2",
+    ]
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        if entry["id"] == "x__ch1-2":
+            entry["start_s"] = noon
+            entry["role"] = "excluded"
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    shutil.copyfile(wd / "x__ch1.wav", wd / "x__ch1-copy.wav")
+
+    survivor = next(s for s in stages.ingest(str(wd)).sources if s.id == "x__ch1-copy")
+    assert survivor.start_s == pytest.approx(noon)
+    assert survivor.role == "excluded"
+
+
+@requires_ffmpeg
+def test_ingest_does_not_hand_a_kept_inputs_start_to_a_folded_copy(
+    tmp_path,
+) -> None:
+    """A kept input's declaration is not the folded copy's, however alike their
+    slugs read.
+
+    ``take.wav`` and the WavPack ``take.wv`` — a *different* take — propose the
+    same slug, and the byte-identical ``take-copy.wv`` survives the fold of the
+    latter. A start declared for the kept ``take`` was read off the folded copy's
+    own slug, which is that same string, and handed to the survivor beside it: two
+    unrelated takes were then placed at one instant (``declared-start``, both at
+    0.0) instead of the unplaceable one being left unresolved.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.pipeline.workspace import Workspace
+
+    sr = 8000
+    t = np.arange(int(2.0 * sr), dtype=np.float64) / sr
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    sf.write(str(wd / "take.wav"), (0.4 * np.sin(2 * np.pi * 220.0 * t)), sr)
+    sf.write(str(wd / "other.wav"), (0.4 * np.sin(2 * np.pi * 440.0 * t)), sr)
+    subprocess.run(
+        [
+            _FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(wd / "other.wav"),
+            "-c:a",
+            "wavpack",
+            str(wd / "take.wv"),
+        ],
+        check=True,
+    )
+    (wd / "other.wav").unlink()
+    shutil.copyfile(wd / "take.wv", wd / "take-copy.wv")
+
+    w = Workspace.at(wd)
+    assert [s.id for s in stages.ingest(str(wd)).sources] == ["take-copy", "take"]
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        if entry["id"] == "take":
+            entry["start_s"] = noon
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    again = {s.id: s.start_s for s in stages.ingest(str(wd)).sources}
+    assert again["take"] == pytest.approx(noon)
+    assert again["take-copy"] is None
+
+    # Nothing declares the two takes simultaneous, so the audio answers — and it
+    # does not place them at one instant.
+    alignment = stages.align(str(wd))
+    assert alignment.offsets.get("take-copy") != alignment.offsets.get("take")
+
+
+def test_align_places_an_in_band_declared_split_by_its_declaration(
+    tmp_path,
+) -> None:
+    """Two parts of one recorder 90 s apart, inside the estimator's own band: the
+    declaration still places them, because the parts **cannot overlap** — they
+    are 90 s long and 90 s apart, so no passage is shared, and a correlation run
+    over them reports two unrelated passages matching (the reviewer measured
+    +21.3330 s, conf 0.505, against a true +90 s). The audio is not consulted."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert alignment.method == "declared-start"
+
+
+def test_align_ignores_a_verdict_over_parts_that_cannot_overlap(
+    tmp_path, monkeypatch
+) -> None:
+    """The rule 221-R1 is about, with the estimator's verdict made explicit: over
+    two 90 s parts 90 s apart a correlation reports two unrelated passages
+    matching — the reviewer's repro read +21.3330 s, conf 0.505, against a true
+    +90 s — and that verdict must not be used, because the parts cannot overlap:
+    there is nothing for it to have found. It is therefore not even asked."""
+    from clear_record.engine import SYNTH_SR, align as engine_align, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    half = scene.size // 2
+    for name, part in (
+        ("REC_20260101_120000.wav", scene[:half]),
+        ("REC_20260101_120130.wav", scene[half:]),
+    ):
+        sf.write(str(wd / name), part, SYNTH_SR)
+
+    asked: list[str] = []
+
+    def spurious(reference_path, source_path, **kwargs):
+        asked.append(source_path)
+        return 21.333, 0.505
+
+    monkeypatch.setattr(engine_align, "estimate_offset", spurious)
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert asked == []  # not consulted: the two recordings cannot share a passage
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(_SHORT_SPLIT_TAKE_S / 2)
+    assert alignment.method == "declared-start"
+
+
+def test_align_asks_the_audio_for_a_later_take_inside_an_earlier_one(tmp_path) -> None:
+    """A shorter take that starts *later* still lies inside a longer earlier one:
+    the earlier tape's tail covers the later one's start, so the two share
+    passage and the pair is the audio's to place (R7). Bounding the overlap by
+    the *shorter* recording instead of by the one that began first called this
+    pair sequential and placed it from its names alone — discarding a measured
+    +40.0 s at conf 0.983."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_OVERLAP_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "TX01_20260101_120000.wav"), scene, SYNTH_SR)
+    # 20 s of the same event beginning 40 s in: 20 s of shared passage.
+    sf.write(str(wd / "TX01_20260101_120040.wav"), scene[40 * SYNTH_SR :], SYNTH_SR)
+
+    _first, later = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[later.id] == pytest.approx(40.0, abs=0.5)
+    # the tape placed it, and the record says so rather than crediting the name
+    assert alignment.method == "windowed-cross-correlation"
+    assert alignment.confidence is not None and alignment.confidence > 0.9
+
+
+def test_align_places_a_declared_pair_that_meets_inside_its_pre_roll(tmp_path) -> None:
+    """The allowance for a rotating recorder's pre-roll: its parts meet *inside*
+    a correlation window of each other (90 s parts 88 s apart here), so the pair
+    is still sequential — and the declaration places it where the estimator,
+    seeing only the 2 s the two share, finds nothing at all."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_SHORT_SPLIT_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "REC_20260101_120000.wav"), scene[: 90 * SYNTH_SR], SYNTH_SR)
+    sf.write(
+        str(wd / "REC_20260101_120128.wav"),
+        scene[88 * SYNTH_SR : 178 * SYNTH_SR],
+        SYNTH_SR,
+    )
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[second.id] == pytest.approx(88.0)
+    assert alignment.method == "declared-start"
+
+
+def test_align_places_a_declared_pair_inside_one_window_of_the_earlier_part(
+    tmp_path,
+) -> None:
+    """The pre-roll allowance itself, pinned where a stub cannot stand in for it.
+
+    The pair here *meets* inside one correlation window of the earlier part's
+    length (90 s and 88 s files, declared 88 s apart), so ``_cannot_overlap``
+    reads it as a rotation and the declaration places it — but the audio would
+    answer for this pair, and answer with the opposite: the two files carry the
+    same passage, so ``estimate_offset`` measures the 2 s arming skew their
+    whole-second names miss. Remove the allowance (``- _WINDOW_S``) from the
+    predicate and that +2 s is what lands in the record. The existing pre-roll
+    test cannot show this: its parts share 2 s and stop there, so the estimator
+    returns no verdict, and the declaration places the pair either way.
+    """
+    from clear_record.engine import SYNTH_SR, align as engine_align, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(90.0, 2, seed=7)
+    skew = scene.size - 88 * SYNTH_SR  # the 2 s both files really share
+    sf.write(str(wd / "REC_20260101_120000.wav"), scene, SYNTH_SR)
+    sf.write(str(wd / "REC_20260101_120128.wav"), scene[skew:], SYNTH_SR)
+
+    # the estimator has a verdict over this pair, and it is the audio's own
+    off, conf = engine_align.estimate_offset(
+        str(wd / "REC_20260101_120000.wav"), str(wd / "REC_20260101_120128.wav")
+    )
+    assert conf is not None and conf > 0.5
+    assert off == pytest.approx(2.0, abs=0.5)
+
+    _first, second = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    # ... and the declaration decides anyway: inside one window of the earlier
+    # part's length, the pair is a rotation, and the audio is not asked.
+    assert alignment.offsets[second.id] == pytest.approx(88.0)
+    assert alignment.method == "declared-start"
+
+
+@requires_ffmpeg
+def test_align_measures_a_declared_pair_libsndfile_cannot_read(
+    tmp_path, monkeypatch
+) -> None:
+    """A declared pair in a container libsndfile refuses (WavPack here; m4a/aac
+    read the same way) is still measured, and still read as sequential.
+
+    Ticket 223 put those suffixes in the walk because ``read_audio`` reaches them
+    through ffmpeg, and a manifest may name the recording itself rather than
+    ingest's staged copy — so the length this rule reads is the length of a file
+    whose header libsndfile cannot open. Read from the header alone, that length
+    was unknown, which left the pair to the audio; over two parts that cannot
+    overlap the estimator answers with two unrelated passages matching (the
+    reviewer's repro: +21.3330 s, conf 0.505, against the true +90 s), the
+    misplacement ticket 221 is about. The estimator is stubbed to that reading
+    here, and must not be asked at all.
+    """
+    from datetime import datetime, timezone
+
+    from clear_record.core import Source
+    from clear_record.engine import align as engine_align
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for name in ("REC_20260101_120000", "REC_20260101_120130"):
+        _write_tone(wd / f"{name}.wav", seconds=90.0)
+        subprocess.run(
+            [
+                _FFMPEG,
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(wd / f"{name}.wav"),
+                "-c:a",
+                "wavpack",
+                str(wd / f"{name}.wv"),
+            ],
+            check=True,
+        )
+        (wd / f"{name}.wav").unlink()
+
+    asked: list[str] = []
+
+    def spurious(reference_path, source_path, **kwargs):
+        asked.append(source_path)
+        return 21.333, 0.505
+
+    monkeypatch.setattr(engine_align, "estimate_offset", spurious)
+
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    Workspace.at(wd).write_manifest(
+        [
+            Source(id="part-1", path=str(wd / "REC_20260101_120000.wv"), start_s=noon),
+            Source(
+                id="part-2",
+                path=str(wd / "REC_20260101_120130.wv"),
+                start_s=noon + 90.0,
+            ),
+        ]
+    )
+    alignment = stages.align(str(wd))
+    assert asked == []  # nothing for the audio to answer: the pair is sequential
+    assert alignment.unresolved == ()
+    assert alignment.offsets["part-2"] == pytest.approx(90.0)
+    assert alignment.method == "declared-start"
+
+
+def test_align_lets_the_audio_place_a_stamped_pair_that_can_overlap(tmp_path) -> None:
+    """The other side of the same rule: two *simultaneous* devices whose names
+    disagree with their audio. A whole-second stamp does not resolve an arming
+    skew, so where the two recordings can overlap the audio places them — 30 s
+    apart by name, 5 s apart on the tape, and the tape wins."""
+    from clear_record.engine import SYNTH_SR, make_scene
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    scene, _ = make_scene(_OVERLAP_TAKE_S, 2, seed=7)
+    sf.write(str(wd / "TX01_20260101_120000.wav"), scene, SYNTH_SR)
+    # The same scene 5 s in: ref_time = source_time + 5, i.e. +5 s.
+    sf.write(str(wd / "TX02_20260101_120030.wav"), scene[5 * SYNTH_SR :], SYNTH_SR)
+
+    _room, later = stages.ingest(str(wd)).sources
+    alignment = stages.align(str(wd))
+    assert alignment.unresolved == ()
+    assert alignment.offsets[later.id] == pytest.approx(5.0, abs=0.5)
+    # the audio spoke, so the record says so (and carries its confidence)
+    assert alignment.method == "windowed-cross-correlation"
+    assert alignment.confidence is not None and alignment.confidence > 0.0
+
+
+def test_ingest_declares_no_start_for_a_name_that_states_no_clock_time(
+    tmp_path,
+) -> None:
+    """A name that states only a date — or only minutes — does not say when a
+    part *started*. Reading one as a start would declare two devices that share a
+    day simultaneous, the exact confusion a declared start exists to prevent, so
+    such a name declares nothing and its source is estimated as before.
+
+    The recorder names the owner's own playbook records — `mac-05`, `tx01`… —
+    carry no clock time at all, so they are in here too: the accepted shapes are
+    this pass's set, not a vendor's convention.
+    """
+    from clear_record.core import JobEvent
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    for index, name in enumerate(
+        (
+            "meeting-2026-01-01.wav",
+            "meeting_20260101_1200.wav",
+            "tx01.wav",
+            "mac-05.wav",
+        )
+    ):
+        _write_tone(wd / name, freq=140.0 + index * 10.0, gain=0.4)
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+    assert [source.start_s for source in sources] == [None] * 4
+    assert not [event for event in events if "declares start" in event.message]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    (
+        "{}",
+        '{"alignment": {"reference": "a"}}',
+        "[1, 2]",
+        '{"sources": [{"id": "a"}]}',
+        '{"sources": {"a": {"id": "a", "path": "a.wav"}}}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": "noon"}]}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": 1767000000000.0}]}',
+        '{"sources": [{"id": "a", "path": "a.wav", "start_s": true}]}',
+        '{"sources": [{"id": ["a"], "path": "a.wav", "start_s": 10.0}]}',
+    ),
+)
+def test_ingest_survives_a_manifest_a_hand_edit_broke(tmp_path, broken) -> None:
+    """The hand-declare flow is exactly what produces a manifest the pass cannot
+    take a declaration out of, and `ingest` must not end in a traceback over one:
+    the pass has not been asked to *use* the manifest, only not to lose what it
+    says, so a broken one costs the record its declarations and nothing else
+    (R8, R9). A `start_s` the record cannot render is one of those shapes however
+    numeric it looks — the last four entries are a name, a year-57964 number, a
+    bool, and an id that cannot key anything — and each is dropped rather than
+    carried into a source or a sink line."""
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=140.0)
+    Workspace.at(wd).manifest_path.write_text(broken, encoding="utf-8")
+
+    sources = stages.ingest(str(wd)).sources
+    assert [source.id for source in sources] == ["a"]
+    assert sources[0].start_s is None
+
+
+def test_ingest_reads_a_start_off_a_dotted_name(tmp_path) -> None:
+    """The accepted shapes, spelled out in `stages._STAMP_RE`: a dotted date with
+    a dotted clock time is one of them (a name outside the set declares nothing,
+    and its source is estimated as before)."""
+    from datetime import datetime, timezone
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "2026.01.01_12.03.20.wav", freq=180.0)
+
+    (source,) = stages.ingest(str(wd)).sources
+    assert source.start_s == pytest.approx(
+        datetime(2026, 1, 1, 12, 3, 20, tzinfo=timezone.utc).timestamp()
+    )
+
+
+def test_align_survives_a_hand_declared_start_no_clock_can_render(tmp_path) -> None:
+    """The same hand-edit class on the other reader (R10): `align` *subtracts*
+    `Source.start_s`, so a value that arrived by hand-edit has to be usable or
+    absent there too. A manifest declaring `a: 12:00:00` and `b: "noon"` places
+    `b` by its audio — the two chirps of the fixture correlate at zero — where it
+    used to raise `TypeError` out of the stage over a field a user typed."""
+    import json
+    from datetime import datetime, timezone
+
+    from clear_record.pipeline.workspace import Workspace
+
+    wd = _workspace(tmp_path)
+    stages.ingest(wd)  # the manifest this test then hand-edits
+    w = Workspace.at(wd)
+    noon = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    manifest = json.loads(w.manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        entry["start_s"] = noon if entry["id"] == "a" else "noon"
+    w.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    alignment = stages.align(wd)
+    assert alignment.unresolved == ()
+    assert alignment.offsets["b"] == pytest.approx(0.0, abs=0.1)
+    assert alignment.method == "windowed-cross-correlation"
 
 
 def test_run_threads_reference_source(tmp_path, monkeypatch) -> None:
@@ -1361,3 +3413,104 @@ def test_two_concurrent_pools_use_distinct_runners(tmp_path, monkeypatch) -> Non
     for wd in (wd1, wd2):
         per_source, _ = Workspace.at(wd).load_segments()
         assert per_source
+
+
+def _unreadable_declaration(workspace: Path, shape: str) -> Path:
+    """Plant a declaration nothing can read, and return it.
+
+    Two shapes, because a file refuses to be read in two ways and the code that
+    says so must not care which: ``permission`` (a mode nothing may read) and
+    ``not-utf8`` (a declaration saved in the machine's own encoding — GBK,
+    cp1252 — which is a plausible field file, not a corrupt one).
+    """
+    declaration = workspace / ".clear-record-ignore"
+    declaration.write_bytes(b"caf\xe9\n" if shape == "not-utf8" else b"*.wav\n")
+    if shape == "permission":
+        declaration.chmod(0o000)
+    return declaration
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_ingest_refuses_a_declaration_it_cannot_read(tmp_path, shape) -> None:
+    """A declaration the pass cannot read is its refusal, in its own words.
+
+    The walk reads the workspace's own ``.clear-record-ignore``, so a file the
+    pass cannot read leaves it unable to know which of the folder's files are
+    inputs — and taking every one of them would be exactly the silent wrong
+    answer the declaration exists to prevent. It says so as the pipeline does:
+    one ``[ingest] cannot read …`` line naming the file and the reason, and the
+    command surface exits on it — never a traceback through the walk, and never a
+    codec's own text as the whole answer.
+    """
+    from clear_record.cli import cli
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    declaration = _unreadable_declaration(wd, shape)
+
+    with pytest.raises(stages.PipelineError, match="cannot read") as refused:
+        stages.ingest(str(wd))
+    # The file it could not read, and the reason (the OS's text follows the
+    # machine's locale, so only the shape is pinned here).
+    assert str(refused.value).startswith(f"[ingest] cannot read {declaration}: ")
+    assert str(refused.value) != f"[ingest] cannot read {declaration}: "
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["ingest", str(wd)])
+    assert str(exit_info.value.code) == str(refused.value)
+
+
+@pytest.mark.parametrize("shape", ["permission", "not-utf8"])
+def test_the_commands_own_auto_probe_refuses_an_unreadable_declaration(
+    tmp_path, shape
+) -> None:
+    """``--auto``'s probe walks the folder in this process, and it says the same.
+
+    The probe measures the tapes to choose a profile, so it reads the folder's
+    own declaration before anything is decoded. A declaration the command cannot
+    read is the declaration's own refusal — the same id the run edges answer —
+    rendered where a person reads it, not a traceback out of the walk.
+    """
+    from clear_record.cli import cli
+    from clear_record.pipeline.workspace import CANNOT_READ_DECLARATION
+
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav")
+    _unreadable_declaration(wd, shape)
+
+    with pytest.raises(SystemExit) as ended:
+        cli.main(["transcribe", str(wd), "--auto"])
+
+    assert str(ended.value) == CANNOT_READ_DECLARATION
+
+
+def test_ingest_applies_a_declaration_saved_with_a_byte_order_mark(tmp_path) -> None:
+    """A declaration saved "UTF-8 with BOM" still names what it names.
+
+    An editor that writes the mark puts ``\\ufeff`` in front of the first line, so
+    a declaration read as plain utf-8 yields ``"\\ufeffb.wav"`` for its pattern,
+    matches nothing, and the file the operator declared out is decoded with **no
+    refusal and no line** — the silent non-application this read exists to
+    prevent. The mark is stripped (a no-op when it is absent), so the one-line
+    declaration the README documents keeps applying; the no-mark, comment and
+    blank-line shapes are covered by the tests either side of this one.
+    """
+    wd = tmp_path / "rec"
+    wd.mkdir()
+    _write_tone(wd / "a.wav", freq=220.0)
+    _write_tone(wd / "b.wav", freq=330.0)
+    (wd / ".clear-record-ignore").write_bytes(b"\xef\xbb\xbfb.wav\n")
+
+    from clear_record.core import JobEvent
+    from clear_record.pipeline.workspace import discover_audio
+
+    events: list[JobEvent] = []
+    sources = stages.ingest(str(wd), on_event=events.append).sources
+
+    assert [s.id for s in sources] == ["a"]
+    assert [p.name for p in discover_audio(wd)] == ["a.wav"]
+    assert [e.message for e in events if "excluded" in (e.message or "")] == [
+        "[ingest] excluded b.wav: named in .clear-record-ignore"
+    ]

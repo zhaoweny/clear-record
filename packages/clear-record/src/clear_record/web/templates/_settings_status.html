@@ -46,6 +46,14 @@
   </form>
 </div>
 
+<h3>{{ tr("Machine tokens") }}</h3>
+{# The credentials scripts carry: one list, its mint form and the one-time
+   plaintext, all swapped as one block (#tokens) by the two routes that write. #}
+<p class="muted">{{ tr("A token authenticates the machine API (/api/v1) for a script, with no browser and no cookie. It is shown once when it is minted and stored only as a hash; revoking it takes effect on the very next request, with no restart. A token cannot open the console, cannot mint or revoke tokens, and cannot destroy anything — the machine API has no verb that destroys what a durable copy cannot reconstruct.") }}</p>
+<div id="tokens">
+  {% include "_settings_tokens.html" %}
+</div>
+
 <h3>{{ tr("Backend availability") }}</h3>
 {% include "_backend_list.html" %}
 

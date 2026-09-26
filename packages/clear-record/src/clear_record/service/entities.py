@@ -328,6 +328,39 @@ class ConsoleSession(Base):
     absolute_deadline: Mapped[str] = mapped_column(Text)
 
 
+class MachineToken(Base):
+    """``machine_token`` — one labelled bearer token a script presents.
+
+    A **second** way to satisfy the auth gate for the machine surface, and only
+    for it: the plaintext is a high-entropy bearer secret, shown once at minting
+    and stored here as its SHA-256 **digest** — the cookie's own treatment, every
+    request re-reads the row, which is what makes a revoke effective on the next
+    request with no restart. ``label`` is unique, so a label names one token: it
+    is what the console lists, what an audit row's target carries
+    (``token:<label>``) and what the operator matches a script against.
+
+    ``created_at`` is when it was minted; ``last_used_at`` is the last request it
+    authenticated — written lazily, at most once per touch interval
+    (:data:`~clear_record.service.auth.TOKEN_TOUCH_INTERVAL`), so a window of
+    calls leaves the previous stamp — and is **nullable**: a token minted and
+    never presented says so. Neither instant is a deadline: a token has no clocks
+    (ADR-0033's tokens are not sessions), so it lives until it is revoked.
+
+    The row is destroyable, unlike an audit row: revoking a token deletes it, and
+    the ``token.revoke`` audit row is what outlives it — the same division the
+    sessions have, where the row is bookkeeping and the credential's own writes
+    are attributed.
+    """
+
+    __tablename__ = "machine_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, unique=True)
+    token_digest: Mapped[str] = mapped_column(Text, unique=True)
+    created_at: Mapped[str] = mapped_column(Text)
+    last_used_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 __all__ = [
     "Archive",
     "Artifact",
@@ -336,6 +369,7 @@ __all__ = [
     "ConsoleCredential",
     "ConsoleSession",
     "GlossaryTerm",
+    "MachineToken",
     "Meeting",
     "PipelineRun",
     "Project",

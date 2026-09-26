@@ -982,6 +982,34 @@ ul.projects .count {
   gap: var(--space-2);
   font-size: var(--text-sm);
 }
+
+/* The one-time machine token (Settings → Status). A minted token's plaintext is
+   shown exactly once, so the block is set apart from the list rather than left
+   as an inline code span the eye slides past: the ok palette says the mint
+   landed, and the value itself is one click selectable so it can be copied
+   without dragging across a monospace string. */
+.token-minted {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--radius-md);
+}
+.token-secret {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.token-mint { margin-top: var(--space-3); }
 .backend-list {
   display: grid;
   gap: var(--space-2);

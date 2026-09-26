@@ -22,9 +22,14 @@ exactly these through:
   without them, they carry no project data, and they are the same bytes for
   everyone.
 
-Everything else needs a live session: pages and fragments redirect to the setup
-route, and the machine surface (``/api/v1/…``) answers ``401`` with
-:data:`AUTH_REQUIRED` in ``detail``, so a script is told what a browser is shown.
+Everything else needs a credential: pages and fragments — the console, which a
+token can never open — redirect to the setup route, and the machine surface
+(``/api/v1/…``) accepts **either** a live session cookie or a machine token
+(:func:`bearer_token`, ``Authorization: Bearer …``), answering ``401`` with
+:data:`AUTH_REQUIRED` in ``detail`` when it has neither, so a script is told what
+a browser is shown. A token is consulted **only** for a :func:`machine_request`:
+it authorizes the machine surface and nothing on the console's side of the app,
+which is the whole of its reach.
 :func:`answers_anonymously` is the single rule both the middleware and the
 route-table test read, so the list cannot grow by a route somebody forgot to add
 to a second copy of it. The console's own prefix is :data:`CONSOLE_PATH`, one
@@ -67,6 +72,23 @@ SIGN_OUT_PATH = f"{SETUP_PATH}/sign-out"
 #: Ending every session — the borrowed-browser remedy, from Settings → Status.
 REVOKE_ALL_PATH = f"{CONSOLE_PATH}/ui/sessions/revoke-all"
 
+#: Minting a machine token, and revoking one: Settings → Status's token list.
+#: Both are **console** routes — the operator is the only one who mints or
+#: revokes, so a token itself can never reach them (a token authenticates the
+#: machine surface alone).
+TOKENS_PATH = f"{CONSOLE_PATH}/ui/tokens"
+
+
+def token_revoke_path(token_id: int) -> str:
+    """The console route that revokes one token, built from the one prefix.
+
+    A function rather than a format string a caller completes, so the list
+    template and the route cannot disagree about the path: both build it from
+    :data:`TOKENS_PATH`.
+    """
+    return f"{TOKENS_PATH}/{token_id}/revoke"
+
+
 #: The compiled assets' mount, and the machine surface's prefix. Both are facts of
 #: the route table; they are named here because the gate reads them.
 STATIC_PREFIX = "/static"
@@ -78,17 +100,26 @@ ANONYMOUS_PATHS = (SETUP_PATH, HEALTH_PATH)
 #: The POST paths answered without a session: the setup page's own two forms.
 ANONYMOUS_POSTS = (CREDENTIAL_PATH, SIGN_IN_PATH)
 
-#: What a machine client is told when it has no session. Plain English on
+#: The scheme word a machine token is presented with: ``Authorization: Bearer
+#: <token>`` (the HTTP authentication grammar's own word, and the one the MCP
+#: best-practices guidance asks a local HTTP server for). One declaration, so the
+#: refusal below and the gate's parser cannot disagree about it.
+BEARER_SCHEME = "Bearer"
+
+#: What a machine client is told when it has neither credential. Plain English on
 #: purpose: it answers a script (the JSON API's ``detail``), not a person reading
 #: a translated console — the same shape the request guard's and the naming
-#: rules' sentences have. The whole anonymous surface is named, because a client
-#: that is refused needs to know whether it asked one of the routes that would
-#: have answered.
+#: rules' sentences have. Both ways in are named — a session cookie, which opens
+#: the console and the machine surface alike, and a bearer token, which opens the
+#: machine surface only — because a client that is refused needs to know what
+#: would have been accepted, and the whole anonymous surface is named for the
+#: same reason.
 AUTH_REQUIRED = (
-    f"request refused: this node needs a signed-in console session, and this "
-    f"request carried none. Open {SETUP_PATH} in a browser and sign in; only "
-    f"{SETUP_PATH}, {HEALTH_PATH} and the compiled assets under {STATIC_PREFIX} "
-    f"answer without one."
+    f"request refused: this node needs a signed-in console session or a machine "
+    f"token, and this request carried neither. Present a {BEARER_SCHEME} token "
+    f"(mint one in the console under {CONSOLE_PATH}/settings/status), or open "
+    f"{SETUP_PATH} in a browser and sign in; only {SETUP_PATH}, {HEALTH_PATH} "
+    f"and the compiled assets under {STATIC_PREFIX} answer without a credential."
 )
 
 
@@ -109,6 +140,30 @@ def answers_anonymously(method: str, path: str) -> bool:
 def machine_request(request: Request) -> bool:
     """Whether this request is addressed to the JSON API rather than a page."""
     return request.url.path.startswith(MACHINE_PREFIX)
+
+
+def bearer_token(request: Request) -> str | None:
+    """The machine token an ``Authorization: Bearer …`` header carries, or ``None``.
+
+    Exactly one shape is read: the scheme word — case-insensitively, as the HTTP
+    authentication grammar has it — and one value after it, with no second word
+    and no empty token. Anything else is **no credential**, which is what lets
+    the gate refuse it exactly as it refuses an absent one instead of guessing at
+    what a malformed header meant.
+
+    Reading the header is this function's whole job: whether the value names a
+    live token is the registry's answer
+    (:meth:`clear_record.service.auth.ConsoleAuth.authenticate_token`), and a
+    token presented here is only ever consulted for a
+    :func:`machine_request` — the console's pages have no bearer branch at all.
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    parts = header.split()
+    if len(parts) != 2 or parts[0].lower() != BEARER_SCHEME.lower():
+        return None
+    return parts[1]
 
 
 def secure_request(request: Request) -> bool:
@@ -170,6 +225,7 @@ __all__ = [
     "ANONYMOUS_PATHS",
     "ANONYMOUS_POSTS",
     "AUTH_REQUIRED",
+    "BEARER_SCHEME",
     "CONSOLE_HOME",
     "CONSOLE_PATH",
     "CREDENTIAL_PATH",
@@ -181,9 +237,12 @@ __all__ = [
     "SIGN_IN_PATH",
     "SIGN_OUT_PATH",
     "STATIC_PREFIX",
+    "TOKENS_PATH",
     "answers_anonymously",
+    "bearer_token",
     "clear_session_cookie",
     "machine_request",
     "secure_request",
     "set_session_cookie",
+    "token_revoke_path",
 ]

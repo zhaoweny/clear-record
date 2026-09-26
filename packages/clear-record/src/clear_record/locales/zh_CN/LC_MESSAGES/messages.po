@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-26 21:35+0800\n"
+"POT-Creation-Date: 2026-09-26 22:26+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -603,54 +603,67 @@ msgstr "无法采纳 {kind} 草稿：{detail}"
 msgid "no promotion is defined for draft kind {kind}"
 msgstr "草稿类型 {kind} 未定义采纳规则"
 
-#: packages/clear-record/src/clear_record/service/auth.py:163
+#: packages/clear-record/src/clear_record/service/auth.py:180
 #, python-brace-format
 msgid "the password must be at least {count} characters."
 msgstr "密码至少需要 {count} 个字符。"
 
-#: packages/clear-record/src/clear_record/service/auth.py:503
+#: packages/clear-record/src/clear_record/service/auth.py:215
+msgid "a machine token needs a label."
+msgstr "机器令牌需要一个标签。"
+
+#: packages/clear-record/src/clear_record/service/auth.py:219
+#, python-brace-format
+msgid "a token label may be at most {count} characters."
+msgstr "令牌标签最多 {count} 个字符。"
+
+#: packages/clear-record/src/clear_record/service/auth.py:225
+msgid "a token label may contain only printable characters."
+msgstr "令牌标签只能包含可打印字符。"
+
+#: packages/clear-record/src/clear_record/service/auth.py:680
 #, python-brace-format
 msgid "cannot write to the registry at {path}: {error}"
 msgstr "无法写入位于 {path} 的注册表：{error}"
 
-#: packages/clear-record/src/clear_record/service/auth.py:510
+#: packages/clear-record/src/clear_record/service/auth.py:687
 #, python-brace-format
 msgid "cannot read the registry at {path}: {error}"
 msgstr "无法读取位于 {path} 的注册表：{error}"
 
-#: packages/clear-record/src/clear_record/service/auth.py:519
+#: packages/clear-record/src/clear_record/service/auth.py:696
 msgid "set or replace the console password, without a browser (the rescue)"
 msgstr "无需浏览器即可设置或更换控制台密码（救援命令）"
 
-#: packages/clear-record/src/clear_record/service/auth.py:527
+#: packages/clear-record/src/clear_record/service/auth.py:704
 #: packages/clear-record/src/clear_record/web/__init__.py:67
 msgid ""
 "override the app data directory (default: CR_DATA_DIR / the platform data"
 " directory)"
 msgstr ""
 
-#: packages/clear-record/src/clear_record/service/auth.py:559
+#: packages/clear-record/src/clear_record/service/auth.py:736
 msgid "New console password"
 msgstr "新控制台密码"
 
-#: packages/clear-record/src/clear_record/service/auth.py:584
+#: packages/clear-record/src/clear_record/service/auth.py:761
 #, python-brace-format
 msgid "the console password is {action} in {path}."
 msgstr "控制台密码已在 {path} 中{action}。"
 
-#: packages/clear-record/src/clear_record/service/auth.py:585
+#: packages/clear-record/src/clear_record/service/auth.py:762
 msgid "replaced"
 msgstr "更换"
 
-#: packages/clear-record/src/clear_record/service/auth.py:585
+#: packages/clear-record/src/clear_record/service/auth.py:762
 msgid "set"
 msgstr "设置"
 
-#: packages/clear-record/src/clear_record/service/auth.py:591
+#: packages/clear-record/src/clear_record/service/auth.py:768
 msgid "every signed-in browser is now signed out; sign in again at /web/setup"
 msgstr "所有已登录的浏览器现已退出登录；请在 /web/setup 重新登录"
 
-#: packages/clear-record/src/clear_record/service/auth.py:594
+#: packages/clear-record/src/clear_record/service/auth.py:771
 msgid "next: start the console and sign in at /web/setup"
 msgstr "下一步：启动控制台并在 /web/setup 登录"
 
@@ -990,14 +1003,14 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 msgid "setup does not record {key!r}"
 msgstr "初始设置不记录 {key!r}"
 
-#: packages/clear-record/src/clear_record/service/store.py:457
+#: packages/clear-record/src/clear_record/service/store.py:458
 #, python-brace-format
 msgid ""
 "registry schema revision {revision} is not one this build carries (its "
 "newest is {head}); upgrade clear-record"
 msgstr "注册表的架构修订版本 {revision} 不是本构建所携带的修订版本（最新为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:465
+#: packages/clear-record/src/clear_record/service/store.py:466
 #, python-brace-format
 msgid ""
 "the registry at {db_path} records schema revision {revision}, which an "
@@ -1007,14 +1020,14 @@ msgstr ""
 "{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 "
 "{db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:486
+#: packages/clear-record/src/clear_record/service/store.py:487
 #, python-brace-format
 msgid ""
 "registry schema version {version} is newer than this build carries (its "
 "newest revision is {head}); upgrade clear-record"
 msgstr "注册表的架构版本 {version} 比本构建所携带的更新（最新修订版本为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:497
+#: packages/clear-record/src/clear_record/service/store.py:498
 #, python-brace-format
 msgid ""
 "the registry at {db_path} was written by an unreleased development build,"
@@ -1022,7 +1035,7 @@ msgid ""
 "record again"
 msgstr "{db_path} 处的注册表由未发布的开发构建写入，本次发布不携带此类注册表；请删除 {db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:660
+#: packages/clear-record/src/clear_record/service/store.py:661
 #, python-brace-format
 msgid ""
 "another surface is migrating the registry at {db_path} and still holds "
@@ -1253,236 +1266,236 @@ msgstr ""
 "    tailnet 决定谁能访问这个控制台；控制台仍会要求输入自己的密码。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:791
+#: packages/clear-record/src/clear_record/web/app.py:792
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:796
+#: packages/clear-record/src/clear_record/web/app.py:797
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:1009
+#: packages/clear-record/src/clear_record/web/app.py:1010
 #, python-brace-format
 msgid "{label} needs a number, not {value!r}."
 msgstr "「{label}」需要一个数字，而不是 {value!r}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1488
+#: packages/clear-record/src/clear_record/web/app.py:1507
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1540
+#: packages/clear-record/src/clear_record/web/app.py:1559
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1588
+#: packages/clear-record/src/clear_record/web/app.py:1607
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1661
+#: packages/clear-record/src/clear_record/web/app.py:1680
 msgid ""
 "a password is already set for this console; sign in, or replace it on the"
 " node with the password command (clear-record password)."
 msgstr "此控制台已设置密码；请登录，或在节点上用密码命令更换它（clear-record password）。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1673
+#: packages/clear-record/src/clear_record/web/app.py:1692
 msgid "the two passwords do not match."
 msgstr "两次输入的密码不一致。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1703
+#: packages/clear-record/src/clear_record/web/app.py:1722
 msgid "that password does not match this console's."
 msgstr "该密码与此控制台的密码不匹配。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1959
+#: packages/clear-record/src/clear_record/web/app.py:2025
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2475
+#: packages/clear-record/src/clear_record/web/app.py:2541
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2507
+#: packages/clear-record/src/clear_record/web/app.py:2573
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
 
-#: packages/clear-record/src/clear_record/web/views.py:116
-#: packages/clear-record/src/clear_record/web/views.py:1308
+#: packages/clear-record/src/clear_record/web/views.py:117
+#: packages/clear-record/src/clear_record/web/views.py:1346
 msgid "Models"
 msgstr "模型"
 
-#: packages/clear-record/src/clear_record/web/views.py:117
+#: packages/clear-record/src/clear_record/web/views.py:118
 msgid "Backends"
 msgstr "后端"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:36
-#: packages/clear-record/src/clear_record/web/views.py:118
+#: packages/clear-record/src/clear_record/web/views.py:119
 msgid "Agent"
 msgstr "智能体"
 
-#: packages/clear-record/src/clear_record/web/views.py:119
+#: packages/clear-record/src/clear_record/web/views.py:120
 msgid "MCP"
 msgstr "MCP"
 
-#: packages/clear-record/src/clear_record/web/views.py:120
+#: packages/clear-record/src/clear_record/web/views.py:121
 msgid "Webhooks"
 msgstr "Webhook"
 
-#: packages/clear-record/src/clear_record/web/views.py:121
+#: packages/clear-record/src/clear_record/web/views.py:122
 msgid "Storage"
 msgstr "存储"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
-#: packages/clear-record/src/clear_record/web/views.py:122
+#: packages/clear-record/src/clear_record/web/views.py:123
 msgid "Status"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/views.py:139
+#: packages/clear-record/src/clear_record/web/views.py:140
 #, python-brace-format
 msgid "running {count}"
 msgstr "运行中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/views.py:140
+#: packages/clear-record/src/clear_record/web/views.py:141
 #, python-brace-format
 msgid "queued {count}"
 msgstr "排队中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/views.py:261
+#: packages/clear-record/src/clear_record/web/views.py:262
 msgid "chunk seconds"
 msgstr "分块秒数"
 
-#: packages/clear-record/src/clear_record/web/views.py:263
+#: packages/clear-record/src/clear_record/web/views.py:264
 msgid ""
 "how much audio one transcription pass decodes at once; a long tape wants "
 "longer chunks"
 msgstr "一次转写解码的音频长度；长录音适合更长的分块"
 
-#: packages/clear-record/src/clear_record/web/views.py:268
+#: packages/clear-record/src/clear_record/web/views.py:269
 msgid "overlap seconds"
 msgstr "重叠秒数"
 
-#: packages/clear-record/src/clear_record/web/views.py:270
+#: packages/clear-record/src/clear_record/web/views.py:271
 msgid "how much neighbouring chunks share, so a word on a boundary is not lost"
 msgstr "相邻分块共享的音频长度，以免边界处的词被漏掉"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:62
-#: packages/clear-record/src/clear_record/web/views.py:279
+#: packages/clear-record/src/clear_record/web/views.py:280
 msgid "jobs"
 msgstr "并发任务"
 
-#: packages/clear-record/src/clear_record/web/views.py:281
+#: packages/clear-record/src/clear_record/web/views.py:282
 msgid ""
 "how many transcription workers may run at once; 0 lets the node choose — "
 "process-isolated backends only, so the native apple-speech path always "
 "runs one"
 msgstr "可同时运行的转写工作进程数；0 表示由节点决定——仅限进程隔离的后端，因此原生 apple-speech 路径始终只运行一个"
 
-#: packages/clear-record/src/clear_record/web/views.py:633
+#: packages/clear-record/src/clear_record/web/views.py:634
 msgid "Not configured"
 msgstr "未配置"
 
-#: packages/clear-record/src/clear_record/web/views.py:635
+#: packages/clear-record/src/clear_record/web/views.py:636
 msgid "Configuration problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/views.py:637
+#: packages/clear-record/src/clear_record/web/views.py:638
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
-#: packages/clear-record/src/clear_record/web/views.py:639
-#: packages/clear-record/src/clear_record/web/views.py:650
+#: packages/clear-record/src/clear_record/web/views.py:640
+#: packages/clear-record/src/clear_record/web/views.py:651
 msgid "No delivery yet"
 msgstr "尚未投递"
 
-#: packages/clear-record/src/clear_record/web/views.py:640
+#: packages/clear-record/src/clear_record/web/views.py:641
 msgid "Configured"
 msgstr "已配置"
 
-#: packages/clear-record/src/clear_record/web/views.py:645
+#: packages/clear-record/src/clear_record/web/views.py:646
 msgid "Config problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/views.py:647
+#: packages/clear-record/src/clear_record/web/views.py:648
 msgid "Failing"
 msgstr "投递失败"
 
-#: packages/clear-record/src/clear_record/web/views.py:649
-#: packages/clear-record/src/clear_record/web/views.py:727
+#: packages/clear-record/src/clear_record/web/views.py:650
+#: packages/clear-record/src/clear_record/web/views.py:728
 msgid "Delivered"
 msgstr "已投递"
 
-#: packages/clear-record/src/clear_record/web/views.py:729
+#: packages/clear-record/src/clear_record/web/views.py:730
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/views.py:1045
+#: packages/clear-record/src/clear_record/web/views.py:1046
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/views.py:1085
+#: packages/clear-record/src/clear_record/web/views.py:1086
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1087
+#: packages/clear-record/src/clear_record/web/views.py:1088
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/views.py:1089
+#: packages/clear-record/src/clear_record/web/views.py:1090
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/views.py:1091
+#: packages/clear-record/src/clear_record/web/views.py:1092
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/views.py:1093
+#: packages/clear-record/src/clear_record/web/views.py:1094
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/views.py:1095
+#: packages/clear-record/src/clear_record/web/views.py:1096
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1096
+#: packages/clear-record/src/clear_record/web/views.py:1097
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1119
+#: packages/clear-record/src/clear_record/web/views.py:1120
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1136
+#: packages/clear-record/src/clear_record/web/views.py:1137
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1213
+#: packages/clear-record/src/clear_record/web/views.py:1214
 msgid "needs attention"
 msgstr "需要处理"
 
-#: packages/clear-record/src/clear_record/web/views.py:1214
+#: packages/clear-record/src/clear_record/web/views.py:1215
 msgid "idle"
 msgstr "空闲"
 
-#: packages/clear-record/src/clear_record/web/views.py:1304
+#: packages/clear-record/src/clear_record/web/views.py:1342
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/views.py:1305
+#: packages/clear-record/src/clear_record/web/views.py:1343
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/views.py:1306
+#: packages/clear-record/src/clear_record/web/views.py:1344
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/views.py:1307
+#: packages/clear-record/src/clear_record/web/views.py:1345
 msgid "Config"
 msgstr "配置"
 
@@ -1630,6 +1643,7 @@ msgstr "归档"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:61
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:33
 msgid "Created"
 msgstr "创建时间"
 
@@ -2330,19 +2344,36 @@ msgid "Sign out everywhere"
 msgstr "在所有位置退出登录"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:49
+msgid "Machine tokens"
+msgstr "机器令牌"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:52
+msgid ""
+"A token authenticates the machine API (/api/v1) for a script, with no "
+"browser and no cookie. It is shown once when it is minted and stored only"
+" as a hash; revoking it takes effect on the very next request, with no "
+"restart. A token cannot open the console, cannot mint or revoke tokens, "
+"and cannot destroy anything — the machine API has no verb that destroys "
+"what a durable copy cannot reconstruct."
+msgstr ""
+"令牌让脚本无需浏览器、无需 Cookie 即可通过机器 "
+"API（/api/v1）认证。它只在生成时显示一次，并且只以哈希形式存储；撤销它会在下一次请求时立即生效，无需重启。令牌无法打开控制台，无法生成或撤销令牌，也无法销毁任何东西——机器"
+" API 没有任何会销毁“无法从持久副本重建的数据”的动词。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:57
 msgid "Backend availability"
 msgstr "后端可用性"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:52
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:60
 #: packages/clear-record/src/clear_record/web/templates/base.html:57
 msgid "Diagnostics"
 msgstr "诊断"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:53
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:61
 msgid "Download diagnostics"
 msgstr "下载诊断"
 
-#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:55
+#: packages/clear-record/src/clear_record/web/templates/_settings_status.html:63
 #: packages/clear-record/src/clear_record/web/templates/agent.html:17
 #: packages/clear-record/src/clear_record/web/templates/setup.html:56
 msgid "Hello-world check"
@@ -2455,6 +2486,42 @@ msgstr ""
 "保留仅限手动：clear-record "
 "绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} "
 "中设置托管根目录；项目的归档根目录在项目页中编辑。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:14
+msgid "Copy this token now — it is shown once and cannot be retrieved again."
+msgstr "请立即复制此令牌——它只显示一次，之后无法再次取回。"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:24
+msgid "Label (what will present it)"
+msgstr "标签（由谁出示）"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:25
+msgid "Token label"
+msgstr "令牌标签"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:26
+msgid "Mint token"
+msgstr "生成令牌"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:32
+msgid "Label"
+msgstr "标签"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:34
+msgid "Last used"
+msgstr "上次使用"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:46
+msgid "never"
+msgstr "从未"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:50
+msgid "Revoke"
+msgstr "撤销"
+
+#: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:55
+msgid "No machine tokens yet."
+msgstr "还没有机器令牌。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:2
 msgid "Loading webhook status…"

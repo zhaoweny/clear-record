@@ -1,4 +1,4 @@
-"""The console credential and the human sessions it authorizes (ADR-0033).
+"""The console credential, its human sessions, and the machine tokens (ADR-0033).
 
 The auth position is one human, one credential and many actors. The credential is
 **one password**, set on the console's first run or replaced by the rescue command
@@ -24,18 +24,26 @@ surface's `actor` word is really about — and an operation that destroys someth
 no durable copy can reconstruct is gated at the act, not by a token. What stays
 anonymous is the console's one page — the setup route, whose two form posts are
 its own — the liveness route, and the compiled assets under ``/static``
-(ADR-0033); machine tokens are a sibling ticket's half, and this module is what
-they will sit beside.
+(ADR-0033).
+
+The module also owns the **machine tokens** a script carries: the operator mints
+one in the console, sees its plaintext once, and the registry holds only its
+digest — so a token is a *second* way to satisfy the gate on the machine surface
+and no way at all past the console's pages. A token is not a session and has no
+clocks: it lives until it is revoked, and the revoke is a delete, which is what
+makes it take effect on the next request with no restart. What a token can never
+do is destroy something no durable copy can reconstruct: the machine surface
+carries no such verb (ADR-0033), and this module adds none.
 
 Where the credential is written. :class:`ConsoleAuth` is the only writer, and it
 writes through :class:`~clear_record.service.store.Registry`, so "the credential
-change is a registry row" holds by construction. The *set* is audited
-(``credential.set``, with the actor the transport supplies); the session rows are
-**bookkeeping** — sign-in, the idle clock, sign-out and the prune — and append no
-audit row, on the same line the setup marker is drawn: they are not history of the
-project data, and one row per request would bury the record that is. The one
-mutation of security state that *is* an attribution question — who holds the key
-— is answered by the ``credential.set`` row.
+change is a registry row" holds by construction. The **attribution questions** are
+audited — ``credential.set`` when the password is set or replaced, ``token.mint``
+and ``token.revoke`` for the machine tokens, each with the actor the transport
+supplies — and everything else is **bookkeeping**: the session rows (sign-in, the
+idle clock, sign-out and the prune) and a token's own last-used instant append no
+audit row, on the same line the setup marker is drawn. They are not history of the
+project data, and one row per request would bury the record that is.
 """
 
 from __future__ import annotations
@@ -56,6 +64,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from clear_record.core import node
 from clear_record.core.i18n import tr
+from clear_record.service.models import MachineToken
 
 if TYPE_CHECKING:  # the store imports this module's constants, never the reverse
     from clear_record.service.store import Registry
@@ -80,8 +89,16 @@ _DERIVED_BYTES = 32
 _SALT_BYTES = 16
 
 #: The session token's entropy. 32 random bytes, URL-safe, are the cookie's whole
-#: secret; the digest of it is all the registry ever holds.
+#: secret; the digest of it is all the registry ever holds. A **machine token**
+#: is the same kind of secret — high-entropy randomness, never a password — so it
+#: is drawn at the same width.
 _TOKEN_BYTES = 32
+
+#: How long a machine token's label may be. A label is the operator's handle on a
+#: script's credential: it is listed, it rides the audit record as
+#: ``token:<label>``, and it has to stay readable in a table row. Sixty-four
+#: characters is a sentence, which is more than a handle needs.
+TOKEN_LABEL_MAX_LENGTH = 64
 
 
 def _utcnow() -> _dt.datetime:
@@ -172,12 +189,64 @@ def new_session_token() -> str:
     return secrets.token_urlsafe(_TOKEN_BYTES)
 
 
-def token_digest(token: str) -> str:
-    """The registry's form of a session token — a plain digest, never the token.
+def new_machine_token() -> str:
+    """A fresh machine token's plaintext — shown once, stored only as its digest.
 
-    A session token is high-entropy randomness, not a password, so it needs no
-    salt or stretching: a SHA-256 digest cannot be read back into the token, and a
-    registry leak hands out no usable cookie.
+    The same shape of secret as a session token (:func:`new_session_token`), and
+    deliberately the same call: what differs is not the entropy but the *life* —
+    a session has clocks, a token has none and lives until it is revoked.
+    """
+    return secrets.token_urlsafe(_TOKEN_BYTES)
+
+
+def require_token_label(label: str) -> str:
+    """``label`` as it may be stored, or the refusal that names the rule.
+
+    The label is the one thing about a token a person reads back — the console
+    lists it, the audit record's target carries it, and a script's own notes say
+    which credential it holds — so it must be an actual handle: non-blank, every
+    character **printable** (a newline or a tab would break the row it is listed
+    in and the line it is logged on, and a no-break space reads as a blank while
+    being a different character), and short enough to read
+    (:data:`TOKEN_LABEL_MAX_LENGTH`).
+    """
+    cleaned = label.strip()
+    if not cleaned:
+        raise ValueError(tr("a machine token needs a label."))
+    if len(cleaned) > TOKEN_LABEL_MAX_LENGTH:
+        raise ValueError(
+            tr(
+                "a token label may be at most {count} characters.",
+                count=TOKEN_LABEL_MAX_LENGTH,
+            )
+        )
+    if any(not char.isprintable() for char in cleaned):
+        raise ValueError(tr("a token label may contain only printable characters."))
+    return cleaned
+
+
+#: How long a token's recorded use may sit before a request moves it again.
+#:
+#: A token's **use** is recorded at most once per window, the shape the session
+#: idle clock already uses (which writes only when less than half its window
+#: remains, so its own writes are at least half a window apart). The reason is
+#: sharper here: the gate's write is synchronous inside an ``async`` middleware,
+#: so a commit per request would block the event loop for every call a script
+#: makes — and a registry another process holds for a moment would then stall the
+#: whole node, not just that request (measured: a token request waiting out the
+#: driver's busy timeout held up an unrelated ``/health`` probe for seconds). What
+#: the console's list has to answer is "is this script still calling?", and a
+#: window answers that as well as an instant.
+TOKEN_TOUCH_INTERVAL = _dt.timedelta(minutes=5)
+
+
+def token_digest(token: str) -> str:
+    """The registry's form of a token — a plain digest, never the token.
+
+    Shared by both kinds of high-entropy secret the auth surface issues: the
+    session cookie's token and the machine tokens a script presents. Neither is a
+    password, so neither needs a salt or stretching: a SHA-256 digest cannot be
+    read back into the token, and a registry leak hands out no usable credential.
     """
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -219,12 +288,14 @@ class SessionState(enum.StrEnum):
 
 
 class ConsoleAuth:
-    """The console credential and its sessions, over one registry.
+    """The credential, the human sessions and the machine tokens, over one registry.
 
-    The console's request gate holds one of these, and the routes that set the
-    credential or start a session hold the same one. The policy and the clock are
-    attributes rather than globals so a test can shorten a timeout or move the
-    clock, and so a process serves one policy at a time.
+    The console's request gate holds one of these, and so do the routes that set
+    the credential, start a session and mint or revoke a token. The policy and the
+    clock are attributes rather than globals so a test can shorten a timeout or
+    move the clock, and so a process serves one policy at a time. The clock is
+    also what stamps a minted token and its uses, so a test that moves it moves
+    every auth instant together.
     """
 
     def __init__(
@@ -393,6 +464,112 @@ class ConsoleAuth:
         takes effect on the next request, from any surface, with no restart.
         """
         return self.registry.end_all_sessions()
+
+    # --- machine tokens (ADR-0033) ----------------------------------------- #
+    #
+    # A script's credential, and a **second** way to satisfy the machine
+    # surface's half of the gate — never the console's. The plaintext is handed
+    # out exactly once, by :meth:`mint_token`; everything after that reads the
+    # registry by digest.
+
+    def mint_token(self, label: str, *, actor: str) -> tuple[str, MachineToken]:
+        """Mint a labelled token; return ``(the plaintext, the row)``.
+
+        **The plaintext is returned to this caller and never stored**: the
+        registry gets the digest, so the console's route is the only place the
+        value exists, it is shown once, and no later request — a reload, a second
+        tab, this method called again — can reproduce it. The actor is the
+        transport's own word, and minting appends ``token.mint`` to the audit
+        record, because "who holds a key" is an attribution question.
+
+        A label already in use is a ``ValueError`` naming it (the store's own
+        refusal): labels are handles, and silently minting a second token under
+        one of them would make the console's revoke action ambiguous.
+        """
+        minted = new_machine_token()
+        row = self.registry.create_machine_token(
+            require_token_label(label),
+            token_digest(minted),
+            created_at=self.clock(),
+            actor=actor,
+        )
+        return minted, row
+
+    def machine_tokens(self) -> list[MachineToken]:
+        """Every minted token, oldest first — what the console's list renders."""
+        return self.registry.machine_tokens()
+
+    def revoke_token(self, label: str, *, actor: str) -> bool:
+        """Revoke the token ``label`` names; True when a row was there.
+
+        The delete *is* the revocation, so the next request bearing the token is
+        refused with no restart and nothing cached to expire. Revoking appends
+        ``token.revoke`` — the other half of the "who holds a key" question — and
+        a label naming nothing revokes nothing and appends nothing.
+        """
+        return self.registry.revoke_machine_token(label, actor=actor)
+
+    def authenticate_token(
+        self, token: str | None, *, touch: bool = True
+    ) -> MachineToken | None:
+        """The token ``token`` names, or ``None`` — and the last-used write.
+
+        ``None`` for an absent or unknown token: a revoked one, a value from
+        another install, or a client's guess. There is no "stale" verdict here,
+        unlike a session's — a token has no clocks and no expiry, so a token that
+        names a row is live until it does not.
+
+        A **use** moves ``last_used_at``, which is the one write a token's use
+        makes — and it is **lazy**: the write happens at most once per
+        :data:`TOKEN_TOUCH_INTERVAL`, not on every request, for the reason that
+        constant states. The decision is made from the row this call already read,
+        so a request that is not due to write performs no write at all: that is
+        what keeps one script's burst of calls from serialising the whole node
+        behind the registry's write lock. It is also best-effort for the reason
+        the gate's other writes are: the token was read and is valid, so a
+        registry another writer holds costs the timestamp and never the request —
+        raising here would turn a correctly authenticated request into a 500.
+        ``touch=False`` is for a caller reading a token without spending a use
+        (the console's list never calls this).
+        """
+        if not token:
+            return None
+        digest = token_digest(token)
+        row = self.registry.machine_token(digest)
+        if row is None:
+            return None
+        now = self.clock()
+        if touch and self._use_is_worth_recording(row, now):
+            try:
+                self.registry.touch_machine_token(digest, used_at=now)
+            except SQLAlchemyError:
+                pass
+        return row
+
+    @staticmethod
+    def _use_is_worth_recording(row: MachineToken, now: _dt.datetime) -> bool:
+        """Whether this use should move ``last_used_at`` — the lazy clock's test.
+
+        A token that has never been presented is always recorded (its first use
+        is the fact the list cannot otherwise show). After that, a use is written
+        only once the stored stamp is at least :data:`TOKEN_TOUCH_INTERVAL` old.
+
+        The comparison is a **string** comparison, and exactly the chronological
+        one: the registry writes these instants in one fixed-width UTC spelling
+        (:func:`~clear_record.service.store._instant`), so two of them order as
+        strings in the same order they happened. A stamp this build cannot read —
+        empty, or hand-edited into something shorter — sorts before the cutoff and
+        is therefore rewritten rather than trusted: the row cannot be inside a
+        window nobody can measure.
+        """
+        if row.last_used_at is None:
+            return True
+        cutoff = (
+            (now - TOKEN_TOUCH_INTERVAL)
+            .astimezone(_dt.UTC)
+            .isoformat(timespec="microseconds")
+        )
+        return row.last_used_at <= cutoff
 
 
 #: How often a running node checks that the session it published for its own
@@ -604,15 +781,19 @@ __all__ = [
     "DEFAULT_SESSION_POLICY",
     "LOCAL_SESSION_REFRESH_S",
     "PASSWORD_MIN_LENGTH",
+    "TOKEN_LABEL_MAX_LENGTH",
+    "TOKEN_TOUCH_INTERVAL",
     "ConsoleAuth",
     "SessionPolicy",
     "SessionState",
     "hash_password",
+    "new_machine_token",
     "new_session_token",
     "publish_local_session",
     "refresh_local_session",
     "register",
     "require_password",
+    "require_token_label",
     "token_digest",
     "verify_password",
 ]

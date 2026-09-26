@@ -100,6 +100,7 @@ from clear_record.service.setup import (
     setup_incomplete,
 )
 from clear_record.service.webhooks import WebhookStatus
+from clear_record.web import auth as auth_edge
 from clear_record.web import lookup
 
 #: The Settings page's sections (ADR-0027): each is a real URL,
@@ -1284,6 +1285,43 @@ def storage_settings_context(registry: Registry, locale: str) -> dict:
     }
 
 
+def tokens_context(
+    registry: Registry, *, minted: str | None = None, error: str | None = None
+) -> dict:
+    """The machine-token list: labels, instants, and the one-time plaintext.
+
+    One context builder for the Settings → Status block and the two routes that
+    write to it (mint, revoke), so the page and a fragment swap render the same
+    rows. The rows come from the service as :class:`~clear_record.service.models.MachineToken`
+    values, which carry **no** digest — a template cannot print a token's secret
+    because the value it renders has no such field.
+
+    ``minted`` is the plaintext of a token minted by *this* request, and it is
+    only ever passed by the mint route's own response: nothing stores it and no
+    earlier read can produce it, so a reload renders the list without it.
+
+    ``error`` is the service's own refusal sentence for a mint that did not land
+    (a label already in use, or one the rule rejects), rendered as the block's
+    alert rather than as a page.
+    """
+    return {
+        "tokens": [
+            {
+                "id": token.id,
+                "label": token.label,
+                "created_at": token.created_at,
+                # ``None`` is "this token has never been presented": the block
+                # says so rather than showing the mint time twice.
+                "last_used_at": token.last_used_at,
+                "revoke_path": auth_edge.token_revoke_path(token.id),
+            }
+            for token in registry.machine_tokens()
+        ],
+        "minted": minted,
+        "error": error,
+    }
+
+
 def status_context(registry: Registry, locale: str) -> dict:
     """Version, the resolved directories, the queue and backend availability."""
     _speaks(locale)
@@ -1313,6 +1351,9 @@ def status_context(registry: Registry, locale: str) -> dict:
         # The permanent hello-world check renders its idle state here; the
         # /web/ui/hello-check POST swaps a result into #hello-check.
         "check": None,
+        # The machine-token block beside Sessions: the list the mint/revoke
+        # routes swap back into #tokens, rendered here with no plaintext.
+        **tokens_context(registry),
     }
 
 

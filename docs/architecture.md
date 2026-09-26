@@ -394,7 +394,9 @@ runnable, and the **project console** is built on top of it:
   (ADR-0013).
 - `clear_record.web` — the local console: FastAPI serving a server-rendered
   **htmx + Alpine.js** UI on `/web/ui/*` and a JSON API on `/api/v1/*`, bound to
-  localhost, behind one console credential (ADR-0033; extra: `web`)
+  localhost, behind the console credential (a browser session, which a client
+  that holds one also presents to `/api/v1`) or a **machine token** for the JSON
+  API (ADR-0033; extra: `web`)
   (ADR-0013, ADR-0016). Its CSS/JS are
   built from `packages/clear-record/frontend/` (Vite + Tailwind v4) and the
   **compiled output is committed**, so the console works offline with no Node on

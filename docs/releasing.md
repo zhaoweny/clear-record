@@ -335,10 +335,12 @@ The console has a credential now (ADR-0033), so `/api/v1/projects` answers `401`
 bare `curl`. The write above therefore presents `cr_session` — the session the
 node published for **this machine**, in the `local-session` file of its state
 directory (`CR_STATE_DIR`, §1 of the deployment guide), which is exactly what the
-command line itself sends. It is the only headless way in today: a *machine token*
-is ticket 262's, and is not built. A previous line that predates the gate has no such
-file (the empty cookie is then ignored and the POST is taken), and `/health` — the
-credential-free route — is what the candidate's own start is checked with.
+command line itself sends. A *script* has its own credential beside it — a
+**machine token** minted in the console (Settings → Status) and presented as
+`Authorization: Bearer <token>` — while the file is the command line's own
+credential. A previous line that predates the gate — or predates the file — has
+none (the empty cookie is then ignored and the POST is taken), and `/health` —
+the credential-free route — is what the candidate's own start is checked with.
 
 So the `select` is the real assertion, and it must print the project's **slug** —
 `registry-smoke` for the name `Registry smoke`, since the API slugifies the name

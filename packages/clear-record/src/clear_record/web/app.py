@@ -177,6 +177,7 @@ from clear_record.web.auth import (
     SETUP_PATH,
     SIGN_IN_PATH,
     SIGN_OUT_PATH,
+    TOKENS_PATH,
 )
 
 # ``_auto_view``, ``ACTIVE_RUN_LABELS`` and ``SETTINGS_SECTIONS`` moved to the
@@ -1124,7 +1125,7 @@ def create_app(
 
     @app.middleware("http")
     async def request_auth(request: Request, call_next):
-        """Hold every request to the anonymous surface or a live session.
+        """Hold every request to the anonymous surface or a live credential.
 
         The gate reads the cookie on **every** request, so the answer is the
         registry's and never a copy the process cached: revoking a session, or
@@ -1133,6 +1134,18 @@ def create_app(
         setup page and the sign-in form ask whether the visitor already has a
         session — and reading never moves the idle clock (``touch=False``), so a
         probe or a shared link cannot keep a session alive.
+
+        **A machine request has a second way in: a bearer token.** The same
+        property holds — the row is read per request, so revoking a token is
+        effective on the very next one with no restart — and the branch is
+        deliberately inside the ``machine_request`` arm alone, so a token can
+        never open the console's pages or fragments. A token that names no row
+        (revoked, another install's, a guess) is refused exactly as an absent
+        one. Its use moves ``last_used_at`` — **lazily**, at most once per
+        ``TOKEN_TOUCH_INTERVAL``, so a script's burst of calls performs no write
+        at all — and a write it does make is one the gate tolerates losing: a
+        locked registry costs the timestamp, never the request, and never the
+        event loop.
 
         The refusal is a redirect for a browser and ``401`` for the machine
         surface, and it clears a cookie it knows to be dead rather than leaving a
@@ -1150,6 +1163,12 @@ def create_app(
         if anonymous or state is SessionState.ACTIVE:
             return await call_next(request)
         if auth_edge.machine_request(request):
+            presented = auth_edge.bearer_token(request)
+            if console.authenticate_token(presented) is not None:
+                # A live token is the second way in, and this request's whole
+                # credential: the route it reaches writes as the API's actor,
+                # exactly as a cookie-authenticated machine request does.
+                return await call_next(request)
             return JSONResponse(
                 status_code=401, content={"detail": auth_edge.AUTH_REQUIRED}
             )
@@ -1848,6 +1867,53 @@ def create_app(
             response, secure=auth_edge.secure_request(request)
         )
         return response
+
+    @app.post(TOKENS_PATH, response_class=HTMLResponse)
+    def mint_token(request: Request, label: str = Form(...)) -> HTMLResponse:
+        """Mint a labelled machine token and show its plaintext **once**.
+
+        The plaintext exists in this response and nowhere else: the registry
+        stores the digest, so the fragment htmx swaps in is the only place the
+        value ever appears, and reloading Settings — a GET, which re-renders the
+        list from the registry — cannot reproduce it. That is the whole of "shown
+        once", and it is why this is a POST's body rather than a query parameter
+        or a second page.
+
+        A label already in use, or one the rule refuses, re-renders the block at
+        200 with the service's own sentence, the console's convention for a form
+        refusal (htmx does not swap a 4xx, so a 409 would make the failure
+        invisible). The actor is the console's, never a field of the form: the
+        audit record says which surface minted the token, and a client cannot
+        name itself.
+        """
+        try:
+            minted, _row = console.mint_token(label, actor=CONSOLE)
+        except ValueError as exc:
+            return render(
+                request,
+                "_settings_tokens.html",
+                views.tokens_context(registry, error=str(exc)),
+            )
+        return render(
+            request,
+            "_settings_tokens.html",
+            views.tokens_context(registry, minted=minted),
+        )
+
+    @app.post(f"{TOKENS_PATH}/{{token_id}}/revoke", response_class=HTMLResponse)
+    def revoke_token(request: Request, token_id: int) -> HTMLResponse:
+        """Revoke one machine token and re-render the list.
+
+        Effective on the very next request a client makes with it, because the
+        gate reads the row per request and there is nothing cached to expire. The
+        row's label is what the revoke names — the audit record's target is
+        ``token:<label>``, which outlives the row — and an id naming no token (a
+        stale page, a second click) revokes nothing and re-renders the same list.
+        """
+        row = registry.machine_token_by_id(token_id)
+        if row is not None:
+            console.revoke_token(row.label, actor=CONSOLE)
+        return render(request, "_settings_tokens.html", views.tokens_context(registry))
 
     @app.post("/web/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:

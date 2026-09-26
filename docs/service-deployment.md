@@ -221,6 +221,45 @@ step, and needs no session, no browser and no running node. Replacing a credenti
 ends every session the old one opened, and a registry it cannot read is refused
 rather than half-written.
 
+#### Machine tokens for scripts (ADR-0033)
+
+[FACT, repo] A **script** that calls the machine API needs a credential of its
+own, and the operator is the only one who mints it: Settings → Status →
+**Machine tokens** → *Mint token*. A token is **labelled** (the label is the
+handle you match a script against), and the plaintext is shown **once**, in the
+response to the mint — the registry keeps only its SHA-256 digest, so no reload,
+no second visit and no copy of the registry can produce it again. The list
+beside the form shows every token's label, when it was minted, when it was last
+used and a **Revoke** button. Present it as a header:
+
+```sh
+curl -H "Authorization: Bearer $CR_TOKEN" http://127.0.0.1:8765/api/v1/projects
+```
+
+| Fact | What it means for the operator |
+|---|---|
+| Shown once | the plaintext exists in the mint response and nowhere else — not in the registry, not in a log line, not in the diagnostics bundle. Lost it? Revoke that token and mint another. |
+| Hashed at rest | the registry holds a SHA-256 digest of the token, never the token itself, so a leaked registry hands out no usable credential. |
+| Last used | a token's use moves `last_used_at` at most once per window (the gate records it lazily, so a busy script never costs the node a write per call); the list answers "is this script still calling?", and `never` means the token has not been presented yet. |
+| Revoked on the next request | a revoke **deletes** the row and the gate reads the row per request, so the very next call is refused — no restart, no grace window. |
+| No expiry | a token is not a session: it has no idle or absolute clock and lives until it is revoked. |
+| One label, one token | a second mint under a label already in use is refused rather than silently producing a second credential. |
+
+**Sign out everywhere** ends browser sessions only — a token is a different
+credential and is revoked one row at a time, from the list above.
+
+**What a token can never do.** It authenticates the **machine API**
+(`/api/v1/…`) and nothing else: it cannot open a console page or fragment, and it
+cannot mint or revoke tokens. And it cannot destroy: no token — and no session,
+and no MCP client — authorizes an operation that destroys data a durable copy
+cannot reconstruct (ADR-0033). The machine API carries two `DELETE` verbs, and
+both are reconstructible: `DELETE /api/v1/glossary/{term_id}` **retires** a term
+(the row survives, and `POST /api/v1/glossary/{term_id}/restore` puts it back),
+and `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses until the meeting has
+a **verified archive** — the durable copy its answer names — and unlinks nothing
+when it refuses. A third one is a decision rather than an accident: the suite
+walks the table and fails on one.
+
 **A bind past loopback needs a name the guard trusts.** The guard answers `403`
 to a `Host` that is neither loopback nor a name in `CR_TRUSTED_HOSTS`, so a
 non-loopback `--host` with none declared refuses to start — before a port is
@@ -257,8 +296,18 @@ your own account, and root — can act on the console as you; nothing on the net
 can, because the file is not served and a browser carries its own cookie. The node
 keeps it current while it runs: a fresh one is minted when the old reaches a
 deadline of its own clocks, or after **Sign out everywhere**, and a stale file is
-refused exactly like any other dead session. Labelled machine tokens are the
-scripting story of their own, and are not built yet.
+refused exactly like any other dead session.
+
+This file is the node's **own-machine credential**, and it is deliberately not a
+machine token. A token's plaintext is shown once and stored only as a digest, so
+a node could not hand its own command line a token across restarts without
+minting (and listing) a new one at every start — and a credential the operator
+can revoke from a page is the wrong shape for a client that has to keep working
+when nobody is looking. The file is a capability the node's own account already
+had: it can read and write the registry itself. The constraints above are the
+contract — one session through the same path, the same two clocks, written beside
+the address record at `0600`, removed on a clean exit, and refused like any other
+dead session once it is stale — and the suite pins each of them.
 
 The loopback default is unaffected: `clear-record serve` with no `--host` always
 starts. `CR_TRUSTED_HOSTS` names the hosts the console answers to (the one
@@ -669,14 +718,21 @@ cheap (`docs/architecture.md` §8).
 
 ## 6. What this does not cover
 
-- **Per-user accounts, RBAC, and machine tokens.** The console has **one**
-  credential and no usernames (ADR-0033), and the machine API carries no bearer
-  token yet — what exists is: the salted hash in the registry, the human sessions
-  and their two windows, the `/web/setup` + `/health` + `/static` anonymous surface,
-  and the rescue command (§1). A token for scripts, per-project authorization, and
-  an approvals ceremony are all deferred, not rejected; the rule they will meet is
-  ADR-0033's — a credential alone may not destroy something no durable copy can
-  reconstruct.
+- **Per-user accounts and RBAC.** The console has **one** credential and no
+  usernames (ADR-0033): every surface's mutation is attributed to the surface
+  (`console`, `api`, `mcp`, `cli`, `queue`), not to a person, and a token is
+  labelled for the operator's own bookkeeping rather than being an identity —
+  the audit record still signs the HTTP API's writes as `api`, not
+  `api:<token label>`. What exists: the salted hash in the registry, the human
+  sessions and their two windows, the machine tokens (§1) and the node's own
+  ready-made session for its own machine, the `/web/setup` + `/health` +
+  `/static` anonymous surface, and the rescue command. Per-project
+  authorization, an approvals ceremony and a per-token actor are deferred, not
+  rejected; the rule they will meet is ADR-0033's — a credential alone may not
+  destroy something no durable copy can reconstruct.
+- **Remote MCP.** `/mcp` over HTTP is decided, not mounted (ADR-0017, ADR-0033):
+  a machine token authenticates the JSON machine API (`/api/v1`) today, and the
+  `/mcp` transport stays deferred until a client needs a non-local one.
 - **A published container image.** You build it, whisper.cpp and all.
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.

@@ -51,7 +51,9 @@ from clear_record.web.auth import (
     SIGN_IN_PATH,
     SIGN_OUT_PATH,
     STATIC_PREFIX,
+    TOKENS_PATH,
     answers_anonymously,
+    token_revoke_path,
 )
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -731,9 +733,85 @@ def test_the_console_path_is_one_declaration() -> None:
     assert SETUP_PATH == f"{CONSOLE_PATH}/setup"
     assert Path(CREDENTIAL_PATH).parent == Path(SETUP_PATH) == Path(SIGN_IN_PATH).parent
     assert Path(SIGN_OUT_PATH).parent == Path(SETUP_PATH)
+    # The machine-token routes are console routes for the same reason: the
+    # operator mints and revokes, and a token is never what reaches them.
+    assert TOKENS_PATH == f"{CONSOLE_PATH}/ui/tokens"
+    assert token_revoke_path(7) == f"{TOKENS_PATH}/7/revoke"
 
 
 # --- the session the node publishes for its own machine ---------------------- #
+#
+# The file **stays**, and these are the constraints it is kept under. Why a machine
+# token is not used for this path is recorded in the ADR's Update and in
+# `docs/service-deployment.md`: a token's plaintext is shown once and stored only
+# as a digest, so a node could not re-present one to its own command line without
+# re-minting (and re-listing) a credential per start; the file is a capability the
+# node's own uid already had. What the two share is the property that matters —
+# neither can destroy anything a durable copy cannot reconstruct.
+
+
+def test_the_nodes_own_machine_credential_is_the_local_session_file(
+    console, monkeypatch, tmp_path
+) -> None:
+    """The node's own-machine credential: five pinned constraints, one place.
+
+    The command line is a client of the node and runs as the node's own
+    operating-system user, which ADR-0033 puts **inside** the boundary; so the
+    node publishes a session for that machine rather than asking it for a
+    password. What that file *is* — as opposed to how it is handed out — is:
+
+    1. **a session like any other**, opened through the same
+       :class:`ConsoleAuth` path a sign-in uses (no second credential kind, no
+       separate table, no gate branch for it);
+    2. **judged by the same two clocks**, from the one policy the app serves;
+    3. **written beside the address record**, mode ``0600``, so the secret is
+       read by the account that already owns the registry and nobody else;
+    4. **removed on a clean exit**, which is what ``NodeServer.shutdown`` does
+       through the keeper;
+    5. **refused like any other dead session** once it is stale or unknown — and
+       presented only to the recorded node (the client half of that is pinned in
+       ``tests/core/test_local_session.py``).
+
+    A token is not used for this path, and this is where the choice is recorded
+    rather than implied: see the section note above.
+    """
+    monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
+    auth = console.app.state.auth
+    policy = SessionPolicy(
+        idle_timeout=timedelta(hours=1), absolute_lifetime=timedelta(days=2)
+    )
+    auth.policy = policy
+
+    # 1 — the same path: a session row, minted by the node's own call.
+    token = refresh_local_session(auth)
+    assert auth.session(token, touch=False) is SessionState.ACTIVE
+    row = console.registry.get_session(token_digest(token))
+    assert row is not None, "the local session is a console session row"
+
+    # 2 — the same clocks, computed from the one policy the app serves.
+    assert row.absolute_deadline - row.created_at == policy.absolute_lifetime
+    assert row.idle_deadline - row.seen_at == policy.idle_timeout
+
+    # 3 — beside the address record, and 0600 at creation.
+    path = node_module.local_session_path()
+    assert path.parent == node_module.node_address_path().parent
+    assert path.stat().st_mode & 0o777 == 0o600
+
+    # 5 — a token this registry never issued is refused like any dead cookie.
+    console.client.cookies.set(SESSION_COOKIE, "a-token-this-registry-never-issued")
+    assert console.client.get("/api/v1/projects").status_code == 401
+    console.client.cookies.set(SESSION_COOKIE, token)
+
+    # 4 — the clean exit takes the file down (the keeper is what shutdown stops),
+    # and it is the *node's* file to take down: every posture records its address
+    # before publishing, and the record's pid is what gates the removal.
+    node_module.record(node_module.NodeAddress.of("127.0.0.1", 8765))
+    keeper = web_app.LocalSessionKeeper(auth)
+    keeper.start()
+    assert node_module.local_session() == token
+    keeper.stop()
+    assert node_module.local_session() is None
+    node_module.forget()
 
 
 def test_the_published_local_session_is_a_session_like_any_other(

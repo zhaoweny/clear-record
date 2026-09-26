@@ -200,6 +200,7 @@ EXPECTED_WEB_TEMPLATES = frozenset(
         "_settings_models.html",
         "_settings_status.html",
         "_settings_storage.html",
+        "_settings_tokens.html",
         "_settings_webhooks.html",
         "_setup_transcription.html",
         "_storage.html",

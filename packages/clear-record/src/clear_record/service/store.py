@@ -132,6 +132,7 @@ from clear_record.service.models import (
     AuditEvent,
     ConsoleSession,
     GlossaryTerm,
+    MachineToken,
     Meeting,
     PipelineRun,
     Project,
@@ -986,6 +987,116 @@ class Registry:
                     )
                 )
         return len(dead)
+
+    # --- machine tokens (ADR-0033) ----------------------------------------- #
+    #
+    # A **third** kind of row beside the credential and the sessions, and the one
+    # a *script* carries: a labelled bearer token, minted in the console, stored
+    # as the digest of its plaintext, and revoked by deleting it. Like the
+    # credential's, its two attribution questions — who minted this token, and
+    # who revoked it — are audit rows (``token.mint``, ``token.revoke``); a
+    # token's own **use** is bookkeeping, the idle clock's sibling, and appends
+    # nothing: a write per request is what the audit record must never be.
+    #
+    # Every read here is by the key the caller already holds (the digest a
+    # request presented, or the id the console's list row carries), so there is
+    # no query over the table that is not a look-up or the whole list.
+
+    def machine_tokens(self) -> list[MachineToken]:
+        """Every minted token, in the order they were minted (oldest first)."""
+        with self._session() as session:
+            rows = session.scalars(
+                select(entities.MachineToken).order_by(entities.MachineToken.id)
+            )
+            return [self._machine_token(row) for row in rows]
+
+    def machine_token(self, digest: str) -> MachineToken | None:
+        """The token whose plaintext digests to ``digest``, or ``None``.
+
+        The look-up a request makes: the digest is the table's own indexed
+        uniqueness, so this is one row by key and never a scan — and a digest
+        that names no row (an unknown token, or one that has been revoked) is
+        ``None`` rather than an error, which is exactly how the gate refuses it.
+        """
+        with self._session() as session:
+            row = session.scalar(
+                select(entities.MachineToken).where(
+                    entities.MachineToken.token_digest == digest
+                )
+            )
+            return None if row is None else self._machine_token(row)
+
+    def machine_token_by_id(self, token_id: int) -> MachineToken | None:
+        """The token the console's list row names, or ``None`` (a stale page)."""
+        with self._session() as session:
+            row = session.get(entities.MachineToken, token_id)
+            return None if row is None else self._machine_token(row)
+
+    @audit.recorded("token.mint", audit.subject("token", "label"))
+    def create_machine_token(
+        self, label: str, digest: str, *, created_at: _dt.datetime, actor: str
+    ) -> MachineToken:
+        """Store one minted token — its label and its digest, never the plaintext.
+
+        ``label`` is the table's own uniqueness rule as well as this code's: a
+        second token with the same label would make the console's revoke action
+        and an audit row's ``token:<label>`` target name two rows, so the
+        collision is refused rather than suffixed like a project slug — a label
+        is the operator's handle on a script's credential, and inventing one for
+        them would hide the mistake.
+        """
+        with self._session() as session:
+            token = entities.MachineToken(
+                label=label,
+                token_digest=digest,
+                created_at=_instant(created_at),
+                last_used_at=None,
+            )
+            session.add(token)
+            try:
+                session.flush()
+            except IntegrityError as exc:
+                raise ValueError(
+                    f"a machine token named {label!r} already exists"
+                ) from exc
+            return self._machine_token(token)
+
+    def touch_machine_token(self, digest: str, *, used_at: _dt.datetime) -> None:
+        """Move a token's last-used instant forward — the write one use makes.
+
+        Bookkeeping, not an act: it records that a request the token
+        authenticated arrived, which is what makes the console's list answer "is
+        this script still calling?" — so it appends no audit row, exactly as the
+        session idle clock does not. **Who decides a write is due is the caller**
+        (:meth:`~clear_record.service.auth.ConsoleAuth.authenticate_token` writes
+        at most once per touch interval, so a burst of calls performs none), and
+        the caller tolerates this store's own refusal (a locked registry): a
+        token's use must never fail the request it authenticated.
+        """
+        with self._session() as session:
+            session.execute(
+                update(entities.MachineToken)
+                .where(entities.MachineToken.token_digest == digest)
+                .values(last_used_at=_instant(used_at))
+            )
+
+    @audit.recorded("token.revoke", audit.subject("token", "label"), conditional=True)
+    def revoke_machine_token(self, label: str, *, actor: str) -> bool:
+        """Delete the token ``label`` names; True when a row was there to delete.
+
+        The delete **is** the revocation, and it is why a revoked token is
+        refused on the very next request with no restart: the gate reads the row
+        per request, so there is no process state to expire. A conditional write,
+        read off its own ``rowcount`` — a label naming a token that is already
+        gone revokes nothing, and the record says so by appending nothing.
+        """
+        with self._session() as session:
+            result = session.execute(
+                delete(entities.MachineToken).where(
+                    entities.MachineToken.label == label
+                )
+            )
+            return bool(result.rowcount)
 
     # --- projects ---------------------------------------------------------- #
     @staticmethod
@@ -2446,6 +2557,21 @@ class Registry:
             seen_at=seen_at,
             idle_deadline=idle_deadline,
             absolute_deadline=absolute_deadline,
+        )
+
+    @staticmethod
+    def _machine_token(row: entities.MachineToken) -> MachineToken:
+        """The row as the console lists and the gate judges it.
+
+        No part of the digest leaves here — the boundary value has no field for
+        it — so a token's secret cannot reach a template, a log line or a JSON
+        response by this route even by mistake.
+        """
+        return MachineToken(
+            id=row.id,
+            label=row.label,
+            created_at=row.created_at,
+            last_used_at=row.last_used_at,
         )
 
     @staticmethod

@@ -259,6 +259,25 @@ class ConsoleSession:
     absolute_deadline: _dt.datetime
 
 
+@dataclasses.dataclass(frozen=True)
+class MachineToken:
+    """One labelled bearer token, as the console's registry lists it.
+
+    The **digest is deliberately not a field**, for the reason a session row
+    carries none: the reader that has the plaintext digests it itself, and the
+    console's list — the only other reader — shows the label, when the token was
+    minted and when it was last used, and nothing that could be presented as a
+    credential. A token with no use yet says so: ``last_used_at`` is ``None``
+    until a request the token authenticated moved it, rather than borrowing the
+    mint time and claiming a use that never happened.
+    """
+
+    id: int
+    label: str
+    created_at: str
+    last_used_at: str | None
+
+
 __all__ = [
     "Archive",
     "Artifact",
@@ -266,6 +285,7 @@ __all__ = [
     "CANDIDATE",
     "ConsoleSession",
     "GlossaryTerm",
+    "MachineToken",
     "Meeting",
     "MEETING_STATUSES",
     "PipelineRun",

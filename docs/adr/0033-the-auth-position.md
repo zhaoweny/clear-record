@@ -300,3 +300,68 @@ verbatim answers and the direction they answer are the
   prefix, so a move of the console moves the cookie with it — and the anonymous
   surface is still the list `web/auth.py`'s `answers_anonymously` returns,
   re-pointed at the new paths, never widened.
+
+## Update (2026-09-26) — the machine tokens land, and the node's own-machine credential is formalised
+
+- [FACT] **Machine tokens are in the build.** `machine_token` (revision `0012`)
+  holds one row per token: a **unique** `label`, the SHA-256 **digest** of the
+  plaintext as the look-up key, when it was minted, and when it was last used
+  (nullable — a token never presented says so). The operator mints one in the
+  console (Settings → Status → *Machine tokens*), sees the plaintext **once** in
+  that response and never again: nothing stores it, so no reload, second visit or
+  registry copy can reproduce it, and losing it means revoking and minting
+  another. Revoking **deletes** the row, and the gate reads the row per request,
+  so a revoked token is refused on the very next request with no restart — the
+  same property a session has, from the same place, and the reason no process
+  holds auth state at all. A token's **use** moves `last_used_at` — **lazily**, at
+  most once per touch interval, the shape the session's own idle clock uses, so a
+  script's burst of calls performs no write at all and the gate's synchronous
+  commit cannot stall the event loop it runs inside; a write it does make is one
+  the gate tolerates losing to a locked registry, because it must never fail an
+  authenticated request. Minting and revoking append `token.mint` /
+  `token.revoke`, with `token:<label>` as the target, because "who holds a key"
+  is an attribution question and a use is not.
+- [FACT] **A token's reach is the machine surface alone.** It satisfies
+  `AUTH_REQUIRED` for `/api/v1/…` as `Authorization: Bearer <token>`, and it is
+  consulted for nothing else: the console's pages, its fragments and the two
+  routes that mint and revoke tokens refuse a token exactly as they refuse an
+  anonymous request (`303` to the setup route). The session cookie's path and the
+  `answers_anonymously` list are unchanged, so the browser surface is exactly as
+  wide as it was; and the refusal the machine surface answers when it has **no**
+  credential — `AUTH_REQUIRED` in the `401`'s `detail` — now names both ways in,
+  so a script that is refused is told what would have been accepted.
+- [FACT] **The actor vocabulary does not change.** A token-authenticated write is
+  recorded against the HTTP API's own word, `api`. The `api:<token label>` form
+  the Decision above reserves is still **not a value**: it would be a second
+  actor grammar in `0010`'s `CHECK`, in `audit.require_actor` and in every reader
+  of the record, and the label is the operator's handle on a credential rather
+  than an identity. It stays reserved for the change that needs it.
+- [FACT] **The destructive contract now has its proof under token auth.** The
+  machine surface's two `DELETE` routes are the glossary **retire** (the row
+  survives the verb and restores) and the managed-tape delete (refused with
+  nothing unlinked until a meeting has a **verified archive**, which its answer
+  names as the durable copy). Both are exercised with a token as the credential,
+  and the route table is walked so a **third** `DELETE` fails the suite rather
+  than arriving quietly — the decision point this ADR's authorization rule asks
+  for.
+- [FACT] **The node's own-machine credential stays a session file, and this
+  Update is where that choice is recorded.** The earlier Update lists "machine
+  tokens for scripts" as not built; that clause is **superseded** for tokens — and
+  the local session the command line presents is deliberately **not** replaced by
+  one. A token's plaintext is shown once and stored only as a digest, so a node
+  could not hand its own command line a token across restarts without minting (and
+  listing) a fresh credential per start; and a credential the operator can revoke
+  from a page is the wrong shape for a client that must keep working while nobody
+  is looking. The file is instead named for what it is — the node's
+  **own-machine credential** — with the five constraints it is kept under pinned
+  by test: it is a session opened through the same `ConsoleAuth` path a sign-in
+  uses, judged by the same two clocks from the app's one policy, written beside
+  the address record at mode `0600`, removed on a clean exit, and refused like any
+  other dead session once it is stale or unknown. The client half — that it is
+  presented only to the **recorded** node — is unchanged. The two credentials
+  share the property that matters: neither can destroy what a durable copy cannot
+  reconstruct.
+- [FACT] **Docs the build carries**: `docs/service-deployment.md` §1 gains the
+  operator's machine-token page (minting, presenting, revoking, and what a token
+  can never do) and the own-machine-credential paragraph, and §6 no longer lists
+  machine tokens among what is not built.

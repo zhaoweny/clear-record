@@ -115,7 +115,9 @@ verbatim answers and the direction they answer are the
   appears.
 - **Restatements.** ADR-0021's ingress posture (the operator's reverse proxy is
   the only ingress) **stands**; its "ships no authentication" clause is
-  **superseded by this decision** — the code follows when the build lands.
+  **superseded by this decision**, and the code has followed — the auth gate
+  landed 2026-09-26 (the Updates below, and
+  [ADR-0021](0021-localhost-only-deployment.md)'s own banner records it).
   ADR-0017's stdio decision **stands** and remains what a local harness uses; its
   revisit condition is **discharged** (the network transport has a decided auth
   story) without mounting the surface. ADR-0031's *declared* author is superseded
@@ -338,9 +340,11 @@ verbatim answers and the direction they answer are the
 - [FACT] **The actor vocabulary does not change.** A token-authenticated write is
   recorded against the HTTP API's own word, `api`. The `api:<token label>` form
   the Decision above reserves is still **not a value**: it would be a second
-  actor grammar in `0010`'s `CHECK`, in `audit.require_actor` and in every reader
-  of the record, and the label is the operator's handle on a credential rather
-  than an identity. It stays reserved for the change that needs it.
+  actor grammar in the vocabulary the record accepts — `lifecycle.ACTORS`, the
+  one declaration `audit.require_actor` reads and refuses anything outside of —
+  and in every reader of the record, and the label is the operator's handle on a
+  credential rather than an identity. It stays reserved for the change that needs
+  it.
 - [FACT] **The destructive contract now has its proof under token auth.** The
   machine surface's two `DELETE` routes are the glossary **retire** (the row
   survives the verb and restores) and the managed-tape delete (refused with

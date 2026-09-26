@@ -856,6 +856,38 @@ def test_a_delete_refused_for_want_of_an_archive_leaves_a_row(
     assert registry.list_tapes(meeting.id) == [tape]
 
 
+def test_a_refused_batch_records_one_row_whether_it_asked_for_one_tape_or_many(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The refusal's subject is the **batch**, so it is one row for the batch.
+
+    ``delete_tapes`` takes a list, and its two policy refusals — a user-chosen
+    workspace, or no verified archive — answer for every id the call asked for
+    at once (ADR-0033's "one refusal covers every id asked for"). A batch of two
+    must therefore read as one failed ``tape.forget`` row naming the meeting, not
+    as one row per tape: the row says the call was refused, and the call is the
+    subject. Nothing is unlinked, either.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    before = len(registry.list_audit_events())
+
+    with pytest.raises(managed.ArchiveRequired):
+        managed.delete_tapes(registry, meeting, [first.id, second.id], actor="api")
+
+    rows = registry.list_audit_events()[before:]
+    assert [(row.actor, row.action, row.target, row.outcome) for row in rows] == [
+        ("api", "tape.forget", f"meeting:{meeting.id}", "failed")
+    ]
+    assert Path(first.path).exists() and Path(second.path).exists()
+    assert registry.list_tapes(meeting.id) == [first, second]
+
+
 def test_deleting_a_tape_outside_the_managed_root_is_refused(
     registry, tmp_path, monkeypatch
 ) -> None:

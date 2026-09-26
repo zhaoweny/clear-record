@@ -56,11 +56,16 @@ Two cross-cutting truths:
 - **[FACT, repo]** There is a health endpoint: `GET /api/health` returns
   `{"status": "ok", "registry": "<path>"}`.
   — `packages/clear-record/src/clear_record/web/app.py:463–465`.
-  — **Superseded 2026-09-26 (ADR-0033's auth gate):** that route is gone. The
-  credential-free liveness route is `GET /health`, answering exactly
-  `{"status": "ok"}` with no registry path, and everything under `/api/` needs a
-  signed-in session — so every `/api/health` named later in this note (the
-  container `HEALTHCHECK` included) reads as `GET /health`.
+  — **Superseded 2026-09-26 (ADR-0033's auth gate):** that route is gone, and the
+  paths moved with it — the console answers under `/web/`, the machine API under
+  `/api/v1/`, and no old path answers. The credential-free liveness route is
+  `GET /health`, answering exactly `{"status": "ok"}` with no registry path — so
+  every `/api/health` named later in this note (the container `HEALTHCHECK`
+  included) reads as `GET /health`. The gate runs first, so a retired `/api/*`
+  path (`/api/health`, `/api/shutdown`, `/api/runs/{id}`) is answered as any
+  gated page is — a `303` to `/web/setup` — while `/api/v1/*` alone is the
+  machine surface: anonymous there is a `401`, and a **bearer machine token**
+  (ADR-0033) satisfies it exactly as a signed-in session does.
 - **[FACT, repo]** The **`tray`** entry point supervises the same app from a
   **Qt-free `ServiceController`**: it starts uvicorn on a daemon thread, polls
   `/api/health` via `wait_until_ready`, and stops by setting `should_exit`;
@@ -590,6 +595,13 @@ Python `list[JobEvent]`; the event API reads that list
 - `GET /api/runs/{id}/events` returns **404** (it requires in-memory state).
   — `web/app.py:646–656`.
 - `GET /ui/runs/{id}` returns **404**. — `web/app.py:454–460`.
+- **Superseded 2026-09-26 (ADR-0033's auth gate):** the routes above moved with
+  the console and the API — the three read here become
+  `GET /api/v1/runs/{run_id}`, `GET /api/v1/runs/{run_id}/events` and
+  `GET /web/ui/runs/{run_id}`, and `POST /api/shutdown` (named above) becomes
+  `POST /api/v1/shutdown` for a script or `POST /web/ui/shutdown` for the
+  console. The verdicts this list states are unchanged: the run row persists,
+  while the event stream and the live state do not.
 - The **meeting row falls back to the last run row**, so the console renders the
   stale status (e.g. `running`) with `polling: False`, no stage and no progress.
   — `web/app.py:144–164,191–210`.

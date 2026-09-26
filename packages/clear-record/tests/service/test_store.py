@@ -42,7 +42,11 @@ from clear_record.service import (
 from clear_record.service import models as models_module
 from clear_record.service import store as store_module
 from clear_record.service.lifecycle import active_run_predicate
-from clear_record.service.store import _LADDER_VERSION, _alembic_config
+from clear_record.service.store import (
+    _LADDER_VERSION,
+    _alembic_config,
+    _write_ahead_log,
+)
 
 #: The repository root: the tree this test's git history lives in.
 _REPO = Path(__file__).resolve().parents[4]
@@ -2190,6 +2194,105 @@ def test_a_read_is_not_refused_while_another_surface_holds_the_write_lock(
     finally:
         holder.rollback()
         holder.close()
+
+
+def _journal_mode(db_path: Path) -> str:
+    """The file's journal mode, read back from its header."""
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        return str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+
+
+def _in_the_rollback_journal(db_path: Path) -> None:
+    """Put a registry on disk back in the rollback journal a released line left.
+
+    This build creates registries on the log, so a fixture only reaches the
+    conversion by taking one back: the mode is a property of the file, and this
+    is the file a candidate meets on an upgrade.
+    """
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+    assert str(mode).lower() == "delete"
+
+
+def test_an_existing_registry_converts_to_the_write_ahead_log_on_open(
+    tmp_path,
+) -> None:
+    """A registry already on disk gains the log, once, and keeps its rows.
+
+    The mode belongs to the **file**, so one open does the conversion and every
+    open after it reads the answer back — which is what extends the property
+    ``test_a_read_is_not_refused_while_another_surface_holds_the_write_lock``
+    leans on to the registries that already exist, not only to the ones this
+    build created. The log's own files are the other half of it: they are beside
+    the registry while a connection holds one, and the last close checkpoints
+    them back into the database and takes them away.
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    first = _registry(tmp_path)
+    first.create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+    assert _journal_mode(db_path) == "delete"
+
+    # The same file, opened again: the row it held is still there, and the file
+    # now carries the log.
+    reopened = Registry.open(db_path=db_path)
+    assert [project.slug for project in reopened.list_projects()] == ["ops"]
+    assert _journal_mode(db_path) == "wal"
+
+    wal = db_path.with_name(db_path.name + "-wal")
+    shm = db_path.with_name(db_path.name + "-shm")
+    assert not wal.exists() and not shm.exists()  # the pool holds nothing open
+    writer = sqlite3.connect(str(db_path))
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("UPDATE project SET slug = slug")
+        assert wal.exists() and shm.exists()
+        writer.commit()
+    finally:
+        writer.close()
+    assert not wal.exists() and not shm.exists()
+
+
+def test_a_conversion_that_meets_a_held_lock_is_tolerated(tmp_path) -> None:
+    """The lock is another surface's, so the conversion gives up and yields.
+
+    ``_write_ahead_log`` runs on every connection the engine opens, and a
+    registry shared by the console and an agent's MCP server is read while the
+    other one writes: the conversion can meet a lock that is not its own. The
+    refusal is tolerated rather than raised — the connection works in the mode
+    the file is already in, and the read below answers — and the next connection
+    tries again, converting once the lock is free. The connection here carries a
+    short busy timeout so the refusal is the same one without the five-second
+    wait the engine's own connections would spend on it (see
+    :func:`clear_record.service.store._write_ahead_log`).
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+
+    holder = sqlite3.connect(str(db_path))
+    holder.execute("BEGIN")
+    holder.execute("SELECT count(*) FROM project").fetchone()  # a reader's SHARED
+    try:
+        dbapi = sqlite3.connect(str(db_path), timeout=0.1)
+        try:
+            _write_ahead_log(dbapi)  # the refusal is swallowed, not raised
+            assert dbapi.execute("SELECT count(*) FROM project").fetchone()[0] == 1
+        finally:
+            dbapi.close()
+        assert _journal_mode(db_path) == "delete"  # the file kept the mode it had
+    finally:
+        holder.rollback()
+        holder.close()
+
+    # The next connection tries again — and with the lock free, it converts.
+    dbapi = sqlite3.connect(str(db_path))
+    try:
+        _write_ahead_log(dbapi)
+    finally:
+        dbapi.close()
+    assert _journal_mode(db_path) == "wal"
 
 
 # --- a folder registered by two surfaces at once ---------------------------- #

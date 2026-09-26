@@ -56,22 +56,14 @@ trust source refuses to start.
   **how to run the backend**, never as an auth story.
 - [OPEN: owner, 2026-09-15, **closed 2026-09-26** — see the Update *the trusted
   proxies land*; quoted here as it stood while the item was open]
-  **Honour `X-Forwarded-*` only from a configured trusted proxy
-  (`CR_TRUSTED_PROXIES`) — deferred, not built.** The owner's steer
+  **Honour `X-Forwarded-*` only from a configured
+  trusted proxy (`CR_TRUSTED_PROXIES`) — deferred, not built.** The owner's steer
   was to accept forwarded headers from a declared proxy, with a **quick path for
   Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
-  instead of asking the operator to declare it. What is true today, scoped: the
-  console's own code reads and honours **no** `X-Forwarded-*` header, and
-  `CR_TRUSTED_PROXIES` is read as the **peer declaration** this item will honour —
-  it is deliberately *not* what admits a non-loopback bind, because the auth
-  gate's startup check reads `CR_TRUSTED_HOSTS` (the one declaration the guard's
-  own `Host` check consults, and a proxy peer is not one). (The server under the
-  console, uvicorn, does rewrite the scheme from a *loopback* peer's
-  `X-Forwarded-Proto` by default, which is the shape this item narrows.) Honouring
-  a declared peer's headers is this item's, so trusting forwarded headers from
-  *anything else* remains a risk to the request guard; the bind is loopback by
-  default, and the UI's relative URLs mean nothing is lost by
-  refusing. Revisit when a proxy deployment
+  instead of asking the operator to declare it. No code reads `X-Forwarded-*` or
+  `CR_TRUSTED_PROXIES` today, so trusting forwarded headers from *anything else*
+  remains a risk to the request guard; the bind stays localhost-only, and the UI's
+  relative URLs mean nothing is lost by refusing. Revisit when a proxy deployment
   genuinely needs the client's scheme or host. *(Direction 2026-09-26:
   [ADR-0033](0033-the-auth-position.md) puts trusted proxies in the auth build's
   scope; the code still reads neither header, so this item stays open-not-built

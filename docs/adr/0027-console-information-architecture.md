@@ -22,9 +22,12 @@ Date: 2026-09-15
   *"a synthetic tape of 'hello world' in user's language"*.
 - [FACT] ADR-0018 already made the guided setup **wizard-shaped** and preferred
   guide-first over bundling a harness.
-- [FACT] The console is htmx 4 + Alpine over server-rendered Jinja, dark/light,
-  bilingual (EN / zh-CN), localhost-only with no auth (ADR-0021), and now has a
-  Playwright gate that drives the real server and captures screenshots.
+- [FACT] The console is htmx 4.0.0 + Alpine 3.17.3 over server-rendered Jinja
+  (the vendored pin — ADR-0023's update, which moved it off ADR-0016's 2.0.4 /
+  3.14.9), dark/light, bilingual (EN / zh-CN) and localhost-only; when this ADR
+  was written it shipped no auth (ADR-0021) — since 2026-09-26 it carries one
+  credential and its own sessions (ADR-0033, and the Update below) — and it now
+  has a Playwright gate that drives the real server and captures screenshots.
 - [FACT] The setup state already exists (`agent-setup.json`: harness,
   mcp_config, seen_version) with a tri-state view (ready / not_configured /
   problem). (ADR-0031 dropped the endpoint/model keys the 0.2 path wrote.)

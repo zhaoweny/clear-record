@@ -144,6 +144,32 @@ def test_a_mutation_records_its_actor_its_target_and_its_outcome(tmp_path) -> No
     assert [row.id for row in rows] == sorted(row.id for row in rows)
 
 
+def test_the_retire_and_the_restore_each_append_their_own_row(tmp_path) -> None:
+    """Both halves of a reversible delete are in the record, under their actor.
+
+    The machine API's ``DELETE`` on a glossary term **retires** rather than
+    deleting, and the restore puts it back — two moves of one term, and each is
+    a mutation the record accounts for on its own (ADR-0033). The target is the
+    term's **id**: a restore addresses the row by id, and the pair reads as the
+    history of that row. The actor is the surface that asked, so who retired it
+    and who restored it are answerable separately.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor=CONSOLE)
+    term = registry.add_term("ops", "Falcon", actor=CONSOLE)
+
+    registry.retire_term(term.id, actor=API)
+    registry.restore_term(term.id, actor=CLI)
+
+    rows = registry.list_audit_events()
+    assert [(row.actor, row.action, row.target, row.outcome) for row in rows] == [
+        (CONSOLE, "project.create", "project:Ops", "ok"),
+        (CONSOLE, "term.add", "term:Falcon", "ok"),
+        (API, "term.retire", f"term:{term.id}", "ok"),
+        (CLI, "term.restore", f"term:{term.id}", "ok"),
+    ]
+
+
 def test_a_refused_call_is_recorded_with_its_own_outcome(tmp_path) -> None:
     """A refusal is the row an audit record exists for, and it survives the rollback.
 

@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-27 00:05+0800\n"
+"POT-Creation-Date: 2026-09-27 00:30+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -635,6 +635,8 @@ msgstr "无法读取位于 {path} 的注册表：{error}"
 msgid "set or replace the console password, without a browser (the rescue)"
 msgstr "无需浏览器即可设置或更换控制台密码（救援命令）"
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/service/auth.py:704
 #: packages/clear-record/src/clear_record/web/__init__.py:67
 msgid ""
@@ -1003,14 +1005,14 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 msgid "setup does not record {key!r}"
 msgstr "初始设置不记录 {key!r}"
 
-#: packages/clear-record/src/clear_record/service/store.py:458
+#: packages/clear-record/src/clear_record/service/store.py:459
 #, python-brace-format
 msgid ""
 "registry schema revision {revision} is not one this build carries (its "
 "newest is {head}); upgrade clear-record"
 msgstr "注册表的架构修订版本 {revision} 不是本构建所携带的修订版本（最新为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:466
+#: packages/clear-record/src/clear_record/service/store.py:467
 #, python-brace-format
 msgid ""
 "the registry at {db_path} records schema revision {revision}, which an "
@@ -1020,14 +1022,14 @@ msgstr ""
 "{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 "
 "{db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:487
+#: packages/clear-record/src/clear_record/service/store.py:488
 #, python-brace-format
 msgid ""
 "registry schema version {version} is newer than this build carries (its "
 "newest revision is {head}); upgrade clear-record"
 msgstr "注册表的架构版本 {version} 比本构建所携带的更新（最新修订版本为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:498
+#: packages/clear-record/src/clear_record/service/store.py:499
 #, python-brace-format
 msgid ""
 "the registry at {db_path} was written by an unreleased development build,"
@@ -1035,14 +1037,14 @@ msgid ""
 "record again"
 msgstr "{db_path} 处的注册表由未发布的开发构建写入，本次发布不携带此类注册表；请删除 {db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:661
+#: packages/clear-record/src/clear_record/service/store.py:662
 #, python-brace-format
 msgid ""
 "another surface is migrating the registry at {db_path} and still holds "
 "its write lock; nothing was changed — retry"
 msgstr "另一个入口正在迁移 {db_path} 处的注册表，并且仍持有写锁；未做任何更改——请重试"
 
-#: packages/clear-record/src/clear_record/service/store.py:1063
+#: packages/clear-record/src/clear_record/service/store.py:1064
 #, python-brace-format
 msgid "a machine token named {label!r} already exists"
 msgstr "已存在名为 {label!r} 的机器令牌。"
@@ -1121,6 +1123,8 @@ msgstr ""
 msgid "port (default {port})"
 msgstr ""
 
+# Per-option help: left English on purpose (the terminal is not the
+# interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:75
 msgid ""
 "set up Tailscale Serve for this port, trust this machine's tailnet name, "

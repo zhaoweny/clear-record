@@ -314,33 +314,52 @@ every check above and fail on the one path an upgrade takes.
 Write a registry with the **previous release**, then open it with the candidate:
 
 ```sh
-# the released line, in its own environment, writes a registry
+# the released line, in its own environment, writes a registry — with the path
+# *that* line serves (see below), not the candidate's
 uv venv /tmp/cr-prev-env
 VIRTUAL_ENV=/tmp/cr-prev-env uv pip install 'clear-record[web]<the released version>'
 CR_DATA_DIR=/tmp/cr-prev-data CR_STATE_DIR=/tmp/cr-prev-state \
   /tmp/cr-prev-env/bin/clear-record serve --port 8790 &
-curl -s -X POST localhost:8790/api/v1/projects -H 'content-type: application/json' \
+curl -s -X POST localhost:8790/api/projects -H 'content-type: application/json' \
   --cookie "cr_session=$(cat /tmp/cr-prev-state/local-session)" \
   -d '{"name":"Registry smoke"}'   # then stop the server: the registry exists now
 
 # the candidate, from the scratch project above, over a copy of that directory
 cp -r /tmp/cr-prev-data /tmp/cr-candidate-data
-CR_DATA_DIR=/tmp/cr-candidate-data uv run clear-record serve --port 8791 &
+CR_DATA_DIR=/tmp/cr-candidate-data CR_STATE_DIR=/tmp/cr-candidate-state \
+  uv run clear-record serve --port 8791 &
 curl -s localhost:8791/health          # {"status":"ok"}: the node opened the registry and migrated it
 sqlite3 /tmp/cr-candidate-data/registry.sqlite3 \
   'select slug from project'           # must print: registry-smoke
 ```
 
-The console has a credential now (ADR-0033), so `/api/v1/projects` answers `401` to a
-bare `curl`. The write above therefore presents `cr_session` — the session the
-node published for **this machine**, in the `local-session` file of its state
-directory (`CR_STATE_DIR`, §1 of the deployment guide), which is exactly what the
-command line itself sends. A *script* has its own credential beside it — a
-**machine token** minted in the console (Settings → Status) and presented as
-`Authorization: Bearer <token>` — while the file is the command line's own
-credential. A previous line that predates the gate — or predates the file — has
-none (the empty cookie is then ignored and the POST is taken), and `/health` —
-the credential-free route — is what the candidate's own start is checked with.
+**Each step runs against the line it names, and uses that line's own path.** The
+first step runs the **released** line: `<the released version>` resolves today to
+`v0.3.0`, which predates the `/api/v1/` re-root and serves `/api/projects` alone
+— a candidate path written into this step is a `404` that lands no row, and the
+`select` below is the only thing that would say so. The second step runs the
+**candidate**, which serves `/api/v1/…` and keeps `/health` at the root (ADR-0033
+moves the console under `/web/` and the machine API under `/api/v1/`, and no old
+path answers). So the two steps carry different paths on purpose; when the
+released line itself has moved past the re-root, this step's path moves with it.
+
+The **candidate's** console has a credential now (ADR-0033), so its
+`/api/v1/projects` answers `401` to a bare `curl`. A write against the candidate
+therefore presents `cr_session` — the session the node published for **this
+machine**, in the `local-session` file of its state directory (`CR_STATE_DIR`,
+§1 of the deployment guide), which is exactly what the command line itself sends.
+A *script* has its own credential beside it — a **machine token** minted in the
+console (Settings → Status) and presented as `Authorization: Bearer <token>` —
+while the file is the command line's own credential. A previous line that
+predates the gate — or predates the file — has none, and the write above into the
+released line is the case in point: `v0.3.0` reads no cookie at all, so the empty
+`cr_session` (the file does not exist yet) is ignored and the POST is taken, and
+`/health` — the credential-free route — is what the candidate's own start is
+checked with. Both steps set `CR_STATE_DIR`, for the same reason: the state dir
+is the released line's too (it resolves it, and writes its own files there),
+while the `local-session` file the write above names arrives with the gate — so
+a gated previous line would publish one for the step to present, and a line that
+predates the file simply has none.
 
 So the `select` is the real assertion, and it must print the project's **slug** —
 `registry-smoke` for the name `Registry smoke`, since the API slugifies the name
@@ -352,8 +371,9 @@ It opens in place: the same file, `alembic_version` at the chain's head, the
 terms it held still there. A registry **no released line wrote** is refused with
 the sentence naming the file — that is the policy working, not a failure.
 
-Delete `/tmp/cr-testpypi-smoke`, `/tmp/cr-prev-env`, `/tmp/cr-prev-data` and
-`/tmp/cr-candidate-data` afterward.
+Delete `/tmp/cr-testpypi-smoke`, `/tmp/cr-prev-env`, `/tmp/cr-prev-data`,
+`/tmp/cr-prev-state`, `/tmp/cr-candidate-data` and `/tmp/cr-candidate-state`
+afterward.
 
 ## Release loops
 

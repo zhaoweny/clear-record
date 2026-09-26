@@ -273,15 +273,16 @@ def _write_ahead_log(dbapi_connection: Any) -> None:
     between units of work).
 
     The mode is a property of the **file**, not of the connection, so the read
-    below is the whole of the work for every connection after the first to find
-    the lock free: ``PRAGMA journal_mode`` answers from the header without
-    taking a lock. The conversion itself does need the write lock, and SQLite
-    refuses it *without waiting* while another connection holds that lock
-    (``SQLITE_BUSY`` at once, not a busy-timeout wait). That refusal is
-    tolerated: the connection that meets it works in the mode the file is
-    already in, the next connection tries again, and a registry on a filesystem
-    that cannot host the log's shared memory keeps working in the rollback
-    journal it had rather than failing to open.
+    below is the whole of the work for every connection after the one that
+    converted it. The conversion itself does need the write lock, and SQLite
+    refuses it while another connection holds a lock of its own: the attempt
+    waits the driver's busy timeout out (five seconds, the default this engine's
+    connections carry) and *then* raises ``SQLITE_BUSY`` — it does not fail at
+    once, so a connection that meets the lock pays that wait before it gives up.
+    That refusal is tolerated: the connection that meets it works in the mode the
+    file is already in, the next connection tries again, and a registry on a
+    filesystem that cannot host the log's shared memory keeps working in the
+    rollback journal it had rather than failing to open.
     """
     mode = dbapi_connection.execute("PRAGMA journal_mode").fetchone()[0]
     if str(mode).lower() == "wal":

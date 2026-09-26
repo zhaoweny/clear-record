@@ -210,7 +210,7 @@ registry holds only that cookie's digest, and every request re-reads the row.
 
 | Window | Default | What it means |
 |---|---|---|
-| Idle timeout | 12 hours | a session that sits unused this long is over; every accepted request moves the clock |
+| Idle timeout | 12 hours | a session that sits unused this long is over; the clock moves on a request only once under half the window is left (the write is lazy, so a busy session costs the node no write per call) |
 | Absolute lifetime | 30 days | a session never outlives this, however busy it is |
 
 Sign out from the console's header. Settings → Status carries **Sign out
@@ -485,8 +485,9 @@ must trust, and the browser's `Origin` is the public name too.
 (the address nginx dials *from*) are what tell the console the browser is on TLS
 and make it mark the session cookie `Secure` — without them it falls back to the
 socket's own plain-HTTP facts and the cookie is not `Secure`.
-This is HTTP Basic auth: use TLS, and treat the password as the only barrier
-between the internet and a console with no accounts of its own.
+This is HTTP Basic auth: use TLS, and treat the proxy's password as the **outer**
+barrier — the console's own credential (§1, *The console credential*) sits behind
+it and does not replace it.
 
 ### Caddy (`forward_auth`)
 
@@ -715,9 +716,9 @@ a user-chosen workspace cannot be deleted here — it is your document.
 Deleting a **glossary term** is likewise not a row delete: the console's and the
 API's `DELETE` retire the term instead — the row survives with `added_by` and
 `created_at`, stops biasing the decoder, and can be restored — `POST
-/api/v1/glossary/{id}/restore`, or the console's Restore button — to the status it
-held before the retire (a retired candidate returns as a candidate, never as
-owner-accepted truth).
+/api/v1/glossary/{term_id}/restore`, or the console's Restore button — to the
+status it held before the retire (a retired candidate returns as a candidate,
+never as owner-accepted truth).
 
 ### Security: uploads raise the stakes on the proxy
 

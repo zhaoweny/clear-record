@@ -30,7 +30,12 @@ data, and is not in this record. Mutating store methods are audited by
 row is appended for every call, whatever the call did:
 
 - the call returned — one row, ``outcome='ok'``, appended in a unit of work of
-  its own, immediately after the write it names;
+  its own, immediately after the write it names. A **conditional** write is the
+  exception, because what it returns *is* its statement's own answer: when the
+  statement matched no row (``claim_run``'s lost race, a state the move is not
+  legal from, an id that names no row), nothing was written and nothing is
+  recorded — ``recorded(…, conditional=True)`` reads that answer instead of
+  assuming the call acted;
 - the call raised — one row, ``outcome='failed'``, appended the same way. A
   refusal is the row an audit record exists for, and it *cannot* be recorded in
   the transaction it belonged to: that transaction is rolled back with the
@@ -40,7 +45,8 @@ row is appended for every call, whatever the call did:
 where the refusal is the *service's own policy answer*: this draft version is
 stale, a run is already in flight for this meeting, this tape is not managed, the
 name you gave is taken. A **key miss** is not: an unknown id is a lookup that
-found nothing (:class:`KeyError`, answered as a 404 by every surface), not an
+found nothing (:class:`KeyError`, answered as a 404 by the HTTP surfaces — the
+MCP adapter answers a ``ToolError`` and the command line a sentence), not an
 operation the service decided against — there is no subject to name, and the row
 would say only that someone asked for something that does not exist. That line is
 what :func:`refused_call` states at each entry point, as the exception types it
@@ -133,6 +139,18 @@ def _target(rule: Target, call: Mapping[str, Any]) -> str:
     return rule(call) if callable(rule) else rule.format(**call)
 
 
+def _no_row(result: Any) -> bool:
+    """Whether a conditional write's answer says its statement moved no row.
+
+    The run-lifecycle statements answer with the row they moved (or ``None``),
+    or with whether they moved one (the boolean writes), so ``None`` and
+    ``False`` are the statements' own "no row moved" — a lost race, a state the
+    move is not legal from, or an id that names no row at all. Read rather than
+    assumed: what the call answered is what the record may say about it.
+    """
+    return result is None or result is False
+
+
 def _named_actor(
     signature: inspect.Signature, arguments: tuple[Any, ...], keywords: dict[str, Any]
 ) -> tuple[str | None, Mapping[str, Any]]:
@@ -158,7 +176,9 @@ def _named_actor(
     return require_actor(bound.arguments["actor"]), call
 
 
-def recorded(action: str, target: Target) -> Callable[[Callable[..., Any]], Any]:
+def recorded(
+    action: str, target: Target, *, conditional: bool = False
+) -> Callable[[Callable[..., Any]], Any]:
     """Decorate a mutating service method so every call of it appends a row.
 
     ``action`` is the verb the record states (``"project.create"``), ``target``
@@ -166,6 +186,15 @@ def recorded(action: str, target: Target) -> Callable[[Callable[..., Any]], Any]
     gains nothing to remember: the row, its outcome and its target are the
     decorator's, and the method only has to carry the ``actor`` its signature
     requires — which is what makes the record complete rather than a convention.
+
+    ``conditional`` marks a method whose statement may match **no row** — the
+    run-lifecycle writes, which return the row they moved or ``None``, or
+    whether they moved one. Such a call answers with the statement's own result,
+    so the decorator reads it (:func:`_no_row`) instead of assuming the call
+    acted: a lost claim, a stale state or an unknown id appends **nothing**.
+    That is not a refusal (the service did not decide against the move) and, for
+    an id that names no row at all, there is no subject to write about — the
+    ``ok`` row belongs to a write that happened, which this one did not.
     """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -196,6 +225,11 @@ def recorded(action: str, target: Target) -> Callable[[Callable[..., Any]], Any]
             except BaseException:
                 self.record_audit(actor, action, _target(target, call), outcome=FAILED)
                 raise
+            if conditional and _no_row(result):
+                # The conditional's own answer: nothing moved, so there is no
+                # mutation to record. An ``ok`` row here would say the call did
+                # what it was asked, which it did not.
+                return result
             self.record_audit(actor, action, _target(target, call))
             return result
 

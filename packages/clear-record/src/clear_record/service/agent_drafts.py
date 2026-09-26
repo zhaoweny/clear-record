@@ -11,7 +11,7 @@ One draft is one chain, on disk under ``<workspace>/agent/<draft_id>/draft.json`
       "draft_id": "…", "kind": "minutes", "project": "…", "meeting": "…",
       "created_at": "…",
       "versions": [
-        {"author": "pi-agent", "written_at": "…", "value": {…},
+        {"author": "mcp", "written_at": "…", "value": {…},
          "decision": null, "reviewed_by": null, "reviewed_at": null,
          "promotion": null}
       ]
@@ -20,7 +20,7 @@ One draft is one chain, on disk under ``<workspace>/agent/<draft_id>/draft.json`
 Properties the design holds to:
 
 - **Every version records who wrote it.** ``author`` is the **actor** the writing
-  transport supplied — ``mcp`` for the stdio adapter, the surface that asked for
+  transport supplied — ``mcp`` for the stdio adapter; the surface that asked, for
   any other caller (ADR-0033) — and it is the only provenance this store can
   honestly claim: the app did not produce the value and never saw the model, and a
   string the caller *declares* looks like evidence without being any (ADR-0033

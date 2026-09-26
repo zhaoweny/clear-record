@@ -498,7 +498,8 @@ run request may name — is a **separate column** from the actor, so a client
 cannot write itself into the record by filling in a field (ADR-0033).
 clear-record calls no model: every draft is written by the user's harness over
 MCP, its recorded author is the **actor its transport supplies** — `mcp` for the
-stdio adapter, `console` for the console, never a string a caller declares
+stdio adapter, never a string a caller declares; the *decision* is recorded
+against the transport that makes it, so a console acceptance says `console`
 (ADR-0033) — the drafts' accept/reject states and provenance have landed, and the
 harness is the only agent integration — see
 [ADR-0031](adr/0031-harness-is-the-only-agent.md). The setup path's
@@ -516,12 +517,15 @@ exports carry no run id — and the run's artifact rows point at its own copy, s
 reader can say which run produced the transcript it holds. A run that stops,
 fails or dies publishes nothing, so neither the workspace's copy nor an earlier
 run's can be rewritten by it: prior versions are retained, not covered
-(ADR-0033). What a run only *reads* stays the workspace's — its tapes, the
-normalized `audio/`, the app-owned chunk cache, the `glossary.txt` a glossary
-edit lands in and the `.clear-record-ignore` declaration — so `ingest` stays
-idempotent and a resume continues the same cache. A **node** run always writes
-under `runs/<run id>/`; the in-place full-pipeline writers are the stage commands
-and `calibrate`, and what they leave at the workspace root names no run.
+(ADR-0033). A run's **documents** are run-scoped, and so is what it publishes;
+what it **reads** stays the workspace's — its tapes, the normalized `audio/`, the
+app-owned chunk cache, the `glossary.txt` a glossary edit lands in and the
+`.clear-record-ignore` declaration — so `ingest` stays idempotent and a resume
+continues the same cache. Two things a **node** run writes in place at the
+workspace root all the same: the normalized `audio/` (the ingest stage writes it
+there, not under `runs/<run id>/`) and the durable `transcribe.log` a running
+pipeline appends to. The stage commands and `calibrate` are the writers that leave
+**everything** in place, at the root and naming no run.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves

@@ -6,23 +6,28 @@ Revises: 0009
 Who called the service, what they touched, and how it ended: one **append-only**
 row per mutating service call — ``(at, actor, action, target, outcome)`` — as
 ADR-0033 decides. ``actor`` is the word a transport supplied about itself
-(``console``, ``api``, ``mcp``, ``cli``, ``tray``, or ``queue`` for the node's own
-queue), never a string a caller chose; ``target`` is the service's own address for
+(``console``, ``api``, ``mcp``, ``cli``, or ``queue`` for the node's own queue),
+never a string a caller chose; ``target`` is the service's own address for
 what was touched (``meeting:Kickoff``, ``tape:12``, ``project:demo``), deliberately
 not a foreign key, so a row outlives what it names.
 
 **Append-only is the schema's, not a convention's.** The service has no statement
 that updates or deletes a row (:meth:`~clear_record.service.store.Registry.record_audit`
-is the only way one is written at all), and these two triggers make that hold
-against anything else that reaches the file: a mutating statement against
-``audit_event`` is refused by the database. A record of who did what that its own
-subject could rewrite is not a record.
+is the only way one is written at all), and these three triggers make that hold for
+row DML: an ``UPDATE``, a ``DELETE``, or a ``REPLACE``/``INSERT`` of an id the
+table already holds is refused by the database. Said plainly, that is the whole
+scope: an **append** is what the table is for, and statements that reach the file
+outside row DML (``ALTER TABLE``, ``DROP TRIGGER``, a schema edit through
+``PRAGMA writable_schema``) are not refused by these triggers — the record is
+append-only, not tamper-proof against a process that rewrites the schema. A record
+of who did what that its own subject could rewrite is not a record.
 
-The triggers are recreated (``DROP TRIGGER IF EXISTS`` then ``CREATE``) rather than assumed (``DROP TRIGGER IF EXISTS`` then
-``CREATE``) so the revision converges when it is re-run over an already-built
-schema — the repair path ``store._pending_stamp`` takes after an open was killed
-part-way through the chain. A trigger is the only thing this revision leaves that
-``CREATE TABLE IF NOT EXISTS`` cannot make idempotent by itself.
+The triggers are recreated (``DROP TRIGGER IF EXISTS`` then ``CREATE``) rather
+than assumed to be absent the way the table's ``CREATE TABLE IF NOT EXISTS``
+assumes nothing lies there, so the revision converges when it is re-run over an
+already-built schema — the repair path ``store._pending_stamp`` takes after an open
+was killed part-way through the chain. A trigger is the only thing this revision
+leaves that ``CREATE TABLE IF NOT EXISTS`` cannot make idempotent by itself.
 """
 
 from __future__ import annotations
@@ -52,21 +57,22 @@ _DDL: tuple[str, ...] = (
 #: attempt into the driver's error rather than a silent no-op.
 #:
 #: Three, because ``REPLACE`` is a third way to rewrite a row and it is refused
-#: twice over, at the two levels that matter:
+#: at the two levels that matter:
 #:
-#: - :data:`audit_event_no_replace` is the **file-level** guarantee: SQLite fires
+#: - :data:`audit_event_no_replace` is the **file-level** guard: SQLite fires
 #:   ``BEFORE INSERT`` *before* ``REPLACE``'s conflict path deletes the
 #:   conflicting row, so the guard sees the id still in the table and refuses.
-#:   That holds whatever a connection's settings are, which is what lets the
-#:   entity say nothing that reaches the file can rewrite a row.
+#:   That holds whatever a connection's settings are, and it is what refuses a
+#:   ``REPLACE`` here.
 #: - ``PRAGMA recursive_triggers = ON`` (set on every connection the registry's
-#:   engine makes, ``store._engine``) is the **connection-level** one: it makes
-#:   the delete inside a ``REPLACE`` fire :data:`audit_event_no_delete` as well,
-#:   so the two statements that rewrite the file are each refused by the trigger
-#:   that names what they do.
+#:   engine makes, ``store._engine``) is **defence in depth**: it makes the delete
+#:   half of a ``REPLACE`` fire :data:`audit_event_no_delete` as well, so that
+#:   side of the rewrite is covered by the trigger that names it —
+#:   :data:`audit_event_no_replace` sees only the insert side.
 #:
-#: Neither is redundant: the trigger needs no cooperation from a connection, and
-#: the pragma covers the conflict path for every connection the registry makes.
+#: The trigger needs no cooperation from a connection; the pragma is the second
+#: layer, for the delete half of the conflict path on every connection the
+#: registry makes.
 _TRIGGERS: tuple[tuple[str, str], ...] = (
     (
         "audit_event_no_update",

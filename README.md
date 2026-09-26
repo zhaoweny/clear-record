@@ -533,7 +533,9 @@ meeting tape").
 > it reads the transcript over MCP and writes what it produced as a draft, whose
 > recorded author is the **actor its transport supplies** — `mcp` for the stdio
 > adapter, which is the only surface that writes a version, never a name a caller
-> declares (ADR-0033) — and a human accepts or rejects it
+> declares (ADR-0033) — and the draft's decision is recorded against the
+> transport that makes it: a harness can accept its own draft over MCP and is
+> recorded as `mcp`, so a **human** decision is the console's
 > (ADR-0031). clear-record itself calls no model and holds no model credential.
 > The setup path's hello-world acceptance test proves tape → transcription →
 > transcript, localizing a failure to a leg (`tts`, `backend`, `model`,

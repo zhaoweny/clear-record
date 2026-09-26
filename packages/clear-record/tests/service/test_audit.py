@@ -376,3 +376,60 @@ def test_a_draft_version_records_the_actor_its_transport_supplied(tmp_path) -> N
         (row.actor, row.action, row.target, row.outcome)
         for row in _rows(registry, "draft.write")
     ] == [(CLI, "draft.write", f"draft:{draft.draft_id}", "ok")]
+
+
+def test_a_conditional_write_that_moved_nothing_records_nothing(tmp_path) -> None:
+    """A run-lifecycle statement that matched no row is not recorded as done.
+
+    ``claim_run``, ``heartbeat_run``, ``stop_run``, ``request_cancel``,
+    ``interrupt_run`` and ``fail_unreadable_run`` answer a conditional write that
+    moved no row with ``None`` or ``False`` — a lost claim, a run that is not
+    running, a row already terminal, an id that names no row at all. None of
+    those is a mutation the record may say happened, and an unknown id names no
+    subject to write about, so each appends nothing (ADR-0033). The row is the
+    statement's own answer, never the assumption that the call acted.
+    """
+    registry = _registry(tmp_path)
+    meeting = _meeting(registry, tmp_path)
+    registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    run = registry.create_run(meeting.id, origin=CONSOLE, actor=CONSOLE)
+    claimed = registry.claim_run(run.id, owner="node:1", actor=QUEUE)
+    assert claimed is not None and claimed.status == "running"
+
+    before = len(registry.list_audit_events())
+    # A lost claim: another claimant already took the row.
+    assert registry.claim_run(run.id, owner="node:2", actor=QUEUE) is None
+    # A row that exists but is not in the state the move is legal from.
+    assert registry.stop_run(run.id, ended_at="now", progress={}, actor=QUEUE) is None
+    # Ids that name no row at all: no subject, so no row either.
+    assert registry.claim_run(9999, owner="node:1", actor=QUEUE) is None
+    assert registry.heartbeat_run(9999, actor=QUEUE) is False
+    assert registry.request_cancel(9999, actor=QUEUE) is None
+    assert registry.stop_run(9999, ended_at="now", progress={}, actor=QUEUE) is None
+    assert (
+        registry.interrupt_run(
+            9999,
+            actor=QUEUE,
+            observed=claimed,
+            ended_at="now",
+            error="gone",
+            progress={},
+        )
+        is None
+    )
+    assert registry.fail_unreadable_run(9999, actor=QUEUE, error="gone") is False
+
+    assert len(registry.list_audit_events()) == before
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in registry.list_audit_events()
+        if row.action
+        in {
+            "run.claim",
+            "run.heartbeat",
+            "run.stop",
+            "run.cancel",
+            "run.interrupt",
+            "run.unreadable",
+        }
+    ] == [(QUEUE, "run.claim", f"run:{run.id}", "ok")]

@@ -247,11 +247,12 @@ def _engine(db_path: Path) -> Engine:
     enforcement is off by default and is set per connection, so it is set on
     every connection the engine makes — the guard the store's hand-written
     connection used to carry, now the engine's own. ``recursive_triggers`` is the
-    same kind of per-connection state, and it is what makes the audit record's
-    append-only triggers hold against ``REPLACE``: SQLite fires a **delete**
-    trigger on the conflict path of ``INSERT OR REPLACE`` only when recursive
-    triggers are on, so with the default off one statement rewrote a row through
-    a table whose update and delete triggers refuse every rewrite (ADR-0033).
+    same kind of per-connection state, and it is **defence in depth** for the
+    audit record: a ``REPLACE`` is refused here by the table's own insert-side
+    guard (``audit_event_no_replace``), which fires before the conflict path runs
+    and refuses whatever the connection's settings are; the pragma is the second
+    layer, for the delete half of ``REPLACE`` that the insert guard does not cover
+    (ADR-0033).
 
     The pool is :class:`~sqlalchemy.pool.NullPool`, so a connection is made for
     one unit of work and closed with it: the discipline the hand-written
@@ -526,6 +527,21 @@ def _with_retire_marker(notes: str | None, status: str) -> str:
     _prior, clean = _split_retire_marker(notes)
     marker = f"[retired from: {status}]"
     return f"{marker}\n{clean}" if clean else marker
+
+
+def _retire_row(row: entities.GlossaryTerm) -> None:
+    """Move a term row to :data:`RETIRED`, recording the status it came from.
+
+    The **one** place a term becomes retired, so no path can leave a retired term
+    without the marker :meth:`Registry.restore_term` reads back: the retire verb
+    and a status change to ``retired`` (``update_term(status=…)``, the console's
+    status control and the API's ``PATCH``) both land here. A term already
+    retired keeps the marker it has — a second retire must not overwrite the
+    status the *first* one took it from.
+    """
+    if row.status != RETIRED:
+        row.notes = _with_retire_marker(row.notes, row.status)
+    row.status = RETIRED
 
 
 def _term_query() -> Select[tuple[entities.GlossaryTerm, str]]:
@@ -941,6 +957,12 @@ class Registry:
         with self._session() as session:
             row, project_slug = self._term_entity(session, term_id)
             for key, value in fields.items():
+                if key == "status" and value == RETIRED:
+                    # The status control can retire a term too, so it takes the
+                    # same path as the retire verb: a retired term without the
+                    # marker its restore reads back would come back a candidate.
+                    _retire_row(row)
+                    continue
                 setattr(row, key, value)
             try:
                 session.flush()
@@ -961,9 +983,7 @@ class Registry:
         """
         with self._session() as session:
             row, project_slug = self._term_entity(session, term_id)
-            if row.status != RETIRED:
-                row.notes = _with_retire_marker(row.notes, row.status)
-            row.status = RETIRED
+            _retire_row(row)
             return self._term(row, project_slug)
 
     @audit.recorded("term.restore", audit.subject("term", "term_id"))
@@ -972,11 +992,20 @@ class Registry:
 
         A term whose recorded status is gone (a later edit overwrote ``notes``)
         comes back a ``candidate`` — the un-reviewed state, never
-        owner-accepted. ``actor`` is the transport's word for the surface that
-        restored it, recorded with the move (ADR-0033).
+        owner-accepted. Only a **retired** term can be restored: restoring one
+        that is not retired would invent a status (a confirmed term would fall
+        back to candidate, dropping owner-accepted truth out of the decoder's
+        bias), so that call is refused with the status the term actually holds.
+        ``actor`` is the transport's word for the surface that restored it,
+        recorded with the move (ADR-0033).
         """
         with self._session() as session:
             row, project_slug = self._term_entity(session, term_id)
+            if row.status != RETIRED:
+                raise ValueError(
+                    f"term {row.term!r} is {row.status}, not retired; there is "
+                    "nothing to restore"
+                )
             prior, clean = _split_retire_marker(row.notes)
             row.status = prior or CANDIDATE
             row.notes = clean
@@ -1395,7 +1424,7 @@ class Registry:
                 setattr(row, key, value)
             return self._run(row)
 
-    @audit.recorded("run.unreadable", audit.subject("run", "run_id"))
+    @audit.recorded("run.unreadable", audit.subject("run", "run_id"), conditional=True)
     def fail_unreadable_run(self, run_id: int, *, actor: str, error: str) -> bool:
         """Fail a run whose stored options this build refuses to read.
 
@@ -1543,7 +1572,7 @@ class Registry:
         with self._session() as session:
             return [self._run(row) for row in session.scalars(stmt)]
 
-    @audit.recorded("run.claim", audit.subject("run", "run_id"))
+    @audit.recorded("run.claim", audit.subject("run", "run_id"), conditional=True)
     def claim_run(self, run_id: int, *, actor: str, owner: str) -> PipelineRun | None:
         """Claim a ``queued`` run for ``owner``: the node's one write for ``running``.
 
@@ -1586,7 +1615,7 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
-    @audit.recorded("run.heartbeat", audit.subject("run", "run_id"))
+    @audit.recorded("run.heartbeat", audit.subject("run", "run_id"), conditional=True)
     def heartbeat_run(self, run_id: int, *, actor: str, at: str | None = None) -> bool:
         """Refresh a running run's liveness heartbeat; ``False`` when it did not land.
 
@@ -1615,7 +1644,7 @@ class Registry:
             )
             return landed.rowcount == 1
 
-    @audit.recorded("run.interrupt", audit.subject("run", "run_id"))
+    @audit.recorded("run.interrupt", audit.subject("run", "run_id"), conditional=True)
     def interrupt_run(
         self,
         run_id: int,
@@ -1674,7 +1703,7 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
-    @audit.recorded("run.stop", audit.subject("run", "run_id"))
+    @audit.recorded("run.stop", audit.subject("run", "run_id"), conditional=True)
     def stop_run(
         self, run_id: int, *, actor: str, ended_at: str, progress: dict
     ) -> PipelineRun | None:
@@ -1712,7 +1741,7 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
-    @audit.recorded("run.cancel", audit.subject("run", "run_id"))
+    @audit.recorded("run.cancel", audit.subject("run", "run_id"), conditional=True)
     def request_cancel(
         self, run_id: int, *, actor: str, at: str | None = None
     ) -> PipelineRun | None:

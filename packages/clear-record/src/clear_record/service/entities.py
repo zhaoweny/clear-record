@@ -252,16 +252,19 @@ class AuditEvent(Base):
     outlives what it names: a deleted tape's audit row still says who deleted it.
     No relationship either, like every other entity here.
 
-    The table is **append-only in the schema**, not only by convention: revision
+    The table is **append-only for row DML**, not only by convention: revision
     0010 puts triggers on it that refuse every ``UPDATE``, every ``DELETE`` and
-    every ``REPLACE`` — the third of them by refusing an ``INSERT`` of an id the
-    table already holds, which is the shape ``REPLACE`` takes (SQLite fires
-    ``BEFORE INSERT`` before the conflict path deletes the row). The registry's
-    engine also turns ``recursive_triggers`` on for every connection it makes, so
-    the delete inside a ``REPLACE`` reaches the delete trigger too. The trigger is
-    the file-level guarantee — nothing that reaches the file rewrites a row — and
-    the pragma is the connection-level one, for every connection the registry
-    makes. See :meth:`~clear_record.service.store.Registry.record_audit`.
+    every ``REPLACE``/``INSERT`` of an id the table already holds (SQLite fires
+    ``BEFORE INSERT`` before ``REPLACE``'s conflict path deletes the row). That is
+    the file-level guard, and it is scoped to those statements: an **append** is
+    what the table is for, and other statements that reach the file — ``ALTER
+    TABLE``, ``DROP TRIGGER``, a schema edit through ``PRAGMA writable_schema`` —
+    are not refused by the triggers, so the record is append-only, not
+    tamper-proof against a process that rewrites the schema. The registry's engine
+    also turns ``recursive_triggers`` on for every connection it makes, which is
+    defence in depth: it lets the delete half of a ``REPLACE`` reach the delete
+    trigger too, where the insert-side guard above sees only the insert half. See
+    :meth:`~clear_record.service.store.Registry.record_audit`.
     """
 
     __tablename__ = "audit_event"

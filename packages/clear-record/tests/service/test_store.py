@@ -318,6 +318,48 @@ def test_retire_records_the_status_a_restore_returns_the_term_to(tmp_path) -> No
     assert reg.list_terms("ops", status="retired") == []
 
 
+def test_a_status_change_to_retired_records_where_it_came_from(tmp_path) -> None:
+    """The status control retires like the verb: the marker is written on it.
+
+    ``update_term(status="retired")`` is the console's status control and the
+    API's ``PATCH``, and it must leave the term exactly as ``retire_term`` does —
+    the row survives, and the status it came from is recorded on it — so a
+    Restore returns a previously-confirmed term as **confirmed**, never as a
+    candidate that silently leaves the decoder's bias.
+    """
+    reg = _registry(tmp_path)
+    reg.create_project("Ops", actor="console")
+    term = reg.add_term(
+        "ops", "Falcon", status="confirmed", added_by="human", actor="console"
+    )
+
+    retired = reg.update_term(term.id, status="retired", actor="console")
+    assert retired.status == "retired"
+    assert reg.get_term(term.id).notes is None  # the marker is never published
+
+    assert reg.restore_term(term.id, actor="console").status == "confirmed"
+
+
+def test_restoring_a_term_that_is_not_retired_is_refused(tmp_path) -> None:
+    """Only a retired term has a prior status to return to.
+
+    Restoring a never-retired one would invent a status — a confirmed term would
+    come back a candidate, dropping owner-accepted truth out of the decoder's
+    bias — so the move is refused with the status the term actually holds, and
+    the term is left exactly as it was.
+    """
+    reg = _registry(tmp_path)
+    reg.create_project("Ops", actor="console")
+    term = reg.add_term(
+        "ops", "Falcon", status="confirmed", added_by="human", actor="console"
+    )
+
+    with pytest.raises(ValueError, match="not retired"):
+        reg.restore_term(term.id, actor="console")
+
+    assert reg.get_term(term.id).status == "confirmed"
+
+
 def test_duplicate_term_in_one_project_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     reg.create_project(

@@ -39,7 +39,7 @@
 </div>
 
 <h3>{{ tr("Sessions") }}</h3>
-<p class="muted">{{ tr("This browser holds a session on this node. Signing out ends it here; signing out everywhere ends every session this node has issued — this browser included — and takes effect on the very next request, with no restart.") }}</p>
+<p class="muted">{{ tr("This browser holds a session on this node. Signing out ends it here; signing out everywhere ends every session this node has issued — this browser included — and takes effect on the very next request, with no restart. The node's own machine — the command line, the tray — is the one client it opens a session for again (within a minute, since nobody is there to sign in).") }}</p>
 <div class="row">
   <form method="post" action="/web/ui/sessions/revoke-all">
     <button type="submit" class="btn btn-danger-ghost">{{ tr("Sign out everywhere") }}</button>

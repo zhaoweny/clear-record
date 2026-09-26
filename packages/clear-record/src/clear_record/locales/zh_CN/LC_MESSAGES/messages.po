@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-27 02:52+0800\n"
+"POT-Creation-Date: 2026-09-27 03:07+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -1326,23 +1326,23 @@ msgstr "此控制台已设置密码；请登录，或在节点上用密码命令
 msgid "that password does not match this console's."
 msgstr "该密码与此控制台的密码不匹配。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2113
+#: packages/clear-record/src/clear_record/web/app.py:2118
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2631
+#: packages/clear-record/src/clear_record/web/app.py:2636
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2663
+#: packages/clear-record/src/clear_record/web/app.py:2668
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
 
 #: packages/clear-record/src/clear_record/web/views.py:118
-#: packages/clear-record/src/clear_record/web/views.py:1370
+#: packages/clear-record/src/clear_record/web/views.py:1375
 msgid "Models"
 msgstr "模型"
 
@@ -1452,67 +1452,67 @@ msgstr "已投递"
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/views.py:1054
+#: packages/clear-record/src/clear_record/web/views.py:1059
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/views.py:1110
+#: packages/clear-record/src/clear_record/web/views.py:1115
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1112
+#: packages/clear-record/src/clear_record/web/views.py:1117
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/views.py:1114
+#: packages/clear-record/src/clear_record/web/views.py:1119
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/views.py:1116
+#: packages/clear-record/src/clear_record/web/views.py:1121
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/views.py:1118
+#: packages/clear-record/src/clear_record/web/views.py:1123
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/views.py:1120
+#: packages/clear-record/src/clear_record/web/views.py:1125
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1121
+#: packages/clear-record/src/clear_record/web/views.py:1126
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1144
+#: packages/clear-record/src/clear_record/web/views.py:1149
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1161
+#: packages/clear-record/src/clear_record/web/views.py:1166
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1238
+#: packages/clear-record/src/clear_record/web/views.py:1243
 msgid "needs attention"
 msgstr "需要处理"
 
-#: packages/clear-record/src/clear_record/web/views.py:1239
+#: packages/clear-record/src/clear_record/web/views.py:1244
 msgid "idle"
 msgstr "空闲"
 
-#: packages/clear-record/src/clear_record/web/views.py:1366
+#: packages/clear-record/src/clear_record/web/views.py:1371
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/views.py:1367
+#: packages/clear-record/src/clear_record/web/views.py:1372
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/views.py:1368
+#: packages/clear-record/src/clear_record/web/views.py:1373
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/views.py:1369
+#: packages/clear-record/src/clear_record/web/views.py:1374
 msgid "Config"
 msgstr "配置"
 
@@ -2353,8 +2353,11 @@ msgid ""
 "This browser holds a session on this node. Signing out ends it here; "
 "signing out everywhere ends every session this node has issued — this "
 "browser included — and takes effect on the very next request, with no "
-"restart."
-msgstr "此浏览器在本节点持有一个会话。退出登录会在此结束该会话；“在所有位置退出登录”会结束本节点签发的所有会话（包括此浏览器），并在下一次请求时立即生效，无需重启。"
+"restart. The node's own machine — the command line, the tray — is the one"
+" client it opens a session for again (within a minute, since nobody is "
+"there to sign in)."
+msgstr ""
+"此浏览器在本节点持有一个会话。退出登录会在此结束该会话；“在所有位置退出登录”会结束本节点签发的所有会话（包括此浏览器），并在下一次请求时立即生效，无需重启。节点自己的机器——命令行与托盘——是唯一会被再次开启会话的客户端（一分钟之内，因为那里没有人可以登录）。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:45
 msgid "Sign out everywhere"
@@ -2688,9 +2691,8 @@ msgid ""
 "not a second place to edit terms — and only when nothing is confirmed "
 "does your own glossary.txt stand as it is."
 msgstr ""
-"注册表才是准绳：一次运行会把这里已确认的术语发布到该会议工作区的 "
-"glossary.txt —— 那是这份清单最近一次发布的副本，而不是另一处编辑术语的地方 —— "
-"只有当没有任何已确认的术语时，你自己写的 glossary.txt 才原样生效。"
+"注册表才是准绳：一次运行会把这里已确认的术语发布到该会议工作区的 glossary.txt —— "
+"那是这份清单最近一次发布的副本，而不是另一处编辑术语的地方 —— 只有当没有任何已确认的术语时，你自己写的 glossary.txt 才原样生效。"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:15
 msgid "Filter"

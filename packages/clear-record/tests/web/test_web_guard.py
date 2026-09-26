@@ -339,6 +339,51 @@ def test_a_declared_proxys_forwarded_host_is_honoured_and_checked(
     assert "evil.example" in forwarded_but_unnamed.json()["detail"]
 
 
+def test_a_declared_peers_own_host_is_its_word_and_the_forwarded_one_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound of the proxy declaration: the peer's ``Host`` does not decide.
+
+    A declared peer is a proxy the operator put in front of the console, so the
+    request that arrives carries the proxy's own ``Host`` and the name the browser
+    actually addressed in ``X-Forwarded-Host``. The guard checks the **forwarded**
+    name — that is what the declaration buys — so an untrusted ``Host`` beside a
+    trusted forwarded name is served, while the same request whose forwarded name
+    is untrusted is refused *naming that name*. The bound is the point of the pin:
+    a declaration is a trust decision about a peer, and the name that decides is
+    still one the operator named (or loopback), never one the peer invents — an
+    undeclared peer gets no such reading at all
+    (``test_a_spoofed_host_from_an_undeclared_peer_is_still_rejected``), and the
+    forwarded name never makes the client *local*
+    (``test_a_forwarded_loopback_name_cannot_make_a_client_local``).
+    """
+    client = _proxied(
+        tmp_path,
+        monkeypatch,
+        declared="203.0.113.7",
+        trusted_hosts=(PROXY_HOST,),
+    )
+
+    def health(forwarded: str | None) -> httpx.Response:
+        headers = {"host": "evil.example"}
+        if forwarded is not None:
+            headers["X-Forwarded-Host"] = forwarded
+        return client.get("/health", headers=headers)
+
+    # The peer's own Host alone decides nothing here, and is not believed either.
+    assert health(None).status_code == 403
+    # The forwarded name is the one checked: a name the operator declared is
+    # served, whatever Host the peer sent.
+    assert health(PROXY_HOST).status_code == 200
+    # And it is checked: a forwarded name nobody named is refused, with the name.
+    refused = health("evil.example")
+    assert refused.status_code == 403
+    assert "evil.example" in refused.json()["detail"]
+    # A chain is read leftmost-first, the same reading the scheme's own test pins:
+    # the first entry is the name the browser saw.
+    assert health("127.0.0.1:8765, evil.example").status_code == 200
+
+
 # Pins too (green at 9b37fbe and 897fd71): it is the criterion's own "still", a
 # regression guard on the guard, and the discriminating tests for the same rule
 # are the declared/undeclared halves above.

@@ -625,19 +625,42 @@ class ServiceTools:
         are what a harness writes with ``write_agent_draft``; nothing is applied
         until a human accepts it with ``accept_agent_draft``. ``minutes`` is the
         meeting's accepted minutes artifact, or ``null`` until one exists.
+
+        Refused, with a reason, when the meeting has no workspace: the chains live
+        in it, so there is nothing to list and the refusal says what would give the
+        meeting drafts.
         """
         agent = self._agent(project, meeting)
         minutes = agent.minutes_artifact()
+        try:
+            drafts = agent.drafts()
+        except MeetingAgentError as exc:
+            # The service's own sentence, in the shape every anticipated failure
+            # here takes: an uncaught exception reaches a model only as
+            # ``Error executing tool …``, which names neither the meeting nor the
+            # fix (the same read-that-raises the console's page had, one transport
+            # over).
+            raise ToolError(str(exc)) from exc
         return AgentDraftsOut(
             kinds=list(TASK_KINDS),
-            drafts=[describe_draft(draft) for draft in agent.drafts()],
+            drafts=[describe_draft(draft) for draft in drafts],
             minutes=None if minutes is None else ArtifactOut.model_validate(minutes),
         )
 
     def read_agent_draft(self, project: str, meeting: str, draft_id: str) -> DraftView:
-        """Read one draft chain: its newest value, its versions and its review state."""
+        """Read one draft chain: its newest value, its versions and its review state.
+
+        Refused, with a reason, when the meeting has no workspace — the chain is a
+        file in it, so the read has nowhere to look.
+        """
         agent = self._agent(project, meeting)
-        return describe_draft(self._draft(agent, draft_id))
+        try:
+            draft = self._draft(agent, draft_id)
+        except MeetingAgentError as exc:
+            # `_draft`'s own refusal (an unknown id) is already a `ToolError`, so
+            # this arm is the workspace one alone.
+            raise ToolError(str(exc)) from exc
+        return describe_draft(draft)
 
     def write_agent_draft(
         self,

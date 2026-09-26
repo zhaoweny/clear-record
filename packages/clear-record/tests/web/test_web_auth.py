@@ -720,15 +720,73 @@ def _route_requests(app: FastAPI) -> list[tuple[str, str]]:
     return requests
 
 
+#: The anonymous surface, spelled out as **literals**: the whole of what
+#: :func:`answers_anonymously` may admit. It is deliberately not read out of the
+#: predicate — a predicate that grew would move the expectation with it, and the
+#: guard would pass on any list at all — and ``_NOT_ANONYMOUS`` names the paths a
+#: person would plausibly try to make public. One of them is the mutation a
+#: reviewer used: add ``/web/ui/diagnostics`` to ``ANONYMOUS_PATHS`` and the two
+#: tests below fail (the predicate test on the literal, the walk test on the
+#: route), where the walk alone could not.
+_ANONYMOUS = (
+    ("GET", SETUP_PATH),
+    ("POST", CREDENTIAL_PATH),
+    ("POST", SIGN_IN_PATH),
+    ("GET", HEALTH_PATH),
+    ("GET", STATIC_PREFIX),
+    ("GET", f"{STATIC_PREFIX}/app.css"),
+    # Any method: the mount is answered before the method branch is consulted.
+    ("POST", f"{STATIC_PREFIX}/app.css"),
+)
+
+_NOT_ANONYMOUS = (
+    ("GET", CONSOLE_HOME),
+    ("GET", "/web/settings/status"),
+    ("GET", "/web/ui/projects"),
+    ("GET", "/web/ui/diagnostics"),
+    ("POST", REVOKE_ALL_PATH),
+    ("GET", f"{MACHINE_PREFIX}projects"),
+    ("GET", "/api/health"),
+    ("GET", "/health/"),
+)
+
+
+def test_the_anonymous_surface_is_exactly_the_declared_one(console) -> None:
+    """What the predicate admits is pinned by literals, and the gate agrees.
+
+    The route walk below reads ``answers_anonymously`` to decide which routes to
+    drive, which is exactly what it cannot police: widening the list widens the
+    skip. This is the half that can — the verdicts on hand-written paths — plus
+    the middleware's own answer for a path outside the surface, driven through the
+    real gate: refused, in the shape its kind gets.
+    """
+    for method, path in _ANONYMOUS:
+        assert answers_anonymously(method, path), (method, path)
+    for method, path in _NOT_ANONYMOUS:
+        assert not answers_anonymously(method, path), (method, path)
+
+    for method, path in _NOT_ANONYMOUS:
+        response = console.client.request(method, path, follow_redirects=False)
+        if path.startswith(MACHINE_PREFIX):
+            assert response.status_code == 401, path
+        else:
+            assert response.status_code == 303, path
+            assert response.headers["location"] == SETUP_PATH, path
+
+
 def test_no_route_outside_the_anonymous_surface_answers_without_a_session(
     console,
 ) -> None:
-    """Every route but the declared ones refuses an anonymous request.
+    """Every route the surface does not declare refuses an anonymous request.
 
     The refusal is a redirect to the setup route for a page and fragment, and
     ``401`` for the machine surface, so a script is told what a browser is shown.
     A route that answered anything else — a page, a fragment, an empty 200 — has
     quietly joined the anonymous surface, and this fails naming it.
+
+    The other direction is checked here too, against the literals: **a route the
+    predicate admits must be one this module declared**, so a list that grew fails
+    rather than being read back out of itself.
     """
     requests = _route_requests(console.app)
     assert len(requests) > 40, (
@@ -736,8 +794,11 @@ def test_no_route_outside_the_anonymous_surface_answers_without_a_session(
     )
 
     offenders: list[tuple[str, str, int, str | None]] = []
+    undeclared: list[tuple[str, str]] = []
     for method, path in requests:
         if answers_anonymously(method, path):
+            if (method, path) not in _ANONYMOUS:
+                undeclared.append((method, path))
             continue
         response = console.client.request(method, path, follow_redirects=False)
         location = response.headers.get("location")
@@ -748,6 +809,7 @@ def test_no_route_outside_the_anonymous_surface_answers_without_a_session(
         if not refused:
             offenders.append((method, path, response.status_code, location))
 
+    assert undeclared == [], f"the anonymous surface grew: {undeclared}"
     assert offenders == [], f"routes answering anonymously: {offenders}"
 
 

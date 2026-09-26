@@ -308,3 +308,52 @@ def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
         {"project": "ops", "meeting": "kickoff", "draft_id": "nope"},
     )
     assert "unknown agent draft" in text
+
+
+def test_a_meeting_with_no_workspace_answers_the_reads_in_words(
+    tmp_path: Path,
+) -> None:
+    """A read of a meeting the machine API can create is a sentence, not a crash.
+
+    The machine API creates a meeting with no ``workspace_path``, and the drafts
+    a harness reads live in the workspace: both read tools therefore meet the
+    service's own refusal. It has to reach the agent as text — the shape the
+    write tools already answer with — because an uncaught exception reaches a
+    model only as ``Error executing tool <name>``, which says nothing about the
+    meeting or what would fix it. The write tool's behaviour is unchanged: it
+    refuses with the same sentence it always did.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    registry.create_project("Ops", actor="console")
+    registry.create_meeting("ops", "Kickoff", actor="console")  # no workspace
+    server = build_server(registry)
+
+    listed = _error(
+        server, "list_agent_drafts", {"project": "ops", "meeting": "kickoff"}
+    )
+    read = _error(
+        server,
+        "read_agent_draft",
+        {"project": "ops", "meeting": "kickoff", "draft_id": "whatever"},
+    )
+    written = _error(
+        server,
+        "write_agent_draft",
+        {
+            "project": "ops",
+            "meeting": "kickoff",
+            "kind": "minutes",
+            "value": _ANSWERS["minutes"],
+        },
+    )
+
+    for name, text in (
+        ("list_agent_drafts", listed),
+        ("read_agent_draft", read),
+        ("write_agent_draft", written),
+    ):
+        # `ToolError` is answered as ``Error executing tool <name>: <the service's
+        # sentence>``, and the crash form is that prefix with nothing after it —
+        # which is all the model would see of the failure otherwise.
+        assert text.startswith(f"Error executing tool {name}: "), text
+        assert "no workspace" in text, text

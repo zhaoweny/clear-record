@@ -1944,7 +1944,12 @@ def create_app(
         """End **every** session — this one included — and land on sign-in.
 
         The remedy for a browser the operator no longer trusts: it takes effect
-        on the next request any of them makes, with no restart. Settings → Status
+        on the next request any of them makes, with no restart — for every session
+        a *browser* holds. The node's own-machine session is the one client that
+        comes back: nobody is at that end to sign in, so the keeper re-opens it
+        within ``LOCAL_SESSION_REFRESH_S`` (the documented bargain of that
+        credential, not a session surviving the sweep — the sweep ends the row
+        like any other). Settings → Status
         posts it, and the response ends the session that asked, so the browser
         that clicked is signed out too — which is the point rather than a
         surprise, and it lands on the sign-in form.

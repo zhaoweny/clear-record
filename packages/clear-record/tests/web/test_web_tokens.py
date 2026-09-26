@@ -345,13 +345,18 @@ def _machine_deletes(console: SimpleNamespace) -> set[str]:
 def test_the_machine_api_has_exactly_two_delete_verbs_and_they_are_the_named_ones(
     console,
 ) -> None:
-    """No route can join the destructive shape without failing here.
+    """No ``DELETE`` route can join the machine surface without failing here.
 
-    The table is the guard: the machine surface's two ``DELETE`` routes are the
-    glossary *retire* (the row survives the verb) and the managed-tape delete
-    (licensed by a verified archive). A third one — the shape a destructive verb
-    arrives in — fails this test before anything is built on it, which is the
-    decision point ADR-0033 asks for.
+    The table is the guard, as far as the table can see: the machine surface's two
+    ``DELETE`` routes are the glossary *retire* (the row survives the verb) and the
+    managed-tape delete (licensed by a verified archive), and a third one fails
+    this test before anything is built on it — the decision point ADR-0033 asks
+    for. What it cannot see is the **method**: a destructive act spelled ``POST``
+    or ``PUT`` is not a ``DELETE`` and would not fail this. The live verbs that
+    shape could arrive in are held elsewhere — ``PUT /api/v1/meetings/{id}/tapes``
+    is append-only through ``service/tapestore.py``'s ``write_set``, and
+    ``POST /api/v1/shutdown`` stops the node without destroying a copy — and the
+    archive precondition guards the tape delete under any method.
     """
     assert _machine_deletes(console) == {
         f"{MACHINE_PREFIX}glossary/{{term_id}}",

@@ -179,16 +179,25 @@ def fake_tailscale(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture()
 def captured_serve(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Replace the uvicorn launcher with a recorder of its ``trusted_hosts``."""
+    """Replace the uvicorn launcher with a recorder of what it was handed."""
     captured: dict = {}
 
-    def fake_serve(*, host, port, open_browser, data_dir=None, trusted_hosts=None):
+    def fake_serve(
+        *,
+        host,
+        port,
+        open_browser,
+        data_dir=None,
+        trusted_hosts=None,
+        trusted_proxies=None,
+    ):
         captured.update(
             host=host,
             port=port,
             open_browser=open_browser,
             data_dir=data_dir,
             trusted_hosts=trusted_hosts,
+            trusted_proxies=trusted_proxies,
         )
         return 0
 
@@ -471,6 +480,11 @@ def test_tailscale_flag_serves_trusts_and_prints_the_url(
 
     assert result.exit_code == 0, result.output
     assert captured_serve["trusted_hosts"] == [TAILNET_NAME]
+    # Serve is the proxy, and its hop arrives over loopback: the flag declares
+    # that peer itself (ADR-0021's quick path), so Serve's X-Forwarded-Proto is
+    # honoured and a tailnet request gets a Secure session cookie — with no
+    # second variable for the operator to set.
+    assert captured_serve["trusted_proxies"] == ["127.0.0.1"]
     assert f"https://{TAILNET_NAME}:{PORT}{CONSOLE_HOME}" in result.output
     # The tailnet is the perimeter, not the authentication: the console asks for
     # its own password (ADR-0033), and the message says both.

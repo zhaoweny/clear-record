@@ -54,26 +54,22 @@ trust source refuses to start.
   mitigation.
 - [DECISION] Deployment shapes (systemd / launchd / container) are documented as
   **how to run the backend**, never as an auth story.
-- [OPEN: owner, 2026-09-15] **Honour `X-Forwarded-*` only from a configured
-  trusted proxy (`CR_TRUSTED_PROXIES`) — deferred, not built.** The owner's steer
-  was to accept forwarded headers from a declared proxy, with a **quick path for
-  Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
-  instead of asking the operator to declare it. What is true today, scoped: the
-  console's own code reads and honours **no** `X-Forwarded-*` header, and
-  `CR_TRUSTED_PROXIES` is read as the **peer declaration** this item will honour —
-  it is deliberately *not* what admits a non-loopback bind, because the auth
+- [OPEN: owner, 2026-09-15, **closed 2026-09-26** — see the Update *the trusted
+  proxies land*] **Honour `X-Forwarded-*` only from a configured trusted proxy
+  (`CR_TRUSTED_PROXIES`).** The owner's steer was to accept
+  forwarded headers from a declared proxy, with a **quick path for Tailscale**:
+  `--tailscale` sets the proxy up itself, so it pre-trusts that hop instead of
+  asking the operator to declare it. Held as it stood while the item was open:
+  the console's own code read and honoured **no** `X-Forwarded-*` header, and
+  `CR_TRUSTED_PROXIES` was read as the **peer declaration** the item would
+  honour — deliberately *not* what admits a non-loopback bind, because the auth
   gate's startup check reads `CR_TRUSTED_HOSTS` (the one declaration the guard's
   own `Host` check consults, and a proxy peer is not one). (The server under the
-  console, uvicorn, does rewrite the scheme from a *loopback* peer's
-  `X-Forwarded-Proto` by default, which is the shape this item narrows.) Honouring
-  a declared peer's headers is this item's, so trusting forwarded headers from
-  *anything else* remains a risk to the request guard; the bind is loopback by
-  default, and the UI's relative URLs mean nothing is lost by
-  refusing. Revisit when a proxy deployment
-  genuinely needs the client's scheme or host. *(Direction 2026-09-26:
-  [ADR-0033](0033-the-auth-position.md) puts trusted proxies in the auth build's
-  scope; the code still reads neither header, so this item stays open-not-built
-  until that lands.)*
+  console, uvicorn, did rewrite the scheme from a *loopback* peer's
+  `X-Forwarded-Proto` by default, which is the shape the item narrowed.) The
+  bind-is-loopback-by-default part of that stands, and so does the last part:
+  honouring a declared peer's headers does not make a name trustable, as the
+  Update records.
 
 ## Rationale
 
@@ -101,3 +97,41 @@ trust source refuses to start.
   the proxy must be the **only** ingress.
 - Revisit if the product grows multi-user, or if it should ever be reachable
   without an operator-managed proxy.
+
+## Update (2026-09-26) — the trusted proxies land
+
+- [FACT] **Forwarded headers are honoured only from declared peers.** The request
+  guard (`clear_record.web.guard`, installed in `clear_record.web.app`) resolves
+  `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-For` into the request
+  **only** when the socket peer is a peer the operator declared
+  (`CR_TRUSTED_PROXIES`, empty by default — so a stock install believes no
+  forwarded header at all). A declared peer's `X-Forwarded-Proto` is what makes a
+  proxied console's session cookie `Secure`: `web/auth.py`'s `secure_request`
+  reads the request's scheme, and the guard writes that scheme before the auth
+  gate reads anything — the guard's middleware runs outside the gate. Its
+  `X-Forwarded-Host` is the authority the console's absolute URLs are built from
+  (port and all), and its `X-Forwarded-For` the client the request is attributed
+  to. A request from any other peer is judged by the socket it arrived on and the
+  `Host` it carries: its forwarded headers are ignored rather than merged in, so a
+  client cannot nominate its own scheme, name or address.
+- [FACT] **The name a proxy forwards is still checked, and the bind rule is
+  unchanged.** `CR_TRUSTED_PROXIES` is a **peer** declaration and not a trust
+  source: a forwarded `Host` meets the same `Host` rule as a direct one, so the
+  public hostname a proxy serves still belongs in `CR_TRUSTED_HOSTS` — the one
+  declaration that admits a non-loopback bind, exactly as the startup refusal
+  already said. Trusting a declared peer's headers says nothing about which names
+  the console answers to.
+- [FACT] **The server no longer decides it.** uvicorn's own `proxy_headers`
+  handling believed a **loopback** peer's `X-Forwarded-Proto` whatever the
+  operator declared, and honoured no `X-Forwarded-Host` at all — the shape this
+  item narrowed. Every console posture now starts its server with that off
+  (`NodeServer`), so the operator's declaration is the decision in one place
+  instead of two.
+- [FACT] **Tailscale keeps the quick path the steer asked for.** `--tailscale`
+  declares the hop Serve proxies from — its target is always
+  `http://127.0.0.1:<port>` — in-process, so a request over the tailnet still gets
+  a `Secure` cookie with no second variable for the operator; an operator running
+  `tailscale serve`, nginx or Caddy by hand declares that loopback peer
+  themselves. The operator's half of this is written down in
+  [`docs/service-deployment.md`](../service-deployment.md) §2, and §6 no longer
+  lists it among what is not built.

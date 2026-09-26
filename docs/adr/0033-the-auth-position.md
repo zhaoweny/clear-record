@@ -277,14 +277,13 @@ verbatim answers and the direction they answer are the
   `--tailscale` trusts its own resolved name), because the request guard would
   answer `403` to every request such a bind received. The loopback default is
   unchanged.
-- [FACT] What is **not** built, and stays with its own tickets: the trusted-proxy
-  half — the console's own code reads no `X-Forwarded-*` header, and what is left
-  is narrowing the header to **declared** peers (`CR_TRUSTED_PROXIES` is the peer
-  declaration that change will honour, and nothing consults it yet; uvicorn's own
-  default already believes `X-Forwarded-Proto` from any loopback peer), and machine
-  tokens for scripts. The credential's *act* — a
-  fresh password at a destructive operation — still has no member of its class to
-  gate.
+- [FACT] The "not built" list this Update opened with — the trusted-proxy half,
+  and machine tokens for scripts — has since emptied of both: **both clauses are
+  superseded** — tokens by the machine-token Update above, and trusted proxies by
+  [ADR-0021](0021-localhost-only-deployment.md)'s Update *the trusted proxies land*
+  (2026-09-26: the console's own code now reads `X-Forwarded-*`, and only from the
+  peers `CR_TRUSTED_PROXIES` declares). The credential's *act* — a fresh password
+  at a destructive operation — still has no member of its class to gate.
 - [FACT] **The re-root landed**: the console answers under `/web/` (pages at
   `/web/…`, fragments at `/web/ui/…`, the credential step at `/web/setup`), the
   machine API under `/api/v1/`, and the compiled assets stay at `/static`;

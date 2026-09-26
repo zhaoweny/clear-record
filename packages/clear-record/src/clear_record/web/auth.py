@@ -169,15 +169,14 @@ def bearer_token(request: Request) -> str | None:
 def secure_request(request: Request) -> bool:
     """Whether this request arrived over HTTPS, so the cookie may be ``Secure``.
 
-    ``request.url.scheme``, and **this module reads no forwarded header**. What
-    the scheme *is* depends on the server under it: uvicorn's own default already
-    rewrites the scheme from ``X-Forwarded-Proto`` for a **loopback peer**
-    (``proxy_headers=True`` with ``forwarded_allow_ips="127.0.0.1,::1"``), so a
-    proxy running on this machine is believed today — which is the ``Secure``
-    cookie a proxied console needs, and also the shape the trusted-proxy change
-    narrows: honouring the header only from the peers the operator *declares*
-    (``CR_TRUSTED_PROXIES``) is that change's, and this function is where a
-    narrowing the server itself does not make would land.
+    ``request.url.scheme`` — the **request's own** scheme, which is the socket's
+    except where a declared proxy says otherwise: the request guard resolves a
+    declared peer's ``X-Forwarded-Proto`` into the request before this module
+    reads it (:func:`clear_record.web.guard.apply_forwarded`), and the server
+    under the console is deliberately told to do no such thing itself. So a
+    TLS-terminating proxy the operator declared (``CR_TRUSTED_PROXIES``) gets the
+    ``Secure`` cookie a proxied console needs, while an undeclared peer's
+    forwarded scheme is never read and the socket's plain ``http`` stands.
     """
     return request.url.scheme == "https"
 

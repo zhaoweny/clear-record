@@ -234,14 +234,23 @@ def _run(
             )
         )
     trusted_hosts: list[str] | None = None
+    trusted_proxies: list[str] | None = None
     session: ServeSession | None = None
     if tailscale:
+        from clear_record.web import guard
+
         _require_loopback_bind(host)
         trusted_hosts, session = _tailscale_setup(
             target_port=port,
             serve_port=tailscale_port if tailscale_port is not None else port,
             override=tailscale_host,
         )
+        # Serve is the proxy this console runs behind, and its hop arrives over
+        # loopback: the flag that sets Serve up declares that peer itself — the
+        # quick path ADR-0021 promised, rather than asking the operator for a
+        # second variable — so Serve's ``X-Forwarded-Proto`` is honoured and a
+        # tailnet request gets a ``Secure`` session cookie.
+        trusted_proxies = sorted(guard.trusted_proxies() | {_serve_proxy_peer()})
     else:
         _require_named_trust(host)
     from clear_record.web.app import serve
@@ -276,6 +285,7 @@ def _run(
             open_browser=not no_browser,
             data_dir=data_dir,
             trusted_hosts=trusted_hosts,
+            trusted_proxies=trusted_proxies,
             **serve_kwargs,
         )
     finally:
@@ -283,6 +293,21 @@ def _run(
             restore()
         if session is not None:
             session.stop()
+
+
+def _serve_proxy_peer() -> str:
+    """The peer Tailscale Serve's hop arrives from — its target's own host.
+
+    Read from the one declaration of that target
+    (:data:`clear_record.web.tailscale.SERVE_TARGET`) rather than spelled again,
+    because the two must agree: the peer a request is *judged* by is the address
+    the socket delivers, which is the host Serve dials.
+    """
+    from urllib.parse import urlsplit
+
+    from clear_record.web import tailscale
+
+    return urlsplit(tailscale.serve_target(0)).hostname or ""
 
 
 def _require_named_trust(host: str) -> None:
@@ -299,9 +324,10 @@ def _require_named_trust(host: str) -> None:
     What admits the bind is therefore the *same* declaration the guard's own
     ``Host`` check reads (:func:`clear_record.web.guard.names_a_trusted_host`),
     and not ``CR_TRUSTED_PROXIES``: a declared peer is the forwarded-header
-    declaration the trusted-proxy change will honour, and it makes no ``Host``
-    trustable today — so admitting a bind on the proxy alone would reproduce
-    exactly the dead console this refusal exists to prevent.
+    declaration the guard honours, and it makes no ``Host`` trustable — a
+    forwarded name is checked exactly as a direct one is — so admitting a bind on
+    the proxy alone would reproduce exactly the dead console this refusal exists
+    to prevent.
 
     Both come from the environment, which is where the operator puts them, so the
     refusal and the guard cannot disagree about what was declared.
@@ -329,7 +355,8 @@ def _require_named_trust(host: str) -> None:
             "they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>\n"
             "    - let Tailscale Serve front it: --tailscale\n"
             "  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the "
-            "forwarded-header declaration — the name it forwards still has to be in "
+            "peers whose forwarded headers are honoured — but that is not a name "
+            "this console answers to: the hostname it forwards still has to be in "
             "CR_TRUSTED_HOSTS.",
             host=host,
         )

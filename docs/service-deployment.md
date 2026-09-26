@@ -84,6 +84,8 @@ Environment=CR_DATA_DIR=%h/.local/share/clear-record
 Environment=CR_MODELS_DIR=%h/.local/share/clear-record/models
 # Add the hostname your proxy serves, so the guard trusts the browser's Origin:
 # Environment=CR_TRUSTED_HOSTS=console.example.com
+# Declare the proxy itself, so its forwarded headers are believed (§2):
+# Environment=CR_TRUSTED_PROXIES=127.0.0.1
 Restart=on-failure
 RestartSec=5
 
@@ -137,6 +139,7 @@ account. Save as `~/Library/LaunchAgents/com.clear-record.web.plist`:
     <key>CR_DATA_DIR</key><string>/Users/you/Library/Application Support/clear-record</string>
     <key>CR_MODELS_DIR</key><string>/Users/you/Library/Application Support/clear-record/models</string>
     <!-- <key>CR_TRUSTED_HOSTS</key><string>console.example.com</string> -->
+    <!-- <key>CR_TRUSTED_PROXIES</key><string>127.0.0.1</string> -->
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -182,7 +185,12 @@ Two honest notes. `--host 0.0.0.0` is **inside** the container only — the
 host, and the request guard is what still refuses a rebound `Host` there;
 `CR_TRUSTED_HOSTS` is required all the same, because a bind past loopback with
 nothing declaring how the console is reached refuses to start (the paragraph
-below). Add a
+below). And the peer a container's console sees is **not** `127.0.0.1`: it is
+whatever address your publishing puts in front of the container (with Docker's
+own port forwarding, normally the bridge gateway). So a `CR_TRUSTED_PROXIES`
+line for a container names *that* address — the address the console actually
+sees, never the host's loopback — or the forwarded headers stay unread and the
+session cookie is not `Secure` (§2). Add a
 GPU with `--gpus all` (NVIDIA, via the Container Toolkit) or
 `--device /dev/dri` (Vulkan), and a health probe against
 `GET /health`; if the proxy is itself a container, put both on one network
@@ -274,16 +282,16 @@ serve nobody.
     - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>
     - name the address your own command line and tray dial as well, so they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>
     - let Tailscale Serve front it: --tailscale
-  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the
-  forwarded-header declaration — the name it forwards still has to be in
-  CR_TRUSTED_HOSTS.
+  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the peers
+  whose forwarded headers are honoured — but that is not a name this console
+  answers to: the hostname it forwards still has to be in CR_TRUSTED_HOSTS.
 ```
 
 `CR_TRUSTED_PROXIES` is a declaration too, and deliberately **not** a trust
-source: it names the peer whose forwarded headers the trusted-proxy change will
-honour (§6), and it makes no `Host` trustable today — which is why admitting a
-bind on the peer alone would start a console that refuses every request, the very
-thing this refusal exists to prevent.
+source: it names the peers whose forwarded headers the console honours (§2), and
+it makes no `Host` trustable — a forwarded name is checked exactly as a direct
+one is — which is why admitting a bind on the peer alone would start a console
+that refuses every request, the very thing this refusal exists to prevent.
 
 **The node's own machine.** A surface running as the same operating-system user
 as the node — the command line first — is inside the boundary this gate defends
@@ -312,8 +320,8 @@ dead session once it is stale — and the suite pins each of them.
 The loopback default is unaffected: `clear-record serve` with no `--host` always
 starts. `CR_TRUSTED_HOSTS` names the hosts the console answers to (the one
 declaration the guard's own check reads); `CR_TRUSTED_PROXIES` names the peers
-whose forwarded headers the trusted-proxy change will honour, and §6 says exactly
-what is read from it today.
+whose forwarded headers the console honours (§2) and is still not a host it
+answers to — the name a proxy forwards has to be in `CR_TRUSTED_HOSTS` as well.
 
 ## 2. The request guard (on by default)
 
@@ -376,6 +384,44 @@ exactly this reason. Two boundaries worth being clear about:
   would make every visitor look local, and a path typed on another machine would
   then be resolved here.
 
+### Forwarded headers: declare your proxy (`CR_TRUSTED_PROXIES`)
+
+[FACT, repo] A proxy that terminates TLS tells the console what the browser
+actually saw with `X-Forwarded-Proto` (and usually `X-Forwarded-Host` /
+`X-Forwarded-For`). The console believes those headers **only from a peer you
+declared**:
+
+```sh
+Environment=CR_TRUSTED_PROXIES=127.0.0.1
+```
+
+That single line is the whole declaration, and it is **your responsibility** —
+nothing else makes a forwarded header readable. With a declared peer:
+
+| Header | What the console does with it |
+|---|---|
+| `X-Forwarded-Proto` | the request's scheme, so the session cookie is marked `Secure` over your TLS and the console builds `https` URLs |
+| `X-Forwarded-Host` | the authority the console's absolute URLs use (port included) — and the name the guard's `Host` check then judges, so it still has to be in `CR_TRUSTED_HOSTS` |
+| `X-Forwarded-For` | the client the request is attributed to (the rightmost entry that is not itself a declared proxy) |
+
+A request from **any other peer** is judged by the socket it arrived on and the
+`Host` it carries: its forwarded headers are ignored rather than merged in, so a
+client cannot nominate its own scheme, name or address. With nothing declared — a
+stock install — no forwarded header is read at all, and uvicorn's own
+`FORWARDED_ALLOW_IPS` knob does nothing here: the console's server leaves
+forwarded headers to the declaration, so this is the only line that decides.
+**If your proxy already runs on this machine, declare it:** the console no longer
+believes a loopback peer by default, and without the declaration the session
+cookie simply is not marked `Secure` (and absolute URLs, if a surface ever builds
+one, follow the socket). `--tailscale` declares Serve's own loopback hop for you
+(§3); your own nginx, Caddy or `tailscale serve` needs `127.0.0.1` named here.
+
+This is *not* how you decide who may reach the console — that is still your proxy
+and nothing else (§3). It is what makes the console's own answers correct behind
+it: a `Secure` session cookie, and absolute URLs that name the host the browser is
+really talking to (the console's own links are relative today, so this is the
+foundation rather than a visible fix).
+
 ## 3. Front it with a proxy
 
 ### nginx (`auth_basic`)
@@ -393,6 +439,7 @@ server {
 
         proxy_pass http://127.0.0.1:8765;
         proxy_set_header Host $host;   # the name the browser used — do not rewrite
+        proxy_set_header X-Forwarded-Proto $scheme;   # so the cookie can be Secure
     }
 }
 ```
@@ -408,9 +455,12 @@ this proxy is told, in one sentence, to address work the registry's way instead.
 Rewriting `Host` would make every visitor look local, and a path typed on another
 machine would then be resolved here. `CR_TRUSTED_HOSTS=console.example.com` is
 required either way: `Host` is a name the guard must trust, and the browser's
-`Origin` is the public name too. This is HTTP Basic auth: use TLS, and treat the
-password as the only barrier between the internet and a console with no
-accounts of its own.
+`Origin` is the public name too. Add `proxy_set_header X-Forwarded-Proto $scheme`
+and `CR_TRUSTED_PROXIES=127.0.0.1` (the address nginx dials *from*) so the console
+knows the browser is on TLS and marks the session cookie `Secure` — without them
+it falls back to the socket's own plain-HTTP facts and the cookie is not `Secure`.
+This is HTTP Basic auth: use TLS, and treat the password as the only barrier
+between the internet and a console with no accounts of its own.
 
 ### Caddy (`forward_auth`)
 
@@ -429,9 +479,12 @@ console.example.com {
 }
 ```
 
-Caddy passes the original `Host` through, so set
-`CR_TRUSTED_HOSTS=console.example.com` and the guard will accept both the
-`Host` and the browser's `Origin`. Caddy obtains and renews TLS automatically.
+Caddy passes the original `Host` through and sets the forwarded headers itself,
+so set `CR_TRUSTED_HOSTS=console.example.com` — the guard will accept both the
+`Host` and the browser's `Origin`, and the name Caddy forwards is the one checked
+— and `CR_TRUSTED_PROXIES=127.0.0.1`, the address Caddy dials from, so its
+`X-Forwarded-Proto` is believed and the session cookie is `Secure`. Caddy obtains
+and renews TLS automatically.
 
 ### Tailscale
 
@@ -452,7 +505,12 @@ It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
 normalized), runs
 `tailscale serve --https=<port> http://127.0.0.1:<console-port>`, and prints the
 URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
-port is not 443).
+port is not 443). It also **declares Serve's own hop** (`127.0.0.1`, the address
+Serve proxies from) as a trusted proxy, so Serve's `X-Forwarded-Proto` is believed
+and a tailnet request gets a `Secure` session cookie — no second variable for you
+to set. Running `tailscale serve` yourself instead? Declare that hop yourself:
+`CR_TRUSTED_PROXIES=127.0.0.1` (plus the tailnet name in `CR_TRUSTED_HOSTS`), or
+the console judges the request by the plain loopback socket it arrives on.
 
 #### Finding the `tailscale` binary
 
@@ -737,17 +795,6 @@ cheap (`docs/architecture.md` §8).
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
   Flatpak is the desktop bundle (ADR-0015), not the node.
-- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 — deferred, not built: the
-  console's own code reads no forwarded header, so a proxied request is judged by
-  the socket it arrived on and the scheme the server under the console reports.
-  That server, uvicorn, already rewrites the scheme from a **loopback** peer's
-  `X-Forwarded-Proto` by default — which is what makes a proxied console's
-  session cookie `Secure` today, and the shape the trusted-proxy change narrows.
-  `CR_TRUSTED_PROXIES` is the declaration that change will honour: it names the
-  peer whose headers may be believed, and it is not a trust source now (§1), so
-  the name a proxy forwards still belongs in `CR_TRUSTED_HOSTS`. Honouring the
-  headers from exactly those peers is what is left to build; the UI uses relative
-  URLs, so a proxy that terminates TLS does not need them meanwhile.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
 

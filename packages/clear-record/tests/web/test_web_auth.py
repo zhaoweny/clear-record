@@ -270,9 +270,10 @@ def test_a_machine_request_carries_no_session_cookie(console) -> None:
 def test_the_cookie_is_secure_when_the_request_arrived_over_https(tmp_path) -> None:
     """The scheme the request arrived by is what ``Secure`` follows.
 
-    The console is served plain HTTP behind the operator's proxy, so this is the
-    socket's scheme today; the trusted-proxy change is what will let a declared
-    peer's ``X-Forwarded-Proto`` say ``https`` here (ADR-0021's open item).
+    Here the *socket* said https, so the cookie is ``Secure``; a console behind a
+    TLS-terminating proxy gets the same answer from the declared peer's
+    ``X-Forwarded-Proto``, which ``test_web_guard.py`` drives both ways (declared
+    and undeclared — ADR-0021's closed item).
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     app = create_app(registry, trusted_hosts=("testserver",))

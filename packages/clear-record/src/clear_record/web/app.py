@@ -33,7 +33,11 @@ signed-in session, and the anonymous surface is a list the route-table test
 enumerates. "Localhost-only" bounds who can connect, not who can act: the
 :mod:`clear_record.web.guard` middleware rejects a hostile page's cross-origin or
 rebound requests before the auth middleware looks at a session (ADR-0021), while
-remote access stays the operator's reverse proxy.
+remote access stays the operator's reverse proxy. That same middleware resolves a
+**declared** proxy's forwarded headers into the request first, so the auth gate's
+cookie and the URLs built downstream are the browser's — and the server under the
+app is told to leave those headers alone (:class:`NodeServer`), which keeps the
+operator's declaration the one decision.
 """
 
 from __future__ import annotations
@@ -53,7 +57,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import UploadFile
+from starlette.datastructures import Headers, UploadFile
 
 from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob, i18n, node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
@@ -889,6 +893,22 @@ class NodeServer(uvicorn.Server):
     runs there; it is only unfindable.
     """
 
+    def __init__(self, config: uvicorn.Config) -> None:
+        """Narrow the server's own forwarded-header handling to nothing.
+
+        Every console posture — ``serve``, ``web`` and the tray's own node —
+        starts its server through this class, and the console's request guard is
+        where a **declared** proxy's ``X-Forwarded-*`` headers are honoured. The
+        server's own handling would decide first and decide differently: it
+        believes a **loopback** peer's ``X-Forwarded-Proto`` whatever the operator
+        declared, hands the guard a scheme and a client that are already rewritten
+        to judge, and honours no ``X-Forwarded-Host`` at all — the shape
+        ``CR_TRUSTED_PROXIES`` replaces. So the server never touches a forwarded
+        header, in any posture, and the declaration is the decision.
+        """
+        config.proxy_headers = False
+        super().__init__(config)
+
     async def startup(self, sockets=None) -> None:
         await super().startup(sockets)
         address = self.bound()
@@ -1034,6 +1054,7 @@ def create_app(
     runs: RunManager | None = None,
     *,
     trusted_hosts: Sequence[str] | None = None,
+    trusted_proxies: Sequence[str] | None = None,
     webhooks: WebhookEmitter | None = None,
 ) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
@@ -1045,6 +1066,12 @@ def create_app(
     ``trusted_hosts`` overrides the extra hostnames the request guard accepts
     (default: ``CR_TRUSTED_HOSTS``, on top of loopback); tests and embedders can
     pass an explicit set, and ``()`` pins the loopback-only default.
+
+    ``trusted_proxies`` overrides the peers whose forwarded headers the request
+    guard honours (default: ``CR_TRUSTED_PROXIES``, and **nobody** — not even
+    loopback); ``()`` pins "believe no forwarded header at all". The guard
+    resolves them into each request before any other middleware reads it, and
+    ``--tailscale`` passes the loopback hop Serve proxies from.
 
     ``webhooks`` is the emitter whose health the console reports; it defaults to
     the shared config-driven one the runs already deliver through, and a test can
@@ -1091,6 +1118,11 @@ def create_app(
         guard.normalize_hosts(trusted_hosts)
         if trusted_hosts is not None
         else guard.trusted_extra_hosts()
+    )
+    proxy_peers = (
+        guard.normalize_hosts(trusted_proxies)
+        if trusted_proxies is not None
+        else guard.trusted_proxies()
     )
 
     def locale(request: Request) -> str:
@@ -1193,12 +1225,32 @@ def create_app(
         rebound read is still a disclosure); ``Origin``/``Referer`` on the
         state-changing ones. A rejection is a plain 403 with an actionable
         message — it is the attacker's request, not the operator's UI.
+
+        A declared proxy's forwarded headers are resolved into the request
+        **before** either check and before anything inside this middleware reads
+        it: the checks then judge the request the *browser* made (its scheme, its
+        name), and the auth gate — registered earlier, so running after this one
+        — reads the scheme this writes when it decides the cookie's ``Secure``.
+        An undeclared peer's headers are not read at all, so its request is
+        judged exactly as the socket delivered it.
         """
-        problem = guard.host_problem(request.headers.get("host"), extra_hosts)
+        guard.apply_forwarded(
+            request.scope,
+            guard.forwarded_facts(
+                request.headers,
+                request.client.host if request.client else None,
+                proxy_peers,
+            ),
+        )
+        # ``Request`` caches the headers it was built with, and this layer's
+        # request predates the resolution above, so the checks read the scope's
+        # own headers — the resolved ones — rather than that stale copy.
+        headers = Headers(scope=request.scope)
+        problem = guard.host_problem(headers.get("host"), extra_hosts)
         if problem is None and request.method not in guard.SAFE_METHODS:
             problem = guard.source_problem(
-                request.headers.get("origin"),
-                request.headers.get("referer"),
+                headers.get("origin"),
+                headers.get("referer"),
                 extra_hosts,
             )
         if problem is not None:
@@ -3219,6 +3271,7 @@ def serve(
     open_browser: bool,
     data_dir: str | None = None,
     trusted_hosts: Sequence[str] | None = None,
+    trusted_proxies: Sequence[str] | None = None,
     log_config: dict | None = None,
     supervise: bool = False,
 ) -> int:
@@ -3229,6 +3282,11 @@ def serve(
     handed to a child (the design decision for ``--tailscale``). ``None`` keeps
     the
     ``CR_TRUSTED_HOSTS`` default.
+
+    ``trusted_proxies`` is forwarded the same way and for the same reason: the
+    peers whose forwarded headers the guard honours (default:
+    ``CR_TRUSTED_PROXIES``), which ``--tailscale`` uses to declare the loopback
+    hop Serve proxies from without asking the operator for a second variable.
 
     ``log_config`` is forwarded to uvicorn: ``serve`` passes the diagnostics-sink
     config so a headless node's logs land beside every other clear-record record;
@@ -3256,6 +3314,7 @@ def serve(
         port=port,
         open_browser=open_browser,
         trusted_hosts=trusted_hosts,
+        trusted_proxies=trusted_proxies,
         log_config=log_config,
         supervise=supervise,
     )
@@ -3268,13 +3327,19 @@ def _serve_forever(
     port: int,
     open_browser: bool,
     trusted_hosts: Sequence[str] | None,
+    trusted_proxies: Sequence[str] | None,
     log_config: dict | None,
     supervise: bool,
 ) -> int:
     """The node's own loop: one server, restarted while supervising (ADR-0013)."""
     while True:
-        app = create_app(registry, trusted_hosts=trusted_hosts)
+        app = create_app(
+            registry, trusted_hosts=trusted_hosts, trusted_proxies=trusted_proxies
+        )
         extra = {} if log_config is None else {"log_config": log_config}
+        # The forwarded-header posture is the server class's, not this line's:
+        # :class:`NodeServer` starts every console with the server's own handling
+        # off, so the guard's declaration is the decision.
         config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
         server = NodeServer(config)
         # Exposed so `POST /api/v1/shutdown` can ask the server to stop — the desktop

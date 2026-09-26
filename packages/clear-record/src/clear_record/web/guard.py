@@ -24,25 +24,33 @@ Trusted hosts are the loopback names — ``127.0.0.1``, ``::1``, ``localhost``
 escape hatch for a console reached through a reverse proxy: the proxy's public
 hostname (and the name the browser puts in ``Origin``) goes there.
 
-A second list lives here too and is **not** a check: the peers in
-``CR_TRUSTED_PROXIES``, whose forwarded headers the console may honour. The
-console's own code reads no ``X-Forwarded-*`` header today (ADR-0021's open item,
-the trusted-proxy change) — the server under it, uvicorn, does rewrite the scheme
-from a **loopback** peer's ``X-Forwarded-Proto`` by default, which is the shape
-that change narrows — so nothing consults this list yet. What admits a
-non-loopback bind is a hostname the guard will actually trust
-(:func:`names_a_trusted_host`), because the startup refusal exists to refuse a
-bind that would answer ``403`` to every request it received.
+A second list lives here too: the peers in ``CR_TRUSTED_PROXIES``, whose
+forwarded headers this console honours — **and only theirs**. A request from any
+other peer is judged by the socket it arrived on and the ``Host`` it carries;
+its ``X-Forwarded-*`` headers are ignored rather than merged in, so a client
+cannot nominate its own scheme, host or address. For a declared peer the three
+headers are resolved into the request *before* the checks below and before the
+auth gate reads the scheme (:func:`forwarded_facts`, :func:`apply_forwarded`),
+which is what makes a TLS-terminating proxy's ``X-Forwarded-Proto`` the session
+cookie's ``Secure`` and its ``X-Forwarded-Host`` the console's absolute URLs.
 
-No domain logic lives here and nothing is stored; the guard is a pure function
-of the request headers and the configured host set.
+That declaration names a **peer**, so it is not a trust source for the ``Host``
+check: the name a proxy forwards still has to be in ``CR_TRUSTED_HOSTS``, which
+is also the one declaration that admits a non-loopback bind
+(:func:`names_a_trusted_host`) — a bind admitted on the peer alone would start a
+console that refuses every request, which is what the startup refusal exists to
+prevent.
+
+No domain logic lives here and nothing is stored; the guard is a function of the
+request headers, the socket's peer and the configured host and peer sets.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, MutableMapping
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 #: Methods that cannot change server state, and so are exempt from the CSRF
@@ -53,16 +61,28 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: default, so a stock install trusts loopback only.
 TRUSTED_HOSTS_ENV = "CR_TRUSTED_HOSTS"
 
-#: Comma-separated peers whose forwarded headers the console may honour. Empty by
-#: default. **Declared, not yet honoured**: the console's own code reads no
-#: ``X-Forwarded-*`` header (ADR-0021's open item; the trusted-proxy change is
-#: what reads a declared peer's headers and lets them drive the session cookie's
-#: scheme and the console's absolute URLs). The server under the console does
-#: rewrite the scheme from a **loopback** peer's ``X-Forwarded-Proto`` by default,
-#: which is the shape that change narrows. Nothing consults this list yet, and it
-#: is deliberately **not** a trust source for the ``Host`` check: the name a proxy
-#: forwards still has to be in :data:`TRUSTED_HOSTS_ENV`.
+#: Comma-separated peers whose forwarded headers the console honours. Empty by
+#: default, so a stock install believes **no** forwarded header: every request is
+#: judged by the socket it arrived on and the ``Host`` it carries. Naming a peer
+#: here is the whole declaration a TLS-terminating proxy needs — its
+#: ``X-Forwarded-Proto`` then drives the session cookie's ``Secure``, its
+#: ``X-Forwarded-Host`` the console's absolute URLs, and its
+#: ``X-Forwarded-For`` the client a request is attributed to. It is deliberately
+#: **not** a trust source for the ``Host`` check: the name a proxy forwards still
+#: has to be in :data:`TRUSTED_HOSTS_ENV`.
 TRUSTED_PROXIES_ENV = "CR_TRUSTED_PROXIES"
+
+#: The forwarded headers a declared peer's requests may carry, lower-cased the way
+#: a request's own header mapping spells them.
+FORWARDED_PROTO = "x-forwarded-proto"
+FORWARDED_HOST = "x-forwarded-host"
+FORWARDED_FOR = "x-forwarded-for"
+
+#: The schemes ``X-Forwarded-Proto`` may name — what a browser can be behind.
+#: Anything else (a ``ws`` hop, a whole URL, a typo) is ignored rather than
+#: written into the request, so the scheme stays one of the two the console's own
+#: cookie and URL decisions are written for.
+_FORWARDED_SCHEMES = frozenset({"http", "https"})
 
 _LOOPBACK_HINT = "127.0.0.1, localhost, ::1 or a name in CR_TRUSTED_HOSTS"
 
@@ -129,12 +149,160 @@ def trusted_proxies(env: Mapping[str, str] | None = None) -> frozenset[str]:
 
     Normalized the way the trusted hosts are — a bare address or hostname, ports
     and brackets stripped — so one spelling serves both this declaration and the
-    peer comparison the trusted-proxy change will make. Nothing reads a forwarded
-    header from these peers yet, and this list is **not** consulted by the
-    ``Host`` check (see :func:`names_a_trusted_host`).
+    peer comparison :func:`is_declared_proxy` makes. Nothing here is a ``Host``
+    the guard trusts: this list names the peers whose forwarded headers are
+    believed (see :func:`names_a_trusted_host`).
     """
     source = os.environ if env is None else env
     return normalize_hosts(source.get(TRUSTED_PROXIES_ENV, "").split(","))
+
+
+def is_declared_proxy(peer: str | None, declared: frozenset[str]) -> bool:
+    """Whether ``peer`` is one of the peers the operator declared a proxy.
+
+    ``peer`` is the address the **socket** delivered (``scope["client"]``), never
+    one a header claims: a header is exactly what a client would use to nominate
+    itself, so the socket stays the truth about who is speaking.
+    """
+    name = host_name(peer)
+    return name is not None and name in declared
+
+
+class Forwarded(NamedTuple):
+    """What a declared peer's forwarded headers say about one request.
+
+    Each field is ``None`` when nothing usable was forwarded — which is also what
+    any request from an undeclared peer resolves to, since its headers are not
+    read at all. A caller then keeps the socket's own scheme, ``Host`` and
+    client, and judges the request as the peer sent it.
+    """
+
+    scheme: str | None = None
+    host: str | None = None
+    client: str | None = None
+
+
+def _forwarded_token(value: str | None) -> str | None:
+    """The first value of a comma-separated forwarded header, or None.
+
+    Forwarded headers accumulate as a request passes through proxies, and each
+    proxy appends its own hop: the first value is the one furthest from *this*
+    server, so it is the one describing the browser's own connection.
+    """
+    if value is None:
+        return None
+    first = value.split(",", 1)[0].strip()
+    return first or None
+
+
+def _forwarded_header(headers: Mapping[str, str], name: str) -> str | None:
+    """One forwarded header, from a mapping keyed with or without its case.
+
+    A request's own header mapping answers case-insensitively, as HTTP requires
+    (``request.headers``, the only caller's); a plain mapping does not, and a
+    header silently ignored over a capital letter is how a security decision goes
+    missing. The exact key is tried first, so the usual path costs one lookup.
+    """
+    value = headers.get(name)
+    if value is not None:
+        return value
+    for key, candidate in headers.items():
+        if key.lower() == name:
+            return candidate
+    return None
+
+
+def _forwarded_scheme(value: str | None) -> str | None:
+    """``http``/``https`` when a declared peer forwarded one, else None."""
+    token = _forwarded_token(value)
+    scheme = token.lower() if token is not None else None
+    return scheme if scheme in _FORWARDED_SCHEMES else None
+
+
+def _forwarded_host(value: str | None) -> str | None:
+    """The authority a declared peer forwarded, or None if it is not one.
+
+    An authority and nothing else — ``console.example.com`` or
+    ``console.example.com:8443``, port kept because it is part of the name the
+    browser addressed. A value carrying a path, whitespace, userinfo or anything
+    outside ASCII is refused, so a misconfigured proxy cannot write a scheme or a
+    path into the console's absolute URLs; the request's own ``Host`` then stays
+    in force and is checked as usual.
+    """
+    authority = _forwarded_token(value)
+    if authority is None or not authority.isascii():
+        return None
+    if any(char in authority for char in "/\\@ \t"):
+        return None
+    return authority
+
+
+def _forwarded_client(value: str | None, declared: frozenset[str]) -> str | None:
+    """The client address a declared peer's ``X-Forwarded-For`` chain leads to.
+
+    The chain is read **right to left** — each hop appends, so the rightmost
+    entry is the one this server's own peer saw — and the first address that is
+    not itself a declared proxy is the client. A chain of nothing but declared
+    peers means the request came through the trusted chain from its far end, so
+    the leftmost entry is the client. An entry the guard cannot read as a name is
+    skipped: the declaration is what makes a header believable, and one
+    unreadable hop does not turn the rest of the chain into a guess.
+    """
+    names = [name for token in (value or "").split(",") if (name := host_name(token))]
+    for name in reversed(names):
+        if name not in declared:
+            return name
+    return names[0] if names else None
+
+
+def forwarded_facts(
+    headers: Mapping[str, str],
+    peer: str | None,
+    declared: frozenset[str],
+) -> Forwarded:
+    """What this request's forwarded headers say, if its peer may say anything.
+
+    ``headers`` is the request's own header mapping and ``peer`` the address the
+    socket delivered. The answer is empty — every field ``None`` — unless
+    ``peer`` is a declared proxy, and then only for the headers it actually sent:
+    an undeclared peer's ``X-Forwarded-*`` is never read, which is what keeps the
+    socket the truth for everyone else.
+    """
+    if not is_declared_proxy(peer, declared):
+        return Forwarded()
+    return Forwarded(
+        scheme=_forwarded_scheme(_forwarded_header(headers, FORWARDED_PROTO)),
+        host=_forwarded_host(_forwarded_header(headers, FORWARDED_HOST)),
+        client=_forwarded_client(_forwarded_header(headers, FORWARDED_FOR), declared),
+    )
+
+
+def apply_forwarded(scope: MutableMapping[str, Any], facts: Forwarded) -> None:
+    """Write a declared peer's forwarded facts into an ASGI request scope.
+
+    The guard's middleware calls this **first**, before it reads the ``Host`` and
+    before the auth gate — registered inside it, so running after it — reads the
+    scheme. Every reader downstream then sees the request as the proxy describes
+    it: the guard's own checks, the cookie's ``Secure``
+    (:func:`clear_record.web.auth.secure_request`), the absolute URLs the router
+    builds from the scope, and the client an access log names. A field the peer
+    did not forward is left exactly as the socket delivered it.
+    """
+    if facts.scheme is not None:
+        scope["scheme"] = facts.scheme
+    if facts.host is not None:
+        # The ``Host`` header is what Starlette builds a request's URL from, so
+        # replacing it here is what makes the forwarded name the one absolute
+        # URLs and the ``Host`` check both read.
+        scope["headers"] = [
+            (name, value)
+            for name, value in scope.get("headers", ())
+            if name.lower() != b"host"
+        ] + [(b"host", facts.host.encode("ascii"))]
+    if facts.client is not None:
+        # A forwarded chain carries no port, and none is invented: 0 is what the
+        # server's own forwarded-header handling leaves there.
+        scope["client"] = (facts.client, 0)
 
 
 def names_a_trusted_host(env: Mapping[str, str] | None = None) -> bool:
@@ -142,10 +310,12 @@ def names_a_trusted_host(env: Mapping[str, str] | None = None) -> bool:
 
     The one declaration a not-loopback bind needs, because it is the one the
     ``Host`` check below reads: a name in :data:`TRUSTED_HOSTS_ENV`. A declared
-    proxy peer (:data:`TRUSTED_PROXIES_ENV`) is *not* one — the guard answers
-    ``403`` to any ``Host`` that is neither loopback nor named, whatever peer
-    forwarded the request — so a bind admitted on the proxy alone would serve
-    nobody, which is exactly what the startup refusal exists to prevent.
+    proxy peer (:data:`TRUSTED_PROXIES_ENV`) is *not* one — a declared peer may
+    speak for the browser, but the name it forwards is still checked, because the
+    guard answers ``403`` to any ``Host`` that is neither loopback nor named,
+    whatever peer forwarded the request — so a bind admitted on the proxy alone
+    would serve nobody, which is exactly what the startup refusal exists to
+    prevent.
 
     The startup refusal asks this of a non-loopback bind; ``--tailscale`` does
     not, because it resolves the tailnet name and passes it to

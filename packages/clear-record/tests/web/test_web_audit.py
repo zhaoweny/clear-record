@@ -227,9 +227,7 @@ def test_a_run_refusal_whose_row_the_registry_refused_answers_409(
     )
     monkeypatch.setattr(app.registry, "record_audit", a_registry_that_refuses_the_row)
 
-    res = app.client.post(
-        f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "cli"}
-    )
+    res = app.client.post(f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "cli"})
 
     assert reads, "the pre-check never read the meeting's live run"
     assert res.status_code == 409

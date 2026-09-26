@@ -1059,9 +1059,7 @@ def test_a_batch_that_fails_at_its_second_row_leaves_both_tapes_whole(
 
     monkeypatch.setattr(registry, "forget_tape", the_second_rows_write_fails)
     with pytest.raises(OperationalError):
-        managed.delete_tapes(
-            registry, meeting, [first.id, second.id], actor="console"
-        )
+        managed.delete_tapes(registry, meeting, [first.id, second.id], actor="console")
 
     assert forgotten == [first.id, second.id]
     assert not Path(first.path).exists()

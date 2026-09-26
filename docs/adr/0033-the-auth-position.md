@@ -262,10 +262,10 @@ verbatim answers and the direction they answer are the
   timeout and an absolute lifetime, both re-read on every request), and the
   **anonymous surface** as a list the route-table test enumerates: the setup route
   (the first run's credential step, then the sign-in form), `GET /health`
-  (exactly `{"status": "ok"}`, the tray's probe), and the compiled assets under
-  `/static`. Every other route needs a session — pages redirect to the setup
-  route, the machine API answers `401` — and the old `/api/health`, which
-  named the registry path, is gone.
+  (exactly `{"status": "ok"}`, the tray's and the command line's probe), and the
+  compiled assets under `/static`. Every other route needs a session — pages
+  redirect to the setup route, the machine API answers `401` — and the old
+  `/api/health`, which named the registry path, is gone.
 - [FACT] **The rescue is a command**: `clear-record password` sets or replaces
   the credential in the registry itself, with no session, no browser and no
   running node, and fails closed on a registry it cannot read. Replacing a
@@ -291,14 +291,20 @@ verbatim answers and the direction they answer are the
   line's probe — the tray probes it to tell a healthy node from a sign-in page,
   and `clear-record node` proves a recorded address through the same call — and
   it names nothing else. **No old path answers.** What that answer *is* depends on
-  the gate, which runs first: anonymously, `/`, `/ui/*` and `/setup` are answered
-  as any gated page is (a `303` to the setup route) and `/api/*` with `401`; with
-  a live session each reaches the router and is a `404`, because no route and no
-  redirect shim survived the move (pre-1.0 breaking change). The
+  the gate, which runs first: only a path under `/api/v1/` counts as a machine
+  request, so anonymously `/api/v1/*` answers `401` while **every other retired
+  path** — `/`, `/ui/*`, `/setup`, and `/api/*` outside the `/api/v1/` prefix
+  (`/api/projects`, `/api/openapi.json`, `/api/docs`) — is answered as any gated
+  page is, a `303` to the setup route; with a live session each reaches the router
+  and is a `404`, because no route and no redirect shim survived the move (pre-1.0
+  breaking change). The
   gate's decisions are unchanged — the session cookie's `Path` is the console
-  prefix, so a move of the console moves the cookie with it — and the anonymous
-  surface is still the list `web/auth.py`'s `answers_anonymously` returns,
-  re-pointed at the new paths, never widened.
+  prefix, so a move of the console moves the cookie with it (the **language**
+  cookie's `Path` was narrowed from `/` to the same prefix in the same sweep: it
+  is the console's own preference, and it has no business riding a machine-API
+  request) — and the anonymous surface is still the list
+  `web/auth.py`'s `answers_anonymously` returns, re-pointed at the new paths,
+  never widened.
 
 ## Update (2026-09-26) — the machine tokens land, and the node's own-machine credential is formalised
 

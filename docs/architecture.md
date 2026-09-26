@@ -481,8 +481,10 @@ type a path there; the meeting's storage panel shows back the path the node reso
 so a run request carries a name the node's models directory resolves
 (`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are
 stated where a client author meets them — the request shapes and route
-descriptions the OpenAPI schema publishes at `/api/v1/docs`, the `run` command's
-help, and README — and enforced at the edge (ADR-0032's 2026-09-25 Update).
+descriptions the OpenAPI schema publishes at `/api/v1/docs` (a machine request,
+so it is read with a credential in a header — a browser's console session is
+scoped away from it), the `run` command's help, and README — and enforced at the
+edge (ADR-0032's 2026-09-25 Update).
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI** is

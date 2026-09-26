@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-26 23:34+0800\n"
+"POT-Creation-Date: 2026-09-27 00:05+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -1042,6 +1042,11 @@ msgid ""
 "its write lock; nothing was changed — retry"
 msgstr "另一个入口正在迁移 {db_path} 处的注册表，并且仍持有写锁；未做任何更改——请重试"
 
+#: packages/clear-record/src/clear_record/service/store.py:1063
+#, python-brace-format
+msgid "a machine token named {label!r} already exists"
+msgstr "已存在名为 {label!r} 的机器令牌。"
+
 #: packages/clear-record/src/clear_record/service/migrations/versions/0009_active_run_per_meeting.py:115
 #, python-brace-format
 msgid ""
@@ -1205,8 +1210,7 @@ msgstr ""
 "    - "
 "同时声明你自己的命令行和托盘所拨号的地址，以便它们直接访问该节点：CR_TRUSTED_HOSTS=<hostname>,<address>\n"
 "    - 让 Tailscale Serve 置于其前：--tailscale\n"
-"  反向代理还需声明 CR_TRUSTED_PROXIES=<peer>[,<peer>...]，即以逗号分隔、"
-"列出其转发头被采信的对端 —— "
+"  反向代理还需声明 CR_TRUSTED_PROXIES=<peer>[,<peer>...]，即以逗号分隔、列出其转发头被采信的对端 —— "
 "但那不是此控制台应答的名称：它转发的主机名仍必须出现在 CR_TRUSTED_HOSTS 中。"
 
 #: packages/clear-record/src/clear_record/web/__init__.py:419
@@ -2495,7 +2499,7 @@ msgstr "请立即复制此令牌——它只显示一次，之后无法再次取
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:24
 msgid "Label (what will present it)"
-msgstr "标签（由谁出示）"
+msgstr "标签（由哪个脚本出示）"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_tokens.html:25
 msgid "Token label"

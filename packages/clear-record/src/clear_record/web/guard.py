@@ -238,15 +238,18 @@ def _forwarded_host(value: str | None) -> str | None:
 
     An authority and nothing else — ``console.example.com`` or
     ``console.example.com:8443``, port kept because it is part of the name the
-    browser addressed. A value carrying a path, whitespace, userinfo or anything
-    outside ASCII is refused, so a misconfigured proxy cannot write a scheme or a
-    path into the console's absolute URLs; the request's own ``Host`` then stays
-    in force and is checked as usual.
+    browser addressed. A value carrying a path, whitespace or any other control
+    character, userinfo or anything outside ASCII is refused, so a misconfigured
+    proxy cannot write a scheme or a path into the console's absolute URLs; the
+    request's own ``Host`` then stays in force and is checked as usual.
     """
     authority = _forwarded_token(value)
     if authority is None or not authority.isascii():
         return None
-    if any(char in authority for char in "/\\@ \t"):
+    # Printable and nothing else: a separator (``/``, ``\``, ``@``, the space in a
+    # userinfo pair) or **any** control character — a tab, a newline, a NUL, DEL —
+    # would otherwise reach the scope ``Host`` and the URLs built from it.
+    if not authority.isprintable() or any(char in authority for char in "/\\@ "):
         return None
     return authority
 

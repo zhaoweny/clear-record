@@ -471,7 +471,11 @@ def test_console_url_spells_out_a_non_default_port() -> None:
 def test_tailscale_flag_serves_trusts_and_prints_the_url(
     fake_tailscale, captured_serve, monkeypatch
 ) -> None:
+    # Both declarations: the flag *merges* into whichever the operator exported
+    # (§2 hands them `CR_TRUSTED_PROXIES`), so an ambient value would answer this
+    # test's exact-list assertion with a second peer.
     monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
+    monkeypatch.delenv("CR_TRUSTED_PROXIES", raising=False)
     fake = fake_tailscale(
         status=_completed("tailscale", "status", stdout=_status_json())
     )

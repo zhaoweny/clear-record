@@ -265,8 +265,8 @@ both are reconstructible: `DELETE /api/v1/glossary/{term_id}` **retires** a term
 (the row survives, and `POST /api/v1/glossary/{term_id}/restore` puts it back),
 and `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses until the meeting has
 a **verified archive** — the durable copy its answer names — and unlinks nothing
-when it refuses. A third one is a decision rather than an accident: the suite
-walks the table and fails on one.
+when it refuses. A **third** such verb would be a decision rather than an
+accident: the suite walks the table and fails on one.
 
 **A bind past loopback needs a name the guard trusts.** The guard answers `403`
 to a `Host` that is neither loopback nor a name in `CR_TRUSTED_HOSTS`, so a
@@ -380,10 +380,12 @@ exactly this reason. Two boundaries worth being clear about:
   is a folder **on the node**; the console shows back the path the node resolved.
   The refusal belongs to the JSON API, the surface where a program names what it
   wants.
-- **Forward the original `Host`.** Caddy and Tailscale Serve do; nginx does with
-  `$host` and does **not** with `$proxy_host`. Rewriting it to a loopback name
-  would make every visitor look local, and a path typed on another machine would
-  then be resolved here.
+- **Pin the published name**; never forward the client's own `Host`. `Host` is
+  the name the path-local rule reads, so both recipes below set it — and
+  `X-Forwarded-Host` with it — to the hostname you published: `$proxy_host` is
+  the node's loopback name, which would make every visitor look local and let a
+  path typed on another machine be resolved here, while a client's own `Host`
+  passed through (nginx's `$host`) leaves that same decision to the client.
 
 ### Forwarded headers: declare your proxy (`CR_TRUSTED_PROXIES`)
 
@@ -407,7 +409,7 @@ containers set the same variable their own way. With a declared peer:
 |---|---|
 | `X-Forwarded-Proto` | the request's scheme: the session cookie is marked `Secure` over your TLS, and the absolute URLs the app builds are the `https` ones (the console's own links are relative today, so this is the foundation rather than a visible change) |
 | `X-Forwarded-Host` | the authority the app's absolute URLs are built from (port included) — and the name the guard's `Host` check then judges, so it still has to be in `CR_TRUSTED_HOSTS`. It never decides whether the client addressed the node itself: that rule reads the `Host` the **client** sent (§3), so a forwarded `127.0.0.1` cannot make a remote client local |
-| `X-Forwarded-For` | the address the app attributes the request to (the rightmost entry that is not itself a declared proxy) — nothing reads it yet: the server's access log prints the transport peer, not this |
+| `X-Forwarded-For` | the address the app attributes the request to (the rightmost entry that is not itself a declared proxy; a chain of nothing but declared peers takes its leftmost entry) — nothing reads it yet: the server's access log prints the transport peer, not this |
 
 A request from **any other peer** is judged by the socket it arrived on and the
 `Host` it carries: its forwarded headers are ignored rather than merged in, so a
@@ -438,8 +440,7 @@ one, follow the socket). `--tailscale` declares Serve's own loopback hop for you
 This is *not* how you decide who may reach the console — that is still your proxy
 and nothing else (§3). It is what makes the console's own answers correct behind
 it: a `Secure` session cookie, and absolute URLs that name the host the browser is
-really talking to (the console's own links are relative today, so this is the
-foundation rather than a visible fix).
+really talking to.
 
 ## 3. Front it with a proxy
 
@@ -538,7 +539,7 @@ clear-record serve --tailscale      # for a service unit (no browser)
 It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
 normalized), runs
 `tailscale serve --https=<port> http://127.0.0.1:<console-port>`, and prints the
-URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
+URL (`https://<machine>.<tailnet>.ts.net/web/`, or with `:<port>` when the exposed
 port is not 443). It also **declares Serve's own hop** (`127.0.0.1`, the address
 Serve proxies from) as a trusted proxy, so Serve's `X-Forwarded-Proto` is believed
 and a tailnet request gets a `Secure` session cookie — no second variable for you

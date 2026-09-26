@@ -267,3 +267,25 @@ plex.tv"*); spec `04-activity-and-status.md` RUN-03.
 - [FACT] `Registry.latest_run_event(run_id)` is the one additive registry read:
   a live run's stage and progress live in its persisted event stream (one event
   per chunk), so the page reads the last one instead of the whole stream.
+
+## Update — 2026-09-26: the credential blocks in Settings -> Status
+
+The auth gate (ticket 259) and the machine tokens (ticket 262) each add a block
+to the one Settings section that already answers "what is this node, and what is
+it doing": Status is where the console's own credentials are read, minted and
+ended.
+
+- [DECISION] **Settings -> Status gains a Sessions block** (ticket 259): one
+  sentence — this browser holds a session on this node — beside a **Sign out
+  everywhere** control (`POST /web/ui/sessions/revoke-all`) that ends every
+  session the node issued, this browser included, on the very next request. It is
+  an **act**, not a knob for a stored setting, and it stands above the token block
+  below because a session is the broader credential.
+- [DECISION] **Settings -> Status gains a Machine tokens block** (ticket 262): the
+  labelled credentials a script presents to `/api/v1` as `Authorization: Bearer
+  <token>` (ADR-0033), listed with when each was minted and last used, a mint form
+  and a per-row **Revoke**. The plaintext is shown **once**, in the mint response,
+  because the registry keeps only a digest; the block's own sentence says so, and
+  says a token can neither open the console nor mint, revoke or destroy. Both
+  writes re-render the same block (`#tokens`), so the list, a refusal and the
+  one-time secret come from one template and one context builder.

@@ -1056,8 +1056,11 @@ class Registry:
             try:
                 session.flush()
             except IntegrityError as exc:
+                # The console's mint form shows this sentence to a person, so it
+                # is a message ID like the label rule's own refusals
+                # (``require_token_label``).
                 raise ValueError(
-                    f"a machine token named {label!r} already exists"
+                    tr("a machine token named {label!r} already exists", label=label)
                 ) from exc
             return self._machine_token(token)
 

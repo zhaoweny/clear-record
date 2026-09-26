@@ -95,6 +95,10 @@ def test_switcher_persists_only_the_language_cookie(tmp_path) -> None:
     assert response.headers["location"] == "/web/"
     cookie = response.headers["set-cookie"]
     assert cookie.startswith(f"{LANG_COOKIE}=zh_CN")
+    # Scoped to the console's own prefix, like the session cookie (ADR-0033): the
+    # preference rides the console's pages and fragments and never the machine
+    # API's requests.
+    assert "Path=/web" in cookie
     # The value is the tag and nothing else: no session, no identity.
     assert response.cookies[LANG_COOKIE] == "zh_CN"
     assert len(response.cookies) == 1

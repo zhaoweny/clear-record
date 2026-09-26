@@ -158,7 +158,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
 
   | prefix | surface | today |
   |---|---|---|
-  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the MCP server as it chooses) | **built**: the API answers under `/api/v1`, and `/api/v1/docs` publishes its schema. (Unversioned under `/api/…` until 2026-09-26.) |
+  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the MCP server as it chooses) | **built**: the API answers under `/api/v1`, and `/api/v1/docs` publishes its schema. Every route FastAPI provides is under the prefix, so the schema and the two documentation UIs are **machine requests**: a browser's console session never rides them (the session cookie is scoped to `/web`), and a reader presents a credential in a header (`curl -H "Authorization: Bearer …" …/api/v1/docs`, ADR-0033's token Update). (Unversioned under `/api/…` until 2026-09-26.) |
   | `/web` | the console BFF — pages and htmx fragments | **built**: the console answers under `/web` — pages at `/web/…`, fragments at `/web/ui/…`. (At `/` and `/ui/*` until 2026-09-26.) |
   | `/mcp` | the agent surface | today **stdio only** (`clear-record mcp`) |
 
@@ -438,10 +438,11 @@ promotes nothing the owner did not say beyond the label each clause carries.
   discovered: in the request shapes' own declarations, so the OpenAPI schema at
   `/api/v1/docs` publishes them (`RunCreate`, `WorkspaceRunCreate`, `MeetingCreate`,
   `TapesUpdate`, `ArchiveCreate`, `ProjectCreate`, `ProjectUpdate`, and each
-  route's description); in the command line's `run` help; in README's "A `run` is
-  a node run" passage; and in the operator guide, where the proxy recipes must
-  forward the original `Host` rather than rewrite it to a name of their own
-  (§2, §3).
+  route's description) — a machine request, so a reader presents a credential in a
+  header and a browser's console session never rides it (ADR-0033); in the command
+  line's `run` help; in README's "A `run` is a node run" passage; and in the
+  operator guide, where the proxy recipes **pin the published name** rather than
+  forward the client's own `Host` (§2, §3).
 - [DECISION] **The console keeps its path fields, and only the machine-facing
   edge refuses.** The Decision makes the console an in-process backend-for-frontend —
   it *is* the node's own face, it shows back the paths the node resolved (the storage

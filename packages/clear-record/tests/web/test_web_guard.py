@@ -701,6 +701,15 @@ def test_a_forwarded_value_that_is_not_usable_is_ignored() -> None:
     assert facts("X-Forwarded-Host", "console.example.com/evil") == guard.Forwarded()
     assert facts("X-Forwarded-Host", "user@console.example.com") == guard.Forwarded()
     assert facts("X-Forwarded-Host", " ") == guard.Forwarded()
+    # Whitespace is more than the space and tab the separators cover: a control
+    # character inside the value (a newline, a carriage return, a NUL, DEL) is not
+    # part of any authority, and letting one through would write it into the scope
+    # ``Host`` the guard then checks and the URLs built from it.
+    assert facts("X-Forwarded-Host", "console.example.com\nx") == guard.Forwarded()
+    assert facts("X-Forwarded-Host", "console.example.com\rx") == guard.Forwarded()
+    assert facts("X-Forwarded-Host", "console.example.com\tx") == guard.Forwarded()
+    assert facts("X-Forwarded-Host", "console.example.com\x00x") == guard.Forwarded()
+    assert facts("X-Forwarded-Host", "console.example.com\x7fx") == guard.Forwarded()
     assert facts("X-Forwarded-For", "") == guard.Forwarded()
 
 

@@ -243,7 +243,7 @@ def _run(
             override=tailscale_host,
         )
     else:
-        _require_declared_trust(host)
+        _require_named_trust(host)
     from clear_record.web.app import serve
 
     if session is not None:
@@ -285,8 +285,8 @@ def _run(
             session.stop()
 
 
-def _require_declared_trust(host: str) -> None:
-    """Refuse a bind past loopback that nothing declares a reachable name for.
+def _require_named_trust(host: str) -> None:
+    """Refuse a bind past loopback that no name the guard trusts covers.
 
     The console holds one credential now (ADR-0033), and that is not what this
     checks: it checks the **request guard**, which answers ``403`` to a ``Host``

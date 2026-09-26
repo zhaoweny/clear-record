@@ -250,7 +250,8 @@ thing this refusal exists to prevent.
 as the node — the command line first — is inside the boundary this gate defends
 (ADR-0033), so it is never asked for the password: the node opens **one session
 for its own machine** through the same path a sign-in uses and publishes its token
-at `local-session` in its state directory (beside the address record), mode
+at `local-session` in its **state** directory (beside the address record — the
+platform state directory, or `CR_STATE_DIR`), mode
 `0600`, removed when the node exits cleanly. Anything that can read that file —
 your own account, and root — can act on the console as you; nothing on the network
 can, because the file is not served and a browser carries its own cookie. The node

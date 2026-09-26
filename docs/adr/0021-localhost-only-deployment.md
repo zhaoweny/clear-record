@@ -20,7 +20,9 @@ trust source refuses to start.
   [`docs/vox/voice-of-owner.md`](../vox/voice-of-owner.md). **This is a hedged
   decision**: option (b), in-app LAN authentication, is **deferred, not
   rejected**, and the "(for now)" is the owner's own framing.
-- [FACT] ADR-0013 already binds the console to `127.0.0.1` with **no auth**.
+- [FACT] The console binds `127.0.0.1` and ships **no authentication** — the
+  loopback-only, no-auth posture is this ADR's own decision, and ADR-0013 ships
+  the console and the `serve` command without stating either.
 - [FACT] `docs/research/2026-09-15-clear-record-as-a-service.md` framed three
   options — (a) localhost + tunnel/VPN, (b) LAN bind + in-app auth, (c) LAN bind +
   reverse-proxy auth — with a cost order of **a < c < b**.

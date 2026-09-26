@@ -269,7 +269,7 @@ class ConsoleAuth:
         credential's own.
 
         The expired rows a registry accumulates are pruned here, on the way in —
-        signing in is the one moment a new row is about to be written, so it is
+        signing in is the one moment a **human** session row is written, so it is
         where the table is kept from growing without bound — and best-effort, so
         a locked registry costs the sweep rather than the sign-in
         (:meth:`_prune`).
@@ -421,8 +421,8 @@ def publish_local_session(console: ConsoleAuth) -> str:
     point of the local session — a token nothing can read is a credential no
     client will ever present — so a state directory that refuses the write ends
     the session it just opened and lets the failure through (the caller's posture
-    is the caller's: :class:`~clear_record.web.app.LocalSessionKeeper` warns once
-    and retries, a startup gives up on the local session and serves on). Without
+    is the caller's: :class:`~clear_record.web.app.LocalSessionKeeper` warns and
+    retries, a startup gives up on the local session and serves on). Without
     this, a keeper that keeps failing would mint one live row per tick, each held
     for the idle window, for a file that never appears.
     """

@@ -1,0 +1,212 @@
+# ADR-0033 — The auth position: one subject, many actors; nothing irreversible without a human
+
+Status: active
+Date: 2026-09-26
+
+The owner selected among agent-authored options in the 2026-09-26 design session;
+the option wording is agent-authored and the selections are the owner's. The
+verbatim answers and the direction they answer are the
+[vox record](../vox/records/2026-09-26-auth-position.md).
+
+## Context
+
+- [FACT] The app ships **no authentication**. `web/` carries two middlewares and
+  neither is auth: the locale middleware, and the request guard — which rejects
+  an untrusted `Host` and cross-origin state-changing requests, and **deliberately
+  allows** one carrying neither. No credential, session, token or `Authorization`
+  path exists in `web/`, `service/` or `tray/`.
+- [FACT] [ADR-0021](0021-localhost-only-deployment.md) decided localhost-only
+  with no auth *"for now"* — in-app LAN auth **deferred, not rejected** — and
+  named the operator's reverse proxy as the ingress. [ADR-0017](0017-mcp-server.md)
+  chose stdio *"because stdio needs no port, no auth and no network"*, and ended
+  with its own revisit condition: *"Revisit if a client needs a network
+  transport."*
+- [FACT] [ADR-0032](0032-the-node-and-its-clients.md) made one node the centre
+  with every surface a client, treated the local caller as a backchannel already
+  trusted, and reserved the `/mcp` prefix — its mount handed to the auth change.
+- [FACT] The destructive surface is exactly two verbs: deleting a **managed
+  tape** (unlink the file, forget the row) and deleting a **glossary term** (row
+  delete). Nothing deletes runs, artifacts, meetings, projects, workspaces,
+  archives or models, and artifact rows are append-only. The tape delete checks
+  only that the tape is managed: "the archive is the durable copy" is a note in
+  the response, **not a precondition**.
+- [FACT] Every run rewrites the meeting workspace's `record.json`/`segments.json`
+  **in place**; only accepted transcript revisions are versioned (the draft chain
+  plus the revision artifacts). History can be covered with no delete at all.
+- [FACT] Draft versions record *"the author identity the writer declared"*
+  ([ADR-0031](0031-harness-is-the-only-agent.md)) — over MCP that parameter's
+  default is the literal string `human`, so a harness can be recorded as its own
+  reviewer.
+- [VOICE: owner, 2026-09-25] The direction, verbatim: *"restrict deleting from
+  agent reachable paths, or at least do a priviledge access management to let
+  human to do just-in-time authorization from a known good interface."*
+- [VOICE: owner, 2026-09-26] The session's answers, verbatim: *"q1. option a; q2.
+  option a, until I discover I need full RBAC; q3. option a; q4. option a -
+  archive is fine, but destructive is not; q5. option a but I'd like to note that
+  we are retaining the history of changes so nothing would be lost"*; *"q6. option
+  a. q7. I think I'd go option c. we have the server to verify the password on the
+  fly, and I guess we could say a password is a password. q8. option a. q9.
+  option a."*; and on the network mount: *"let's defer it. say it's open to
+  revisit but we are not building it just yet, and it's a transport change rather
+  than to-be-designed state."* What each option named is in the vox record.
+
+## Decision
+
+- [DECISION: owner, 2026-09-26] **The trust boundary is the operating-system
+  account.** In-app auth buys three things and no more: ingress control (who can
+  reach the node), attribution (who did what), and accident-prevention (an
+  autonomous agent cannot stumble into destruction). A process running as the
+  same user is **inside** the boundary — it can call the loopback API and write
+  the registry — and the documents say so rather than imply otherwise. Real
+  separation is a deployment move (the node under its own uid, or a sandbox),
+  never an app feature.
+- [DECISION: owner, 2026-09-26] **One subject, many actors.** There is one human;
+  no usernames, no accounts table. Every mutation records the **actor** the
+  transport supplies — `console`, `api` (later `api:<token label>`), `mcp`,
+  `cli`, `tray` — never a string an argument chooses. A run's `origin` is the
+  precedent and the vocabulary.
+- [DECISION: owner, 2026-09-26] **The authorization rule.** An operation requires
+  fresh human authorization **iff it destroys data not reconstructible from a
+  durable copy**. Everything else — archive, cache invalidation, glossary edits,
+  draft writes, tape-set edits — stays agent-allowed.
+- [DECISION: owner, 2026-09-26] **No credential alone authorizes destruction.**
+  Machine tokens in particular: *archive is fine, destructive is not.* No
+  session, token or MCP client is sufficient by itself for a destructive act.
+- [DECISION: owner, 2026-09-26] **Rewrite-in-place is destructive in kind.** Run
+  outputs become run-scoped snapshots, and prior versions are **retained**: a
+  later run must not be able to cover an earlier run's record. Retention, not
+  only classification — nothing silently lost.
+- [DECISION: owner, 2026-09-26] **Shrink the irreversible set by construction.**
+  Managed-tape deletion requires a **verified archive** of the meeting (the check
+  archive verification already performs). Glossary deletion becomes a **retire**
+  status, the row surviving with its `added_by`/`created_at`. No approval
+  machinery ships before a non-reconstructible operation exists.
+- [DECISION: owner, 2026-09-26] **Enforcement is at the operation, not the
+  surface.** When such an operation is introduced, the server verifies a **fresh
+  password at the act** — the sudo shape: the human presents it at the moment of
+  the act (TTY prompt or browser form), no capability token is minted or handed
+  to a caller, and no per-surface authority matrix exists. Replayability is
+  accepted — *a password is a password* — with rotation as the lever. Nothing in
+  the current class exercises it; the rule binds the moment the class returns.
+- [DECISION: owner, 2026-09-26] **The authentication half is AUTH-01…AUTH-08
+  absorbed**: one credential in SQLite, human sessions, machine tokens, trusted
+  proxies, fail-loud, the `/web/` + `/api/v1/` re-root, and `/web/setup` +
+  `/health` the only anonymous surfaces — with two amendments: AUTH-02 gains
+  step-up-at-the-act, AUTH-03 gains *no destructive verbs*.
+- [DECISION: owner, 2026-09-26] **Audit.** Every mutating service call appends
+  `(at, actor, action, target, outcome)` to an append-only record, and `actor` is
+  a required argument on mutating service entry points so it cannot be forgotten.
+- [DECISION: owner, 2026-09-26] **`/mcp` over HTTP: the story is decided, the
+  mount is deferred.** The network transport's credential is the node's own
+  machine-token story (a pre-shared bearer; the MCP spec makes authorization
+  optional and its best-practices guidance asks a local HTTP server for a token),
+  and the MCP tool surface carries no destructive verbs. Mounting it is a
+  **transport change** over settled policy, pulled when a client needs a
+  non-local MCP transport.
+- [DECISION: owner, 2026-09-26] **RBAC stays deferred** — single authority, no
+  per-project authorization. Revisit when a second human or per-project sharing
+  appears.
+- **Restatements.** ADR-0021's ingress posture (the operator's reverse proxy is
+  the only ingress) **stands**; its "ships no authentication" clause is
+  **superseded by this decision** — the code follows when the build lands.
+  ADR-0017's stdio decision **stands** and remains what a local harness uses; its
+  revisit condition is **discharged** (the network transport has a decided auth
+  story) without mounting the surface. ADR-0031's *declared* author is superseded
+  in part: a draft's author becomes the actor its transport supplies.
+
+## Sanitization — the anticipated first member of the destructive class
+
+- [VOICE: owner, 2026-09-26] From the same design conversation, verbatim: *"*normally*
+  neither can silently rewrite history, unless it's sometime intentional and we'd
+  better to not question why, in the field"*; *"so in the end, we could just state,
+  in the record history: - it is sanitized by who, at when - the current version of
+  sanitized content"*; *"to me that's a `git merge --squash` operation, almost"*.
+- [DECISION: owner, 2026-09-26] **When an operation in the destructive class
+  exists, sanitization is the exceptional authorized rewrite.** Ordinary history
+  stays append-only; a sanitize establishes a new trusted root whose prior states
+  are unrecoverable **by design** — an authorized rewrite plus aggressive GC, never
+  "v17 retained, v18 supersedes it".
+- [DESIGN] **The surviving marker is the whole of it: authority, time, scope, and
+  the resulting version** — and nothing that reconstructs what left: no reason, no
+  prior-content hash, no diff, no sizes. The interrogable question is authority, not
+  motive: this credential, valid at this time, held SANITIZE authority, used it on
+  this record. Even the identity may be recorded as an authority class.
+- [DESIGN] **A sanitize must reach the reconstructible copies the app owns** — the
+  verified archive the delete rule leans on, and the run-scoped snapshots the
+  rewrite rule retains. The storage and backup domain outside the app is the
+  operator's, per the boundary decision above; a sanitize the app cannot complete is
+  a partial one and says so.
+- [DESIGN] **Its credential check is the class gate**: a fresh password verified by
+  the server at the act, presented by the human at the act. It is not exposed in the
+  MCP tool namespace — exposure discipline and the operation's authority check are
+  different axes, and the gate above is the authority.
+- [FACT] **Nothing above is built and no ticket carries it**: it is the shape the
+  first operation in the class inherits when a field need arrives.
+
+## Rationale
+
+- **The boundary statement is the design's honesty.** An app cannot distinguish a
+  same-uid agent from its user, so the promises are scoped to what can actually
+  be enforced, and the deployment path to a real boundary is named instead of
+  implied.
+- **Attribution is cheap now and impossible to reconstruct later.** A
+  self-reported author is worse than none because it looks like evidence.
+- **Reconstructibility moves the decisions into data design** — archives,
+  snapshots, retire-not-delete — where they hold by construction, instead of into
+  a credential ceremony a local process could forge anyway.
+- **The rule and its gate are recorded together**, so the first
+  non-reconstructible operation arrives with its authorization shape already
+  decided.
+
+## Discarded alternatives
+
+- **Attack-resistant same-uid defense** (WebAuthn/TPM, capabilities pinned
+  outside the database): a large tax against a residual a same-uid process with
+  filesystem write can defeat anyway — it can rewrite the pin, or the code.
+  Revisit only if the node holds something worth that.
+- **A per-surface authority matrix** (destructive verbs only under the console,
+  403 for tokens): rejected — the operation's fresh-credential check is the
+  discriminator, and a matrix adds places for drift.
+- **Capability tokens bound to an operation**: rejected — *a password is a
+  password*; no minted capability crosses to a caller.
+- **Keeping the unarchived tape delete behind an approval ceremony**: rejected —
+  the archive precondition is the smallest thing that makes the invariant hold;
+  the ceremony ships when a real non-reconstructible operation exists.
+- **Approvals machinery now** (a pending inbox, retry matching): nothing in the
+  class to gate.
+- **Two-stage tombstone deletion for tapes**: destruction would then happen
+  unattended after a grace window — exactly what a human act should gate. The
+  archive precondition gives "delete is reversible" with a durable copy instead
+  of a timer.
+
+## Consequences / review hook
+
+- **The draft author changes meaning.** The MCP tools' `author` parameters die:
+  a draft's recorded author becomes the transport's actor — `mcp` for the stdio
+  adapter, `console` for the console. The tool count is unchanged, so the ADR-0017
+  drift guard keeps holding.
+- **The destructive surface changes shape.** Tape deletion gains the
+  verified-archive precondition; glossary deletion becomes a status change. The
+  tests for both move to the new contract.
+- **The registry gains the audit record and the operational tables** (secrets,
+  sessions, tokens); the migrations are owed through ADR-0030's chain.
+- **Docs the build must update**: the run/draft provenance statements in
+  `docs/architecture.md` and ADR-0031's Update; `docs/service-deployment.md`'s
+  trusted-proxy item the moment AUTH-04 lands; the console-ia lane's auth items
+  as they are absorbed.
+- **Revisit triggers**: a second human or per-project sharing (RBAC); a client
+  that needs a non-local MCP transport (the `/mcp` mount, open questions below);
+  the first non-reconstructible operation (its authorization flow).
+
+## Open questions — the `/mcp` mount's revisit
+
+- **Credential conformance**: pre-shared bearer only (works in the
+  developer-facing MCP hosts; deviates from the spec's OAuth/PRM path) versus a
+  minimal Protected Resource Metadata + OAuth path when a strict client requires
+  discovery.
+- **Remote-safe tool surface**: verbs that take local paths (`set_meeting_tapes`,
+  `start_run`'s glossary path) are meaningful only on the node's own machine —
+  refuse them over the mount, filter them from `tools/list` per authorization
+  (the spec lets the set vary by authorization), or add an upload-based verb.
+- **Session model**: stateless versus the SDK's session-id stateful mode, and
+  concurrency with the node's single run queue.

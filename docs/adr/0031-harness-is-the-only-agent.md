@@ -187,3 +187,11 @@ Date: 2026-09-23
 - **Revisit** if a genuinely in-app, model-free job appears (a deterministic
   check, say): that is a feature, not a runner, and it would not bring a
   credential back.
+
+## Update (2026-09-26) — the declared author becomes the transport's actor
+
+- [DECISION] [ADR-0033](0033-the-auth-position.md) supersedes the **declared**
+  part of this ADR's author provenance: a draft version's author becomes the actor
+  its transport supplies — `mcp` for the stdio adapter, `console` for the console
+  — rather than a string a caller chooses. The chain shape, the accept/reject
+  decisions, and everything else here stand.

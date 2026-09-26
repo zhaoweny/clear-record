@@ -47,6 +47,7 @@ Rows name the owning document and never restate its decision text.
 | i18n | `tr()` with English message IDs, the English default unchanged; logs, JSON, exports and the diagnostics bundle are never translated | `docs/i18n.md` | same record |
 | Outbound notifications | webhooks, with endpoint health and the last delivery outcome surfaced | ADR-0020 | `records/2026-09-15-webhooks.md` |
 | The node and its clients | one API server is the centre and the surfaces are backends-for-frontends over it; the console stays in process, the command line becomes a client | ADR-0032 | `records/2026-09-21-node-and-clients.md` |
+| The access position | in-app auth is decided: one subject with many actors, attribution on every mutation, and destruction only where a durable copy exists; the build rides v0.4.0's access stage | ADR-0033 | `records/2026-09-26-auth-position.md` |
 | The stated next position | dictation as a first-class input, with near-real-time and re-transcription modes — **deferred to 0.4**, no release date yet | no ADR yet; the tracker's 0.4 headline | `records/2026-09-21-dictation-input.md` |
 
 ## Standing positions
@@ -117,3 +118,6 @@ moved verbatim, and each entry's own header says what its words rest on:
   server-centric direction: the command line as a facade of the node, the surfaces as
   backends-for-frontends, and the preliminaries it rests on.
 - [`records/2026-09-21-v03-scope.md`](records/2026-09-21-v03-scope.md) — the v0.3 scope and milestone decisions.
+- [`records/2026-09-26-auth-position.md`](records/2026-09-26-auth-position.md) — the access
+  position: the trust boundary, one subject with many actors, reconstructible-by-construction
+  deletion, and the deferred `/mcp` mount.

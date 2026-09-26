@@ -3,6 +3,12 @@
 Status: active
 Date: 2026-09-15
 
+Superseded **in part** by [ADR-0033](0033-the-auth-position.md) (2026-09-26): the
+in-app auth position is decided, so this ADR's "ships no authentication" clause is
+superseded by that decision — the code still ships no auth until its build lands —
+while the ingress posture (the operator's reverse proxy is the only ingress)
+stands.
+
 ## Context
 
 - [VOICE: owner, 2026-09-15] Answering the service-deployment investigation,
@@ -47,7 +53,10 @@ Date: 2026-09-15
   `CR_TRUSTED_PROXIES` today, so trusting forwarded headers from *anything else*
   remains a risk to the request guard; the bind stays localhost-only, and the UI's
   relative URLs mean nothing is lost by refusing. Revisit when a proxy deployment
-  genuinely needs the client's scheme or host.
+  genuinely needs the client's scheme or host. *(Direction 2026-09-26:
+  [ADR-0033](0033-the-auth-position.md) puts trusted proxies in the auth build's
+  scope; the code still reads neither header, so this item stays open-not-built
+  until that lands.)*
 
 ## Rationale
 

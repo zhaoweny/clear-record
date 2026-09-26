@@ -23,6 +23,13 @@ and reuses a pipe only while that keeper answers. A pipe whose keeper is gone is
 stale — its tokens are gone with it — and is replaced. Over-seeding from a
 benign init race would inflate the pool, so a lock file serialises seeding.
 
+**A token also dies with a worker killed while holding one**, and a pool that
+has leaked empty hangs its readers rather than failing them — silently, behind
+a healthy-looking pipe. The keeper therefore probes: a token it finds goes
+straight back (no net change to the pool), and a pipe it has watched empty for
+several consecutive probes is reseeded. A momentary over-fill while running
+tests happen to hold every token is the accepted side of that trade.
+
 **Best-effort by design**: a convenience that cannot be set up must not fail
 the gate it speeds up. A failure prints nothing to stdout, which leaves
 ``PYTEST_JOBSERVER`` empty and the run unthrottled, and one line to stderr.
@@ -37,6 +44,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import select
 import signal
 import stat
 import subprocess
@@ -54,6 +62,11 @@ TOKEN = b"+"
 
 #: How long ``init`` waits for a fresh keeper to prove it seeded the pipe.
 KEEPER_START_TIMEOUT_SECONDS = 5.0
+
+#: How often the keeper probes the pool, and how many consecutive empty probes
+#: mean "this pool leaked" rather than "every token is briefly checked out".
+PROBE_SECONDS = 15.0
+EMPTY_PROBES_BEFORE_RESEED = 4
 
 
 def default_path() -> Path:
@@ -96,16 +109,35 @@ def keeper_pid(path: Path) -> int | None:
     return None
 
 
-def keep(path: Path, tokens: int) -> int:
-    """Hold ``path`` open and seed it — the keeper process itself."""
+def keep(
+    path: Path,
+    tokens: int,
+    probe_seconds: float,
+    empty_probes: int,
+) -> int:
+    """Hold ``path`` open, seed it, and top the pool back up — the keeper itself."""
     fd = os.open(path, os.O_RDWR)  # holds the pipe object alive
     written = os.write(fd, TOKEN * tokens)
     if written != tokens:
         raise OSError(f"short seed write: {written} of {tokens} bytes")
     pid_path(path).write_text(f"{os.getpid()}\n")
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    empty = 0
     while True:
-        signal.pause()  # hold the descriptor until the machine goes away
+        readable, _, _ = select.select([fd], [], [], probe_seconds)
+        if readable:
+            token = os.read(fd, 1)
+            if token:
+                os.write(fd, token)  # straight back: the probe changes nothing
+                empty = 0
+            time.sleep(probe_seconds)  # a full pool must not make this a spin
+            continue
+        empty += 1
+        if empty >= empty_probes:
+            written = os.write(fd, TOKEN * tokens)  # leak recovery, not the seed
+            if written != tokens:
+                raise OSError(f"short reseed write: {written} of {tokens} bytes")
+            empty = 0
 
 
 def spawn_keeper(path: Path, tokens: int) -> bool:
@@ -170,10 +202,19 @@ def main(argv: list[str] | None = None) -> int:
     keep_command = commands.add_parser("keep", help="hold the pipe open (internal)")
     keep_command.add_argument("--path", type=Path, required=True)
     keep_command.add_argument("--tokens", type=int, default=DEFAULT_TOKENS)
+    keep_command.add_argument("--probe-seconds", type=float, default=PROBE_SECONDS)
+    keep_command.add_argument(
+        "--empty-probes", type=int, default=EMPTY_PROBES_BEFORE_RESEED
+    )
     args = parser.parse_args(argv)
 
     if args.command == "keep":
-        return keep(args.path.resolve(), max(1, args.tokens))
+        return keep(
+            args.path.resolve(),
+            max(1, args.tokens),
+            args.probe_seconds,
+            max(1, args.empty_probes),
+        )
     path = init((args.path or default_path()).resolve(), max(1, args.tokens))
     if path is None:
         return 1

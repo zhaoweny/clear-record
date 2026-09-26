@@ -15,13 +15,17 @@ spot-checked, so a route added later cannot quietly join the anonymous surface
 
 from __future__ import annotations
 
+import asyncio
 import re
+import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from _console import CONSOLE_PASSWORD, signed_in
 from clear_record.core import node as node_module
@@ -36,7 +40,7 @@ from clear_record.service.auth import (
     verify_password,
 )
 from clear_record.service.diagnostics import collect_bundle, redact_log_line
-from clear_record.service.lifecycle import CONSOLE
+from clear_record.service.lifecycle import API, CONSOLE
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 from clear_record.web.auth import (
@@ -183,6 +187,72 @@ def test_the_first_run_form_cannot_replace_an_existing_credential(console) -> No
     assert "already set" in replaced.text
     assert verify_password(PASSWORD, console.registry.credential())
     assert not verify_password("attacker-long-password", console.registry.credential())
+
+
+def test_a_first_run_request_whose_body_arrives_late_loses_to_the_one_that_landed(
+    console,
+) -> None:
+    """The claim is **insert-only**, so a delayed body cannot replace the credential.
+
+    The reproduction the review filed: one request's body is held open while a
+    second completes the setup, then released. Reading "is a credential set" and
+    writing afterwards cannot promise anything about the order the two bodies
+    arrive in — both answered ``303`` and the *late* password was the one that
+    worked, which is a takeover of a console that was already set up. The claim
+    is one insert-only statement, so the late request is answered ``409``, the
+    password that landed first keeps working, and the loser's refusal is not
+    recorded as a credential set.
+    """
+    landed = "the-password-that-landed-4b7"
+    late = "late-arrival-password-9c1"
+
+    async def race() -> tuple[httpx.Response, httpx.Response, str | None]:
+        transport = httpx.ASGITransport(app=console.app)
+        # One body, held open: `started` fires once the route has asked for it.
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def held_body():
+            yield f"password={late}&confirm={late}".encode()
+            started.set()
+            await release.wait()
+
+        async with (
+            httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as first,
+            httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as second,
+        ):
+            delayed = asyncio.create_task(
+                first.post(
+                    CREDENTIAL_PATH,
+                    content=held_body(),
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                )
+            )
+            await started.wait()
+            landed_response = await second.post(
+                CREDENTIAL_PATH, data={"password": landed, "confirm": landed}
+            )
+            release.set()
+            late_response = await delayed
+            return landed_response, late_response, second.cookies.get(SESSION_COOKIE)
+
+    landed_response, late_response, token = asyncio.run(race())
+
+    assert landed_response.status_code == 303
+    assert late_response.status_code == 409
+    assert "already set" in late_response.text
+    # The winner's password is the console's credential, and its session opened.
+    assert verify_password(landed, console.registry.credential())
+    assert not verify_password(late, console.registry.credential())
+    assert console.app.state.auth.session(token, touch=False) is SessionState.ACTIVE
+    # Nothing replaced anything: one credential set, and the loser is not one.
+    assert [
+        (event.action, event.outcome) for event in console.registry.list_audit_events()
+    ] == [("credential.set", "ok")]
 
 
 def test_the_credential_form_refuses_a_mismatch_and_a_short_password(console) -> None:
@@ -430,6 +500,92 @@ def test_health_answers_with_no_session_and_no_token(console) -> None:
 def test_health_is_anonymous_on_a_fresh_registry(console) -> None:
     """A probe must tell a healthy node from a setup page with no credential at all."""
     assert console.client.get("/health").status_code == 200
+
+
+def test_health_answers_while_a_held_registry_lock_blocks_an_auth_write(
+    console, tmp_path, monkeypatch
+) -> None:
+    """The gate's registry reads are off the event loop, so the node stays alive.
+
+    The measurement the review filed: with SQLite's write lock held by another
+    surface, a request bearing a **fresh** token — whose first presentation is
+    the lazy ``last_used_at`` write — sat inside the event loop for as long as
+    the lock lived, so a concurrent anonymous ``/health`` (which asks the
+    registry nothing) was answered only after it. Catching the eventual
+    exception does not stop that wait; running the read in a worker thread does.
+    Both auth reads are off-thread now, so the probe is answered while the write
+    is still at the lock — and the write still lands once the lock is gone.
+
+    The bound is half the hold, because the fact under test is orders of
+    magnitude (a stalled loop vs. a free one), not milliseconds.
+    """
+    held = threading.Event()
+    release = threading.Event()
+    touched = threading.Event()
+    hold_seconds = 2.0
+    registry = console.registry
+
+    real_touch = registry.touch_machine_token
+
+    def touch(*args, **kwargs):
+        # Fires as the write starts, before it waits for the lock: the probe
+        # below is then racing a write that is *at* the lock, not one that has
+        # not been attempted.
+        touched.set()
+        return real_touch(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "touch_machine_token", touch)
+    minted, _row = console.app.state.auth.mint_token("probe script", actor=API)
+
+    def hold_the_write_lock() -> None:
+        connection = sqlite3.connect(tmp_path / "registry.sqlite3")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            held.set()
+            release.wait(hold_seconds * 2)  # a cap: a broken run must not hang
+        finally:
+            connection.rollback()
+            connection.close()
+
+    holder = threading.Thread(target=hold_the_write_lock, daemon=True)
+    holder.start()
+    assert held.wait(5), "the registry write lock was never taken"
+
+    async def probe() -> tuple[float, httpx.Response | None, httpx.Response | None]:
+        transport = httpx.ASGITransport(app=console.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            started = time.monotonic()
+            gated = asyncio.create_task(
+                client.get(
+                    f"{MACHINE_PREFIX}projects",
+                    headers={"Authorization": f"Bearer {minted}"},
+                )
+            )
+            # Deterministic, not a sleep: the token's write is at the lock.
+            await asyncio.to_thread(touched.wait, 5)
+            health = await client.get(HEALTH_PATH)
+            elapsed = time.monotonic() - started
+            release.set()
+            return elapsed, health, await gated
+
+    try:
+        elapsed, health, gated = asyncio.run(probe())
+    finally:
+        release.set()
+        holder.join(5)
+
+    assert touched.is_set(), "the token's lazy write was never attempted"
+    assert health is not None and health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert elapsed < hold_seconds / 2, (
+        f"the liveness probe waited {elapsed:.2f}s behind a registry write lock "
+        f"another surface held"
+    )
+    assert gated is not None and gated.status_code == 200
+    # The offloaded write is not dropped: the use it records is in the row.
+    assert console.registry.machine_tokens()[0].last_used_at is not None
 
 
 # --- the re-root: the old paths are gone, the new ones answer ---------------- #

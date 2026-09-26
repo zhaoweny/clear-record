@@ -27,12 +27,14 @@ from clear_record.core import RecordDocument, Segment, Source, load_json
 from clear_record.pipeline import stages
 from clear_record.pipeline.workspace import (
     MANIFEST,
+    RETENTION_PREFIX,
     RUN_MARKER,
     RECORD,
     RUNS_DIR,
     SEGMENTS,
     Workspace,
     discover_audio,
+    discover_inputs,
     publish_run,
 )
 
@@ -268,6 +270,99 @@ def test_every_run_of_a_workspace_shares_its_chunk_cache(tmp_path: Path) -> None
     assert home.run_scope(1).chunk_cache("a").directory == cache
     assert home.begin_scope(2).chunk_cache("a").directory == cache
     assert Workspace.at(home.run_scope(2).outputs).chunk_cache("a").directory == cache
+
+
+def test_publishing_over_a_root_no_run_scope_holds_preserves_it(tmp_path: Path) -> None:
+    """The upgrade boundary: the first scoped run is not the last copy's end.
+
+    A root written before runs were scoped (or by a stage command) holds
+    documents **no** run's own copy has, so publishing over them left the
+    artifact rows that named those paths describing the new run's bytes with the
+    old ones gone. They are copied aside first, the copies are readable and not
+    an input, and the publication names each one so the caller that owns the
+    association can follow it.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    home.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    home.manifest_path.write_text('{"sources": []}', encoding="utf-8")
+    home.segments_path.write_text('{"legacy": "segments"}', encoding="utf-8")
+    home.record_path.write_text('{"legacy": "record"}', encoding="utf-8")
+    home.export_dir.mkdir(parents=True, exist_ok=True)
+    (home.export_dir / "record.md").write_text("legacy export", encoding="utf-8")
+    legacy = {
+        path: path.read_bytes()
+        for path in (
+            home.manifest_path,
+            home.segments_path,
+            home.record_path,
+            home.export_dir / "record.md",
+        )
+    }
+
+    scope = _finish(home.begin_scope(1), "new")
+    publication = publish_run(scope)
+
+    # The new run's copy is the published one — documents and exports both.
+    assert _record_text(home) == "new"
+    assert (home.export_dir / "record.md").read_text(encoding="utf-8") == "new"
+    # Every document publication replaced is readable, byte for byte, in the
+    # retained copy the publication named.
+    retained = dict(publication.retained)
+    assert set(retained) == set(legacy)
+    assert all(
+        copy.read_bytes() == legacy[original] for original, copy in retained.items()
+    )
+    # One retained copy, beside the run scopes and named for what it is.
+    directory = next(iter(retained.values()))
+    while not directory.name.startswith(RETENTION_PREFIX):
+        directory = directory.parent
+    assert directory.parent == home.root / RUNS_DIR
+    assert all(directory in copy.parents for copy in retained.values())
+    # It is the app's own state, not an input: the walk takes nothing from it and
+    # narrates nothing about it.
+    assert discover_inputs(home.root) == ([], [])
+    # The run's own copy is untouched by the preservation.
+    assert _record_text(scope) == "new"
+    assert (scope.export_dir / "record.md").read_text(encoding="utf-8") == "new"
+
+
+def test_publishing_over_a_run_scopes_own_copy_preserves_nothing(
+    tmp_path: Path,
+) -> None:
+    """The ordinary flow stays silent: a run's published copy is retained already.
+
+    Run 1's copy is at ``runs/1/``, byte for byte, so run 2's publication of the
+    root replaces nothing that is not readable elsewhere — no retained copy is
+    made, and the root holds no extra directory.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    publish_run(_finish(home.begin_scope(1), "first"))
+
+    publication = publish_run(_finish(home.begin_scope(2), "second"))
+
+    assert publication.retained == ()
+    assert sorted(path.name for path in (home.root / RUNS_DIR).iterdir()) == ["1", "2"]
+    assert _record_text(home) == "second"
+    assert _record_text(home.run_scope(1)) == "first"
+
+
+def test_a_stage_commands_root_document_is_preserved_too(tmp_path: Path) -> None:
+    """A stage command writes at the root and names no run — so a run keeps it.
+
+    ``transcribe``/``calibrate`` leave their outputs at the workspace root with
+    no run named (ADR-0033); they are the other root a run's publication would
+    otherwise be the end of, and the rule that preserves the pre-257 set covers
+    them for the same reason: no run's copy holds those bytes.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    home.record_path.parent.mkdir(parents=True, exist_ok=True)
+    home.record_path.write_text('{"staged": "hand-run"}', encoding="utf-8")
+
+    publication = publish_run(_finish(home.begin_scope(1), "new"))
+
+    (copy,) = dict(publication.retained).values()
+    assert copy.read_text(encoding="utf-8") == '{"staged": "hand-run"}'
+    assert _record_text(home) == "new"
 
 
 # --- the declaration an operator hand-edits --------------------------------- #

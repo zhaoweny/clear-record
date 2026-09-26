@@ -71,7 +71,7 @@ import datetime as _dt
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -864,6 +865,37 @@ class Registry:
         """
         with self._session() as session:
             return session.scalar(select(entities.ConsoleCredential.encoded))
+
+    @audit.recorded("credential.set", "credential:console", conditional=True)
+    def claim_credential(self, encoded: str, *, actor: str) -> bool:
+        """Write the credential **only when none exists**; ``False`` when one did.
+
+        The first-run form is anonymous — nobody can sign in yet — so it must
+        claim the credential, never replace one. A read followed by a write
+        cannot promise that: two requests that both read "no credential" both
+        write, and whichever lands second wins. The claim is therefore **one
+        statement** — an insert that does nothing when the row is already there
+        (``ON CONFLICT DO NOTHING`` against the table's primary key, the same
+        ``CHECK (id = 1)`` that makes a second credential impossible) — and its
+        answer is whether *this* call wrote: the registry's own verdict, read
+        under the write lock, rather than a race the caller has to win.
+
+        ``ON CONFLICT`` covers a uniqueness conflict only, so a value the table
+        itself refuses still raises: nothing here can store a credential the
+        schema would not have taken. A call that lost writes nothing and appends
+        no audit row (:func:`~clear_record.service.audit.recorded` reads the
+        conditional answer), which is the honest record: no credential was set
+        by it. *Replacing* one stays
+        :meth:`store_credential`'s — the rescue path the node runs as the
+        operator (``clear-record password``).
+        """
+        with self._session() as session:
+            result = session.execute(
+                sqlite_insert(entities.ConsoleCredential)
+                .values(id=_CREDENTIAL_ROW, encoded=encoded, updated_at=_now())
+                .on_conflict_do_nothing(index_elements=["id"])
+            )
+            return bool(result.rowcount)
 
     @audit.recorded("credential.set", "credential:console")
     def store_credential(self, encoded: str, *, actor: str) -> None:
@@ -2313,6 +2345,48 @@ class Registry:
                 .order_by(entities.Artifact.kind, entities.Artifact.id)
             )
             return [self._artifact(row) for row in rows]
+
+    @audit.recorded(
+        "artifact.retain", audit.subject("meeting", "meeting_id"), conditional=True
+    )
+    def retain_artifact_paths(
+        self, meeting_id: int, moves: Mapping[str, str], *, actor: str
+    ) -> int:
+        """Point the meeting's artifact rows at the copies that retain their bytes.
+
+        The other half of a publication's preservation
+        (:func:`clear_record.pipeline.workspace.publish_run`): a root document no
+        run scope held was copied aside *before* it was replaced, and this is what
+        keeps the association honest — every row of the meeting whose ``path`` is
+        one of the moved paths is repointed at the copy, so the row keeps
+        describing the bytes it recorded instead of quietly describing whatever
+        the publication put at the old path. That is the upgrade boundary's data
+        loss, one row at a time: before this, the first run after an upgrade left
+        every pre-257 artifact row reading the new run's content.
+
+        A row is **not** rewritten away: its ``id``, ``kind``, ``run_id``,
+        ``sha256``, ``bytes``, ``produced_by`` and ``review_state`` are exactly as
+        they were and only ``path`` follows the file, which is what "nothing
+        deletes an artifact row" (ADR-0033) means here. The move appends one
+        ``artifact.retain`` row naming the meeting; a mapping that matches no row
+        moves nothing and appends nothing (``conditional``), which is the honest
+        record of a publication that preserved documents no row named. Returns the
+        number of rows moved.
+        """
+        if not moves:
+            return 0
+        with self._session() as session:
+            rows = session.scalars(
+                select(entities.Artifact).where(
+                    entities.Artifact.meeting_id == meeting_id,
+                    entities.Artifact.path.in_(list(moves)),
+                )
+            )
+            moved = 0
+            for row in rows:
+                row.path = moves[row.path]
+                moved += 1
+            return moved
 
     def latest_artifact(self, meeting_id: int, kind: str) -> Artifact | None:
         """The meeting's newest artifact of ``kind``, or ``None``.

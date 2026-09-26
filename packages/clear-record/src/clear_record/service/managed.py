@@ -52,6 +52,7 @@ import os
 import re
 import secrets
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import BinaryIO
 
@@ -68,7 +69,7 @@ from clear_record.core.i18n import deferred
 from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service import audit, tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
-from clear_record.service.archive import verify_archive
+from clear_record.service.archive import unarchived_tapes, verify_archive
 from clear_record.service.models import Archive, Meeting, Tape
 from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
@@ -171,10 +172,12 @@ class ResumeNotSupported(UploadRejected):
 
 
 class ArchiveRequired(UploadRejected):
-    """A managed tape cannot be deleted: the meeting has no verified archive.
+    """A managed tape cannot be deleted: no verified archive holds its bytes.
 
     The delete would destroy data with no durable copy, so it is refused with a
-    message naming the archive action instead (ADR-0033).
+    message naming the archive action instead (ADR-0033) — either because no
+    archive of the meeting verifies, or because the verified ones hold no copy of
+    the tapes the batch asked for.
     """
 
 
@@ -558,22 +561,55 @@ class TapeDeletion:
     archive: Archive
 
 
-def durable_archive(registry: Registry, meeting: Meeting) -> Archive:
-    """The meeting's **verified** archive: the durable copy a delete leans on.
+def durable_archive(
+    registry: Registry, meeting: Meeting, tapes: Sequence[Tape]
+) -> Archive:
+    """The meeting's **verified** archive that holds *tapes*' current bytes.
 
-    The newest archive (the registry lists them newest first) that verifies is
-    the one named; an archive whose manifest is gone, or whose files no longer
-    match their recorded sizes/digests, does not count. Raises
-    :class:`ArchiveRequired` when none verifies — the message names the archive
-    action, since archiving is what makes the delete reconstructible.
+    The durable copy a delete leans on, and the whole of the licence: the
+    archives are re-checked newest first (the registry lists them newest first),
+    and an archive whose manifest is gone, or whose files no longer match their
+    recorded sizes/digests, does not count. Neither does one that verifies while
+    holding no copy of **every tape being deleted**: what makes the delete
+    reconstructible is the copy of *those bytes*, so a tape uploaded after the
+    archive was made — or re-recorded under an old name since — is not covered by
+    it, and leaning on the meeting's membership alone would destroy the only copy
+    there is (:func:`clear_record.service.archive.unarchived_tapes`).
+
+    Raises :class:`ArchiveRequired` when no archive verifies *and* covers the
+    batch — the message names the archive action, since archiving is what makes
+    the delete reconstructible, and the tapes no verified copy holds, since that
+    is what the next archive has to include.
     """
+    uncovered: list[str] = []
     for archive in registry.list_archives(meeting.id):
         try:
-            verification = verify_archive(archive.root_path)
+            # The manifest must still be the one the registry sealed for this
+            # archive: a rewritten or subset manifest is not the record of what
+            # was copied, so nothing about the archive can be checked (and a
+            # manifest listing only this tape would otherwise pass vacuously).
+            verification = verify_archive(
+                archive.root_path, manifest_sha256=archive.manifest_sha256
+            )
         except FileNotFoundError:
             continue
-        if verification.ok:
-            return archive
+        if not verification.ok:
+            continue
+        missing = unarchived_tapes(archive.root_path, [tape.path for tape in tapes])
+        if missing:
+            # Keep the **newest** verification's answer: it is the archive the
+            # caller meant to lean on, so its gaps are the actionable ones.
+            uncovered = uncovered or missing
+            continue
+        return archive
+    if uncovered:
+        raise ArchiveRequired(
+            deferred(
+                "this meeting's verified archive holds no copy of {names}; "
+                "archive the meeting again, then delete these tapes"
+            ),
+            names=", ".join(uncovered),
+        )
     raise ArchiveRequired(
         deferred(
             "this meeting has no verified archive; archive the meeting first, "
@@ -595,16 +631,18 @@ def delete_tapes(
     Only tapes inside the meeting's managed workspace may be deleted: a
     user-chosen path is the user's document, not app-owned data (ADR-0007). And
     every delete stands on a durable copy: the meeting must have a **verified**
-    archive, or the whole batch is refused with a message naming the archive
-    action and nothing is unlinked (ADR-0033). The durable copy is one archive
-    for the meeting, so it is verified **once**, and every precondition — the
-    actor's own gate included — passes before the first unlink: a bad id, or a
-    word the record cannot attribute a row to, refuses the batch whole with the
-    filesystem untouched.
+    archive **that holds the current bytes of every tape being deleted** — a
+    meeting-level archive is not the licence, the copy of those bytes is — or the
+    whole batch is refused with a message naming the archive action and nothing
+    is unlinked (ADR-0033). One archive is the durable copy for the whole batch,
+    so it is verified **once**, and every precondition — the actor's own gate
+    included — passes before the first unlink: a bad id, or a word the record
+    cannot attribute a row to, refuses the batch whole with the filesystem
+    untouched.
 
     ``actor`` is the transport's word for the surface that asked for the
     deletion. Each tape's own row is dropped against it, and the two refusals
-    below — a user-chosen workspace, or no verified archive for the meeting —
+    below — a user-chosen workspace, or no verified archive holding these tapes —
     each leave one failed ``tape.forget`` row for the meeting (the batch's
     subject: one refusal covers every id asked for), so a tape that is gone is
     still accounted for (ADR-0033). The containment guard's refusal (a tape
@@ -637,11 +675,12 @@ def delete_tapes(
     for tape in tapes:
         _require_within(Path(tape.path), resolved_root)
     try:
-        archive = durable_archive(registry, meeting)
+        archive = durable_archive(registry, meeting, tapes)
     except ArchiveRequired:
         # A policy answer like the workspace refusal above, and the one that
         # guards the destroy: the refusal leaves a row (ADR-0033) — one for the
-        # batch, naming the meeting whose archive is missing.
+        # batch, naming the meeting whose durable copy is missing or does not
+        # hold the tapes asked for.
         registry.record_audit(
             actor,
             "tape.forget",

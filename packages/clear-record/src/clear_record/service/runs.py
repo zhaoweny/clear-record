@@ -1860,10 +1860,22 @@ class RunManager:
 
         # The run finished: its own copy becomes the workspace's published copy,
         # which is the default read from here on, and its artifacts are the files
-        # in its own copy — so a later run's publication cannot change what an
-        # artifact points at (ADR-0033). A run that stopped or failed returned
-        # above and publishes nothing.
-        publish_run(scope)
+        # in its own copy — so a later run's publication cannot change what a
+        # **run's** artifact points at (ADR-0033). A run that stopped or failed
+        # returned above and publishes nothing.
+        #
+        # What publication can still change is a row that named a **root**
+        # document no run scope held — a pre-257 install's outputs, or a stage
+        # command's. Those are copied aside before they are replaced, and the rows
+        # follow the copies, so an artifact keeps reading the bytes it recorded
+        # rather than the run's (the upgrade boundary's data loss).
+        publication = publish_run(scope)
+        if publication.retained:
+            self._registry.retain_artifact_paths(
+                meeting.id,
+                {str(root): str(copy) for root, copy in publication.retained},
+                actor=QUEUE,
+            )
         artifacts = self._register_artifacts(meeting, run.id)
         ended_at = _now()
         self._registry.update_run(

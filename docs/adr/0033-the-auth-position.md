@@ -216,7 +216,12 @@ verbatim answers and the direction they answer are the
   into its **own copy** (`<workspace>/runs/<run id>/`) and a **finished** run
   publishes that copy at the workspace root, which stays the default read. A run
   that stops, fails or dies publishes nothing, so no run can cover an earlier
-  run's record or the workspace's copy; the run's manifest, its segments' `meta`,
+  run's own copy of its record — and a root whose documents no run's copy holds
+  (an install from before run scoping, or a stage command's output) is copied into
+  a retained copy under the workspace **before** it is replaced, with the artifact
+  rows that named those paths following the copies (the upgrade boundary,
+  corrected 2026-09-27: the first run after an upgrade used to be the last legacy
+  output's end); the run's manifest, its segments' `meta`,
   its record's `metadata` and so its JSON export name the run, and its artifact
   rows point at its own copy (the Markdown/SRT/VTT exports carry no run id).
   Retention holds by construction, before any delete rule leans on it — the
@@ -236,9 +241,10 @@ verbatim answers and the direction they answer are the
   commands and `calibrate` are the writers that leave **everything** in place, at
   the root and naming no run.
 - [FACT] Two decisions above now hold in the build, recorded in
-  [ADR-0024](0024-managed-workspace-tape-upload.md)'s Update: a managed tape's
-  delete requires a **verified archive** of its meeting — refused with nothing
-  unlinked, and the archive action named, when none verifies — and deleting a
+  [ADR-0024](0024-managed-workspace-tape-upload.md)'s Update — and refined there
+  on 2026-09-27: a managed tape's delete requires a **verified archive that holds
+  the tape's current bytes** — refused with nothing unlinked, and the archive
+  action named, when none verifies or none holds them — and deleting a
   glossary term is a **retire**: the row keeps `added_by`/`created_at`, stops
   biasing the decoder, and Restores to the status the retire took it from.
 
@@ -322,8 +328,12 @@ verbatim answers and the direction they answer are the
   same property a session has, from the same place, and the reason no process
   holds auth state at all. A token's **use** moves `last_used_at` — **lazily**, at
   most once per touch interval, the shape the session's own idle clock uses, so a
-  script's burst of calls performs no write at all and the gate's synchronous
-  commit cannot stall the event loop it runs inside; a write it does make is one
+  script's burst of calls performs no write at all, and **both of the gate's
+  registry reads run in a worker thread**, so a write lock another surface holds
+  cannot stall the event loop the gate runs inside (corrected 2026-09-27: the
+  read ran *inside* the loop, so the wait — not only the eventual failure — held
+  every unrelated request, `/health` included, for as long as the lock lived); a
+  write the gate does make is one
   the gate tolerates losing to a locked registry, because it must never fail an
   authenticated request. Minting and revoking append `token.mint` /
   `token.revoke`, with `token:<label>` as the target, because "who holds a key"
@@ -346,10 +356,11 @@ verbatim answers and the direction they answer are the
   credential rather than an identity. It stays reserved for the change that needs
   it.
 - [FACT] **The destructive contract now has its proof under token auth.** The
-  machine surface's two `DELETE` routes are the glossary **retire** (the row
+  surface's two `DELETE` routes are the glossary **retire** (the row
   survives the verb and restores) and the managed-tape delete (refused with
-  nothing unlinked until a meeting has a **verified archive**, which its answer
-  names as the durable copy). Both are exercised with a token as the credential,
+  nothing unlinked until a verified archive **holds the tapes asked for**, which
+  its answer names as the durable copy). Both are exercised with a token as the
+  credential,
   and the route table is walked so a **third** `DELETE` fails the suite rather
   than arriving quietly — the decision point this ADR's authorization rule asks
   for.

@@ -321,8 +321,32 @@ class ConsoleAuth:
         for a message (the console form and the rescue command both do), and the
         rule is stated once more here (:func:`require_password`) so no other
         caller can store a value the rule refuses.
+
+        **Replacing is this call's, and only the node's own rescue path
+        (``clear-record password``) may make it.** The console's first-run form
+        claims the credential instead (:meth:`claim_password`), because an
+        anonymous form that could replace one would hand the console to whoever
+        could reach the page.
         """
         self.registry.store_credential(
+            hash_password(require_password(password)), actor=actor
+        )
+
+    def claim_password(self, password: str, *, actor: str) -> bool:
+        """Set the credential **only when there is none**; ``False`` when one was.
+
+        What the console's first-run form asks for, and the whole of its answer:
+        the check and the write are one insert-only statement at the store
+        (:meth:`~clear_record.service.store.Registry.claim_credential`), so a
+        request whose body arrives late — after another request has already set
+        the credential — loses instead of replacing it, and the operator's
+        password stands. The caller renders the refusal; nothing here signs a
+        loser in.
+
+        The password is validated and hashed exactly as :meth:`set_password`
+        does, and the KDF is the caller's to keep off the event loop.
+        """
+        return self.registry.claim_credential(
             hash_password(require_password(password)), actor=actor
         )
 

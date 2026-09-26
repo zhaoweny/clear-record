@@ -263,8 +263,9 @@ and no MCP client — authorizes an operation that destroys data a durable copy
 cannot reconstruct (ADR-0033). The machine API carries two `DELETE` verbs, and
 both are reconstructible: `DELETE /api/v1/glossary/{term_id}` **retires** a term
 (the row survives, and `POST /api/v1/glossary/{term_id}/restore` puts it back),
-and `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses until the meeting has
-a **verified archive** — the durable copy its answer names — and unlinks nothing
+and `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses until a **verified
+archive holds the tape's current bytes** — the durable copy its answer names —
+and unlinks nothing
 when it refuses. A **third** such verb would be a decision rather than an
 accident: the suite walks the table and fails on one.
 
@@ -704,11 +705,14 @@ and the uploaded tapes (path, sha256, size);
 `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
 a user-chosen workspace cannot be deleted here — it is your document.
 
-> **Deleting requires a verified archive.** The route re-checks the meeting's
-> archives against their manifests (`verify_archive`) and refuses with 400 when
-> none verifies — *archive the meeting first* — unlinking nothing; the refusal
-> names the archive action and the console's controls state the precondition.
-> With a verified archive the delete proceeds, and the response's note names the
+> **Deleting requires a verified archive that holds the tape.** The route
+> re-checks the meeting's archives against their manifests (`verify_archive`)
+> and refuses with 400 when none verifies, or when a verified one holds no copy
+> of the tape's current bytes — *archive the meeting again* — unlinking nothing;
+> the refusal
+> names the archive action and the tapes no copy holds, and the console's
+> controls state the precondition.
+> With such an archive the delete proceeds, and the response's note names the
 > archive that is the durable copy. An archive is a copy, never a move
 > (ADR-0006); archive the
 > meeting (`POST /api/v1/meetings/{id}/archives`) before deleting its tapes.

@@ -712,6 +712,151 @@ def test_deleting_a_tape_removes_its_file_and_the_tape_set(
     assert registry.latest_recording_set(meeting.id) is None
 
 
+def test_a_tape_uploaded_after_the_archive_is_not_covered_by_it(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The licence is the archive's **copy of these bytes**, not the meeting's.
+
+    The reproduction the review filed: A is archived, B is uploaded afterwards,
+    so B's bytes are in no archive at all. Leaning on the meeting's archive
+    unlinked the only copy there was and dropped B's row; the precondition is
+    asked per tape, so the batch is refused whole, the refusal names the tape,
+    and A — the one the copy actually holds — stays deletable.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archived = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    before = len(registry.list_audit_events())
+
+    with pytest.raises(managed.ArchiveRequired) as refusal:
+        managed.delete_tape(registry, meeting, second.id, actor="console")
+
+    assert "b.wav" in str(refusal.value)
+    assert Path(second.path).exists()
+    assert registry.list_tapes(meeting.id) == [first, second]
+    (row,) = registry.list_audit_events()[before:]
+    assert (row.actor, row.action, row.target, row.outcome) == (
+        "console",
+        "tape.forget",
+        f"meeting:{meeting.id}",
+        "failed",
+    )
+
+    deleted = managed.delete_tape(registry, meeting, first.id, actor="console")
+    assert deleted.archive == archived
+    assert not Path(first.path).exists()
+    assert registry.list_tapes(meeting.id) == [second]
+
+
+def test_a_tape_re_recorded_since_the_archive_is_not_covered(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Name and path are not the copy: the bytes the archive holds are gone."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    # The same path under the same name, holding what the archive never saw.
+    Path(tape.path).write_bytes(b"two")
+
+    with pytest.raises(managed.ArchiveRequired, match="no copy of a.wav"):
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
+
+    assert Path(tape.path).read_bytes() == b"two"
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_archiving_again_licenses_the_tape_the_new_copy_holds(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """A re-archive is the durable copy the refused delete was missing."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    with pytest.raises(managed.ArchiveRequired):
+        managed.delete_tape(registry, meeting, second.id, actor="console")
+    again = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+
+    deleted = managed.delete_tape(registry, meeting, second.id, actor="console")
+
+    assert deleted.archive == again
+    assert not Path(second.path).exists()
+    assert registry.list_tapes(meeting.id) == [first]
+
+
+def test_a_manifest_rewritten_since_the_archive_licenses_nothing(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The archive's licence is the manifest the registry **sealed**, byte for byte.
+
+    A manifest that was rewritten since — here emptied of every file entry, the
+    subset shape that lists nothing to contradict — verifies vacuously against
+    itself: there is nothing missing and nothing mismatched. The registry recorded
+    the digest of the manifest it sealed, so the rewritten one is not this
+    archive's record of what was copied and the delete is refused with nothing
+    unlinked. Without the digest check an archive listing no files at all would
+    license destroying a tape it never held.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    manifest = Path(archive.root_path) / MANIFEST_FILENAME
+    manifest.write_text(json.dumps({"files": []}), encoding="utf-8")
+
+    with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
+
+    assert Path(tape.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_a_manifest_naming_only_the_tape_asked_about_licenses_nothing(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """A subset manifest that happens to list the tape is not the sealed record.
+
+    The other side of the same hole: a manifest rewritten to name only A (and
+    nothing else the archive held) would cover A by its own contents. Its bytes
+    are not what the registry recorded, so it is *unverifiable* and the delete
+    stands on nothing — the difference between "a file says these bytes are in
+    here" and "the archive is the one that was made".
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    other = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    manifest = Path(archive.root_path) / MANIFEST_FILENAME
+    sealed = json.loads(manifest.read_text(encoding="utf-8"))
+    subset = dict(
+        sealed, files=[entry for entry in sealed["files"] if "a.wav" in entry["path"]]
+    )
+    assert len(subset["files"]) == 1
+    manifest.write_text(json.dumps(subset), encoding="utf-8")
+
+    with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
+        managed.delete_tapes(registry, meeting, [tape.id, other.id], actor="console")
+
+    assert Path(tape.path).exists() and Path(other.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape, other]
+
+
 def test_deleting_a_tape_without_a_verified_archive_is_refused(
     registry, tmp_path, monkeypatch
 ) -> None:
@@ -784,9 +929,9 @@ def test_deleting_all_tapes_verifies_the_durable_copy_once(
     verifications: list[str] = []
     real = managed.verify_archive
 
-    def counting(path):
+    def counting(path, **kwargs):
         verifications.append(str(path))
-        return real(path)
+        return real(path, **kwargs)
 
     monkeypatch.setattr(managed, "verify_archive", counting)
 

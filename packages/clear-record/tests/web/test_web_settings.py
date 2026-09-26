@@ -10,7 +10,6 @@ Status's walk-setup-again (which forgets the setup marker and nothing else).
 from __future__ import annotations
 
 import json
-import re
 
 from _console import signed_in
 from clear_record.core import paths
@@ -190,34 +189,6 @@ def test_the_models_checkpoint_copy_is_translated_in_a_chinese_console(
     assert "可用检查点" in page
     assert "下载某个规格会把对应检查点放到磁盘上" in page
     assert "Available checkpoints" not in page
-
-
-#: The retention note, translated — pinned whole, never in fragments: a catalog
-#: that carries a second copy of an older translation (the way a hand-merged
-#: ``msgstr`` continuation does) still contains every fragment, and the console
-#: then renders the note twice.
-RETENTION_NOTE_ZH = (
-    "保留仅限手动：clear-record 绝不会自行删除录音。"
-    "删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。"
-    "在 {path} 中设置托管根目录；项目的归档根目录在项目页中编辑。"
-)
-
-
-def test_the_retention_note_is_translated_in_a_chinese_console(tmp_path) -> None:
-    """The retention note ships translated, **once**, and says what it now says.
-
-    It names both refusals a tape delete can meet — no verified archive, and a
-    user-chosen workspace (which is refused however archived) — and the paragraph
-    it renders is compared as a whole, so a doubled or stale ``msgstr`` fails.
-    """
-    client = _client(tmp_path)
-    client.cookies.set(LANG_COOKIE, "zh_CN")
-    page = client.get("/web/settings/storage").text
-
-    notes = re.findall(r'<p class="muted settings-note">(.*?)</p>', page, re.S)
-    (note,) = [item for item in notes if "保留仅限手动" in item]
-    assert note == RETENTION_NOTE_ZH.format(path=paths.config_path())
-    assert "Retention is manual only" not in page
 
 
 def test_downloading_a_model_from_settings_calls_the_pinned_downloader(

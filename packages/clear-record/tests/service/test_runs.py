@@ -7,6 +7,7 @@ events, artifact checksums — is exercised with no ASR backend and no GPU.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import itertools
 import json
 import os
@@ -573,6 +574,102 @@ def test_run_lifecycle_records_events_and_artifacts(tmp_path) -> None:
     assert {artifact.kind for artifact in artifacts} == {"record", "export"}
     assert all(artifact.sha256 for artifact in artifacts)
     assert all(artifact.bytes for artifact in artifacts)
+
+
+def test_the_first_scoped_run_keeps_the_legacy_outputs_and_their_rows_readable(
+    tmp_path,
+) -> None:
+    """The upgrade boundary: the first run must not be the last record's end.
+
+    A pre-257 install's root holds the run's documents, and the registry holds
+    rows naming those paths. The first run after the upgrade publishes its own
+    copy over them — before this, every one of those rows began reading the *new*
+    run's content and the old bytes survived nowhere. Publication now preserves
+    the documents no run's own copy holds **before** it replaces them, and the
+    rows follow the copies: the old version still reads as the old version, the
+    new run's document is the published one, and the row's own checksum still
+    describes the bytes it names.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    home = Workspace.at(meeting.workspace_path)
+    # The pre-257 shape: documents at the root, naming no run, and the artifact
+    # rows the old run path registered against those very paths. ``run_id`` is
+    # not what the rule reads — the path is — so these are the rows a re-run
+    # leaves whoever produced them.
+    home.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    home.manifest_path.write_text('{"sources": []}', encoding="utf-8")
+    home.segments_path.write_text('{"legacy": "segments"}', encoding="utf-8")
+    home.record_path.write_text('{"legacy": "record"}', encoding="utf-8")
+    home.export_dir.mkdir(parents=True, exist_ok=True)
+    (home.export_dir / "record.md").write_text("legacy export", encoding="utf-8")
+    (home.export_dir / "minutes.md").write_text("legacy minutes", encoding="utf-8")
+    legacy_paths = (
+        ("record", home.record_path),
+        ("transcript", home.segments_path),
+        ("export", home.export_dir / "record.md"),
+        ("export", home.export_dir / "minutes.md"),
+    )
+    before = {path: path.read_bytes() for _kind, path in legacy_paths}
+    legacy = [
+        (
+            path,
+            registry.add_artifact(
+                meeting.id,
+                actor="queue",
+                kind=kind,
+                path=str(path),
+                sha256=hashlib.sha256(before[path]).hexdigest(),
+                bytes=len(before[path]),
+            ),
+        )
+        for kind, path in legacy_paths
+    ]
+    # The names the run's own copy produces — and therefore the ones publication
+    # replaces. ``minutes.md`` is the one it does not.
+    replaced = {home.record_path, home.segments_path, home.export_dir / "record.md"}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        export = Path(directory) / "export"
+        export.mkdir(parents=True, exist_ok=True)
+        (export / "record.md").write_text("new export", encoding="utf-8")
+        (Path(directory) / "record.json").write_text(
+            '{"new": "record"}', encoding="utf-8"
+        )
+        (Path(directory) / "segments.json").write_text(
+            '{"new": "segments"}', encoding="utf-8"
+        )
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    state = manager.wait(
+        manager.start(meeting, origin="console", actor="console").id, timeout=10
+    )
+
+    assert state.status == "done"
+    # The new run's copy is the published one.
+    assert home.record_path.read_text(encoding="utf-8") == '{"new": "record"}'
+    assert (home.export_dir / "record.md").read_text(encoding="utf-8") == "new export"
+    # Every legacy row still reads the bytes it recorded: the ones publication
+    # replaced follow the preserved copies, and the one it did not replace stays
+    # where it is — the rule moves an association only when the file moves.
+    rows = {row.id: row for row in registry.list_artifacts(meeting.id)}
+    for path, row in legacy:
+        moved = rows[row.id]
+        assert Path(moved.path).read_bytes() == before[path]
+        assert moved.sha256 == row.sha256
+        assert moved.kind == row.kind
+        if path in replaced:
+            assert Path(moved.path) != path
+            assert Path(moved.path).is_relative_to(home.root / "runs")
+        else:
+            assert Path(moved.path) == path
+    assert [
+        (event.action, event.target, event.outcome)
+        for event in registry.list_audit_events()
+        if event.action == "artifact.retain"
+    ] == [("artifact.retain", f"meeting:{meeting.id}", "ok")]
 
 
 def test_wait_does_not_return_until_the_run_leaves_live(tmp_path) -> None:

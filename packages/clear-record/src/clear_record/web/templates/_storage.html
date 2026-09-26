@@ -44,7 +44,7 @@
   {% if storage.managed %}
   <p class="muted storage-root">{{ tr("Managed root") }}:
     <code>{{ storage.managed_root }}</code></p>
-  <p class="muted storage-note">{{ tr("clear-record never deletes tapes on its own. Deleting here is manual: it is refused until the meeting has a verified archive as the durable copy.") }}</p>
+  <p class="muted storage-note">{{ tr("clear-record never deletes tapes on its own. Deleting here is manual: it is refused until a verified archive holds the tape's own bytes as their durable copy.") }}</p>
   {% endif %}
 
   {% if storage.tapes %}
@@ -72,7 +72,7 @@
                   hx-delete="/web/ui/meetings/{{ storage.meeting_id }}/tapes/{{ tape.id }}"
                   hx-target="#storage-{{ storage.meeting_id }}"
                   hx-swap="innerHTML"
-                  hx-confirm="{{ tr("Delete this tape? It is unlinked, and the meeting's verified archive is the durable copy.") }}"
+                  hx-confirm="{{ tr("Delete this tape? Its file is unlinked, and a verified archive holding its bytes is the durable copy.") }}"
                   title="{{ tr('Delete tape') }}"
                   aria-label="{{ tr('Delete tape') }}">&#10005;</button>
           {% endif %}
@@ -100,6 +100,6 @@
           hx-delete="/web/ui/meetings/{{ storage.meeting_id }}/tapes"
           hx-target="#storage-{{ storage.meeting_id }}"
           hx-swap="innerHTML"
-          hx-confirm="{{ tr("Delete all of this meeting's tapes? Their files are unlinked, and the meeting's verified archive is the durable copy.") }}">{{ tr("Delete all tapes") }}</button>
+          hx-confirm="{{ tr("Delete all of this meeting's tapes? Their files are unlinked, and a verified archive holding them is the durable copy.") }}">{{ tr("Delete all tapes") }}</button>
   {% endif %}
 </div>

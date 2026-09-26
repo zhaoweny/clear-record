@@ -1189,7 +1189,11 @@ def create_app(
         ``TOKEN_TOUCH_INTERVAL``, so a script's burst of calls performs no write
         at all — and a write it does make is one the gate tolerates losing: a
         locked registry costs the timestamp, never the request, and never the
-        event loop.
+        event loop. **Both reads run in a worker thread** for that last clause's
+        sake: they are synchronous registry calls, and a write lock another
+        surface holds would otherwise stall this process's whole loop — every
+        unrelated request with it — for as long as the driver's busy timeout
+        allows, refused exception or not.
 
         The refusal is a redirect for a browser and ``401`` for the machine
         surface, and it clears a cookie it knows to be dead rather than leaving a
@@ -1201,14 +1205,25 @@ def create_app(
         """
         anonymous = auth_edge.answers_anonymously(request.method, request.url.path)
         token = request.cookies.get(auth_edge.SESSION_COOKIE)
-        state = console.session(token, touch=not anonymous)
+        # Both auth reads are **synchronous registry calls, so neither runs on
+        # the event loop**: a session whose lazy idle touch is due, or a token
+        # presentation, takes SQLite's write lock, and a lock another surface
+        # holds would stall this process's whole loop — an unrelated anonymous
+        # `/health` included, which is the wait the reviewer measured, not a
+        # refusal. Off-thread, a held lock costs a worker thread and the write
+        # (`ConsoleAuth` already tolerates losing it); the loop keeps answering.
+        # The pattern is the KDF's and the model download's in this file.
+        state = await run_in_threadpool(console.session, token, touch=not anonymous)
         request.state.session_state = state
         request.state.session_token = token if state is SessionState.ACTIVE else None
         if anonymous or state is SessionState.ACTIVE:
             return await call_next(request)
         if auth_edge.machine_request(request):
             presented = auth_edge.bearer_token(request)
-            if console.authenticate_token(presented) is not None:
+            if (
+                await run_in_threadpool(console.authenticate_token, presented)
+                is not None
+            ):
                 # A live token is the second way in, and this request's whole
                 # credential: the route it reaches writes as the API's actor,
                 # exactly as a cookie-authenticated machine request does.
@@ -1722,9 +1737,16 @@ def create_app(
     async def set_credential(request: Request) -> Response:
         """Set the console's credential on the first run, and sign in with it.
 
-        **Refused once a credential exists.** This form is anonymous — it has to
-        be, nobody can sign in yet — so if it could also *replace* the credential,
-        anyone who could reach the page could take the console over. The rescue
+        **Refused once a credential exists, and the write is what refuses.** This
+        form is anonymous — it has to be, nobody can sign in yet — so if it could
+        also *replace* the credential, anyone who could reach the page could take
+        the console over. Reading "is one set" before the body and then writing
+        cannot promise that: a request whose body arrives after another request
+        has already set the credential would read the old answer and replace what
+        that request wrote. The claim
+        (:meth:`~clear_record.service.auth.ConsoleAuth.claim_password`) is one
+        insert-only statement instead, so the loser of that race is answered
+        ``409`` and the credential the winner set keeps working. The rescue
         command is the way back for a credential that is lost or broken
         (``clear-record password``), and it runs as the operator on the node.
 
@@ -1732,22 +1754,8 @@ def create_app(
         (:data:`~clear_record.service.auth.PASSWORD_MIN_LENGTH`) and confirmed,
         then hashed in a worker thread (the KDF is deliberately slow, and the
         event loop is serving a node), and the reply starts the session the
-        operator just earned.
+        operator just earned — a refusal starts nothing.
         """
-        if console.configured():
-            return render(
-                request,
-                "auth.html",
-                _auth_context(
-                    request,
-                    error=tr(
-                        "a password is already set for this console; sign in, "
-                        "or replace it on the node with the password command "
-                        "(clear-record password)."
-                    ),
-                ),
-                status_code=409,
-            )
         form = await request.form()
         password = str(form.get("password") or "")
         confirm = str(form.get("confirm") or "")
@@ -1761,7 +1769,23 @@ def create_app(
                 error = str(exc)
         if error:
             return render(request, "auth.html", _auth_context(request, error=error))
-        await run_in_threadpool(console.set_password, password, actor=CONSOLE)
+        claimed = await run_in_threadpool(
+            console.claim_password, password, actor=CONSOLE
+        )
+        if not claimed:
+            return render(
+                request,
+                "auth.html",
+                _auth_context(
+                    request,
+                    error=tr(
+                        "a password is already set for this console; sign in, "
+                        "or replace it on the node with the password command "
+                        "(clear-record password)."
+                    ),
+                ),
+                status_code=409,
+            )
         token = await run_in_threadpool(console.sign_in, password)
         return _signed_in(request, token, redirect_to=CONSOLE_HOME)
 
@@ -2315,15 +2339,17 @@ def create_app(
     def ui_delete_meeting_tapes(request: Request, meeting_id: int) -> HTMLResponse:
         """Delete every uploaded tape of the meeting (the per-meeting control).
 
-        Still manual and still confirmed: each delete needs the meeting's
-        **verified archive** as its durable copy, and nothing here deletes on the
-        node's own initiative (owner, 2026-09-15).
+        Still manual and still confirmed: each delete needs a **verified archive
+        that holds the tape's own bytes** as its durable copy, and nothing here
+        deletes on the node's own initiative (owner, 2026-09-15).
         """
         meeting = lookup.meeting(registry, meeting_id)
         try:
-            # One verification for the batch: the durable copy is the meeting's,
-            # not the tape's (the same rule `delete_tapes` states) — and the
-            # console is what each drop is recorded against.
+            # One verification for the batch: one archive is the durable copy
+            # for every tape asked for, so it is verified once — and it is the
+            # **bytes it holds** that license the batch, not the meeting's
+            # membership (the rule `delete_tapes` states). Each drop is recorded
+            # against the console.
             managed.delete_tapes(
                 registry,
                 meeting,
@@ -3048,9 +3074,10 @@ def create_app(
     def delete_tape(meeting_id: int, tape_id: int) -> TapeDeletedOut:
         """Delete one managed tape's file and record.
 
-        The delete requires a **verified archive** of the meeting — the durable
-        copy — so it is refused (400) when none verifies, with the archive action
-        named; a tape in a user-chosen workspace is refused too (it is not
+        The delete requires a **verified archive that holds the tape's current
+        bytes** — the durable copy — so it is refused (400) when none verifies, or
+        when none holds them, with the archive action named; a tape in a
+        user-chosen workspace is refused too (it is not
         app-owned data). On success the note names the archive that made the
         delete reconstructible (ADR-0033).
         """
@@ -3063,7 +3090,7 @@ def create_app(
         return TapeDeletedOut(
             deleted=TapeOut.model_validate(deletion.tape),
             note=(
-                "the verified archive is the durable copy: "
+                "the verified archive holding the tape is the durable copy: "
                 f"{deletion.archive.root_path}"
             ),
         )
@@ -3210,7 +3237,12 @@ def create_app(
     def post_verify(archive_id: int) -> ArchiveVerification:
         archive = lookup.archive(registry, archive_id)
         try:
-            return verify_archive(archive.root_path)
+            # The registry's sealed manifest digest is what makes this an answer
+            # about *this archive's* record rather than about whatever manifest
+            # is on the disk now.
+            return verify_archive(
+                archive.root_path, manifest_sha256=archive.manifest_sha256
+            )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

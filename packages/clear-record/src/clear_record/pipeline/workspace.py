@@ -34,6 +34,7 @@ here is ever committed.
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 import hashlib
 import os
 import shutil
@@ -76,13 +77,16 @@ CHUNKS_DIR = "chunks"
 #: finished run publishes its own copy there (see :func:`publish_run`).
 RUNS_DIR = "runs"
 
-#: The marker a run scope carries (:meth:`Workspace.begin_scope`), naming the
-#: workspace it belongs to and the run it is. It is what makes a directory a
-#: scope: ``runs`` is an ordinary word, so a workspace that happens to sit at
-#: ``…/runs/7`` must not be mistaken for one — only a **marked** directory
-#: resolves back to the workspace whose run wrote it, and only a marked
-#: directory is skipped by discovery (everything else under ``runs/`` is the
-#: operator's, and is classified like any other file). Hidden, like
+#: The marker an **app-owned directory under ``runs/``** carries, naming the
+#: workspace it belongs to: a run's own copy area
+#: (:meth:`Workspace.begin_scope`) names the run it is as well, while a retained
+#: copy of the root's unscoped outputs (:func:`_retained_dir`) belongs to no run
+#: and names none. It is what makes such a directory the app's own: ``runs`` is
+#: an ordinary word, so a workspace that happens to sit at ``…/runs/7`` must not
+#: be mistaken for a run scope — only a **marked** directory resolves back to the
+#: workspace whose run wrote it, and only a marked directory is skipped by
+#: discovery (everything else under ``runs/`` is the operator's, and is
+#: classified like any other file). Hidden, like
 #: :data:`IGNORE_FILE`, so it is not itself an input or a file the walk narrates.
 RUN_MARKER = ".clear-record-run.json"
 
@@ -217,9 +221,11 @@ class DeclarationUnreadable(ValueError):
 
 
 def _run_scopes(directory: Path) -> frozenset[str]:
-    """The names under ``<directory>/runs/`` that are **marked run scopes**.
+    """The names under ``<directory>/runs/`` that are **marked** — the app's own.
 
-    A marked scope is the app's own output for one run (:data:`RUN_MARKER`), so
+    A marked directory is the app's own output — one run's copy area
+    (:data:`RUN_MARKER`), or a retained copy of the root's unscoped outputs
+    (:func:`_retained_dir`), which carries the same mark and names no run — so
     the walk never takes anything under it as an input. Any *other* directory
     under ``runs/`` is the operator's — a capture folder that happens to be
     named ``runs`` with a take in it, say — and its files are classified like
@@ -878,6 +884,13 @@ class Workspace:
 #: published beside them, one file each (:func:`publish_run`).
 PUBLISHED_DOCUMENTS = (MANIFEST, SEGMENTS, RECORD)
 
+#: The prefix of the directory a publication keeps the root's **unscoped**
+#: outputs in, beside the run scopes: ``<workspace>/runs/retained-<stamp>/``. The
+#: upgrade boundary is what it exists for — a root whose documents name no run is
+#: held nowhere else, so overwriting them would be the last copy's end
+#: (:func:`_retain_unscoped_outputs`).
+RETENTION_PREFIX = "retained"
+
 
 def _publish_file(source: Path, target: Path) -> None:
     """Copy *source* over *target* by rename: a reader sees all of one or the other.
@@ -893,7 +906,128 @@ def _publish_file(source: Path, target: Path) -> None:
     os.replace(tmp, target)
 
 
-def publish_run(scope: Workspace) -> list[Path]:
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@dataclasses.dataclass(frozen=True)
+class Publication:
+    """What one publication wrote, and what it kept instead of overwriting.
+
+    ``published`` is the root paths written, in the order they landed.
+    ``retained`` pairs each root path that was **preserved** — copied into the
+    workspace's retained copy because no run scope held it — with the copy. That
+    pair is for the caller that owns the *association* between a path and a
+    record: the registry's artifact rows follow the copies, so a row keeps
+    describing the bytes it recorded. No pairs means the publication replaced
+    only documents a run's own scope already holds.
+    """
+
+    published: tuple[Path, ...] = ()
+    retained: tuple[tuple[Path, Path], ...] = ()
+
+
+def _publication_targets(scope: Workspace, home: Workspace) -> list[tuple[Path, Path]]:
+    """The ``(source, target)`` pairs a publication of *scope* would write."""
+    targets: list[tuple[Path, Path]] = []
+    for name in PUBLISHED_DOCUMENTS:
+        source = scope.outputs / name
+        if source.is_file():
+            targets.append((source, home.root / name))
+    if scope.export_dir.is_dir():
+        for source in sorted(scope.export_dir.iterdir()):
+            if source.is_file():
+                targets.append((source, home.export_dir / source.name))
+    return targets
+
+
+def _held_by_a_run_scope(home: Workspace, target: Path) -> bool:
+    """Whether a **run's own copy** holds *target*'s current bytes.
+
+    That is what makes replacing the root's copy harmless, and the test is byte
+    identity rather than a name or a claim: a finished run's copy
+    (``<workspace>/runs/<run id>/``) is what its publication wrote, so a root
+    document some scope holds is one a reader can still reach afterwards. The
+    exceptions are the ones this exists for — a root written *before* runs were
+    scoped, a stage command's output (a stage writes at the root and names no
+    run), an operator's hand-edited manifest — none of which any scope holds.
+    """
+    if not target.is_file():
+        return True
+    try:
+        size = target.stat().st_size
+        want = _sha256(target)
+    except OSError:
+        return False
+    relative = target.relative_to(home.root)
+    for name in _run_scopes(home.root):
+        candidate = home.root / RUNS_DIR / name / relative
+        try:
+            if candidate.stat().st_size != size or _sha256(candidate) != want:
+                continue
+        except OSError:
+            continue
+        return True
+    return False
+
+
+def _retained_dir(home: Workspace) -> Path:
+    """A fresh directory under ``runs/`` for one publication's retained copy.
+
+    Stamped like an archive's directory, with the same collision rule (the next
+    free name): a second publication that finds *other* unscoped documents must
+    not merge them into the first copy's directory, because the first copy is
+    what an artifact row may already be reading. It carries no
+    :data:`RUN_MARKER`: nothing resolves it back to a run — what reaches it is the
+    artifact row repointed at it — and the walk under ``runs/`` reads only what it
+    knows (its :data:`WORKSPACE_FILES` by name, ``export/`` by
+    :data:`SKIP_DIRS`), so an unmarked directory of documents holds no input.
+    """
+    parent = home.root / RUNS_DIR
+    stem = f"{RETENTION_PREFIX}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    name, suffix = stem, 2
+    while (parent / name).exists():
+        name, suffix = f"{stem}-{suffix}", suffix + 1
+    directory = parent / name
+    # Marked like a run scope (:data:`RUN_MARKER`) and naming no run, which is
+    # what the copy is: the app's own retained output, so the walk never reads it
+    # as an input. The name carries the publication's stamp, so a reader can tell
+    # which one preserved what.
+    _publish_json(directory / RUN_MARKER, {"workspace": str(home.root)})
+    return directory
+
+
+def _retain_unscoped_outputs(
+    home: Workspace, targets: list[tuple[Path, Path]]
+) -> dict[Path, Path]:
+    """Copy aside the documents *targets* would replace that no run scope holds.
+
+    The copy is made **before the first target is written**, so the bytes that
+    were at the root are never the ones at risk, and the run's own copy is never
+    touched — what is preserved is the root's copy of documents that no run's
+    copy holds. ``{}`` when every target is held by a run scope: the ordinary
+    case, which stays silent and writes nothing.
+    """
+    at_risk = [
+        target for _source, target in targets if not _held_by_a_run_scope(home, target)
+    ]
+    if not at_risk:
+        return {}
+    directory = _retained_dir(home)
+    retained: dict[Path, Path] = {}
+    for target in at_risk:
+        copy = directory / target.relative_to(home.root)
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, copy)
+        retained[target] = copy
+    return retained
+
+
+def publish_run(scope: Workspace) -> Publication:
     """Copy a finished run's own documents over the workspace's published copy.
 
     Called only for a run that **finished**: a run that stopped, failed or died
@@ -904,28 +1038,33 @@ def publish_run(scope: Workspace) -> list[Path]:
     the run's own copy does; the run's copy itself is left untouched, which is
     what keeps an earlier run's record readable after a later one.
 
-    Returns the paths written, in the order they landed. A document the run never
+    **What it will not destroy.** For a workspace whose runs have always been
+    scoped, the root's documents are the last run's published copy, which that
+    run's own scope still holds byte for byte — replacing them loses nothing. A
+    root written **before** runs were scoped (an install from before 257), or by
+    a *stage command* (a stage writes at the root and names no run), is held
+    nowhere else: publishing over it would leave the artifact rows that named
+    those paths describing the **new** run's bytes with the old ones gone — the
+    upgrade boundary, where the first new run destroyed the last legacy output.
+    So every target about to be replaced that no run scope holds is copied into a
+    retained copy under the workspace before the first of them is written, and
+    :attr:`Publication.retained` names each move so the caller that owns the
+    association can follow it (:meth:`clear_record.service.store.Registry.
+    retain_artifact_paths`).
+
+    Returns the paths written and the paths preserved; a document the run never
     wrote is skipped rather than published as an absence.
     """
     if scope.run_id is None:
-        return []
+        return Publication()
     home = Workspace(scope.root)
+    targets = _publication_targets(scope, home)
+    retained = _retain_unscoped_outputs(home, targets)
     published: list[Path] = []
-    for name in PUBLISHED_DOCUMENTS:
-        source = scope.outputs / name
-        if source.is_file():
-            target = home.root / name
-            _publish_file(source, target)
-            published.append(target)
-    if scope.export_dir.is_dir():
-        home.export_dir.mkdir(parents=True, exist_ok=True)
-        for source in sorted(scope.export_dir.iterdir()):
-            if not source.is_file():
-                continue
-            target = home.export_dir / source.name
-            _publish_file(source, target)
-            published.append(target)
-    return published
+    for source, target in targets:
+        _publish_file(source, target)
+        published.append(target)
+    return Publication(published=tuple(published), retained=tuple(retained.items()))
 
 
 def report_line(
@@ -1013,6 +1152,8 @@ __all__ = [
     "DeclarationUnreadable",
     "IGNORE_FILE",
     "PUBLISHED_DOCUMENTS",
+    "Publication",
+    "RETENTION_PREFIX",
     "RUN_GLOSSARY_DIRNAME",
     "RUNS_DIR",
     "RUN_MARKER",

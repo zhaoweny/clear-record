@@ -16,7 +16,7 @@ import pytest
 from alembic import command
 
 from clear_record.service import Registry, archive_meeting, verify_archive
-from clear_record.service.archive import MANIFEST_FILENAME
+from clear_record.service.archive import MANIFEST_FILENAME, unarchived_tapes
 from clear_record.service.store import _alembic_config
 
 
@@ -241,6 +241,81 @@ def test_verify_archive_reports_a_manifest_it_cannot_read(tmp_path) -> None:
     manifest.unlink()
     with pytest.raises(FileNotFoundError):
         verify_archive(archive_dir)
+
+
+def test_verify_archive_answers_about_the_manifest_the_registry_sealed(
+    tmp_path,
+) -> None:
+    """A manifest rewritten since is *unverifiable*, however consistent it reads.
+
+    The sealed digest is what makes the answer about **this archive's** record:
+    a rewritten manifest — emptied, or truncated to the one file a caller happens
+    to ask about — must not verify vacuously against its own contents, or an
+    archive that never held a tape would authorize deleting it.
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    sealed = manifest.read_text(encoding="utf-8")
+
+    assert (
+        verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256).ok is True
+    )
+
+    # Emptied: nothing listed, so nothing missing and nothing mismatched.
+    manifest.write_text(json.dumps({"files": []}), encoding="utf-8")
+    emptied = verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256)
+    assert emptied.ok is False
+    assert emptied.missing == [] and emptied.mismatched == []
+    assert emptied.unverifiable is not None
+    assert "registry recorded" in emptied.unverifiable
+    # Without the digest the same file still reads as its own, consistent list:
+    # the weaker check a path alone can make, kept for callers that have no row.
+    assert verify_archive(archive_dir).ok is True
+
+    # Rewritten but self-consistent, listing only what the caller asks about.
+    manifest.write_text(
+        json.dumps(json.loads(sealed) | {"files": [json.loads(sealed)["files"][0]]}),
+        encoding="utf-8",
+    )
+    subset = verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256)
+    assert subset.ok is False
+    assert subset.unverifiable is not None
+
+    manifest.write_text(sealed, encoding="utf-8")
+    assert (
+        verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256).ok is True
+    )
+
+
+def test_unarchived_tapes_covers_nothing_when_the_manifest_lists_nothing(
+    tmp_path,
+) -> None:
+    """An entries-less manifest holds no copy, so it answers for no tape.
+
+    The vacuous pass this closes is *verification*', not coverage's: a manifest
+    listing no files verifies against itself, and a delete leaning on that answer
+    would destroy the only copy there is. Coverage is asked of the **contents** —
+    an entry whose size and digest are the file's current bytes — so no entries
+    means no tape is covered.
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    sealed = manifest.read_text(encoding="utf-8")
+    tape = tmp_path / "a.wav"
+
+    assert unarchived_tapes(archive_dir, [tape]) == []
+    manifest.write_text(json.dumps({"files": []}), encoding="utf-8")
+    assert unarchived_tapes(archive_dir, [tape]) == ["a.wav"]
+
+    # The name is not the copy: the same path under the same name, holding other
+    # bytes of the same length, is not covered — the digest is the test.
+    manifest.write_text(sealed, encoding="utf-8")
+    tape.write_bytes(b"RIFFfake-AUDIO")
+    assert unarchived_tapes(archive_dir, [tape]) == ["a.wav"]
 
 
 def test_a_refused_archive_copies_nothing(tmp_path) -> None:

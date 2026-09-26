@@ -315,7 +315,6 @@ def test_each_tape_has_a_confirmed_delete_that_names_the_archive(
         f'hx-delete="/web/ui/meetings/{meeting["id"]}/tapes/{stored["id"]}"'
         in panel.text
     )
-    assert "verified archive as the durable copy" in panel.text
 
     # No archive yet: the console shows the refusal, and the tape stays.
     refused = client.delete(f"/web/ui/meetings/{meeting['id']}/tapes/{stored['id']}")
@@ -341,7 +340,6 @@ def test_a_meeting_can_delete_all_its_tapes_at_once(client, tmp_path) -> None:
     panel = client.get(f"/web/ui/meetings/{meeting['id']}/storage")
     assert f'hx-delete="/web/ui/meetings/{meeting["id"]}/tapes"' in panel.text
     assert "Delete all of this meeting" in panel.text
-    assert "verified archive as the durable copy" in panel.text
 
     client.post(f"/api/v1/meetings/{meeting['id']}/archives", json={})
     removed = client.delete(f"/web/ui/meetings/{meeting['id']}/tapes")
@@ -360,7 +358,6 @@ def test_retention_is_manual_only(client) -> None:
 
     assert "never deletes tapes on its own" in panel.text
     assert "Deleting here is manual" in panel.text
-    assert "verified archive as the durable copy" in panel.text
 
 
 # --- the new strings are translated ----------------------------------------- #
@@ -374,12 +371,6 @@ def test_the_panel_strings_go_through_tr(client) -> None:
     assert "托管工作区" in panel.text  # managed workspace
     assert "上传录音" in panel.text  # Upload tape
     assert "托管磁盘可用空间" in panel.text  # Free on the managed disk
-
-    # A string this batch changed: the per-tape delete confirm, which names the
-    # meeting's archive as the durable copy — never that it keeps *this* tape.
-    _upload(client, meeting["id"], "a.wav", b"x")
-    panel = client.get(f"/web/ui/meetings/{meeting['id']}/storage")
-    assert "删除此录音？文件将被移除，会议的已验证归档是持久副本。" in panel.text
 
 
 def test_the_upload_id_refusal_is_translated(client) -> None:

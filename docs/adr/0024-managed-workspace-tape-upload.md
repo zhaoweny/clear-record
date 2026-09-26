@@ -186,12 +186,13 @@ shrink-the-irreversible-set rule: the archive stops being a note beside the
 delete and becomes its precondition. The original text is kept for the record.
 
 - [DECISION] **`DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses unless the
-  meeting has a verified archive.** The registry's archives are re-checked
-  newest first against their manifests (`verify_archive`); the first that
-  verifies is the durable copy the delete leans on, and the response's note names
-  it. With no
-  verified archive the route answers 400 with a message naming the archive action
-  — archive the meeting first — and nothing is unlinked. A user-chosen
+  meeting has a verified archive that holds the tape.** The registry's archives
+  are re-checked newest first against their manifests (`verify_archive`); the
+  first that verifies **and lists the current bytes of every tape the batch was
+  asked for** is the durable copy the delete leans on, and the response's note
+  names it. With no verified archive, or none holding those tapes, the route
+  answers 400 with a message naming the archive action — archive the meeting
+  again — and nothing is unlinked. A user-chosen
   workspace's tape is still refused as before (it is the user's document).
 - [DESIGN] **The console's delete controls read the same rule.** The per-tape and
   delete-all controls still confirm manually, but their wording names the
@@ -199,3 +200,28 @@ delete and becomes its precondition. The original text is kept for the record.
   message.
 - [DESIGN] **Deleting a glossary term is now a retire** — see ADR-0033; the row
   survives with `added_by`/`created_at` and can be restored.
+
+## Update (2026-09-27) — the archive must hold the tapes, not just the meeting
+
+The Delete bullet above first shipped as "the meeting's newest *verifying*
+archive is the durable copy", which a remote review falsified: **a verified
+archive authorizes deleting a tape it never contained.** Upload A → archive the
+meeting → upload B → delete B, and B's bytes were unlinked while the archive held
+only A's, on the strength of the meeting's membership alone. The accepted row this
+broke is the spec's own first acceptance item ("a re-run cannot cover an earlier
+run's record" has a delete-shaped twin: nothing irreversible without a durable
+copy of *the thing being destroyed*).
+
+- [DECISION] **The precondition is answered per tape, from the bytes.**
+  `service.managed.durable_archive` walks the meeting's archives newest first, and
+  an archive counts only when it verifies *and* its manifest lists a copy of every
+  tape the batch asked for, matched by size and `sha256` against the file's
+  **current** bytes (`service.archive.unarchived_tapes`). Name and meeting
+  membership are not evidence: a tape re-recorded under an archived name is not
+  covered, and neither is one whose bytes came after the archive was made. A batch
+  no verified archive covers is refused whole — nothing unlinked, one failed
+  `tape.forget` row for the meeting as before — and the message names the tapes no
+  verified copy holds, since those are what the next archive has to include.
+- [FACT] The same-tape-after-re-archive case is the licence working as intended:
+  archiving again makes a copy that holds the tape, and the delete then stands on
+  *that* archive (the newest one covering the batch), not on the earlier one.

@@ -869,9 +869,16 @@ def media_rows(registry: Registry, slug: str) -> list[dict]:
 
 
 def archive_status(archive) -> ArchiveVerification | None:
-    """The verification summary, or None when the manifest is gone."""
+    """The verification summary, or None when the manifest is gone.
+
+    The registry's own digest of the manifest is passed in, so the answer is
+    about **this archive's** record: a manifest rewritten since it was sealed is
+    *unverifiable*, never a vacuous pass.
+    """
     try:
-        return _adapters().verify_archive(archive.root_path)
+        return _adapters().verify_archive(
+            archive.root_path, manifest_sha256=archive.manifest_sha256
+        )
     except FileNotFoundError:
         return None
 

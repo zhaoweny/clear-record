@@ -38,9 +38,16 @@ def registry(tmp_path) -> Registry:
 
 def _managed_meeting(registry: Registry, monkeypatch, tmp_path, title="Kickoff"):
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", title)
-    return managed.ensure_managed_workspace(registry, meeting)
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        title,
+        actor="console",
+    )
+    return managed.ensure_managed_workspace(registry, meeting, actor="console")
 
 
 class _DroppedStream(io.BytesIO):
@@ -114,12 +121,19 @@ def test_a_path_escaping_slug_creates_nothing_outside_the_root(
     import dataclasses
 
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     escaped = dataclasses.replace(meeting, project_slug="../escaped")
 
     with pytest.raises(managed.UploadRejected, match="outside the managed root"):
-        managed.ensure_managed_workspace(registry, escaped)
+        managed.ensure_managed_workspace(registry, escaped, actor="console")
 
     assert not (tmp_path / "escaped").exists()
     assert registry.meeting_by_id(meeting.id).workspace_path is None
@@ -132,11 +146,20 @@ def test_a_symlinked_managed_root_is_allowed(registry, tmp_path, monkeypatch) ->
     link = tmp_path / "root-link"
     link.symlink_to(real, target_is_directory=True)
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(link))
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
-    meeting = managed.ensure_managed_workspace(registry, meeting)
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    meeting = managed.ensure_managed_workspace(registry, meeting, actor="console")
 
-    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav")
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", actor="console"
+    )
 
     assert Path(tape.path).resolve().is_relative_to(real.resolve())
     assert Path(tape.path).read_bytes() == b"RIFF"
@@ -146,7 +169,7 @@ def test_ensure_managed_workspace_is_idempotent(
     registry, tmp_path, monkeypatch
 ) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    again = managed.ensure_managed_workspace(registry, meeting)
+    again = managed.ensure_managed_workspace(registry, meeting, actor="console")
     assert again.workspace_path == meeting.workspace_path
 
 
@@ -154,15 +177,25 @@ def test_a_user_chosen_workspace_is_not_managed(
     registry, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
-    meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+    meeting = registry.create_meeting(
+        "ops",
+        "Local",
+        workspace_path=str(chosen),
+        actor="console",
+    )
 
     assert not managed.is_managed(meeting)
     # An upload cannot write into a user document; it names the fix.
     with pytest.raises(managed.UploadRejected, match="user-chosen workspace"):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename="a.wav")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename="a.wav", actor="console"
+        )
     assert list(chosen.iterdir()) == []
 
 
@@ -174,7 +207,7 @@ def test_upload_records_a_checksummed_tape_and_the_tape_set(
     payload = b"RIFF-fake-audio-bytes"
 
     tape = managed.upload_tape(
-        registry, meeting, io.BytesIO(payload), filename="take-one.wav"
+        registry, meeting, io.BytesIO(payload), filename="take-one.wav", actor="console"
     )
 
     assert tape.sha256 == hashlib.sha256(payload).hexdigest()
@@ -194,7 +227,7 @@ def test_an_uploaded_tape_is_discoverable_audio(
 ) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     tape = managed.upload_tape(
-        registry, meeting, io.BytesIO(b"RIFF-fake"), filename="a.wav"
+        registry, meeting, io.BytesIO(b"RIFF-fake"), filename="a.wav", actor="console"
     )
 
     workspace = Workspace.at(meeting.workspace_path)
@@ -205,9 +238,11 @@ def test_a_second_upload_of_the_same_name_gets_its_own_file(
     registry, tmp_path, monkeypatch
 ) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    first = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
     second = managed.upload_tape(
-        registry, meeting, io.BytesIO(b"two"), filename="a.wav"
+        registry, meeting, io.BytesIO(b"two"), filename="a.wav", actor="console"
     )
 
     assert Path(first.path) != Path(second.path)
@@ -229,6 +264,7 @@ def test_a_partial_upload_leaves_no_tape(registry, tmp_path, monkeypatch) -> Non
             meeting,
             _DroppedStream(b"RIFF-fake-audio", fail_after=4),
             filename="broken.wav",
+            actor="console",
         )
 
     assert registry.list_tapes(meeting.id) == []
@@ -247,7 +283,9 @@ def test_a_failed_registry_write_removes_the_file(
 
     monkeypatch.setattr(registry, "register_tape", boom)
     with pytest.raises(RuntimeError):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", actor="console"
+        )
 
     assert list((Path(meeting.workspace_path) / "tapes").iterdir()) == []
 
@@ -267,14 +305,24 @@ def test_a_valid_upload_id_names_the_scratch_file(
 
     monkeypatch.setattr(managed.os, "replace", record)
     tape = managed.upload_tape(
-        registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", upload_id="take-01"
+        registry,
+        meeting,
+        io.BytesIO(b"RIFF"),
+        filename="a.wav",
+        upload_id="take-01",
+        actor="console",
     )
 
     assert seen == [".cr-upload-take-01.part"]
     assert Path(tape.path).read_bytes() == b"RIFF"
     # Success consumed the slot: the id can be used again for a new upload.
     managed.upload_tape(
-        registry, meeting, io.BytesIO(b"RIFF"), filename="b.wav", upload_id="take-01"
+        registry,
+        meeting,
+        io.BytesIO(b"RIFF"),
+        filename="b.wav",
+        upload_id="take-01",
+        actor="console",
     )
     assert len(registry.list_tapes(meeting.id)) == 2
 
@@ -291,7 +339,9 @@ def test_no_upload_id_keeps_the_random_scratch_name(
         return real_replace(src, dst)
 
     monkeypatch.setattr(managed.os, "replace", record)
-    managed.upload_tape(registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav")
+    managed.upload_tape(
+        registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", actor="console"
+    )
 
     assert len(seen) == 1
     assert seen[0].startswith(".cr-upload-")
@@ -324,6 +374,7 @@ def test_a_malformed_upload_id_is_refused_before_the_body_is_read(
             _MustNotBeRead(b"ignored"),
             filename="a.wav",
             upload_id=upload_id,
+            actor="console",
         )
     assert registry.list_tapes(meeting.id) == []
     assert list(Path(meeting.workspace_path).rglob("*.part")) == []
@@ -346,6 +397,7 @@ def test_an_occupied_upload_id_is_refused_as_unsupported(
             _MustNotBeRead(b"ignored"),
             filename="a.wav",
             upload_id="take-01",
+            actor="console",
         )
 
     assert partial.read_bytes() == b"interrupted upload"  # untouched
@@ -364,7 +416,12 @@ def test_a_symlink_at_an_upload_id_is_refused_the_same_way(
 
     with pytest.raises(managed.ResumeNotSupported):
         managed.upload_tape(
-            registry, meeting, io.BytesIO(b"x"), filename="a.wav", upload_id="take-01"
+            registry,
+            meeting,
+            io.BytesIO(b"x"),
+            filename="a.wav",
+            upload_id="take-01",
+            actor="console",
         )
 
     assert secret.read_bytes() == b"SECRET"
@@ -387,14 +444,18 @@ def test_traversal_and_separators_are_rejected(
 ) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     with pytest.raises(managed.UnsafeFilename):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename=filename)
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename=filename, actor="console"
+        )
     assert registry.list_tapes(meeting.id) == []
 
 
 def test_a_blank_filename_is_rejected(registry, tmp_path, monkeypatch) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     with pytest.raises(managed.UnsafeFilename):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename="  ")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename="  ", actor="console"
+        )
 
 
 def test_a_name_over_255_utf8_bytes_is_rejected(
@@ -404,13 +465,17 @@ def test_a_name_over_255_utf8_bytes_is_rejected(
     name = "\u674e" * 100 + ".wav"  # 304 UTF-8 bytes, 104 characters
     assert len(name) <= 255 and len(name.encode("utf-8")) > 255
     with pytest.raises(managed.UnsafeFilename, match="255 bytes"):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename=name)
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename=name, actor="console"
+        )
 
 
 def test_a_non_audio_extension_is_rejected(registry, tmp_path, monkeypatch) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     with pytest.raises(managed.DisallowedExtension, match="allowed extensions"):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename="notes.txt")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename="notes.txt", actor="console"
+        )
     assert registry.list_tapes(meeting.id) == []
 
 
@@ -428,6 +493,7 @@ def test_an_oversize_upload_is_refused_before_the_body_is_read(
             _MustNotBeRead(b"ignored"),
             filename="a.wav",
             declared_bytes=10**9,
+            actor="console",
         )
     assert registry.list_tapes(meeting.id) == []
 
@@ -439,7 +505,11 @@ def test_an_oversize_body_is_stopped_mid_stream(
     monkeypatch.setattr(managed, "max_upload_bytes", lambda: 4)
     with pytest.raises(managed.UploadTooLarge):
         managed.upload_tape(
-            registry, meeting, io.BytesIO(b"0123456789"), filename="a.wav"
+            registry,
+            meeting,
+            io.BytesIO(b"0123456789"),
+            filename="a.wav",
+            actor="console",
         )
     assert registry.list_tapes(meeting.id) == []
     assert list((Path(meeting.workspace_path) / "tapes").iterdir()) == []
@@ -455,7 +525,9 @@ def test_a_full_disk_mid_stream_is_refused_clearly(
 
     monkeypatch.setattr(managed.os, "fsync", no_space)
     with pytest.raises(managed.InsufficientSpace, match="disk filled"):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", actor="console"
+        )
     assert registry.list_tapes(meeting.id) == []
     assert list((Path(meeting.workspace_path) / "tapes").iterdir()) == []
 
@@ -476,6 +548,7 @@ def test_low_disk_is_refused_before_the_body_is_read(
             _MustNotBeRead(b"ignored"),
             filename="a.wav",
             declared_bytes=10,
+            actor="console",
         )
     assert registry.list_tapes(meeting.id) == []
 
@@ -491,7 +564,9 @@ def test_a_symlinked_destination_is_never_followed(
     secret.write_bytes(b"SECRET")
     (tapes / "a.wav").symlink_to(secret)
 
-    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"real"), filename="a.wav")
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"real"), filename="a.wav", actor="console"
+    )
 
     assert secret.read_bytes() == b"SECRET"  # the link target is untouched
     assert (tapes / "a.wav").is_symlink()
@@ -510,7 +585,9 @@ def test_a_symlinked_tapes_directory_is_refused(
     )
 
     with pytest.raises(managed.UploadRejected, match="symlink"):
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename="a.wav")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename="a.wav", actor="console"
+        )
     assert list(elsewhere.iterdir()) == []
 
 
@@ -519,8 +596,12 @@ def test_storage_reports_the_workspace_size_and_the_tapes(
     registry, tmp_path, monkeypatch
 ) -> None:
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    managed.upload_tape(registry, meeting, io.BytesIO(b"12345"), filename="a.wav")
-    managed.upload_tape(registry, meeting, io.BytesIO(b"123"), filename="b.wav")
+    managed.upload_tape(
+        registry, meeting, io.BytesIO(b"12345"), filename="a.wav", actor="console"
+    )
+    managed.upload_tape(
+        registry, meeting, io.BytesIO(b"123"), filename="b.wav", actor="console"
+    )
 
     storage = managed.meeting_storage(registry, meeting)
 
@@ -548,10 +629,18 @@ def test_storage_reports_no_free_space_for_a_user_chosen_workspace(
     registry, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
-    meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+    meeting = registry.create_meeting(
+        "ops",
+        "Local",
+        workspace_path=str(chosen),
+        actor="console",
+    )
 
     assert managed.meeting_storage(registry, meeting).free_bytes is None
 
@@ -586,7 +675,7 @@ def test_the_guard_and_the_storage_report_share_root_free_bytes(
     monkeypatch.setattr(managed, "root_free_bytes", no_space)
 
     with pytest.raises(managed.InsufficientSpace):
-        managed.precheck_upload(registry, meeting, declared_bytes=1)
+        managed.precheck_upload(registry, meeting, declared_bytes=1, actor="console")
     assert managed.meeting_storage(registry, meeting).free_bytes == 0
     assert calls  # both read the seam, neither re-implements it
 
@@ -596,13 +685,15 @@ def test_deleting_a_tape_removes_its_file_and_the_tape_set(
 ) -> None:
     """With a verified archive the delete stands; the archive is reported."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    first = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
-    second = managed.upload_tape(
-        registry, meeting, io.BytesIO(b"two"), filename="b.wav"
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
     )
-    archive = archive_meeting(registry, meeting, tmp_path / "archive")
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
 
-    deleted = managed.delete_tape(registry, meeting, first.id)
+    deleted = managed.delete_tape(registry, meeting, first.id, actor="console")
 
     assert deleted.tape == first
     assert deleted.archive == archive
@@ -611,7 +702,7 @@ def test_deleting_a_tape_removes_its_file_and_the_tape_set(
     assert registry.list_tapes(meeting.id) == [second]
     assert registry.latest_recording_set(meeting.id).paths == (second.path,)
 
-    managed.delete_tape(registry, meeting, second.id)
+    managed.delete_tape(registry, meeting, second.id, actor="console")
     assert registry.latest_recording_set(meeting.id) is None
 
 
@@ -620,10 +711,12 @@ def test_deleting_a_tape_without_a_verified_archive_is_refused(
 ) -> None:
     """No durable copy, no delete: the refusal names the archive action."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
 
     with pytest.raises(managed.ArchiveRequired) as refusal:
-        managed.delete_tape(registry, meeting, tape.id)
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
 
     assert "archive the meeting first" in str(refusal.value)
     assert Path(tape.path).exists()
@@ -635,13 +728,15 @@ def test_deleting_a_tape_whose_archive_does_not_verify_is_refused(
 ) -> None:
     """A tampered archive is not a durable copy, so it does not license a delete."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
-    archive = archive_meeting(registry, meeting, tmp_path / "archive")
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
     copy = Path(archive.root_path) / "tapes" / "a.wav"
     copy.write_bytes(bytes(copy.stat().st_size))
 
     with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
-        managed.delete_tape(registry, meeting, tape.id)
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
 
     assert Path(tape.path).exists()
     assert registry.list_tapes(meeting.id) == [tape]
@@ -652,14 +747,16 @@ def test_deleting_a_tape_is_refused_when_the_archive_manifest_is_corrupt(
 ) -> None:
     """A corrupt manifest is not a durable copy: it refuses, it does not raise."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
-    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
-    archive = archive_meeting(registry, meeting, tmp_path / "archive")
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
     (Path(archive.root_path) / MANIFEST_FILENAME).write_text(
         "{not json", encoding="utf-8"
     )
 
     with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
-        managed.delete_tape(registry, meeting, tape.id)
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
 
     assert Path(tape.path).exists()
     assert registry.list_tapes(meeting.id) == [tape]
@@ -671,10 +768,12 @@ def test_deleting_all_tapes_verifies_the_durable_copy_once(
     """One archive is one durable copy of the meeting: verify it once per batch."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     tapes = [
-        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename=name)
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"x"), filename=name, actor="console"
+        )
         for name in ("a.wav", "b.wav", "c.wav")
     ]
-    archive_meeting(registry, meeting, tmp_path / "archive")
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
 
     verifications: list[str] = []
     real = managed.verify_archive
@@ -685,7 +784,9 @@ def test_deleting_all_tapes_verifies_the_durable_copy_once(
 
     monkeypatch.setattr(managed, "verify_archive", counting)
 
-    deletions = managed.delete_tapes(registry, meeting, [tape.id for tape in tapes])
+    deletions = managed.delete_tapes(
+        registry, meeting, [tape.id for tape in tapes], actor="console"
+    )
 
     assert len(verifications) == 1
     assert [deletion.tape.id for deletion in deletions] == [t.id for t in tapes]
@@ -702,10 +803,14 @@ def test_deleting_a_tape_outside_the_managed_root_is_refused(
     # A managed meeting can still carry a tape row for a path outside the root;
     # deleting that would touch a user document, so it is refused.
     tape = registry.register_tape(
-        meeting.id, path=str(outside), sha256="0" * 64, bytes=7
+        meeting.id,
+        path=str(outside),
+        sha256="0" * 64,
+        bytes=7,
+        actor="console",
     )
     with pytest.raises(managed.UploadRejected, match="outside the managed root"):
-        managed.delete_tape(registry, meeting, tape.id)
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
     assert outside.read_bytes() == b"keep me"
 
 
@@ -713,17 +818,29 @@ def test_deleting_from_a_user_chosen_workspace_is_refused(
     registry, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
     tape_file = chosen / "a.wav"
     tape_file.write_bytes(b"keep me")
-    meeting = registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+    meeting = registry.create_meeting(
+        "ops",
+        "Local",
+        workspace_path=str(chosen),
+        actor="console",
+    )
     tape = registry.register_tape(
-        meeting.id, path=str(tape_file), sha256="0" * 64, bytes=7
+        meeting.id,
+        path=str(tape_file),
+        sha256="0" * 64,
+        bytes=7,
+        actor="console",
     )
     with pytest.raises(managed.UploadRejected, match="user-chosen workspace"):
-        managed.delete_tape(registry, meeting, tape.id)
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
     assert tape_file.read_bytes() == b"keep me"
 
 
@@ -741,21 +858,43 @@ def test_a_managed_and_a_dir_workspace_are_indistinguishable_to_the_stages(
     from clear_record.service.runs import RunManager
 
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
 
     payload = b"RIFF-the-same-bytes"
 
-    managed_meeting = registry.create_meeting("ops", "Managed")
-    managed_meeting = managed.ensure_managed_workspace(registry, managed_meeting)
+    managed_meeting = registry.create_meeting(
+        "ops",
+        "Managed",
+        actor="console",
+    )
+    managed_meeting = managed.ensure_managed_workspace(
+        registry, managed_meeting, actor="console"
+    )
     managed.upload_tape(
-        registry, managed_meeting, io.BytesIO(payload), filename="a.wav"
+        registry,
+        managed_meeting,
+        io.BytesIO(payload),
+        filename="a.wav",
+        actor="console",
     )
 
     dir_ws = tmp_path / "user" / "kickoff"
     dir_ws.mkdir(parents=True)
     (dir_ws / "a.wav").write_bytes(payload)
-    dir_meeting = registry.create_meeting("ops", "Dir", workspace_path=str(dir_ws))
-    registry.set_recording_set(dir_meeting.id, [str(dir_ws / "a.wav")])
+    dir_meeting = registry.create_meeting(
+        "ops",
+        "Dir",
+        workspace_path=str(dir_ws),
+        actor="console",
+    )
+    registry.set_recording_set(
+        dir_meeting.id,
+        [str(dir_ws / "a.wav")],
+        actor="console",
+    )
 
     records: dict[str, str] = {}
 
@@ -773,7 +912,7 @@ def test_a_managed_and_a_dir_workspace_are_indistinguishable_to_the_stages(
 
     for meeting in (managed_meeting, dir_meeting):
         manager = RunManager(registry, pipeline=fake_pipeline)
-        run = manager.start(meeting, origin="console")
+        run = manager.start(meeting, origin="console", actor="console")
         state = manager.wait(run.id, timeout=10)
         assert state.status == "done"
 
@@ -806,7 +945,9 @@ def test_machine_storage_counts_every_bucket_and_marks_source_or_derived(
     monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models"))
 
-    managed.upload_tape(registry, meeting, io.BytesIO(b"t" * 100), filename="a.wav")
+    managed.upload_tape(
+        registry, meeting, io.BytesIO(b"t" * 100), filename="a.wav", actor="console"
+    )
     workspace = Workspace.at(meeting.workspace_path)
     _seed_derived(workspace)
     chunk = workspace.chunks_dir / "src" / "chunk.json"
@@ -863,12 +1004,20 @@ def test_machine_storage_measures_a_user_chosen_workspace_and_its_disk(
     registry, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
     (chosen / "a.wav").write_bytes(b"u" * 40)  # a loose tape: source
     (chosen / "record.json").write_bytes(b"d" * 6)
-    registry.create_meeting("ops", "Local", workspace_path=str(chosen))
+    registry.create_meeting(
+        "ops",
+        "Local",
+        workspace_path=str(chosen),
+        actor="console",
+    )
 
     storage = managed.machine_storage(registry)
     (project,) = storage["projects"]
@@ -889,15 +1038,26 @@ def test_a_partly_unreadable_workspace_keeps_the_measured_bytes(
 ) -> None:
     """One unreadable workspace must not collapse the whole bucket to zero."""
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     meetings = [
         managed.ensure_managed_workspace(
-            registry, registry.create_meeting("ops", title)
+            registry,
+            registry.create_meeting(
+                "ops",
+                title,
+                actor="console",
+            ),
+            actor="console",
         )
         for title in ("Alpha", "Beta", "Gamma")
     ]
     for meeting in meetings:
-        managed.upload_tape(registry, meeting, io.BytesIO(b"t" * 10), filename="a.wav")
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"t" * 10), filename="a.wav", actor="console"
+        )
 
     if os.name != "posix" or os.geteuid() == 0:
         pytest.skip("permission bits cannot be expressed here")
@@ -955,12 +1115,25 @@ def test_a_tape_registered_for_two_meetings_counts_once(
 ) -> None:
     """One physical file is one bucket byte, however many rows name it."""
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     shared = tmp_path / "shared.wav"
     shared.write_bytes(b"s" * 700)
     for title in ("First", "Second"):
-        meeting = registry.create_meeting("ops", title)
-        registry.register_tape(meeting.id, path=str(shared), sha256="0" * 64, bytes=700)
+        meeting = registry.create_meeting(
+            "ops",
+            title,
+            actor="console",
+        )
+        registry.register_tape(
+            meeting.id,
+            path=str(shared),
+            sha256="0" * 64,
+            bytes=700,
+            actor="console",
+        )
 
     storage = managed.machine_storage(registry)
 
@@ -974,11 +1147,24 @@ def test_a_meeting_without_a_workspace_still_counts_its_tapes(
 ) -> None:
     """No workspace is not no storage: registered tapes are still measured."""
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Pathless")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Pathless",
+        actor="console",
+    )
     tape_file = tmp_path / "a.wav"
     tape_file.write_bytes(b"t" * 12)
-    registry.register_tape(meeting.id, path=str(tape_file), sha256="0" * 64, bytes=12)
+    registry.register_tape(
+        meeting.id,
+        path=str(tape_file),
+        sha256="0" * 64,
+        bytes=12,
+        actor="console",
+    )
 
     storage = managed.machine_storage(registry)
 
@@ -992,13 +1178,21 @@ def test_a_workspace_two_meetings_share_is_counted_once(
     registry, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     shared = tmp_path / "user-docs"
     shared.mkdir()
     (shared / "a.wav").write_bytes(b"u" * 40)
     (shared / "record.json").write_bytes(b"d" * 6)
     for title in ("First", "Second"):
-        registry.create_meeting("ops", title, workspace_path=str(shared))
+        registry.create_meeting(
+            "ops",
+            title,
+            workspace_path=str(shared),
+            actor="console",
+        )
 
     storage = managed.machine_storage(registry)
 

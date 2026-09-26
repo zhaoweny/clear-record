@@ -90,9 +90,22 @@ def test_snapshot_from_text_ignores_comments_and_blanks() -> None:
 def test_project_snapshot_and_writer_produce_the_pipeline_file(tmp_path: Path) -> None:
     """The registry's confirmed terms land in the workspace ``glossary.txt``."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    confirmation = registry.add_term("ops", "Falcon", status="confirmed")
-    registry.add_term("ops", "Draft", added_by="agent")  # candidate
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    confirmation = registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Draft",
+        added_by="agent",
+        actor="console",
+    )  # candidate
     workspace = Workspace.at(tmp_path / "ws")
 
     path, snapshot = write_project_snapshot(registry, "ops", workspace)
@@ -104,7 +117,12 @@ def test_project_snapshot_and_writer_produce_the_pipeline_file(tmp_path: Path) -
     assert snapshot.sha256 == build_snapshot([confirmation]).sha256
 
     # A second confirmed term changes the written file and the hash.
-    registry.add_term("ops", "Booster", status="confirmed")
+    registry.add_term(
+        "ops",
+        "Booster",
+        status="confirmed",
+        actor="console",
+    )
     _, edited = write_project_snapshot(registry, "ops", workspace)
     assert workspace.glossary_terms() == ["Booster", "Falcon"]
     assert edited.sha256 != snapshot.sha256
@@ -117,13 +135,13 @@ def test_retiring_a_term_empties_the_projects_snapshot(tmp_path: Path) -> None:
     but the snapshot (and the ``glossary.txt`` a run writes) carries no term.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    term = registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project("Ops", actor="console")
+    term = registry.add_term("ops", "Falcon", status="confirmed", actor="console")
     workspace = Workspace.at(tmp_path / "ws")
     path, _ = write_project_snapshot(registry, "ops", workspace)
     assert path.read_text(encoding="utf-8") == "Falcon\n"
 
-    retired = registry.retire_term(term.id)
+    retired = registry.retire_term(term.id, actor="console")
     path, snapshot = write_project_snapshot(registry, "ops", workspace)
 
     assert retired.status == "retired"

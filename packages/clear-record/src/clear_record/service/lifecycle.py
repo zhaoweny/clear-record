@@ -141,10 +141,33 @@ RESUMABLE_STATUSES = tuple(status for status in TERMINAL_STATUSES if status != D
 #: — asks this rather than listing the pair itself.
 ATTENTION_STATUSES = (FAILED, INTERRUPTED)
 
-#: The node's own **queue**. Not a surface and never recorded on a row: the actor
-#: that claims a run, ends the one it executes, and reaps the one whose owner
-#: died — this process acting on the registry's own state.
+#: The node's own **queue**. It is not a surface and is never recorded as a run's
+#: ``origin`` — it is the actor that claims a run, ends the one it executes, and
+#: reaps the one whose owner died: this process acting on the registry's own
+#: state. The audit record *does* name it, because a mutating call the queue makes
+#: still has to say who made it (:data:`ACTORS`).
 QUEUE = "queue"
+
+#: The **surfaces**, as each one names itself when it calls the service. A
+#: surface supplies its own word at the call — never a string its client chose —
+#: and the service records it as the call's actor (ADR-0033). One word per
+#: transport that reaches the service, so a reader of the audit record can tell
+#: the console from a script. There is no word for the tray: it drives the node
+#: over HTTP like any other client, so what it touches is the **API's** actor,
+#: and a name for it would be a word no transport ever supplies.
+CONSOLE = "console"
+API = "api"
+MCP = "mcp"
+CLI = "cli"
+
+#: Every actor the audit record may name: the surfaces, then the node's own
+#: queue. A vocabulary rather than a convention — the value the record holds is
+#: one of these, checked where the row is written
+#: (:func:`~clear_record.service.audit.require_actor`), so a surface cannot invent
+#: a word and a reader never has to interpret one. ``api`` is what the HTTP API
+#: signs as today; the token-labelled form ADR-0033 reserves
+#: (``api:<token label>``) is that decision's, and is not a value yet.
+ACTORS: tuple[str, ...] = (CONSOLE, API, MCP, CLI, QUEUE)
 
 
 # --- the moves -------------------------------------------------------------- #
@@ -218,15 +241,17 @@ class RunTransition:
 #: **Enqueue**: a surface creates the run in ``queued``, at the back of the node's
 #: FIFO. The move :meth:`~clear_record.service.runs.RunManager.start` makes, and
 #: the one place a run's origin is recorded.
-ENQUEUE = RunTransition("enqueued", (), QUEUED, ("console", "api", "mcp", "cli"))
+ENQUEUE = RunTransition("enqueued", (), QUEUED, (CONSOLE, API, MCP, CLI))
 
-#: Which surface **started** a run. ``console`` is the local console UI,
-#: ``api`` the HTTP JSON API (a script or an integration), ``mcp`` the stdio MCP
-#: server an agent harness drives, ``cli`` the command line. It is recorded when
-#: the run is enqueued, so a run's provenance survives the restart that ends its
-#: process — and it is declared as the actors of the move that creates a run
-#: rather than beside it, because the origins *are* the surfaces that may enqueue
-#: one.
+#: Which surface **started** a run — the actor, under the name a run's row gives
+#: it. ``console`` is the local console UI, ``api`` the HTTP JSON API (a script
+#: or an integration), ``mcp`` the stdio MCP server an agent harness drives,
+#: ``cli`` the command line. It is recorded when the run is enqueued, so a run's
+#: provenance survives the restart that ends its process — and it is declared as
+#: the actors of the move that creates a run rather than beside it, because the
+#: origins *are* the surfaces that may enqueue one. The same four words are what
+#: the audit record names those surfaces as (:data:`ACTORS`), so a run's row and
+#: the audit row that records its enqueue say the same thing about who asked.
 RUN_ORIGINS: tuple[str, ...] = ENQUEUE.actors
 
 #: **Start**: the queue claims the head of the FIFO, and the pipeline executes.

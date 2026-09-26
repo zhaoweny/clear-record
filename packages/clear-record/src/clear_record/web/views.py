@@ -55,6 +55,7 @@ from clear_record.core.paths import (
 )
 from clear_record.service import (
     BACKEND_AUTO,
+    CONSOLE,
     TERM_STATUSES,
     MalformedRunOptions,
     Meeting,
@@ -1130,7 +1131,7 @@ def upload_refusal(registry: Registry, locale: str, meeting: Meeting) -> dict | 
     if managed.is_managed(meeting) or not meeting.workspace_path:
         return None
     try:
-        managed.precheck_upload(registry, meeting, declared_bytes=0)
+        managed.precheck_upload(registry, meeting, declared_bytes=0, actor=CONSOLE)
     except managed.UploadRejected as exc:
         return refusal(locale, exc, tr("This meeting cannot take an upload"))
     return None  # pragma: no cover - is_managed / no-path are handled above

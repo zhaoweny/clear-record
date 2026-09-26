@@ -26,6 +26,14 @@ Design notes:
   :meth:`Registry.request_cancel`), and one statement assigns a run event's
   sequence inside its own insert (:meth:`Registry.add_run_event`). Everything
   else reads and writes through the entities.
+- **Every mutation is audited, and the actor is a required argument** (ADR-0033).
+  Each mutating method here carries :func:`~clear_record.service.audit.recorded`,
+  so one call appends one row to ``audit_event``: who called (the transport's own
+  word, never a caller's), what they touched, and how it ended — a refusal
+  included, in a unit of work of its own, because the transaction it belonged to
+  is rolled back with the failure. The table refuses every ``UPDATE`` and
+  ``DELETE`` (revision 0010), and :meth:`Registry.record_audit` is the only way a
+  row is written at all.
 - **A session per operation.** :meth:`Registry._session` is one unit of work:
   the sessionmaker is bound to the engine this registry owns, the session
   commits on a clean exit, and a session whose body raises is rolled back and
@@ -92,7 +100,7 @@ from sqlalchemy.pool import NullPool
 from clear_record.core.events import JobEvent
 from clear_record.core.i18n import tr
 from clear_record.core.paths import registry_path
-from clear_record.service import entities, tapestore
+from clear_record.service import audit, entities, tapestore
 from clear_record.service.lifecycle import (
     ACTIVE_RUN_STATUSES,
     CLAIM,
@@ -114,6 +122,7 @@ from clear_record.service.models import (
     TERM_STATUSES,
     Archive,
     Artifact,
+    AuditEvent,
     GlossaryTerm,
     Meeting,
     PipelineRun,
@@ -237,7 +246,12 @@ def _engine(db_path: Path) -> Engine:
     SQLite keeps the connection's state, not just the database's: foreign-key
     enforcement is off by default and is set per connection, so it is set on
     every connection the engine makes — the guard the store's hand-written
-    connection used to carry, now the engine's own.
+    connection used to carry, now the engine's own. ``recursive_triggers`` is the
+    same kind of per-connection state, and it is what makes the audit record's
+    append-only triggers hold against ``REPLACE``: SQLite fires a **delete**
+    trigger on the conflict path of ``INSERT OR REPLACE`` only when recursive
+    triggers are on, so with the default off one statement rewrote a row through
+    a table whose update and delete triggers refuse every rewrite (ADR-0033).
 
     The pool is :class:`~sqlalchemy.pool.NullPool`, so a connection is made for
     one unit of work and closed with it: the discipline the hand-written
@@ -253,6 +267,7 @@ def _engine(db_path: Path) -> Engine:
     @event.listens_for(engine, "connect")
     def _foreign_keys_on(dbapi_connection: Any, _record: Any) -> None:
         dbapi_connection.execute("PRAGMA foreign_keys = ON")
+        dbapi_connection.execute("PRAGMA recursive_triggers = ON")
 
     return engine
 
@@ -665,6 +680,55 @@ class Registry:
             finally:
                 config.attributes.pop("connection", None)
 
+    # --- the audit record (ADR-0033) --------------------------------------- #
+    def record_audit(
+        self, actor: str, action: str, target: str, outcome: str = audit.OK
+    ) -> None:
+        """Append one row to the audit record — the **only** way a row is written.
+
+        ``actor`` is the surface's own word for itself
+        (:data:`~clear_record.service.lifecycle.ACTORS`), ``action`` the verb it
+        performed, ``target`` the service's address for what it touched, and
+        ``outcome`` whether the call did what it was asked (:data:`~.audit.OK`) or
+        was refused (:data:`~.audit.FAILED`).
+
+        There is deliberately no update and no delete beside it, and revision 0010
+        makes that hold past this class: triggers on the table refuse every
+        ``UPDATE`` and every ``DELETE``, so a record of who did what cannot be
+        rewritten by the code that wrote it. The row is appended in a unit of work
+        of its own — which is what lets a **refused** call be recorded at all, the
+        transaction it belonged to having been rolled back with the failure
+        (:func:`clear_record.service.audit.recorded`).
+
+        An actor outside the vocabulary is refused *before* the row is attempted:
+        the word a surface supplies is a value the rest of the service reads, not
+        a free-form label.
+        """
+        actor = audit.require_actor(actor)
+        if outcome not in audit.OUTCOMES:
+            raise ValueError(
+                f"unknown audit outcome {outcome!r}; expected one of "
+                + ", ".join(audit.OUTCOMES)
+            )
+        with self._session() as session:
+            session.add(
+                entities.AuditEvent(
+                    at=_now(),
+                    actor=actor,
+                    action=action,
+                    target=target,
+                    outcome=outcome,
+                )
+            )
+
+    def list_audit_events(self, *, limit: int | None = None) -> list[AuditEvent]:
+        """The audit record, oldest row first — the order it was written in."""
+        with self._session() as session:
+            statement = select(entities.AuditEvent).order_by(entities.AuditEvent.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            return [self._audit_event(row) for row in session.scalars(statement)]
+
     # --- projects ---------------------------------------------------------- #
     @staticmethod
     def _project_taken(session: Session, slug: str) -> bool:
@@ -684,12 +748,15 @@ class Registry:
             n += 1
         return slug
 
+    @audit.recorded("project.create", audit.subject("project", "slug", "name"))
     def create_project(
         self,
         name: str,
         notes: str = "",
         default_archive_root: str | None = None,
         slug: str | None = None,
+        *,
+        actor: str,
     ) -> Project:
         name = name.strip()
         if not name:
@@ -735,10 +802,12 @@ class Registry:
             raise KeyError(slug)
         return project
 
+    @audit.recorded("project.update", audit.subject("project", "slug"))
     def update_project(
         self,
         slug: str,
         *,
+        actor: str,
         name: str | None = None,
         notes: str | None = None,
         default_archive_root: str | None = None,
@@ -776,11 +845,13 @@ class Registry:
             return {slug: int(count) for slug, count in rows}
 
     # --- glossary ---------------------------------------------------------- #
+    @audit.recorded("term.add", audit.subject("term", "term"))
     def add_term(
         self,
         project_slug: str,
         term: str,
         *,
+        actor: str,
         reading: str | None = None,
         aliases: str | None = None,
         definition: str | None = None,
@@ -835,10 +906,12 @@ class Registry:
         with self._session() as session:
             return [self._term(term, slug) for term, slug in session.execute(stmt)]
 
+    @audit.recorded("term.update", audit.subject("term", "term_id"))
     def update_term(
         self,
         term_id: int,
         *,
+        actor: str,
         term: str | None = None,
         reading: str | None = None,
         aliases: str | None = None,
@@ -875,14 +948,16 @@ class Registry:
                 raise ValueError("a term with that spelling already exists") from exc
             return self._term(row, project_slug)
 
-    def retire_term(self, term_id: int) -> GlossaryTerm:
+    @audit.recorded("term.retire", audit.subject("term", "term_id"))
+    def retire_term(self, term_id: int, *, actor: str) -> GlossaryTerm:
         """Retire a term: it leaves the decoder's glossary, the row survives.
 
         Deleting the row would lose who added it and when, so a retire is a
         status change (ADR-0033). The status it came from is recorded on the row
         (inside ``notes``, which no surface is shown) so :meth:`restore_term` can
         put it back: a retired candidate returns as a candidate, never as
-        owner-accepted truth.
+        owner-accepted truth. ``actor`` is the transport's word for the surface
+        that retired it, recorded with the move (ADR-0033).
         """
         with self._session() as session:
             row, project_slug = self._term_entity(session, term_id)
@@ -891,12 +966,14 @@ class Registry:
             row.status = RETIRED
             return self._term(row, project_slug)
 
-    def restore_term(self, term_id: int) -> GlossaryTerm:
+    @audit.recorded("term.restore", audit.subject("term", "term_id"))
+    def restore_term(self, term_id: int, *, actor: str) -> GlossaryTerm:
         """Return a retired term to the status it held before the retire.
 
         A term whose recorded status is gone (a later edit overwrote ``notes``)
         comes back a ``candidate`` — the un-reviewed state, never
-        owner-accepted.
+        owner-accepted. ``actor`` is the transport's word for the surface that
+        restored it, recorded with the move (ADR-0033).
         """
         with self._session() as session:
             row, project_slug = self._term_entity(session, term_id)
@@ -934,11 +1011,13 @@ class Registry:
             n += 1
         return slug
 
+    @audit.recorded("meeting.create", audit.subject("meeting", "slug", "title"))
     def create_meeting(
         self,
         project_slug: str,
         title: str,
         *,
+        actor: str,
         recorded_at: str | None = None,
         workspace_path: str | None = None,
         slug: str | None = None,
@@ -1012,7 +1091,10 @@ class Registry:
             meeting, project_slug = row
             return self._meeting(meeting, project_slug)
 
-    def set_meeting_status(self, meeting_id: int, status: str) -> Meeting:
+    @audit.recorded("meeting.status", audit.subject("meeting", "meeting_id"))
+    def set_meeting_status(
+        self, meeting_id: int, status: str, *, actor: str
+    ) -> Meeting:
         if status not in MEETING_STATUSES:
             raise ValueError(
                 f"status must be one of {MEETING_STATUSES}, got {status!r}"
@@ -1022,16 +1104,21 @@ class Registry:
             row.status = status
             return self._meeting(row, project_slug)
 
-    def set_meeting_workspace(self, meeting_id: int, workspace_path: str) -> Meeting:
+    @audit.recorded("meeting.workspace", audit.subject("meeting", "meeting_id"))
+    def set_meeting_workspace(
+        self, meeting_id: int, workspace_path: str, *, actor: str
+    ) -> Meeting:
         with self._session() as session:
             row, project_slug = self._meeting_entity(session, meeting_id)
             row.workspace_path = workspace_path
             return self._meeting(row, project_slug)
 
+    @audit.recorded("meeting.update", audit.subject("meeting", "meeting_id"))
     def update_meeting(
         self,
         meeting_id: int,
         *,
+        actor: str,
         title: str | None = None,
         notes: str | None = None,
     ) -> Meeting:
@@ -1054,8 +1141,9 @@ class Registry:
             return self._meeting(row, project_slug)
 
     # --- recording sets ---------------------------------------------------- #
+    @audit.recorded("meeting.tapes", audit.subject("meeting", "meeting_id"))
     def set_recording_set(
-        self, meeting_id: int, paths: list[str] | tuple[str, ...]
+        self, meeting_id: int, paths: list[str] | tuple[str, ...], *, actor: str
     ) -> RecordingSet:
         clean = [str(p) for p in paths if str(p).strip()]
         if not clean:
@@ -1073,7 +1161,7 @@ class Registry:
             return self._recording_set(latest) if latest is not None else None
 
     # --- a workspace directory's meeting ----------------------------------- #
-    def meeting_for_workspace(self, directory: str) -> Meeting:
+    def meeting_for_workspace(self, directory: str, *, actor: str) -> Meeting:
         """The meeting this node runs *directory* as — found, or registered here.
 
         The command line's subject is a workspace **directory** (``--dir``) and
@@ -1098,14 +1186,20 @@ class Registry:
             ):
                 return meeting
         name = Path(resolved).name or resolved
-        project = self.get_project(_slugify(name)) or self.create_project(name)
-        return self.create_meeting(project.slug, name, workspace_path=resolved)
+        project = self.get_project(_slugify(name)) or self.create_project(
+            name, actor=actor
+        )
+        return self.create_meeting(
+            project.slug, name, workspace_path=resolved, actor=actor
+        )
 
     # --- uploaded tapes ---------------------------------------------------- #
+    @audit.recorded("tape.register", audit.subject("meeting", "meeting_id"))
     def register_tape(
         self,
         meeting_id: int,
         *,
+        actor: str,
         path: str,
         sha256: str,
         bytes: int,
@@ -1146,7 +1240,8 @@ class Registry:
             row = session.get(entities.Tape, tape_id)
             return self._tape(row) if row is not None else None
 
-    def forget_tape(self, tape_id: int) -> Tape:
+    @audit.recorded("tape.forget", audit.subject("tape", "tape_id"))
+    def forget_tape(self, tape_id: int, *, actor: str) -> Tape:
         """Drop a tape's row and remove its path from the meeting's tape set.
 
         The file is the caller's to unlink (the store owns no filesystem). When
@@ -1163,10 +1258,12 @@ class Registry:
             return tape
 
     # --- pipeline runs ----------------------------------------------------- #
+    @audit.recorded("run.enqueue", audit.subject("meeting", "meeting_id"))
     def create_run(
         self,
         meeting_id: int,
         *,
+        actor: str,
         backend: str | None = None,
         model: str | None = None,
         language: str | None = None,
@@ -1239,10 +1336,12 @@ class Registry:
             session.flush()
             return self._run(row)
 
+    @audit.recorded("run.update", audit.subject("run", "run_id"))
     def update_run(
         self,
         run_id: int,
         *,
+        actor: str,
         status: str | None = None,
         started_at: str | None = None,
         ended_at: str | None = None,
@@ -1296,7 +1395,8 @@ class Registry:
                 setattr(row, key, value)
             return self._run(row)
 
-    def fail_unreadable_run(self, run_id: int, *, error: str) -> bool:
+    @audit.recorded("run.unreadable", audit.subject("run", "run_id"))
+    def fail_unreadable_run(self, run_id: int, *, actor: str, error: str) -> bool:
         """Fail a run whose stored options this build refuses to read.
 
         The one write in this class that does **not** map its row back to a value.
@@ -1443,7 +1543,8 @@ class Registry:
         with self._session() as session:
             return [self._run(row) for row in session.scalars(stmt)]
 
-    def claim_run(self, run_id: int, *, owner: str) -> PipelineRun | None:
+    @audit.recorded("run.claim", audit.subject("run", "run_id"))
+    def claim_run(self, run_id: int, *, actor: str, owner: str) -> PipelineRun | None:
         """Claim a ``queued`` run for ``owner``: the node's one write for ``running``.
 
         Returns the claimed row, or ``None`` when the claim is lost — either
@@ -1485,7 +1586,8 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
-    def heartbeat_run(self, run_id: int, *, at: str | None = None) -> bool:
+    @audit.recorded("run.heartbeat", audit.subject("run", "run_id"))
+    def heartbeat_run(self, run_id: int, *, actor: str, at: str | None = None) -> bool:
         """Refresh a running run's liveness heartbeat; ``False`` when it did not land.
 
         A ``False`` is not an error to act on: it means the row is not ``running``
@@ -1513,10 +1615,12 @@ class Registry:
             )
             return landed.rowcount == 1
 
+    @audit.recorded("run.interrupt", audit.subject("run", "run_id"))
     def interrupt_run(
         self,
         run_id: int,
         *,
+        actor: str,
         observed: PipelineRun,
         ended_at: str,
         error: str,
@@ -1570,8 +1674,9 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
+    @audit.recorded("run.stop", audit.subject("run", "run_id"))
     def stop_run(
-        self, run_id: int, *, ended_at: str, progress: dict
+        self, run_id: int, *, actor: str, ended_at: str, progress: dict
     ) -> PipelineRun | None:
         """Move a **queued** run to ``stopped``, before anyone claimed it (RUN-04).
 
@@ -1607,8 +1712,9 @@ class Registry:
                 return None
             return self._run_row(session, run_id)
 
+    @audit.recorded("run.cancel", audit.subject("run", "run_id"))
     def request_cancel(
-        self, run_id: int, *, at: str | None = None
+        self, run_id: int, *, actor: str, at: str | None = None
     ) -> PipelineRun | None:
         """Record a cancel **request** on a ``running`` run (RUN-04).
 
@@ -1677,7 +1783,8 @@ class Registry:
             return int(ahead) + 1
 
     # --- the persisted event stream ---------------------------------------- #
-    def add_run_event(self, run_id: int, event: JobEvent) -> int:
+    @audit.recorded("run.event", audit.subject("run", "run_id"))
+    def add_run_event(self, run_id: int, event: JobEvent, *, actor: str) -> int:
         """Append one progress event to a run's durable stream; return its seq.
 
         The sequence is assigned atomically by the insert, so a run's chunk
@@ -1752,10 +1859,12 @@ class Registry:
         )
 
     # --- artifacts --------------------------------------------------------- #
+    @audit.recorded("artifact.add", audit.subject("meeting", "meeting_id"))
     def add_artifact(
         self,
         meeting_id: int,
         *,
+        actor: str,
         kind: str,
         path: str,
         run_id: int | None = None,
@@ -1809,11 +1918,13 @@ class Registry:
             return self._artifact(row) if row is not None else None
 
     # --- archives ---------------------------------------------------------- #
+    @audit.recorded("archive.add", audit.subject("meeting", "meeting_id"))
     def add_archive(
         self,
         meeting_id: int,
         project_id: int,
         *,
+        actor: str,
         root_path: str,
         manifest_path: str,
         manifest_sha256: str,
@@ -2003,6 +2114,17 @@ class Registry:
             produced_by=row.produced_by,
             review_state=row.review_state,
             created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _audit_event(row: entities.AuditEvent) -> AuditEvent:
+        return AuditEvent(
+            id=row.id,
+            at=row.at,
+            actor=row.actor,
+            action=row.action,
+            target=row.target,
+            outcome=row.outcome,
         )
 
     @staticmethod

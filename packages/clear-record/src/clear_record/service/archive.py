@@ -147,6 +147,7 @@ def archive_meeting(
     meeting: Meeting,
     root: str | Path | None = None,
     *,
+    actor: str,
     webhooks: WebhookEmitter | None = None,
 ) -> Archive:
     """Copy ``meeting``'s tape set and pipeline artifacts into a new archive.
@@ -154,7 +155,9 @@ def archive_meeting(
     The tape set is the meeting's latest selection; the artifacts are everything
     the registry knows the pipeline produced. Both are copied into
     ``<root>/<project_slug>/<YYYYMMDD-HHMMSS>-<meeting_slug>/`` and listed in
-    ``archive.json``. The archive is recorded in the registry and returned.
+    ``archive.json``. The archive is recorded in the registry and returned —
+    against the surface ``actor`` names, because recording an archive is a
+    registry write (ADR-0033).
 
     An existing archive is never reused or overwritten; every call makes a new
     directory. A name that a concurrent archive won between the uniqueness probe
@@ -231,6 +234,7 @@ def archive_meeting(
     archive = registry.add_archive(
         meeting.id,
         meeting.project_id,
+        actor=actor,
         root_path=str(archive_dir),
         manifest_path=str(manifest_path),
         manifest_sha256=manifest_sha256,

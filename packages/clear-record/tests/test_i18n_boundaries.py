@@ -169,13 +169,22 @@ def _console_over_a_refused_row(tmp_path, stored: str):
     un-take a row a rescan already reached.
     """
     registry = Registry.open(db_path=tmp_path / "r.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     _store_run_options(registry, run.id, stored)
     manager = RunManager(registry, start_queue=False)
@@ -248,14 +257,22 @@ def test_the_quarantine_keeps_the_detail_english(pseudo, tmp_path) -> None:
     later_workspace = tmp_path / "later"
     later_workspace.mkdir()
     later_meeting = registry.create_meeting(
-        "ops", "Retro", workspace_path=str(later_workspace)
+        "ops",
+        "Retro",
+        workspace_path=str(later_workspace),
+        actor="console",
     )
-    registry.set_recording_set(later_meeting.id, [str(tape)])
+    registry.set_recording_set(
+        later_meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     later = registry.create_run(
         later_meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     manager = RunManager(registry, pipeline=lambda *args: None)

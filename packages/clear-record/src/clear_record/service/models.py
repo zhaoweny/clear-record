@@ -222,9 +222,28 @@ class Archive:
     created_at: str
 
 
+@dataclasses.dataclass(frozen=True)
+class AuditEvent:
+    """One appended row of the service's audit record (ADR-0033).
+
+    Who called the service, what they touched and how it ended. ``target`` is the
+    service's own address for what was touched (``project:demo``, ``run:12``) and
+    not a foreign key: an audit row outlives what it names, which is the point of
+    keeping it.
+    """
+
+    id: int
+    at: str
+    actor: str
+    action: str
+    target: str
+    outcome: str
+
+
 __all__ = [
     "Archive",
     "Artifact",
+    "AuditEvent",
     "CANDIDATE",
     "GlossaryTerm",
     "Meeting",

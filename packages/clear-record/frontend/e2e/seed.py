@@ -42,6 +42,10 @@ from clear_record.service.diagnostics import machine_description
 from clear_record.service.managed import workspace_path_for
 from clear_record.service.store import Registry
 
+#: The actor every write in this seeder records (ADR-0033): the e2e tooling runs
+#: it as a script, so the service records it as the command line.
+E2E_ACTOR = "cli"
+
 #: ``(start, end, speaker, source, text)`` — a plausible review conversation, long
 #: enough that the reading column is exercised at a realistic measure.
 SEGMENTS: tuple[tuple[float, float, str, str, str], ...] = (
@@ -220,9 +224,9 @@ def _cost_record(
 
 def _managed_meeting(registry: Registry, root: Path, slug: str, title: str) -> Meeting:
     """A meeting with a managed workspace, ready to be run against."""
-    meeting = registry.create_meeting(slug, title)
+    meeting = registry.create_meeting(slug, title, actor=E2E_ACTOR)
     meeting = registry.set_meeting_workspace(
-        meeting.id, str(workspace_path_for(root, meeting))
+        meeting.id, str(workspace_path_for(root, meeting)), actor=E2E_ACTOR
     )
     Path(meeting.workspace_path).mkdir(parents=True, exist_ok=True)
     return meeting
@@ -242,6 +246,7 @@ def _upload_tape(registry: Registry, meeting: Meeting, name: str) -> None:
         path=str(path),
         sha256=hashlib.sha256(tape_bytes).hexdigest(),
         bytes=len(tape_bytes),
+        actor=E2E_ACTOR,
     )
 
 
@@ -325,10 +330,12 @@ def main() -> int:
     root = data / "workspaces"
 
     q3 = registry.create_project(
-        "Q3 sync", notes="Quarterly planning and review recordings"
+        "Q3 sync", notes="Quarterly planning and review recordings", actor=E2E_ACTOR
     )
     registry.create_project(
-        "Field interviews", notes="On-location interviews, one speaker each"
+        "Field interviews",
+        notes="On-location interviews, one speaker each",
+        actor=E2E_ACTOR,
     )
 
     for term, reading, aliases, definition, status in TERMS:
@@ -339,13 +346,14 @@ def main() -> int:
             aliases=aliases,
             definition=definition,
             status=status,
+            actor=E2E_ACTOR,
         )
 
     # The meeting the visual specs review: a managed workspace with a real
     # reconciled record, an artifact row, accepted minutes and a finished run.
-    kickoff = registry.create_meeting("q3-sync", "Kickoff")
+    kickoff = registry.create_meeting("q3-sync", "Kickoff", actor=E2E_ACTOR)
     kickoff = registry.set_meeting_workspace(
-        kickoff.id, str(workspace_path_for(root, kickoff))
+        kickoff.id, str(workspace_path_for(root, kickoff)), actor=E2E_ACTOR
     )
     workspace = Path(kickoff.workspace_path)
     workspace.mkdir(parents=True, exist_ok=True)
@@ -366,6 +374,7 @@ def main() -> int:
         path=str(workspace / "record.json"),
         produced_by="pipeline",
         review_state="final",
+        actor=E2E_ACTOR,
     )
     # One uploaded tape: the Media tab's inventory and the storage panel need a
     # real file to size, and the screenshot is empty without one.
@@ -377,6 +386,7 @@ def main() -> int:
         path=str(tape_path),
         sha256=hashlib.sha256(tape_bytes).hexdigest(),
         bytes=len(tape_bytes),
+        actor=E2E_ACTOR,
     )
     minutes = workspace / "minutes.md"
     minutes.write_text(
@@ -390,6 +400,7 @@ def main() -> int:
         path=str(minutes),
         produced_by="agent",
         review_state="accepted",
+        actor=E2E_ACTOR,
     )
     run = registry.create_run(
         kickoff.id,
@@ -401,6 +412,7 @@ def main() -> int:
             "decoder_knobs": {"beam_size": 5, "temperature": 0.0},
         },
         origin="console",
+        actor=E2E_ACTOR,
     )
     # Finished with the cost record a real run measures (RUN-01): the console
     # derives its speed and duration from these primitives, so without one the
@@ -424,16 +436,17 @@ def main() -> int:
                 peak_rss_bytes=3_435_597_824,
             )
         },
+        actor=E2E_ACTOR,
     )
 
     # A meeting that has not produced anything yet: the empty states, the run
     # form and the profile preview.
-    registry.create_meeting("q3-sync", "Weekly standup")
+    registry.create_meeting("q3-sync", "Weekly standup", actor=E2E_ACTOR)
 
     # A managed meeting with a workspace but no transcript yet.
-    retro = registry.create_meeting("q3-sync", "Retro")
+    retro = registry.create_meeting("q3-sync", "Retro", actor=E2E_ACTOR)
     retro = registry.set_meeting_workspace(
-        retro.id, str(workspace_path_for(root, retro))
+        retro.id, str(workspace_path_for(root, retro)), actor=E2E_ACTOR
     )
     Path(retro.workspace_path).mkdir(parents=True, exist_ok=True)
 
@@ -454,6 +467,7 @@ def main() -> int:
             )
         ),
         origin="console",
+        actor=E2E_ACTOR,
     )
     # It stopped mid-transcribe (RUN-04), so its record covers the stages it
     # reached and leaves the rest to nothing — never a guess.
@@ -476,6 +490,7 @@ def main() -> int:
                 peak_rss_bytes=None,
             )
         },
+        actor=E2E_ACTOR,
     )
 
     # An archive whose manifest is gone: the lazy status cell's "missing" hue.
@@ -485,6 +500,7 @@ def main() -> int:
         root_path=str(data / "archives" / "kickoff"),
         manifest_path=str(data / "archives" / "kickoff" / "manifest.json"),
         manifest_sha256="0" * 64,
+        actor=E2E_ACTOR,
     )
 
     # The status page's live rows (RUN-03). The queue runs one thing at a time,
@@ -513,6 +529,7 @@ def main() -> int:
             )
         ),
         origin="mcp",
+        actor=E2E_ACTOR,
     )
 
     # A returning user (ticket 04): record the current version so `/` lands on

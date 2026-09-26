@@ -17,7 +17,14 @@ from fastapi.testclient import TestClient
 
 from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.pipeline.workspace import Workspace, publish_run
-from clear_record.service import AGENT_DIRNAME, MeetingAgent, Registry, RunManager
+from clear_record.service import (
+    AGENT_DIRNAME,
+    CONSOLE,
+    MCP,
+    MeetingAgent,
+    Registry,
+    RunManager,
+)
 from clear_record.web.app import create_app
 
 _ANSWERS: dict[str, dict] = {
@@ -57,14 +64,20 @@ class SimpleConsole:
     def write(
         self,
         kind: str,
-        author: str = "pi-agent",
+        actor: str = CONSOLE,
         value: dict | None = None,
         draft_id: str | None = None,
     ):
+        """Write one draft as ``actor``: the console by default, or a harness.
+
+        A version's recorded author is the actor its transport supplies
+        (ADR-0033), so a test that wants a second writer passes another actor —
+        there is no author for a caller to declare.
+        """
         return MeetingAgent(self.registry, self.meeting).write(
             kind,
             value if value is not None else _ANSWERS[kind],
-            author=author,
+            actor=actor,
             draft_id=draft_id,
         )
 
@@ -76,7 +89,10 @@ class SimpleConsole:
 
 def _console(tmp_path: Path) -> SimpleConsole:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     write_json(
@@ -89,7 +105,12 @@ def _console(tmp_path: Path) -> SimpleConsole:
             ),
         ),
     )
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     app = create_app(registry, RunManager(registry))
     return SimpleConsole(
         client=TestClient(app), registry=registry, meeting=meeting, workspace=workspace
@@ -104,6 +125,7 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
         path=str(console.workspace / "record.json"),
         produced_by="pipeline",
         review_state="final",
+        actor="console",
     )
 
     page = console.client.get("/ui/projects/ops/meetings/kickoff")
@@ -130,12 +152,14 @@ def test_each_kind_lands_as_a_reviewable_draft_with_its_author(
     console = _console(tmp_path)
 
     for kind in _ANSWERS:
-        console.write(kind, author="pi-agent")
+        console.write(kind)
 
     page = console.client.get("/ui/projects/ops/meetings/kickoff")
     for kind in _ANSWERS:
         assert kind in page.text
-    assert "pi-agent" in page.text  # the author is shown, not a model name
+    # The version records the actor the console supplied — the transport's word,
+    # never a name a caller declared (ADR-0033).
+    assert CONSOLE in page.text
     assert "Accept" in page.text and "Reject" in page.text
     assert sorted(draft["kind"] for draft in console.drafts()) == sorted(_ANSWERS)
 
@@ -145,7 +169,7 @@ def test_a_second_version_is_shown_on_the_chain(tmp_path: Path) -> None:
     first = console.write("minutes")
     console.write(
         "minutes",
-        author="other-agent",
+        actor=MCP,
         value=_ANSWERS["minutes"],
         draft_id=first.draft_id,
     )
@@ -153,7 +177,8 @@ def test_a_second_version_is_shown_on_the_chain(tmp_path: Path) -> None:
     page = console.client.get("/ui/projects/ops/meetings/kickoff")
 
     assert "2 versions" in page.text
-    assert "pi-agent" in page.text and "other-agent" in page.text
+    # One chain, two writers: each version records the actor that wrote it.
+    assert CONSOLE in page.text and MCP in page.text
     assert first.draft_id in page.text
 
 
@@ -236,7 +261,7 @@ def test_the_console_posts_the_version_and_a_stale_one_is_refused(
     first = console.write("minutes")
     console.write(
         "minutes",
-        author="other-agent",
+        actor=MCP,
         value=_ANSWERS["minutes"] | {"body": "# Two"},
         draft_id=first.draft_id,
     )

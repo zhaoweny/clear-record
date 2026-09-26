@@ -29,16 +29,26 @@ def _seeded(tmp_path, *, default_archive_root: bool = True):
     registry = _registry(tmp_path)
     root = tmp_path / "archive"
     registry.create_project(
-        "Ops", default_archive_root=str(root) if default_archive_root else None
+        "Ops",
+        default_archive_root=str(root) if default_archive_root else None,
+        actor="console",
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake-audio")
     meeting = registry.create_meeting(
-        "ops", "Kickoff", recorded_at="2026-09-14", workspace_path=str(workspace)
+        "ops",
+        "Kickoff",
+        recorded_at="2026-09-14",
+        workspace_path=str(workspace),
+        actor="console",
     )
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     record = workspace / "record.json"
     record.write_bytes(b'{"segments": []}')
     registry.add_artifact(
@@ -47,13 +57,18 @@ def _seeded(tmp_path, *, default_archive_root: bool = True):
         path=str(record),
         sha256=hashlib.sha256(record.read_bytes()).hexdigest(),
         bytes=record.stat().st_size,
+        actor="console",
     )
     return registry, meeting, tape, record, root
 
 
 def test_manifest_lists_every_file_with_checksums(tmp_path) -> None:
     registry, meeting, tape, record, root = _seeded(tmp_path)
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     assert archive.meeting_id == meeting.id
     assert archive.project_id == meeting.project_id
@@ -109,10 +124,18 @@ def test_rearchiving_creates_a_new_directory(tmp_path, monkeypatch) -> None:
         "clear_record.service.archive._timestamp", lambda: "20260914-120000"
     )
 
-    first = archive_meeting(registry, meeting)
+    first = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
     first_manifest = Path(first.manifest_path).read_bytes()
 
-    second = archive_meeting(registry, meeting)
+    second = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     assert second.root_path != first.root_path
     assert Path(second.root_path).is_dir()
@@ -144,7 +167,11 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(archive_mod, "_archive_dir", racy)
 
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     # The concurrent winner is byte-for-byte untouched...
     assert (winner / MANIFEST_FILENAME).read_text(
@@ -158,7 +185,11 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
 
 def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     registry, meeting, _tape, _record, _root = _seeded(tmp_path)
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
     archive_dir = Path(archive.root_path)
 
     assert verify_archive(archive_dir).ok is True
@@ -182,10 +213,19 @@ def test_archive_root_must_be_chosen(tmp_path) -> None:
         tmp_path, default_archive_root=False
     )
     with pytest.raises(ValueError, match="no archive root"):
-        archive_meeting(registry, meeting)
+        archive_meeting(
+            registry,
+            meeting,
+            actor="console",
+        )
 
     explicit = tmp_path / "somewhere-else"
-    archive = archive_meeting(registry, meeting, root=explicit)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        root=explicit,
+        actor="console",
+    )
     assert Path(archive.root_path).parent == explicit.resolve() / "ops"
 
 
@@ -208,13 +248,18 @@ def test_an_existing_registry_at_the_released_baseline_opens_and_archives(
 
     registry = Registry(db)
     assert [p.slug for p in registry.list_projects()] == ["ops"]
-    meeting = registry.create_meeting("ops", "Kickoff")
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     archive = registry.add_archive(
         meeting.id,
         meeting.project_id,
         root_path="/archives/ops/kickoff",
         manifest_path="/archives/ops/kickoff/archive.json",
         manifest_sha256="0" * 64,
+        actor="console",
     )
     assert registry.list_archives(meeting.id) == [archive]
     assert registry.get_archive(archive.id) == archive

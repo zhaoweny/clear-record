@@ -34,6 +34,7 @@ from clear_record.core import (
     resolve_options,
 )
 from clear_record.service import (
+    QUEUE,
     MalformedRunOptions,
     PipelineOptions,
     PipelineRun,
@@ -51,11 +52,23 @@ def _registry(tmp_path) -> Registry:
 
 
 def _meeting(registry: Registry, tmp_path, tapes: list[Path]):
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    registry.set_recording_set(meeting.id, [str(tape) for tape in tapes])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape) for tape in tapes],
+        actor="console",
+    )
     return meeting
 
 
@@ -83,9 +96,22 @@ def test_run_defaults_to_the_project_glossary_snapshot(tmp_path) -> None:
     an unreviewed candidate never reaches the decoder.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Falcon", status="confirmed")
-    registry.add_term("ops", "Draft", added_by="agent")  # candidate
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Draft",
+        added_by="agent",
+        actor="console",
+    )  # candidate
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -97,7 +123,7 @@ def test_run_defaults_to_the_project_glossary_snapshot(tmp_path) -> None:
         seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     assert seen["text"] == "Falcon\n"  # candidate excluded
@@ -131,6 +157,7 @@ def test_start_records_the_resolved_profile_knobs_and_auto_meta(tmp_path) -> Non
         options,
         auto={"auto": {"explanation": explanation, "chose": ["profile"]}},
         origin="console",
+        actor="console",
     )
     manager.wait(run.id, timeout=10)
 
@@ -143,18 +170,31 @@ def test_start_records_the_resolved_profile_knobs_and_auto_meta(tmp_path) -> Non
 
 def test_an_edited_glossary_changes_the_next_runs_recorded_hash(tmp_path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
 
     manager = RunManager(registry, pipeline=lambda *args: None)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     manager.wait(first.id, timeout=10)
 
-    registry.add_term("ops", "Booster", status="confirmed")
-    second = manager.start(meeting, origin="console")
+    registry.add_term(
+        "ops",
+        "Booster",
+        status="confirmed",
+        actor="console",
+    )
+    second = manager.start(meeting, origin="console", actor="console")
     manager.wait(second.id, timeout=10)
 
     assert first.options["glossary_sha256"] != second.options["glossary_sha256"]
@@ -173,8 +213,8 @@ def test_a_retired_term_no_longer_reaches_the_decoder(tmp_path) -> None:
     nothing (ADR-0033).
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    term = registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project("Ops", actor="console")
+    term = registry.add_term("ops", "Falcon", status="confirmed", actor="console")
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -185,12 +225,12 @@ def test_a_retired_term_no_longer_reaches_the_decoder(tmp_path) -> None:
         seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     manager.wait(first.id, timeout=10)
     assert seen["text"] == "Falcon\n"
 
-    retired = registry.retire_term(term.id)
-    second = manager.start(meeting, origin="console")
+    retired = registry.retire_term(term.id, actor="console")
+    second = manager.start(meeting, origin="console", actor="console")
     manager.wait(second.id, timeout=10)
 
     assert retired.status == "retired"
@@ -210,8 +250,11 @@ def test_a_hand_written_glossary_survives_a_project_whose_terms_are_all_retired(
     them, and keep using it as the run's glossary (ADR-0033).
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.retire_term(registry.add_term("ops", "Falcon", status="confirmed").id)
+    registry.create_project("Ops", actor="console")
+    registry.retire_term(
+        registry.add_term("ops", "Falcon", status="confirmed", actor="console").id,
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -228,7 +271,7 @@ def test_a_hand_written_glossary_survives_a_project_whose_terms_are_all_retired(
         )
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     assert (
@@ -248,8 +291,8 @@ def test_a_demoted_term_no_longer_reaches_the_decoder(tmp_path) -> None:
     is gone from the decoder's prompt.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    term = registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project("Ops", actor="console")
+    term = registry.add_term("ops", "Falcon", status="confirmed", actor="console")
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -261,12 +304,14 @@ def test_a_demoted_term_no_longer_reaches_the_decoder(tmp_path) -> None:
         seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     manager.wait(first.id, timeout=10)
     assert seen["text"] == "Falcon\n"
 
-    registry.update_term(term.id, status="candidate")  # the console's status control
-    second = manager.start(meeting, origin="console")
+    registry.update_term(
+        term.id, status="candidate", actor="console"
+    )  # the console's status control
+    second = manager.start(meeting, origin="console", actor="console")
     manager.wait(second.id, timeout=10)
 
     assert seen["text"] == ""  # not confirmed, so not the decoder's business
@@ -276,8 +321,16 @@ def test_a_demoted_term_no_longer_reaches_the_decoder(tmp_path) -> None:
 
 def test_an_explicit_glossary_wins_over_the_project_snapshot(tmp_path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -291,7 +344,10 @@ def test_an_explicit_glossary_wins_over_the_project_snapshot(tmp_path) -> None:
 
     manager = RunManager(registry, pipeline=fake_pipeline)
     run = manager.start(
-        meeting, PipelineOptions(glossary=str(explicit)), origin="console"
+        meeting,
+        PipelineOptions(glossary=str(explicit)),
+        origin="console",
+        actor="console",
     )
     manager.wait(run.id, timeout=10)
 
@@ -315,8 +371,16 @@ def test_a_hand_written_glossary_survives_when_there_are_no_confirmed_terms(
     run uses the surviving file, recording its identity.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Draft", added_by="agent")  # candidate only
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Draft",
+        added_by="agent",
+        actor="console",
+    )  # candidate only
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -330,7 +394,7 @@ def test_a_hand_written_glossary_survives_when_there_are_no_confirmed_terms(
         seen["options"] = options
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     # Untouched, and the run's glossary is that file (no explicit path set, so
@@ -348,8 +412,16 @@ def test_a_hand_written_glossary_survives_when_there_are_no_confirmed_terms(
 def test_confirmed_terms_write_and_win_over_a_hand_written_glossary(tmp_path) -> None:
     """Once the registry has confirmed terms it is authoritative and overwrites."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Falcon", status="confirmed")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
@@ -363,7 +435,7 @@ def test_confirmed_terms_write_and_win_over_a_hand_written_glossary(tmp_path) ->
         seen["options"] = options
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     assert workspace.glossary_path.read_text(encoding="utf-8") == "Falcon\n"
@@ -394,7 +466,7 @@ def test_run_lifecycle_records_events_and_artifacts(tmp_path) -> None:
         (Path(directory) / "record.json").write_text("{}", encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     state = manager.wait(run.id, timeout=10)
 
     assert state.status == "done"
@@ -435,7 +507,7 @@ def test_wait_does_not_return_until_the_run_leaves_live(tmp_path) -> None:
             release.wait(10)
 
     manager = FrozenAfterTerminal(registry, pipeline=lambda *args: None)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert frozen.wait(10), "the run did not reach its terminal transition"
     assert manager.require_state(run.id).status == "done"
     with manager._lock:
@@ -468,7 +540,9 @@ def test_failed_run_is_recorded(tmp_path) -> None:
         raise RuntimeError("backend unavailable")
 
     manager = RunManager(registry, pipeline=boom)
-    state = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+    state = manager.wait(
+        manager.start(meeting, origin="console", actor="console").id, timeout=10
+    )
 
     assert state.status == "failed"
     assert "backend unavailable" in (state.error or "")
@@ -491,7 +565,9 @@ def test_a_failure_around_the_pipeline_still_fails_the_meeting(tmp_path) -> None
 
     manager._register_artifacts = boom  # type: ignore[method-assign]
 
-    state = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+    state = manager.wait(
+        manager.start(meeting, origin="console", actor="console").id, timeout=10
+    )
 
     assert state.status == "failed"
     assert registry.meeting_by_id(meeting.id).status == "failed"
@@ -499,17 +575,33 @@ def test_a_failure_around_the_pipeline_still_fails_the_meeting(tmp_path) -> None
 
 def test_run_requires_a_workspace_and_a_tape_set(tmp_path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     manager = RunManager(registry, pipeline=lambda *args: None)
 
-    no_tapes = registry.create_meeting("ops", "No tapes", workspace_path=str(tmp_path))
+    no_tapes = registry.create_meeting(
+        "ops",
+        "No tapes",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        manager.start(no_tapes, origin="console")
+        manager.start(no_tapes, origin="console", actor="console")
 
-    no_workspace = registry.create_meeting("ops", "No workspace")
-    registry.set_recording_set(no_workspace.id, [str(tmp_path / "x.wav")])
+    no_workspace = registry.create_meeting(
+        "ops",
+        "No workspace",
+        actor="console",
+    )
+    registry.set_recording_set(
+        no_workspace.id,
+        [str(tmp_path / "x.wav")],
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        manager.start(no_workspace, origin="console")
+        manager.start(no_workspace, origin="console", actor="console")
 
 
 def test_a_second_run_is_refused_while_one_is_in_flight(tmp_path) -> None:
@@ -524,9 +616,9 @@ def test_a_second_run_is_refused_while_one_is_in_flight(tmp_path) -> None:
         release.wait(10)
 
     manager = RunManager(registry, pipeline=slow_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     with pytest.raises(ValueError):
-        manager.start(meeting, origin="console")
+        manager.start(meeting, origin="console", actor="console")
 
     release.set()
     assert manager.wait(run.id, timeout=10).status == "done"
@@ -575,7 +667,7 @@ def test_two_concurrent_submissions_leave_one_run_and_the_same_refusal(
 
     def submit() -> None:
         try:
-            results.append(manager.start(meeting, origin="console"))
+            results.append(manager.start(meeting, origin="console", actor="console"))
         except ValueError as exc:  # the refusal, not a crash
             results.append(exc)
 
@@ -617,9 +709,17 @@ def test_the_index_refusing_a_second_active_run_reads_as_the_refusal(
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    live = registry.create_run(meeting.id, origin="console")
+    live = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     assert (
-        registry.claim_run(live.id, owner=f"{platform.node()}:{os.getpid()}")
+        registry.claim_run(
+            live.id,
+            owner=f"{platform.node()}:{os.getpid()}",
+            actor="console",
+        )
         is not None
     )
 
@@ -627,7 +727,7 @@ def test_the_index_refusing_a_second_active_run_reads_as_the_refusal(
     monkeypatch.setattr(registry, "active_run_for_meeting", lambda meeting_id: None)
     try:
         with pytest.raises(ValueError) as refused:
-            manager.start(meeting, origin="console")
+            manager.start(meeting, origin="console", actor="console")
     finally:
         manager.shutdown(timeout=5)
 
@@ -666,7 +766,7 @@ def test_a_foreign_key_refusal_is_not_reported_as_a_run_in_flight(
     monkeypatch.setattr(registry, "meeting_by_id", the_meeting_disappears)
     try:
         with pytest.raises(IntegrityError) as refused:
-            manager.start(meeting, origin="console")
+            manager.start(meeting, origin="console", actor="console")
     finally:
         manager.shutdown(timeout=5)
 
@@ -700,7 +800,9 @@ def test_a_pipeline_error_fails_the_run_with_the_stages_own_message(tmp_path) ->
 
     manager = RunManager(registry, pipeline=pipeline)
     try:
-        run = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+        run = manager.wait(
+            manager.start(meeting, origin="console", actor="console").id, timeout=10
+        )
     finally:
         manager.shutdown(timeout=5)
 
@@ -731,15 +833,15 @@ def test_a_meeting_runs_again_once_its_run_has_finished(tmp_path) -> None:
             raise RuntimeError("backend unavailable")
 
     manager = RunManager(registry, pipeline=pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(first.id, timeout=10).status == "done"
-    second = manager.start(meeting, origin="console")
+    second = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(second.id, timeout=10).status == "done"
 
     fail_next.set()
-    third = manager.start(meeting, origin="console")
+    third = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(third.id, timeout=10).status == "failed"
-    fourth = manager.start(meeting, origin="console")
+    fourth = manager.start(meeting, origin="console", actor="console")
     assert fourth.id != third.id
 
     # The fourth start was **admitted** — which is the point of the test: the
@@ -768,7 +870,9 @@ def test_event_cursor_supports_streaming(tmp_path) -> None:
             progress.advance()
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    state = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+    state = manager.wait(
+        manager.start(meeting, origin="console", actor="console").id, timeout=10
+    )
 
     assert len(state.events_since(0)) == 4
     assert state.events_since(4) == []
@@ -793,7 +897,7 @@ def test_events_persist_and_replay(tmp_path) -> None:
         progress.advance(source="b")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     # A *new* manager over the same registry has no process memory of the run...
@@ -814,13 +918,32 @@ def test_a_running_run_from_a_dead_process_becomes_interrupted(tmp_path) -> None
     meeting = _meeting(registry, tmp_path, [tape])
 
     # A run left mid-flight by a process that died.
-    orphan = registry.create_run(meeting.id, backend="apple")
-    registry.update_run(
-        orphan.id, status="running", started_at="2026-01-01T00:00:00+00:00"
+    orphan = registry.create_run(
+        meeting.id,
+        backend="apple",
+        actor="console",
     )
-    registry.set_meeting_status(meeting.id, "running")
-    registry.add_run_event(orphan.id, JobEvent(stage="ingest", index=1, total=3))
-    registry.add_run_event(orphan.id, JobEvent(stage="transcribe", index=0, total=2))
+    registry.update_run(
+        orphan.id,
+        status="running",
+        started_at="2026-01-01T00:00:00+00:00",
+        actor="console",
+    )
+    registry.set_meeting_status(
+        meeting.id,
+        "running",
+        actor="console",
+    )
+    registry.add_run_event(
+        orphan.id,
+        JobEvent(stage="ingest", index=1, total=3),
+        actor="console",
+    )
+    registry.add_run_event(
+        orphan.id,
+        JobEvent(stage="transcribe", index=0, total=2),
+        actor="console",
+    )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
 
@@ -834,7 +957,7 @@ def test_a_running_run_from_a_dead_process_becomes_interrupted(tmp_path) -> None
     assert [event.stage for event in state.events] == ["ingest", "transcribe"]
 
     # The honesty requirement: a new run is startable after the restart.
-    fresh = manager.start(meeting, origin="console")
+    fresh = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(fresh.id, timeout=10).status == "done"
     assert registry.meeting_by_id(meeting.id).status == "recorded"
 
@@ -852,6 +975,7 @@ def test_a_queued_run_survives_a_restart_and_is_drained(tmp_path) -> None:
         meeting.id,
         backend="apple",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     seen: dict = {}
@@ -890,6 +1014,7 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
         meeting.id,
         backend="apple",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     starts: list[RunManager] = []
@@ -914,10 +1039,19 @@ def test_a_queue_built_stopped_drains_once_a_submission_starts_it(
     later_workspace.mkdir()
     later_tape = tmp_path / "later.wav"
     later_tape.write_bytes(b"RIFFfake")
-    later = registry.create_meeting("ops", "Retro", workspace_path=str(later_workspace))
-    registry.set_recording_set(later.id, [str(later_tape)])
+    later = registry.create_meeting(
+        "ops",
+        "Retro",
+        workspace_path=str(later_workspace),
+        actor="console",
+    )
+    registry.set_recording_set(
+        later.id,
+        [str(later_tape)],
+        actor="console",
+    )
 
-    run = manager.start(later, origin="console")
+    run = manager.start(later, origin="console", actor="console")
 
     assert manager.wait(run.id, timeout=10).status == "done"
     assert registry.get_run(queued.id).status == "done"
@@ -956,16 +1090,31 @@ def test_a_row_the_build_cannot_read_does_not_stop_the_queue(tmp_path) -> None:
     later_workspace = tmp_path / "later"
     later_workspace.mkdir()
     later_meeting = registry.create_meeting(
-        "ops", "Retro", workspace_path=str(later_workspace)
+        "ops",
+        "Retro",
+        workspace_path=str(later_workspace),
+        actor="console",
     )
-    registry.set_recording_set(later_meeting.id, [str(tape)])
+    registry.set_recording_set(
+        later_meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     options = dataclasses.asdict(PipelineOptions(backend="apple"))
     refused = registry.create_run(
-        refused_meeting.id, backend="apple", origin="console", run_options=options
+        refused_meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=options,
+        actor="console",
     )
     later = registry.create_run(
-        later_meeting.id, backend="apple", origin="console", run_options=options
+        later_meeting.id,
+        backend="apple",
+        origin="console",
+        run_options=options,
+        actor="console",
     )
     assert refused.id < later.id  # the unreadable row is the head of the FIFO
 
@@ -1018,6 +1167,7 @@ def test_a_quarantine_cannot_fail_a_run_that_moved_first(tmp_path) -> None:
         backend="apple",
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
@@ -1081,14 +1231,26 @@ def test_a_quarantine_cannot_fail_a_run_that_moved_first(tmp_path) -> None:
 def test_two_meetings_queue_instead_of_fighting_for_the_node(tmp_path) -> None:
     """Later meetings wait their turn; only one executes at a time (FIFO)."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tapes = [tmp_path / f"{name}.wav" for name in ("first", "second", "third")]
     for tape in tapes:
         tape.write_bytes(b"RIFFfake")
     meetings = []
     for tape, name in zip(tapes, ("First", "Second", "Third")):
-        meeting = registry.create_meeting("ops", name, workspace_path=str(tmp_path))
-        registry.set_recording_set(meeting.id, [str(tape)])
+        meeting = registry.create_meeting(
+            "ops",
+            name,
+            workspace_path=str(tmp_path),
+            actor="console",
+        )
+        registry.set_recording_set(
+            meeting.id,
+            [str(tape)],
+            actor="console",
+        )
         meetings.append(meeting)
 
     release = threading.Event()
@@ -1108,7 +1270,10 @@ def test_two_meetings_queue_instead_of_fighting_for_the_node(tmp_path) -> None:
             active -= 1
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    runs = [manager.start(meeting, origin="console") for meeting in meetings]
+    runs = [
+        manager.start(meeting, origin="console", actor="console")
+        for meeting in meetings
+    ]
 
     # Wait until the first is actually executing; the rest must be queued, in
     # FIFO order, reporting their place in the wait line (1 = next).
@@ -1139,7 +1304,7 @@ def test_shutdown_is_bounded_and_does_not_cancel_a_run(tmp_path) -> None:
 
     release = threading.Event()
     manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     for _ in range(1000):
         if manager.require_state(run.id).status == "running":
             break
@@ -1162,8 +1327,17 @@ def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
 
     # A run row the manager did not see start (its own earlier process), already
     # terminal? No — running, so reconciliation moves it and frees the meeting.
-    orphan = registry.create_run(meeting.id, backend="apple")
-    registry.update_run(orphan.id, status="running", started_at="now")
+    orphan = registry.create_run(
+        meeting.id,
+        backend="apple",
+        actor="console",
+    )
+    registry.update_run(
+        orphan.id,
+        status="running",
+        started_at="now",
+        actor="console",
+    )
     release = threading.Event()
     manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
     assert manager.active_state(meeting.id) is None  # reconciled to interrupted
@@ -1173,11 +1347,12 @@ def test_the_active_guard_is_derived_from_the_registry(tmp_path) -> None:
         meeting.id,
         backend="apple",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     state = manager.active_state(meeting.id)
     assert state is not None and state.run_id == fresh.id
     with pytest.raises(ValueError):
-        manager.start(meeting, origin="console")
+        manager.start(meeting, origin="console", actor="console")
 
     release.set()
     assert manager.wait(fresh.id, timeout=10).status == "done"
@@ -1198,7 +1373,8 @@ class _UnreadableBeats:
         self.beats = 0
         self.raise_on_read = True
 
-    def heartbeat_run(self, run_id: int, *, at: str | None = None) -> bool:
+    def heartbeat_run(self, run_id: int, *, actor: str, at: str | None = None) -> bool:
+        assert actor == QUEUE  # the queue is what signs its own beat
         self.beats += 1
         return False
 
@@ -1345,35 +1521,84 @@ def test_the_claim_is_a_conditional_update(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    queued = registry.create_run(meeting.id, origin="console")
+    queued = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     waiting = registry.create_run(
-        registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path)).id,
+        registry.create_meeting(
+            "ops",
+            "Waiting",
+            workspace_path=str(tmp_path),
+            actor="console",
+        ).id,
         origin="mcp",
+        actor="mcp",
     )
 
-    winner = registry.claim_run(queued.id, owner="console:1")
+    winner = registry.claim_run(
+        queued.id,
+        owner="console:1",
+        actor="console",
+    )
     assert winner is not None
     assert (winner.status, winner.owner) == ("running", "console:1")
     assert winner.started_at is not None and winner.heartbeat_at is not None
 
     # The same run, claimed again: no row matches and nothing is overwritten.
-    assert registry.claim_run(queued.id, owner="mcp:2") is None
+    assert (
+        registry.claim_run(
+            queued.id,
+            owner="mcp:2",
+            actor="console",
+        )
+        is None
+    )
     still = registry.get_run(queued.id)
     assert (still.status, still.owner) == ("running", "console:1")
 
     # One run per node: a *different* queued run is not claimable either.
-    assert registry.claim_run(waiting.id, owner="mcp:2") is None
+    assert (
+        registry.claim_run(
+            waiting.id,
+            owner="mcp:2",
+            actor="console",
+        )
+        is None
+    )
     assert registry.get_run(waiting.id).status == "queued"
 
     # The heartbeat refreshes a running run and stops when it is no longer one.
-    assert registry.heartbeat_run(queued.id, at="2026-01-01T00:00:00+00:00")
+    assert registry.heartbeat_run(
+        queued.id,
+        at="2026-01-01T00:00:00+00:00",
+        actor="console",
+    )
     assert registry.get_run(queued.id).heartbeat_at == "2026-01-01T00:00:00+00:00"
-    registry.update_run(queued.id, status="done")
-    assert registry.heartbeat_run(queued.id) is False
+    registry.update_run(
+        queued.id,
+        status="done",
+        actor="console",
+    )
+    assert (
+        registry.heartbeat_run(
+            queued.id,
+            actor="console",
+        )
+        is False
+    )
     assert registry.get_run(queued.id).heartbeat_at == "2026-01-01T00:00:00+00:00"
 
     # The node is free again, so the run that was waiting is claimable.
-    assert registry.claim_run(waiting.id, owner="mcp:2") is not None
+    assert (
+        registry.claim_run(
+            waiting.id,
+            owner="mcp:2",
+            actor="console",
+        )
+        is not None
+    )
 
 
 def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
@@ -1390,7 +1615,11 @@ def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    queued = registry.create_run(meeting.id, origin="console")
+    queued = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
 
     holding = threading.Event()
 
@@ -1412,7 +1641,11 @@ def test_a_contended_claim_waits_and_still_wins(tmp_path) -> None:
     holder_thread.start()
     assert holding.wait(5)
     started = time.monotonic()
-    claimed = registry.claim_run(queued.id, owner="console:1")
+    claimed = registry.claim_run(
+        queued.id,
+        owner="console:1",
+        actor="console",
+    )
     waited = time.monotonic() - started
     holder_thread.join(5)
 
@@ -1434,13 +1667,13 @@ def test_a_run_records_the_surface_that_started_it(tmp_path) -> None:
     meeting = _meeting(registry, tmp_path, [tape])
 
     manager = RunManager(registry, pipeline=lambda *args: None)
-    run = manager.start(meeting, origin="mcp")
+    run = manager.start(meeting, origin="mcp", actor="mcp")
     assert registry.get_run(run.id).origin == "mcp"
     assert manager.wait(run.id, timeout=10).status == "done"
     assert registry.get_run(run.id).origin == "mcp"
 
     with pytest.raises(ValueError):
-        manager.start(meeting, origin="grafana")
+        manager.start(meeting, origin="grafana", actor="grafana")
     with pytest.raises(TypeError):
         manager.start(meeting)  # type: ignore[call-arg] - a start path names itself
 
@@ -1460,8 +1693,17 @@ def test_reconciliation_respects_a_live_peer_and_reaps_a_dead_one(tmp_path) -> N
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     busy = _meeting(registry, tmp_path, [tape])
-    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
-    registry.set_recording_set(waiting.id, [str(tape)])
+    waiting = registry.create_meeting(
+        "ops",
+        "Waiting",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        waiting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     # A peer process claimed this run and is executing it: the claim wrote a
     # heartbeat, and nothing else has touched the row since.
@@ -1469,17 +1711,30 @@ def test_reconciliation_respects_a_live_peer_and_reaps_a_dead_one(tmp_path) -> N
         busy.id,
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     # The owner is one the pid probe cannot resolve, so the **heartbeat** is
     # what decides here: an owner that looks like a live pid would hold the
     # run on a machine that happens to have that pid, and the test would be
     # about the probe instead of about the beat.
-    assert registry.claim_run(peer_run.id, owner="peer:not-a-pid") is not None
-    registry.set_meeting_status(busy.id, "running")
+    assert (
+        registry.claim_run(
+            peer_run.id,
+            owner="peer:not-a-pid",
+            actor="console",
+        )
+        is not None
+    )
+    registry.set_meeting_status(
+        busy.id,
+        "running",
+        actor="console",
+    )
     behind = registry.create_run(
         waiting.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
@@ -1492,7 +1747,11 @@ def test_reconciliation_respects_a_live_peer_and_reaps_a_dead_one(tmp_path) -> N
 
         # The peer dies without a word: its heartbeat is all that is left of it,
         # and once it is stale the queue takes over.
-        assert registry.heartbeat_run(peer_run.id, at="2020-01-01T00:00:00+00:00")
+        assert registry.heartbeat_run(
+            peer_run.id,
+            at="2020-01-01T00:00:00+00:00",
+            actor="console",
+        )
         assert manager.wait(behind.id, timeout=10).status == "done"
     finally:
         manager.shutdown(timeout=5)
@@ -1518,22 +1777,48 @@ def test_a_run_whose_owner_is_alive_holds_its_meeting_and_the_node(tmp_path) -> 
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     busy = _meeting(registry, tmp_path, [tape])
-    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
-    registry.set_recording_set(waiting.id, [str(tape)])
+    waiting = registry.create_meeting(
+        "ops",
+        "Waiting",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        waiting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     held = registry.create_run(
         busy.id,
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     owner = f"{platform.node()}:{os.getpid()}"
-    assert registry.claim_run(held.id, owner=owner) is not None
-    registry.set_meeting_status(busy.id, "running")
-    assert registry.heartbeat_run(held.id, at="2020-01-01T00:00:00+00:00")
+    assert (
+        registry.claim_run(
+            held.id,
+            owner=owner,
+            actor="console",
+        )
+        is not None
+    )
+    registry.set_meeting_status(
+        busy.id,
+        "running",
+        actor="console",
+    )
+    assert registry.heartbeat_run(
+        held.id,
+        at="2020-01-01T00:00:00+00:00",
+        actor="console",
+    )
     behind = registry.create_run(
         waiting.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
@@ -1544,7 +1829,7 @@ def test_a_run_whose_owner_is_alive_holds_its_meeting_and_the_node(tmp_path) -> 
         # The node and the meeting are still held, ticks and all.
         assert manager.wait(behind.id, timeout=2.0).status == "queued"
         with pytest.raises(ValueError):
-            manager.start(busy, origin="console")
+            manager.start(busy, origin="console", actor="console")
     finally:
         manager.shutdown(timeout=5)
 
@@ -1569,17 +1854,28 @@ def test_a_killed_owner_is_reaped_at_once(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
-    registry.set_recording_set(waiting.id, [str(tape)])
+    waiting = registry.create_meeting(
+        "ops",
+        "Waiting",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        waiting.id,
+        [str(tape)],
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     behind = registry.create_run(
         waiting.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     marker = tmp_path / "running"
@@ -1635,17 +1931,28 @@ def test_a_frozen_owner_does_not_admit_a_second_pipeline(tmp_path, monkeypatch) 
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     busy = _meeting(registry, tmp_path, [tape])
-    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
-    registry.set_recording_set(waiting.id, [str(tape)])
+    waiting = registry.create_meeting(
+        "ops",
+        "Waiting",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        waiting.id,
+        [str(tape)],
+        actor="console",
+    )
     run = registry.create_run(
         busy.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     behind = registry.create_run(
         waiting.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     marker = tmp_path / "running"
@@ -1668,7 +1975,7 @@ def test_a_frozen_owner_does_not_admit_a_second_pipeline(tmp_path, monkeypatch) 
             assert held.status == "running" and held.error is None
             assert manager.wait(behind.id, timeout=2.0).status == "queued"
             with pytest.raises(ValueError):
-                manager.start(busy, origin="console")
+                manager.start(busy, origin="console", actor="console")
         finally:
             manager.shutdown(timeout=5)
     finally:
@@ -1698,22 +2005,33 @@ def test_a_live_pid_holds_a_run_even_when_the_owner_names_another_host(
         busy.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     assert (
         registry.claim_run(
-            held.id, owner=f"a-name-this-machine-had-before:{os.getpid()}"
+            held.id,
+            owner=f"a-name-this-machine-had-before:{os.getpid()}",
+            actor="console",
         )
         is not None
     )
-    registry.set_meeting_status(busy.id, "running")
-    assert registry.heartbeat_run(held.id, at="2020-01-01T00:00:00+00:00")
+    registry.set_meeting_status(
+        busy.id,
+        "running",
+        actor="console",
+    )
+    assert registry.heartbeat_run(
+        held.id,
+        at="2020-01-01T00:00:00+00:00",
+        actor="console",
+    )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
     try:
         assert manager.reconcile() == []
         assert registry.get_run(held.id).status == "running"
         with pytest.raises(ValueError):
-            manager.start(busy, origin="console")
+            manager.start(busy, origin="console", actor="console")
     finally:
         manager.shutdown(timeout=5)
 
@@ -1734,12 +2052,27 @@ def test_a_running_row_with_an_out_of_range_pid_reconciles(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    run = registry.create_run(meeting.id, origin="console")
+    run = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     # The owner column is free text and this pid is too large for C's int, which
     # is what `os.kill` converts to.
     oversized = f"{platform.node()}:{'9' * 24}"
-    assert registry.claim_run(run.id, owner=oversized) is not None
-    assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
+    assert (
+        registry.claim_run(
+            run.id,
+            owner=oversized,
+            actor="console",
+        )
+        is not None
+    )
+    assert registry.heartbeat_run(
+        run.id,
+        at="2020-01-01T00:00:00+00:00",
+        actor="console",
+    )
 
     manager = RunManager(registry, pipeline=lambda *args: None)  # must not raise
     try:
@@ -1770,7 +2103,7 @@ def test_a_completed_run_logs_no_heartbeat_failure(tmp_path, monkeypatch) -> Non
 
     manager = RunManager(registry, pipeline=lambda *args: None)
     for _ in range(3):
-        run = manager.start(meeting, origin="console")
+        run = manager.start(meeting, origin="console", actor="console")
         assert manager.wait(run.id, timeout=10).status == "done"
 
     events = [json.loads(line)["event"] for line in read_recent(200)]
@@ -1802,7 +2135,7 @@ def test_a_failing_beat_read_does_not_kill_the_heartbeat_thread(
     flaky = _UnreadableBeats(registry)
     release = threading.Event()
     manager = RunManager(flaky, pipeline=lambda *args: release.wait(10))
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     try:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and flaky.beats < 3:
@@ -1830,18 +2163,30 @@ def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    run = registry.create_run(meeting.id, origin="console")
+    run = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     # The owner is one the pid probe cannot resolve, so the **heartbeat** is
     # what decides here: an owner that looks like a live pid would hold the
     # run on a machine that happens to have that pid, and the test would be
     # about the probe instead of about the beat.
-    assert registry.claim_run(run.id, owner="peer:not-a-pid") is not None
+    assert (
+        registry.claim_run(
+            run.id,
+            owner="peer:not-a-pid",
+            actor="console",
+        )
+        is not None
+    )
     reaped = registry.interrupt_run(
         run.id,
         observed=registry.get_run(run.id),  # nothing beat it: the compare wins
         ended_at="2026-01-01T00:00:00+00:00",
         error=RESTART_REASON,
         progress={"interrupted": True},
+        actor="console",
     )
     assert reaped is not None and reaped.error == RESTART_REASON
 
@@ -1850,6 +2195,7 @@ def test_a_finished_run_does_not_keep_a_reapers_reason(tmp_path) -> None:
         status="done",
         ended_at="2026-01-01T00:01:00+00:00",
         progress={"kept": 1},
+        actor="console",
     )
     assert (finished.status, finished.error) == ("done", None)
     assert finished.progress == {"kept": 1}
@@ -1873,7 +2219,7 @@ def test_a_second_manager_leaves_a_live_run_alone(tmp_path) -> None:
 
     release = threading.Event()
     first = RunManager(registry, pipeline=lambda *args: release.wait(10))
-    run = first.start(meeting, origin="console")
+    run = first.start(meeting, origin="console", actor="console")
     for _ in range(1000):
         if registry.get_run(run.id).status == "running":
             break
@@ -1906,10 +2252,25 @@ def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path, monkeypatch) -> N
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    run = registry.create_run(meeting.id, origin="console")
+    run = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     unreadable = f"{platform.node()}:{'9' * 24}"
-    assert registry.claim_run(run.id, owner=unreadable) is not None
-    assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
+    assert (
+        registry.claim_run(
+            run.id,
+            owner=unreadable,
+            actor="console",
+        )
+        is not None
+    )
+    assert registry.heartbeat_run(
+        run.id,
+        at="2020-01-01T00:00:00+00:00",
+        actor="console",
+    )
 
     stale = registry.get_run(run.id)  # what a reaper decided from
     registry.update_run(
@@ -1917,8 +2278,13 @@ def test_a_reap_cannot_overwrite_a_run_that_finished(tmp_path, monkeypatch) -> N
         status="done",
         ended_at="2026-01-01T00:00:00+00:00",
         progress={"kept": 1},
+        actor="console",
     )
-    registry.set_meeting_status(meeting.id, "recorded")
+    registry.set_meeting_status(
+        meeting.id,
+        "recorded",
+        actor="console",
+    )
 
     reached: list[int] = []
     original = Registry.interrupt_run
@@ -1963,19 +2329,41 @@ def test_a_reap_cannot_overwrite_a_run_its_owner_refreshed(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    run = registry.create_run(meeting.id, origin="console")
+    run = registry.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     # The owner is one the pid probe cannot resolve, so the **heartbeat** is what
     # decides here: an owner that looks like a live pid would hold the run on a
     # machine that happens to have that pid, and the test would be about the probe
     # instead of about the beat.
     unreadable = f"{platform.node()}:{'9' * 24}"
-    assert registry.claim_run(run.id, owner=unreadable) is not None
-    registry.set_meeting_status(meeting.id, "running")
-    assert registry.heartbeat_run(run.id, at="2020-01-01T00:00:00+00:00")
+    assert (
+        registry.claim_run(
+            run.id,
+            owner=unreadable,
+            actor="console",
+        )
+        is not None
+    )
+    registry.set_meeting_status(
+        meeting.id,
+        "running",
+        actor="console",
+    )
+    assert registry.heartbeat_run(
+        run.id,
+        at="2020-01-01T00:00:00+00:00",
+        actor="console",
+    )
     stale = registry.get_run(run.id)  # what the reaper judged dead from
 
     # The owner is alive and keeps beating: the row is no longer the stale one.
-    assert registry.heartbeat_run(run.id)
+    assert registry.heartbeat_run(
+        run.id,
+        actor="console",
+    )
     beaten = registry.get_run(run.id).heartbeat_at
     assert beaten != stale.heartbeat_at
 
@@ -2012,27 +2400,53 @@ def test_a_heartbeat_ahead_of_the_clock_is_not_evidence_of_life(tmp_path) -> Non
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     busy = _meeting(registry, tmp_path, [tape])
-    waiting = registry.create_meeting("ops", "Waiting", workspace_path=str(tmp_path))
-    registry.set_recording_set(waiting.id, [str(tape)])
+    waiting = registry.create_meeting(
+        "ops",
+        "Waiting",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        waiting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     peer_run = registry.create_run(
         busy.id,
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     # The owner is one the pid probe cannot resolve, so the **heartbeat** is
     # what decides here: an owner that looks like a live pid would hold the
     # run on a machine that happens to have that pid, and the test would be
     # about the probe instead of about the beat.
-    assert registry.claim_run(peer_run.id, owner="peer:not-a-pid") is not None
-    registry.set_meeting_status(busy.id, "running")
+    assert (
+        registry.claim_run(
+            peer_run.id,
+            owner="peer:not-a-pid",
+            actor="console",
+        )
+        is not None
+    )
+    registry.set_meeting_status(
+        busy.id,
+        "running",
+        actor="console",
+    )
     # A beat written before the clock stepped backwards, i.e. dated after "now".
-    assert registry.heartbeat_run(peer_run.id, at="2099-01-01T00:00:00+00:00")
+    assert registry.heartbeat_run(
+        peer_run.id,
+        at="2099-01-01T00:00:00+00:00",
+        actor="console",
+    )
 
     behind = registry.create_run(
         waiting.id,
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     manager = RunManager(registry, pipeline=lambda *args: None)
     try:
@@ -2060,6 +2474,7 @@ def test_two_processes_claim_one_run_and_exactly_one_executes(tmp_path) -> None:
         meeting.id,
         origin="mcp",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     gate = tmp_path / "gate"
@@ -2158,7 +2573,7 @@ def test_a_completed_run_records_every_cost_primitive(tmp_path) -> None:
     meeting = _meeting(registry, tmp_path, [tape])
 
     manager = RunManager(registry, pipeline=_fake_pipeline_with_transcript)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(run.id, timeout=10).status == "done"
 
     cost = registry.get_run(run.id).progress["cost"]
@@ -2206,7 +2621,7 @@ def test_a_failed_run_records_the_stages_it_completed(tmp_path) -> None:
     )
 
     manager = RunManager(registry, pipeline=boom)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(run.id, timeout=10).status == "failed"
 
     cost = registry.get_run(run.id).progress["cost"]
@@ -2237,7 +2652,7 @@ def test_a_run_that_fails_after_transcribe_reports_its_transcript(tmp_path) -> N
         raise RuntimeError("reconcile exploded")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(run.id, timeout=10).status == "failed"
 
     cost = registry.get_run(run.id).progress["cost"]
@@ -2282,7 +2697,7 @@ def test_a_run_that_dies_before_writing_the_transcript_ignores_a_stale_one(
         raise RuntimeError("crashed before writing the transcript")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(run.id, timeout=10).status == "failed"
 
     cost = registry.get_run(run.id).progress["cost"]
@@ -2300,13 +2715,21 @@ def test_an_interrupted_run_keeps_the_stages_it_completed(tmp_path) -> None:
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
-    orphan = registry.create_run(meeting.id, backend="apple")
+    orphan = registry.create_run(
+        meeting.id,
+        backend="apple",
+        actor="console",
+    )
     registry.update_run(
-        orphan.id, status="running", started_at="2026-01-01T00:00:00+00:00"
+        orphan.id,
+        status="running",
+        started_at="2026-01-01T00:00:00+00:00",
+        actor="console",
     )
     registry.add_run_event(
         orphan.id,
         JobEvent(stage="ingest", index=1, total=1, done=True, elapsed_s=2.5),
+        actor="console",
     )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
@@ -2335,6 +2758,7 @@ def _completed_run(
         backend=backend,
         model=model,
         run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=chunk_seconds)),
+        actor="console",
     )
     registry.update_run(
         run.id,
@@ -2351,6 +2775,7 @@ def _completed_run(
                 "model": model,
             },
         },
+        actor="console",
     )
     return run
 
@@ -2390,6 +2815,7 @@ def test_the_eta_projects_matching_history_onto_the_same_tape(tmp_path) -> None:
         backend="apple",
         model="small",
         run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
+        actor="console",
     )
 
     # 600 audio seconds at 2 audio-seconds per wall second = 300s projected.
@@ -2408,6 +2834,7 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
         backend="apple",
         model="small",
         run_options=dataclasses.asdict(PipelineOptions(chunk_seconds=30.0)),
+        actor="console",
     )
     # Nothing has completed yet: there is nothing to project.
     assert estimate_eta_s(registry, run, elapsed_s=0.0) is None
@@ -2415,8 +2842,17 @@ def test_the_eta_is_none_without_matching_history(tmp_path) -> None:
     # The completed runs that make the point live in a second meeting: history is
     # matched by configuration, not by meeting, and this meeting's own run is
     # still active — one meeting has one active run (revision 0009's index).
-    earlier = registry.create_meeting("ops", "Earlier", workspace_path=str(tmp_path))
-    registry.set_recording_set(earlier.id, [str(tape)])
+    earlier = registry.create_meeting(
+        "ops",
+        "Earlier",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        earlier.id,
+        [str(tape)],
+        actor="console",
+    )
 
     # A completed run with another model is not history for this run.
     _completed_run(
@@ -2462,6 +2898,7 @@ def test_a_running_row_the_build_cannot_read_does_not_stop_the_node(tmp_path) ->
         backend="apple",
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     with closing(sqlite3.connect(str(registry.db_path))) as conn, conn:
         conn.execute(
@@ -2500,15 +2937,16 @@ def test_a_claim_that_fails_does_not_stop_the_queue(tmp_path, monkeypatch) -> No
         backend="apple",
         origin="console",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     real_claim = Registry.claim_run
     attempts = {"n": 0}
 
-    def flaky_claim(self, run_id, *, owner):
+    def flaky_claim(self, run_id, *, actor, owner):
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise OperationalError("SELECT 1", {}, Exception("database is locked"))
-        return real_claim(self, run_id, owner=owner)
+        return real_claim(self, run_id, owner=owner, actor=actor)
 
     monkeypatch.setattr(Registry, "claim_run", flaky_claim)
     manager = RunManager(registry, pipeline=lambda *args: None)
@@ -2635,9 +3073,9 @@ def test_a_runs_artifacts_are_its_own_copy_and_the_newest_is_the_default_read(
     meeting = _meeting(registry, tmp_path, [tape])
 
     manager = RunManager(registry, pipeline=_documented_pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(first.id, timeout=10).status == "done"
-    second = manager.start(meeting, origin="console")
+    second = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(second.id, timeout=10).status == "done"
 
     workspace = Workspace.at(meeting.workspace_path)
@@ -2699,7 +3137,7 @@ def test_a_run_that_dies_mid_way_spares_the_earlier_run_and_the_published_copy(
         _documented_pipeline(directory, options, on_event)
 
     manager = RunManager(registry, pipeline=pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(first.id, timeout=10).status == "done"
 
     workspace = Workspace.at(meeting.workspace_path)
@@ -2710,7 +3148,7 @@ def test_a_run_that_dies_mid_way_spares_the_earlier_run_and_the_published_copy(
     export = (workspace.export_dir / "record.md").read_bytes()
 
     dying["mid-way"] = True
-    second = manager.start(meeting, origin="console")
+    second = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(second.id, timeout=10).status == "failed"
 
     # The workspace still holds the last *finished* run, byte for byte ...
@@ -2762,9 +3200,9 @@ def test_a_resumed_run_continues_in_the_workspaces_chunk_cache(tmp_path) -> None
         _documented_pipeline(directory, options, on_event)
 
     manager = RunManager(registry, pipeline=pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(first.id, timeout=10).status == "done"
-    resumed = manager.resume(first.id, origin="console")
+    resumed = manager.resume(first.id, origin="console", actor="console")
     assert manager.wait(resumed.id, timeout=10).status == "done"
 
     assert registry.get_run(resumed.id).resumes_run_id == first.id
@@ -2790,16 +3228,18 @@ def test_a_workspace_that_lives_under_runs_slash_a_number_is_a_workspace(
     that must still find the tape, and the transcript read back.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project("Ops", actor="console")
     workspace = tmp_path / "runs" / "7"
     workspace.mkdir(parents=True)
     tape = workspace / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(workspace), actor="console"
+    )
+    registry.set_recording_set(meeting.id, [str(tape)], actor="console")
 
     manager = RunManager(registry, pipeline=_documented_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     assert manager.wait(run.id, timeout=10).status == "done"
 
     home = Workspace.at(workspace)

@@ -65,7 +65,7 @@ from clear_record.pipeline.workspace import (
 )
 from clear_record.core.i18n import deferred
 from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
-from clear_record.service import tapestore
+from clear_record.service import audit, tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.service.archive import verify_archive
 from clear_record.service.models import Archive, Meeting, Tape
@@ -203,18 +203,24 @@ def ensure_managed_workspace(
     registry: Registry,
     meeting: Meeting,
     root: str | os.PathLike | None = None,
+    *,
+    actor: str,
 ) -> Meeting:
     """Create the meeting's managed workspace and point the meeting at it.
 
     Idempotent: an already-provisioned managed meeting keeps its directory. The
     shape is the ordinary :class:`~clear_record.pipeline.workspace.Workspace` shape,
     so nothing downstream can tell it apart.
+
+    ``actor`` is the surface this provisioning is done for, and is recorded
+    against the meeting it points at (ADR-0033): pointing a meeting at a
+    workspace is a registry write like any other.
     """
     resolved_root = managed_root(root)
     path = workspace_path_for(resolved_root, meeting)
     _safe_mkdir(path, root=resolved_root)
     if meeting.workspace_path != str(path):
-        meeting = registry.set_meeting_workspace(meeting.id, str(path))
+        meeting = registry.set_meeting_workspace(meeting.id, str(path), actor=actor)
     return meeting
 
 
@@ -239,6 +245,8 @@ def precheck_upload(
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
     upload_id: str | None = None,
+    *,
+    actor: str,
 ) -> Meeting:
     """Refuse an upload *before* its body is read, where the guard can.
 
@@ -247,9 +255,11 @@ def precheck_upload(
     free space on the managed root. ``upload_id`` is the client's optional
     upload id: it is validated here, and an id whose scratch file is already on
     disk is refused as unsupported (resume is not built). Returns the (possibly
-    newly provisioned) meeting so the caller need not resolve it twice.
+    newly provisioned) meeting so the caller need not resolve it twice — and
+    ``actor`` is the upload's surface, recorded if provisioning turns out to be
+    needed (ADR-0033).
     """
-    meeting = _upload_workspace(registry, meeting, root)
+    meeting = _upload_workspace(registry, meeting, root, actor=actor)
     token = validate_upload_id(upload_id)
     if token is not None:
         _refuse_occupied_upload_id(meeting, token)
@@ -273,6 +283,7 @@ def upload_tape(
     meeting: Meeting,
     stream: BinaryIO,
     *,
+    actor: str,
     filename: str | None,
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
@@ -291,7 +302,9 @@ def upload_tape(
     identity for a future resume layer. This slice still starts every upload at
     zero: an id whose scratch file exists is refused by the precheck.
     """
-    meeting = precheck_upload(registry, meeting, declared_bytes, root, upload_id)
+    meeting = precheck_upload(
+        registry, meeting, declared_bytes, root, upload_id, actor=actor
+    )
     assert meeting.workspace_path is not None  # precheck provisioned it
     token = validate_upload_id(upload_id)
     name = sanitize_filename(filename)
@@ -350,7 +363,11 @@ def upload_tape(
         replaced = True
         _fsync_dir(tapes)
         return registry.register_tape(
-            meeting.id, path=str(target), sha256=digest.hexdigest(), bytes=written
+            meeting.id,
+            actor=actor,
+            path=str(target),
+            sha256=digest.hexdigest(),
+            bytes=written,
         )
     except OSError as exc:
         if created:
@@ -569,6 +586,8 @@ def delete_tapes(
     meeting: Meeting,
     tape_ids: list[int],
     root: str | os.PathLike | None = None,
+    *,
+    actor: str,
 ) -> list[TapeDeletion]:
     """Delete **managed** tapes' files and records, when that is reversible.
 
@@ -579,6 +598,12 @@ def delete_tapes(
     action and nothing is unlinked (ADR-0033). The durable copy is one archive
     for the meeting, so it is verified **once**, and every requested tape is
     checked before any file is unlinked — a bad id refuses the batch whole.
+
+    ``actor`` is the transport's word for the surface that asked for the
+    deletion: each tape's own row is dropped against it, and the workspace
+    refusal below is recorded as a failed ``tape.forget`` for the meeting (the
+    batch's subject — one refusal covers every id asked for), so a tape that is
+    gone is still accounted for (ADR-0033).
     """
     tapes: list[Tape] = []
     for tape_id in tape_ids:
@@ -588,6 +613,14 @@ def delete_tapes(
         tapes.append(tape)
     resolved_root = managed_root(root)
     if not is_managed(meeting, resolved_root):
+        # A policy answer, not a key miss, so the refusal leaves a row — one for
+        # the batch, naming the meeting whose tapes were refused (ADR-0033).
+        registry.record_audit(
+            actor,
+            "tape.forget",
+            f"meeting:{meeting.id}",
+            outcome=audit.FAILED,
+        )
         raise UploadRejected(
             deferred(
                 "this meeting uses a user-chosen workspace; only a managed tape can "
@@ -601,7 +634,9 @@ def delete_tapes(
     for tape in tapes:
         Path(tape.path).unlink(missing_ok=True)
         deletions.append(
-            TapeDeletion(tape=registry.forget_tape(tape.id), archive=archive)
+            TapeDeletion(
+                tape=registry.forget_tape(tape.id, actor=actor), archive=archive
+            )
         )
     return deletions
 
@@ -611,9 +646,15 @@ def delete_tape(
     meeting: Meeting,
     tape_id: int,
     root: str | os.PathLike | None = None,
+    *,
+    actor: str,
 ) -> TapeDeletion:
-    """Delete one managed tape; see :func:`delete_tapes` for the rule."""
-    return delete_tapes(registry, meeting, [tape_id], root)[0]
+    """Delete one managed tape; see :func:`delete_tapes` for the rule.
+
+    ``actor`` is the transport's word for the surface that asked, and every
+    drop this delegates to is recorded against it (ADR-0033).
+    """
+    return delete_tapes(registry, meeting, [tape_id], root, actor=actor)[0]
 
 
 def sanitize_filename(filename: str | None) -> str:
@@ -709,6 +750,8 @@ def _upload_workspace(
     registry: Registry,
     meeting: Meeting,
     root: str | os.PathLike | None,
+    *,
+    actor: str,
 ) -> Meeting:
     """The managed workspace an upload may write into.
 
@@ -717,7 +760,7 @@ def _upload_workspace(
     in a user document (ADR-0007's rule still holds).
     """
     if not meeting.workspace_path:
-        return ensure_managed_workspace(registry, meeting, root)
+        return ensure_managed_workspace(registry, meeting, root, actor=actor)
     if not is_managed(meeting, root):
         raise UploadRejected(
             deferred(

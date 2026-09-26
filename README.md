@@ -530,8 +530,10 @@ meeting tape").
 > meetings and tape sets, running tapes with progress and a live run view, tape
 > upload into a managed workspace, and the archive view. The three jobs
 > (glossary collection, transcript check, minutes) are the **harness's** work:
-> it reads the transcript over MCP and writes what it produced as a draft with
-> the author identity it declares, and a human accepts or rejects it
+> it reads the transcript over MCP and writes what it produced as a draft, whose
+> recorded author is the **actor its transport supplies** — `mcp` for the stdio
+> adapter, which is the only surface that writes a version, never a name a caller
+> declares (ADR-0033) — and a human accepts or rejects it
 > (ADR-0031). clear-record itself calls no model and holds no model credential.
 > The setup path's hello-world acceptance test proves tape → transcription →
 > transcript, localizing a failure to a leg (`tts`, `backend`, `model`,

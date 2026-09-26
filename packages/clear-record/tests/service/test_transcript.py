@@ -22,10 +22,18 @@ def _registry(tmp_path: Path) -> Registry:
 
 def _meeting(tmp_path: Path):
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     return registry, meeting, workspace
 
 
@@ -161,8 +169,15 @@ def test_no_transcript_is_actionable(tmp_path: Path) -> None:
 
 def test_no_workspace_is_actionable(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     with pytest.raises(FileNotFoundError, match="no workspace"):
         read_transcript(meeting)
 

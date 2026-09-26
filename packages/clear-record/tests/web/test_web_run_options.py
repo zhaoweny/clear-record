@@ -41,13 +41,22 @@ def _console(tmp_path) -> tuple[TestClient, Registry, int]:
     that to timing. These tests are about the read.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     manager = RunManager(registry, start_queue=False)
     client = TestClient(

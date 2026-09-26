@@ -30,13 +30,25 @@ def _registry(tmp_path) -> Registry:
 
 
 def _meeting_with_tapes(registry: Registry, tmp_path):
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     return meeting
 
 
@@ -245,7 +257,7 @@ def test_run_lifecycle_is_logged(tmp_path) -> None:
     meeting = _meeting_with_tapes(registry, tmp_path)
 
     manager = RunManager(registry, pipeline=lambda *args: None)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     events = [json.loads(line) for line in read_recent(100)]
@@ -264,7 +276,7 @@ def test_a_failing_run_logs_the_reason(tmp_path) -> None:
         raise RuntimeError("backend exploded")
 
     manager = RunManager(registry, pipeline=boom)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     failures = [json.loads(line) for line in read_recent(100) if '"run.failed"' in line]
@@ -274,14 +286,22 @@ def test_a_failing_run_logs_the_reason(tmp_path) -> None:
 
 def test_a_refused_start_is_logged(tmp_path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    meeting = registry.create_meeting("ops", "Empty", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Empty",
+        workspace_path=str(workspace),
+        actor="console",
+    )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
     with pytest.raises(ValueError):
-        manager.start(meeting, origin="console")
+        manager.start(meeting, origin="console", actor="console")
 
     events = [json.loads(line)["event"] for line in read_recent(100)]
     assert "run.refused" in events
@@ -293,8 +313,17 @@ def test_startup_reconciliation_is_logged(tmp_path) -> None:
 
     registry = _registry(tmp_path)
     meeting = _meeting_with_tapes(registry, tmp_path)
-    orphan = registry.create_run(meeting.id, backend="apple")
-    registry.update_run(orphan.id, status="running", started_at="now")
+    orphan = registry.create_run(
+        meeting.id,
+        backend="apple",
+        actor="console",
+    )
+    registry.update_run(
+        orphan.id,
+        status="running",
+        started_at="now",
+        actor="console",
+    )
 
     RunManager(registry, pipeline=lambda *args: None)
 

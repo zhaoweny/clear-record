@@ -1,11 +1,11 @@
 """The MCP draft tools: write, read, accept, reject, over the real client.
 
 The adapter is thin, so these assert exactly that: the five tools exist, a write
-returns the chain's structured value with the author it declared, a new version
-goes on the same chain, an acceptance returns the promotion's outcome and records
-who decided it, and a bad kind or unknown draft comes back as an actionable
-``is_error`` rather than a crash. No model, endpoint or key is involved
-(ADR-0031): the harness writes, the app stores.
+returns the chain's structured value with the actor this transport recorded, a
+new version goes on the same chain, an acceptance returns the promotion's outcome
+and records who decided it, and a bad kind or unknown draft comes back as an
+actionable ``is_error`` rather than a crash. No model, endpoint or key is
+involved (ADR-0031): the harness writes, the app stores.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from clear_record.mcp.server import TOOL_NAMES, build_server
-from clear_record.service import Registry
+from clear_record.service import MCP, Registry
 from mcp_client import error_text as _error
 from mcp_client import names as _names
 from mcp_client import payload as _payload
@@ -47,10 +47,18 @@ _ANSWERS: dict[str, dict] = {
 
 def _registry(tmp_path: Path) -> Registry:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     return registry
 
 
@@ -58,13 +66,12 @@ def _server(tmp_path: Path):
     return build_server(_registry(tmp_path))
 
 
-def _write(server, kind: str, *, author: str = "pi-agent", draft_id=None):
+def _write(server, kind: str, *, draft_id=None):
     arguments = {
         "project": "ops",
         "meeting": "kickoff",
         "kind": kind,
         "value": _ANSWERS[kind],
-        "author": author,
     }
     if draft_id is not None:
         arguments["draft_id"] = draft_id
@@ -106,7 +113,7 @@ def test_write_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
     written = _write(server, "glossary_collection")
     assert written["review_state"] == "draft"
     assert written["value"]["terms"][0]["term"] == "Falcon"
-    assert written["provenance"]["author"] == "pi-agent"
+    assert written["provenance"]["author"] == MCP
     draft_id = written["draft_id"]
 
     read = _payload(
@@ -115,7 +122,7 @@ def test_write_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
         {"project": "ops", "meeting": "kickoff", "draft_id": draft_id},
     )
     assert read["value"] == written["value"]
-    assert read["provenance"]["author"] == "pi-agent"
+    assert read["provenance"]["author"] == MCP
     assert read["versions"] == written["versions"]
 
     accepted = _payload(
@@ -126,28 +133,26 @@ def test_write_read_accept_round_trips_a_draft(tmp_path: Path) -> None:
             "meeting": "kickoff",
             "draft_id": draft_id,
             "version": written["version"],
-            "author": "human:owner",
         },
     )
     assert accepted["review_state"] == "accepted"
     assert accepted["promotion"]["summary"]["added"] == ["Falcon"]
-    # Who wrote it and who decided it are both on the chain.
-    assert accepted["versions"][0]["author"] == "pi-agent"
-    assert accepted["versions"][0]["reviewed_by"] == "human:owner"
+    # Who wrote it and who decided it are both on the chain — the same actor, the
+    # adapter's, because both tools were called over this transport and neither
+    # takes an identity from its caller (ADR-0033).
+    assert accepted["versions"][0]["author"] == MCP
+    assert accepted["versions"][0]["reviewed_by"] == MCP
 
 
-def test_a_second_write_appends_a_version_with_its_own_author(
+def test_a_second_write_appends_a_version_recorded_against_its_writer(
     tmp_path: Path,
 ) -> None:
     server = _server(tmp_path)
     first = _write(server, "minutes")
 
-    second = _write(server, "minutes", author="other-agent", draft_id=first["draft_id"])
+    second = _write(server, "minutes", draft_id=first["draft_id"])
 
-    assert [version["author"] for version in second["versions"]] == [
-        "pi-agent",
-        "other-agent",
-    ]
+    assert [version["author"] for version in second["versions"]] == [MCP, MCP]
     # A new version puts the draft back in review.
     assert second["review_state"] == "draft"
     listing = _payload(
@@ -188,12 +193,11 @@ def test_rejecting_a_draft_keeps_it(tmp_path: Path) -> None:
             "meeting": "kickoff",
             "draft_id": written["draft_id"],
             "version": written["version"],
-            "author": "human:owner",
         },
     )
     assert rejected["review_state"] == "rejected"
     assert rejected["promotion"] is None
-    assert rejected["versions"][-1]["reviewed_by"] == "human:owner"
+    assert rejected["versions"][-1]["reviewed_by"] == MCP
 
 
 def test_the_decision_tools_require_the_version_they_decide(tmp_path: Path) -> None:
@@ -235,7 +239,6 @@ def test_a_payload_that_cannot_be_its_kind_is_refused_over_mcp(
             "meeting": "kickoff",
             "kind": "minutes",
             "value": {},
-            "author": "pi-agent",
         },
     )
 
@@ -251,7 +254,7 @@ def test_a_decision_naming_a_stale_version_is_refused_over_mcp(
 ) -> None:
     server = _server(tmp_path)
     first = _write(server, "minutes")
-    _write(server, "minutes", author="other-agent", draft_id=first["draft_id"])
+    _write(server, "minutes", draft_id=first["draft_id"])
 
     text = _error(
         server,
@@ -276,7 +279,7 @@ def test_a_decision_naming_a_stale_version_is_refused_over_mcp(
         },
     )
     assert accepted["review_state"] == "accepted"
-    assert accepted["versions"][1]["reviewed_by"] == "human"
+    assert accepted["versions"][1]["reviewed_by"] == MCP
 
 
 def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
@@ -291,7 +294,6 @@ def test_an_unknown_kind_and_an_unknown_draft_are_actionable_errors(
             "meeting": "kickoff",
             "kind": "summarize",
             "value": {},
-            "author": "pi-agent",
         },
     )
     # The service's own message carries the kind and the known kinds; the

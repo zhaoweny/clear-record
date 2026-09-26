@@ -23,7 +23,8 @@ The stories, in order, each reported:
    read to be there. Needs no key.
 2. **Scripted drafts** — write one draft version per job with
    ``write_agent_draft``, then append a second version to one chain, and assert
-   the chain reports both versions with their authors. Needs no key.
+   the chain reports both versions, each recorded against the adapter's actor
+   (``mcp``: the three draft tools take no author — ADR-0033). Needs no key.
 3. **Review** — accept one draft and reject another over MCP, and assert the
    acceptance produced its artifact while the rejected chain is kept. Needs no
    key.
@@ -120,11 +121,17 @@ DRAFT_KINDS: tuple[str, ...] = ("glossary_collection", "transcript_check", "minu
 #: that carries it (or is empty), so --data-dir can never quietly eat data.
 SEED_MARKER = ".agent-drive-seed"
 
-#: The author identities the drive declares. The scripted stories use one name
-#: and the model leg another, so a chain written by both shows two authors.
-SCRIPTED_AUTHOR = "agent-drive/scripted"
-MODEL_AUTHOR = "agent-drive/model"
-HUMAN_AUTHOR = "human:agent-drive"
+#: The actor every draft operation in this drive is recorded against: the word
+#: ADR-0033 has the stdio adapter supply for itself. The drive speaks to the
+#: server as an external client does, so it pins the *wire* value here rather
+#: than importing the service's constant — and there is nothing else it could
+#: send: a draft's author is the transport's actor, and the three draft tools
+#: take no author parameter.
+DRIVE_ACTOR = "mcp"
+
+#: What the drive's own **seeding** is recorded against: the drive is a command
+#: line script, and ``cli`` is the word the service records for that surface.
+DRIVE_CLI = "cli"
 
 #: sk-shaped tokens, masked even if a value the redactor was not told about
 #: reaches the output through a traceback or an endpoint echo.
@@ -431,23 +438,30 @@ def seed(registry: Registry, workspace_root: Path):
     """Seed one project, its glossary and one meeting with a real transcript.
 
     The registry is the e2e seed pattern: the service layer writes the same rows
-    the console reads, so the drive cannot drift from the app own schema.
+    the console reads, so the drive cannot drift from the app own schema. These
+    writes are the **command line's** — this script is one — and each carries
+    ``actor="cli"``, the word the service records for that surface (ADR-0033).
     """
     project = registry.create_project(
-        "Agent drive", notes="Throwaway project for the agent test-drive."
+        "Agent drive",
+        notes="Throwaway project for the agent test-drive.",
+        actor=DRIVE_CLI,
     )
     for term, reading, aliases, definition, status in SEED_TERMS:
         registry.add_term(
             project.slug,
             term,
+            actor=DRIVE_CLI,
             reading=reading,
             aliases=aliases,
             definition=definition,
             status=status,
         )
-    meeting = registry.create_meeting(project.slug, "Kickoff")
+    meeting = registry.create_meeting(project.slug, "Kickoff", actor=DRIVE_CLI)
     meeting = registry.set_meeting_workspace(
-        meeting.id, str(workspace_path_for(workspace_root, meeting))
+        meeting.id,
+        str(workspace_path_for(workspace_root, meeting)),
+        actor=DRIVE_CLI,
     )
     workspace = Path(meeting.workspace_path)
     workspace.mkdir(parents=True, exist_ok=True)
@@ -547,7 +561,11 @@ def drive_tape(
 
     digest = hashlib.sha256(tape.read_bytes()).hexdigest()
     registry.register_tape(
-        meeting.id, path=str(tape), sha256=digest, bytes=tape.stat().st_size
+        meeting.id,
+        path=str(tape),
+        sha256=digest,
+        bytes=tape.stat().st_size,
+        actor=DRIVE_CLI,
     )
 
     workspace = Path(meeting.workspace_path)
@@ -674,9 +692,11 @@ async def _story_scripted(
 ) -> dict[str, str]:
     """Story 2: write one draft version per job, then extend one chain.
 
-    Returns the draft id per kind. The second version on the glossary chain is
-    the provenance proof: the chain must report two authors and be back in
-    review, because a new version re-opens a decided draft.
+    Returns the draft id per kind. Every version is recorded against ``mcp`` —
+    the adapter's actor, the only identity a write over this transport can have
+    (ADR-0033) — and the second version on the glossary chain is the proof that a
+    chain takes one: two versions, both the adapter's, and a draft whose newest
+    version is pending again.
     """
     values = _scripted_values(project, meeting)
     drafts: dict[str, str] = {}
@@ -689,7 +709,6 @@ async def _story_scripted(
                 "meeting": meeting,
                 "kind": kind,
                 "value": values[kind],
-                "author": SCRIPTED_AUTHOR,
             },
         )
         payload = _payload(result)
@@ -698,11 +717,12 @@ async def _story_scripted(
             continue
         drafts[kind] = str(payload["draft_id"])
         versions = payload.get("versions") or []
-        author = (versions[-1] or {}).get("author") if versions else None
+        actor = (versions[-1] or {}).get("author") if versions else None
         report.add(
             f"2 draft {kind}",
             "PASS",
-            f"draft {payload['draft_id']} ({payload.get('review_state')}) author={author}",
+            f"draft {payload['draft_id']} ({payload.get('review_state')}) "
+            f"actor={actor}",
         )
 
     if "glossary_collection" in drafts:
@@ -714,24 +734,23 @@ async def _story_scripted(
                 "meeting": meeting,
                 "kind": "glossary_collection",
                 "value": values["glossary_collection"],
-                "author": MODEL_AUTHOR,
                 "draft_id": drafts["glossary_collection"],
             },
         )
         payload = _payload(result) or {}
         versions = payload.get("versions") or []
-        authors = [entry.get("author") for entry in versions]
-        if len(versions) == 2 and authors == [SCRIPTED_AUTHOR, MODEL_AUTHOR]:
+        actors = [entry.get("author") for entry in versions]
+        if len(versions) == 2 and actors == [DRIVE_ACTOR, DRIVE_ACTOR]:
             report.add(
                 "2 chain",
                 "PASS",
-                f"2 versions on one chain with authors {authors}",
+                f"2 versions on one chain, both recorded against {DRIVE_ACTOR}",
             )
         else:
             report.add(
                 "2 chain",
                 "FAIL",
-                f"expected 2 versions by both authors, got {authors}",
+                f"expected 2 versions against {DRIVE_ACTOR!r}, got {actors}",
             )
     return drafts
 
@@ -753,9 +772,11 @@ async def _draft_version(session, project: str, meeting: str, draft_id: str) -> 
 async def _story_review(
     session, project: str, meeting: str, drafts: dict[str, str], report: Report
 ) -> tuple[bool, str]:
-    """Story 3: a human accepts one draft over MCP and rejects another.
+    """Story 3: this client accepts one draft over MCP and rejects another.
 
     Returns whether an acceptance produced its artifact, and which kind it was.
+    The decision is recorded against the adapter's actor, as the write was — the
+    tools take no identity from their caller (ADR-0033).
     """
     target = drafts.get("minutes") or drafts.get("transcript_check")
     if target is None:
@@ -771,7 +792,6 @@ async def _story_review(
             "meeting": meeting,
             "draft_id": target,
             "version": version,
-            "author": HUMAN_AUTHOR,
         },
     )
     payload = _payload(result) or {}
@@ -780,14 +800,14 @@ async def _story_review(
     decided = versions[-1] if versions else {}
     if (
         payload.get("review_state") == "accepted"
-        and decided.get("reviewed_by") == HUMAN_AUTHOR
+        and decided.get("reviewed_by") == DRIVE_ACTOR
     ):
         summary = promotion.get("summary") or {}
         artifact = summary.get("artifact_id")
         report.add(
             "3 accept",
             "PASS",
-            f"accepted the {kind} draft by {HUMAN_AUTHOR}; "
+            f"accepted the {kind} draft as {DRIVE_ACTOR}; "
             f"promotion artifact={artifact or '(none)'}",
         )
         ok = artifact is not None
@@ -811,7 +831,6 @@ async def _story_review(
                 "meeting": meeting,
                 "draft_id": reject,
                 "version": version,
-                "author": HUMAN_AUTHOR,
             },
         )
         payload = _payload(result) or {}
@@ -819,9 +838,9 @@ async def _story_review(
         decided = versions[-1] if versions else {}
         if (
             payload.get("review_state") == "rejected"
-            and decided.get("reviewed_by") == HUMAN_AUTHOR
+            and decided.get("reviewed_by") == DRIVE_ACTOR
         ):
-            report.add("3 reject", "PASS", f"rejected draft {reject} by {HUMAN_AUTHOR}")
+            report.add("3 reject", "PASS", f"rejected draft {reject} as {DRIVE_ACTOR}")
         else:
             report.add(
                 "3 reject",
@@ -860,9 +879,9 @@ def _chat_completion(
 MODEL_SYSTEM = (
     "You are an MCP client agent with access to the clear-record tools. Call "
     "read_transcript for the meeting you are given, then write the candidate "
-    "glossary terms you found with write_agent_draft (kind='glossary_collection', "
-    "author='agent-drive/model'). Do not invent anything the transcript does not "
-    "say."
+    "glossary terms you found with write_agent_draft "
+    "(kind='glossary_collection'). Do not invent anything the transcript does "
+    "not say."
 )
 MODEL_QUESTION = (
     "Read this meeting's transcript and propose the glossary terms it needs."

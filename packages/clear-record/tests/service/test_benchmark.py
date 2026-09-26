@@ -103,10 +103,16 @@ def _seed(
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
     registry = registry or Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = _workspace(tmp_path, memory=memory)
     meeting = registry.create_meeting(
-        "ops", "Kickoff", workspace_path=str(workspace.root)
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace.root),
+        actor="console",
     )
     run = registry.create_run(
         meeting.id,
@@ -114,9 +120,15 @@ def _seed(
         model="small",
         language="en",
         options=meta or {},
+        actor="console",
     )
     if cost is not None:
-        registry.update_run(run.id, status="done", progress={"cost": cost})
+        registry.update_run(
+            run.id,
+            status="done",
+            progress={"cost": cost},
+            actor="console",
+        )
     return registry, registry.get_run(run.id), workspace
 
 
@@ -288,27 +300,45 @@ def test_a_later_run_does_not_erase_an_earlier_runs_memory(tmp_path) -> None:
     peak from its own cost record.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     first_workspace = _workspace(tmp_path)
     meeting = registry.create_meeting(
-        "ops", "Kickoff", workspace_path=str(first_workspace.root)
+        "ops",
+        "Kickoff",
+        workspace_path=str(first_workspace.root),
+        actor="console",
     )
-    first = registry.create_run(meeting.id, backend="apple", model="small")
+    first = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        actor="console",
+    )
     registry.update_run(
         first.id,
         status="done",
         progress={"cost": {**COST, "peak_rss_bytes": 512 * 1024 * 1024}},
+        actor="console",
     )
     reason = "no decoder worker ran: every chunk was reused from the cache"
     # The re-run overwrites segments.json with its own (unknown) measurement.
     first_workspace.write_segments(
         {"a": []}, {"sources": {}, "peak_rss_bytes": None, "peak_rss_reason": reason}
     )
-    second = registry.create_run(meeting.id, backend="apple", model="small")
+    second = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        actor="console",
+    )
     registry.update_run(
         second.id,
         status="done",
         progress={"cost": {**COST, "peak_rss_reason": reason}},
+        actor="console",
     )
 
     first_axes = run_axes(
@@ -395,21 +425,36 @@ def test_a_fake_backend_run_yields_every_axis(tmp_path, monkeypatch) -> None:
     the memory axis must say so with a reason rather than report a zero.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     directory = tmp_path / "rec"
     directory.mkdir()
     sr = 8000
     tone = np.arange(6 * sr, dtype=np.float64) / sr
     wav = directory / "a.wav"
     sf.write(str(wav), (0.4 * np.sin(2 * np.pi * 220.0 * tone)).astype(np.float32), sr)
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(directory))
-    registry.set_recording_set(meeting.id, [str(wav)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(directory),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(wav)],
+        actor="console",
+    )
     monkeypatch.setattr(stages, "get_backend", lambda _id: _FakeBackend())
 
     manager = RunManager(registry)
     try:
         run = manager.start(
-            meeting, PipelineOptions(backend="fake", jobs=1), origin="console"
+            meeting,
+            PipelineOptions(backend="fake", jobs=1),
+            origin="console",
+            actor="console",
         )
         state = manager.wait(run.id, timeout=120)
     finally:

@@ -64,6 +64,7 @@ from clear_record.core import (
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
+from clear_record.service import audit
 from clear_record.service.diagnostics import machine_description
 from clear_record.service.glossary import (
     CONFIRMED,
@@ -80,6 +81,7 @@ from clear_record.service.lifecycle import (
     FINISH,
     INTERRUPT,
     INTERRUPTED,
+    QUEUE,
     QUEUED,
     RESTART_REASON,
     RUN_IN_FLIGHT,
@@ -145,7 +147,7 @@ class RunChannel:
         if self._signal.is_set():
             raise RunCancelled("the run was cancelled")
         with self._events_lock:
-            self._registry.add_run_event(self._run_id, event)
+            self._registry.add_run_event(self._run_id, event, actor=QUEUE)
 
 
 #: The pipeline stages, in declared order: a run's cost record times each one
@@ -551,7 +553,7 @@ NO_INPUTS_LEFT_BY_DECLARATION = deferred(
 )
 
 
-def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
+def workspace_run_meeting(registry: Registry, directory: str, *, actor: str) -> Meeting:
     """The meeting a run over workspace *directory* is a run of, tapes and all.
 
     A run command's subject is a workspace **directory** (``clear-record run
@@ -611,10 +613,10 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
         raise ValueError(CANNOT_READ_DECLARATION) from exc
     if not kept and any(is_audio(path) for path in walked_past):
         raise ValueError(NO_INPUTS_LEFT_BY_DECLARATION)
-    meeting = registry.meeting_for_workspace(directory)
+    meeting = registry.meeting_for_workspace(directory, actor=actor)
     tapes = [str(path) for path in kept]
     if tapes:
-        registry.set_recording_set(meeting.id, tapes)
+        registry.set_recording_set(meeting.id, tapes, actor=actor)
     return meeting
 
 
@@ -878,6 +880,7 @@ class RunManager:
             # complete are still in its persisted event stream.
             reaped = self._registry.interrupt_run(
                 run.id,
+                actor=QUEUE,
                 observed=run,
                 ended_at=ended_at,
                 # The row's ``error`` carries the message **ID**, not a rendered
@@ -905,7 +908,9 @@ class RunManager:
                 continue
             meeting = self._registry.meeting_by_id(run.meeting_id)
             if meeting is not None and meeting.status == "running":
-                self._registry.set_meeting_status(run.meeting_id, "interrupted")
+                self._registry.set_meeting_status(
+                    run.meeting_id, "interrupted", actor=QUEUE
+                )
             log_event(
                 "warning",
                 "runs",
@@ -1029,6 +1034,7 @@ class RunManager:
         *,
         auto: dict | None = None,
         origin: str,
+        actor: str,
         resumes: int | None = None,
     ) -> PipelineRun:
         """Enqueue a run at the back of the node's FIFO and return its row.
@@ -1041,10 +1047,19 @@ class RunManager:
         raises for a known active run — but a *different* meeting now waits
         honestly instead of fighting for the one GPU.
 
-        ``origin`` says which surface started it, one of :data:`RUN_ORIGINS`
+        ``origin`` says which surface **started** it, one of :data:`RUN_ORIGINS`
         (RUN-02). It is required — a start path that does not name itself would
         record a run whose provenance nobody can trust — and recorded with the
-        row, so it survives the restart that ends this process.
+        row, so it survives the restart that ends this process. ``actor`` is a
+        **different thing** and is required beside it: the transport that called
+        the service, which is what the run's enqueue is recorded against in the
+        audit record (ADR-0033). The two are separate on purpose. ``origin`` is
+        the surface the *run* is attributable to and a run request may name it —
+        the command line asks the node for a run whose ``origin`` is ``cli`` —
+        while the actor is the transport that carried the request, which for that
+        same command is the node's API. Copying one into the other would let a
+        client write itself into the audit record by filling in a body field,
+        which is the hole the actor argument exists to close.
 
         ``resumes`` names the run this one continues (RUN-04). The link is
         recorded with the row and checked by the registry (same meeting, run
@@ -1059,27 +1074,38 @@ class RunManager:
         """
         if origin not in RUN_ORIGINS:
             raise ValueError(f"origin must be one of {RUN_ORIGINS}, got {origin!r}")
-        if not meeting.workspace_path:
-            self._refuse(meeting, "meeting has no workspace path")
-            raise ValueError(
-                deferred("meeting has no workspace path; set one before running")
-            )
-        tape_set = self._registry.latest_recording_set(meeting.id)
-        if tape_set is None:
-            self._refuse(meeting, "meeting has no tape set")
-            raise ValueError(
-                deferred("meeting has no tape set; select tapes before running")
-            )
-        if self._registry.active_run_for_meeting(meeting.id) is not None:
-            self._active_run_refusal(meeting)
+        with audit.refused_call(
+            self._registry,
+            actor,
+            "run.enqueue",
+            f"meeting:{meeting.id}",
+            refusals=(ValueError,),
+        ):
+            # The guards this call owns: no workspace, no tape set, a run already
+            # in flight. Each is a policy answer, so each leaves a ``failed`` row
+            # (ADR-0033); a registry error is not one and passes through as it is.
+            if not meeting.workspace_path:
+                self._refuse(meeting, "meeting has no workspace path")
+                raise ValueError(
+                    deferred("meeting has no workspace path; set one before running")
+                )
+            tape_set = self._registry.latest_recording_set(meeting.id)
+            if tape_set is None:
+                self._refuse(meeting, "meeting has no tape set")
+                raise ValueError(
+                    deferred("meeting has no tape set; select tapes before running")
+                )
+            if self._registry.active_run_for_meeting(meeting.id) is not None:
+                self._active_run_refusal(meeting)
 
-        options = dataclasses.replace(
-            options or PipelineOptions(), audio_files=tuple(tape_set.paths)
-        )
-        options, run_meta = self._resolve_glossary(meeting, options)
+            options = dataclasses.replace(
+                options or PipelineOptions(), audio_files=tuple(tape_set.paths)
+            )
+            options, run_meta = self._resolve_glossary(meeting, options)
         try:
             run = self._registry.create_run(
                 meeting.id,
+                actor=actor,
                 backend=options.backend,
                 model=options.model,
                 language=options.language,
@@ -1123,7 +1149,7 @@ class RunManager:
         return run
 
     # --- cancel and resume (RUN-04) ----------------------------------------- #
-    def cancel(self, run_id: int) -> PipelineRun:
+    def cancel(self, run_id: int, *, actor: str) -> PipelineRun:
         """Cancel a queued or running run, and return its row as it now stands.
 
         Two different acts, chosen by where the run actually is:
@@ -1147,6 +1173,10 @@ class RunManager:
         Cancelling a run that is already terminal is a no-op (a second click, a
         stale page): the row is returned unchanged. ``KeyError`` for an unknown
         run, so each caller owns its 404.
+
+        ``actor`` is the surface that asked for the cancel, and it is what the
+        move is recorded against in the audit record (ADR-0033): the one that
+        stops a queued run and the one that records the request both carry it.
         """
         run = self._registry.get_run(run_id)
         if run is None:
@@ -1158,6 +1188,7 @@ class RunManager:
             ended_at = _now()
             stopped = self._registry.stop_run(
                 run_id,
+                actor=actor,
                 ended_at=ended_at,
                 progress=self._progress(run_id, STOP_QUEUED.target, ended_at=ended_at),
             )
@@ -1171,7 +1202,9 @@ class RunManager:
                 if meeting is not None and meeting.status == "running":
                     # A cancel before the run started leaves the meeting runnable,
                     # not recorded and not failed.
-                    self._registry.set_meeting_status(run.meeting_id, "ready")
+                    self._registry.set_meeting_status(
+                        run.meeting_id, "ready", actor=actor
+                    )
                 log_event(
                     "info",
                     "runs",
@@ -1189,7 +1222,7 @@ class RunManager:
             if current.status != RUNNING:
                 return current
 
-        requested = self._registry.request_cancel(run_id)
+        requested = self._registry.request_cancel(run_id, actor=actor)
         if requested is None:
             # Terminal between the read and the write: report what it is now.
             current = self._registry.get_run(run_id)
@@ -1207,7 +1240,7 @@ class RunManager:
         )
         return requested
 
-    def resume(self, run_id: int, *, origin: str) -> PipelineRun:
+    def resume(self, run_id: int, *, origin: str, actor: str) -> PipelineRun:
         """Start a new run that continues ``run_id``, re-using its chunk cache.
 
         The previous run's **own resolved options** are what it continues with:
@@ -1215,6 +1248,11 @@ class RunManager:
         plan, so resuming with the same ones is exactly what makes the cached
         chunks reusable. ``resume`` is forced on — a resume that re-decoded
         everything would be a plain re-run wearing the name.
+
+        ``origin`` and ``actor`` are :meth:`start`'s two words with the same
+        division of labour: the new run records the surface that asked, and this
+        call — including its own refusals — is recorded against the transport
+        (ADR-0033).
 
         Only a terminal run can be resumed (a live one is cancelled first), and
         its options must be on the row: a run old enough to predate them cannot be
@@ -1224,21 +1262,30 @@ class RunManager:
         previous = self._registry.get_run(run_id)
         if previous is None:
             raise KeyError(run_id)
-        if previous.status in ACTIVE_RUN_STATUSES:
-            # Placeholder-free, like the service's other refusals: the console
-            # renders the message it is given, and the user is looking at the run.
-            raise ValueError(deferred("this run is still in flight; cancel it first"))
-        options = self._options_from_row(previous)
-        if options is None:
-            raise ValueError(
-                deferred(
-                    "this run did not record the options it ran with, "
-                    "so it cannot be resumed"
+        with audit.refused_call(
+            self._registry,
+            actor,
+            "run.resume",
+            f"run:{run_id}",
+            refusals=(ValueError,),
+        ):
+            if previous.status in ACTIVE_RUN_STATUSES:
+                # Placeholder-free, like the service's other refusals: the console
+                # renders the message it is given, and the user is looking at the run.
+                raise ValueError(
+                    deferred("this run is still in flight; cancel it first")
                 )
-            )
-        meeting = self._registry.meeting_by_id(previous.meeting_id)
-        if meeting is None:
-            raise ValueError(deferred("the run's meeting no longer exists"))
+            options = self._options_from_row(previous)
+            if options is None:
+                raise ValueError(
+                    deferred(
+                        "this run did not record the options it ran with, "
+                        "so it cannot be resumed"
+                    )
+                )
+            meeting = self._registry.meeting_by_id(previous.meeting_id)
+            if meeting is None:
+                raise ValueError(deferred("the run's meeting no longer exists"))
         run = self.start(
             meeting,
             # The scope is *this* run's assertion about which chunks may be
@@ -1248,6 +1295,7 @@ class RunManager:
                 options, resume=True, rerun_sources=None, rerun_range=None
             ),
             origin=origin,
+            actor=actor,
             resumes=previous.id,
         )
         log_event(
@@ -1452,7 +1500,7 @@ class RunManager:
 
     def _execute_run(self, run: PipelineRun) -> None:
         try:
-            claimed = self._registry.claim_run(run.id, owner=self._owner)
+            claimed = self._registry.claim_run(run.id, actor=QUEUE, owner=self._owner)
         except (SQLAlchemyError, MalformedRunOptions) as exc:
             # The claim is one statement, and either way it failed this pass:
             # the database would not take it (a locked registry, a disk error) or
@@ -1518,6 +1566,7 @@ class RunManager:
                 ended_at = _now()
                 self._registry.update_run(
                     run.id,
+                    actor=QUEUE,
                     status=FAIL.target,
                     ended_at=ended_at,
                     error=error,
@@ -1527,7 +1576,7 @@ class RunManager:
                 )
                 # The pipeline's own failure path sets this; a failure raised
                 # around that path must not leave the meeting "running".
-                self._registry.set_meeting_status(run.meeting_id, "failed")
+                self._registry.set_meeting_status(run.meeting_id, "failed", actor=QUEUE)
             except Exception:  # noqa: BLE001 - the registry is the last resort
                 pass
             log_event(
@@ -1584,7 +1633,10 @@ class RunManager:
                     # looks dead 30 s later and its meeting and the node are freed.
                     # The registry raises SQLAlchemy's errors (ADR-0030), which
                     # wrap the driver's own.
-                    landed = self._registry.heartbeat_run(run_id)
+                    landed = self._registry.heartbeat_run(
+                        run_id,
+                        actor=QUEUE,
+                    )
                     asked_to_stop = landed and self._registry.cancel_requested(run_id)
                     reaped = not landed and self._was_reaped(run_id)
                 except (SQLAlchemyError, MalformedRunOptions) as exc:
@@ -1709,7 +1761,7 @@ class RunManager:
         # The row is already ``running``: the claim wrote that status, its
         # ``started_at`` and its first heartbeat in one conditional update. A
         # second write here would be a second, unconditional source of truth.
-        self._registry.set_meeting_status(meeting.id, "running")
+        self._registry.set_meeting_status(meeting.id, "running", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1764,12 +1816,13 @@ class RunManager:
             ended_at = _now()
             self._registry.update_run(
                 run.id,
+                actor=QUEUE,
                 status=FAIL.target,
                 ended_at=ended_at,
                 error=error,
                 progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
             )
-            self._registry.set_meeting_status(meeting.id, "failed")
+            self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
             log_event(
                 "error",
                 "runs",
@@ -1796,11 +1849,12 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=FINISH.target,
             ended_at=ended_at,
             progress=self._progress(run.id, FINISH.target, ended_at=ended_at),
         )
-        self._registry.set_meeting_status(meeting.id, "recorded")
+        self._registry.set_meeting_status(meeting.id, "recorded", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1839,6 +1893,7 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=STOP_RUNNING.target,
             ended_at=ended_at,
             error=error,
@@ -1846,7 +1901,7 @@ class RunManager:
                 run.id, STOP_RUNNING.target, error, ended_at=ended_at
             ),
         )
-        self._registry.set_meeting_status(meeting.id, "ready")
+        self._registry.set_meeting_status(meeting.id, "ready", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1886,7 +1941,7 @@ class RunManager:
             return False
         error = str(exc)
         try:
-            moved = self._registry.fail_unreadable_run(run_id, error=error)
+            moved = self._registry.fail_unreadable_run(run_id, actor=QUEUE, error=error)
             if not moved:
                 # The row is not this build's to fail any more, so there is no
                 # failure to record on it, on its meeting or in a notification:
@@ -1899,7 +1954,7 @@ class RunManager:
                 else None
             )
             if meeting is not None:
-                self._registry.set_meeting_status(meeting.id, "failed")
+                self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
                 self._webhooks.emit(
                     FAIL.event,
                     project_id=meeting.project_id,
@@ -1966,13 +2021,14 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=FAIL.target,
             ended_at=ended_at,
             error=error,
             progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
         )
         if meeting is not None:
-            self._registry.set_meeting_status(meeting.id, "failed")
+            self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
             self._webhooks.emit(
                 FAIL.event,
                 project_id=meeting.project_id,
@@ -2119,6 +2175,7 @@ class RunManager:
                 digest = None
             self._registry.add_artifact(
                 meeting.id,
+                actor=QUEUE,
                 run_id=run_id,
                 kind=kind,
                 path=str(path),

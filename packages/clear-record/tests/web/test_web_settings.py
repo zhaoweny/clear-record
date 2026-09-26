@@ -244,9 +244,16 @@ def test_the_storage_section_shows_the_managed_root_and_archive_roots(tmp_path) 
 
 def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
-    meeting = managed.ensure_managed_workspace(registry, meeting)
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    meeting = managed.ensure_managed_workspace(registry, meeting, actor="console")
     client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
 
     page = client.get("/settings/storage").text
@@ -331,16 +338,29 @@ def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> N
         create_app(registry, runs=manager, trusted_hosts=("testserver",))
     )
 
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
         origin="mcp",
+        actor="console",
     )
     try:
         for _ in range(1000):

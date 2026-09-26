@@ -105,11 +105,21 @@ def _meeting_with_a_workspace(remote: SimpleNamespace, workspace: Path):
     about), so the subject of the run is arranged through the registry directly,
     the way the console's own in-process flow leaves it.
     """
-    remote.registry.create_project("Ops")
-    meeting = remote.registry.create_meeting(
-        "ops", "Kickoff", workspace_path=str(workspace)
+    remote.registry.create_project(
+        "Ops",
+        actor="console",
     )
-    remote.registry.set_recording_set(meeting.id, [str(workspace / "a.wav")])
+    meeting = remote.registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
+    remote.registry.set_recording_set(
+        meeting.id,
+        [str(workspace / "a.wav")],
+        actor="console",
+    )
     return meeting
 
 
@@ -176,7 +186,10 @@ def test_a_blank_directory_is_refused_not_run(local) -> None:
     on a blank name). The edge refuses it before anything is resolved, so a
     refused request registers no meeting.
     """
-    local.registry.create_project("Ops")
+    local.registry.create_project(
+        "Ops",
+        actor="console",
+    )
 
     for blank in ("", "   "):
         refused = local.client.post("/api/runs", json={"directory": blank})
@@ -416,9 +429,15 @@ def test_a_non_local_client_runs_a_registry_meeting_the_way_it_always_did(
 def test_a_model_named_as_a_path_is_refused_on_both_run_edges(local, tmp_path) -> None:
     """A model is addressed neither by path nor by id: it is already on the node."""
     workspace = _workspace(tmp_path)
-    local.registry.create_project("Ops")
+    local.registry.create_project(
+        "Ops",
+        actor="console",
+    )
     meeting = local.registry.create_meeting(
-        "ops", "Kickoff", workspace_path=str(workspace)
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
     )
     meetings_before = len(local.registry.list_meetings())
 

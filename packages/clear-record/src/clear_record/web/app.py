@@ -56,7 +56,9 @@ from clear_record.core import i18n
 from clear_record.core import node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
 from clear_record.service import (
+    API,
     BUNDLE_FILENAME,
+    CONSOLE,
     RUN_IN_FLIGHT,
     AgentDraftsOut,
     ArchiveOut,
@@ -744,14 +746,17 @@ async def _receive_tape(
     *,
     declared: int | None,
     upload_id: str | None,
+    actor: str,
 ) -> Tape:
     """Read one multipart tape body and store it, for both upload surfaces.
 
     The form parse, the ``file`` part check and the threadpool
     :func:`managed.upload_tape` call are identical on the HTML and JSON routes;
-    only how a refusal is presented differs. A malformed body or a missing
-    ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
-    so each caller maps it to its own shape (a re-render, or an HTTP status).
+    only how a refusal is presented differs — and ``actor``, the surface doing
+    the upload, which the tape's own registration is recorded against
+    (ADR-0033). A malformed body or a missing ``file`` part raises the same
+    :class:`managed.UploadRejected` the guards do, so each caller maps it to its
+    own shape (a re-render, or an HTTP status).
     """
     # Accepted deviation from ADR-0024:67-71 (which decides multipart -> a sibling
     # .part on the managed root, and defers only resumability): Starlette 1.6
@@ -780,6 +785,7 @@ async def _receive_tape(
         registry,
         meeting,
         upload.file,
+        actor=actor,
         filename=upload.filename,
         declared_bytes=declared,
         upload_id=upload_id,
@@ -1246,7 +1252,14 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin=body.origin
+                meeting,
+                resolved.options,
+                auto=resolved.meta,
+                # The caller declares the run's ``origin`` (``cli`` for the
+                # command line); the actor is *this transport*, so a client
+                # cannot name itself in the audit record (ADR-0033).
+                origin=body.origin,
+                actor=API,
             )
         except ValueError as exc:
             # A refusal the start path made (see the docstring above), or an
@@ -1543,7 +1556,7 @@ def create_app(
         """
         error = None
         try:
-            registry.create_project(name)
+            registry.create_project(name, actor=CONSOLE)
         except ValueError as exc:
             error = str(exc)
         response = render(
@@ -1612,9 +1625,9 @@ def create_app(
             )
         try:
             if accept:
-                agent.promote(draft, version=version)
+                agent.promote(draft, actor=CONSOLE, version=version)
             else:
-                agent.reject(draft, version=version)
+                agent.reject(draft, actor=CONSOLE, version=version)
         except (MeetingAgentError, PromotionError) as exc:
             return render_meeting(
                 request, meeting, error=views.error_message(locale(request), exc)
@@ -1671,6 +1684,7 @@ def create_app(
             registry.add_term(
                 slug,
                 term,
+                actor=CONSOLE,
                 reading=reading or None,
                 aliases=aliases or None,
                 definition=definition or None,
@@ -1687,7 +1701,7 @@ def create_app(
     ) -> HTMLResponse:
         term = lookup.term(registry, term_id)
         try:
-            term = registry.update_term(term_id, status=status)
+            term = registry.update_term(term_id, status=status, actor=CONSOLE)
         except ValueError as exc:
             # An invalid status is fixable in the form; re-render the tab with
             # the service's message at 200 (htmx does not swap a 4xx).
@@ -1703,7 +1717,7 @@ def create_app(
         console can restore it (ADR-0033).
         """
         term = lookup.term(registry, term_id)
-        registry.retire_term(term_id)
+        registry.retire_term(term_id, actor=CONSOLE)
         return detail(request, term.project_slug, tab="glossary")
 
     @app.post("/ui/glossary/{term_id}/restore", response_class=HTMLResponse)
@@ -1712,10 +1726,10 @@ def create_app(
 
         "Restore" is not "confirm": the service returns the term to the status
         the retire took it from, so a retired candidate comes back a candidate
-        (ADR-0033).
+        (ADR-0033). The move is the console's, and is recorded as such.
         """
         term = lookup.term(registry, term_id)
-        registry.restore_term(term_id)
+        registry.restore_term(term_id, actor=CONSOLE)
         return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
@@ -1738,11 +1752,12 @@ def create_app(
             meeting = registry.create_meeting(
                 slug,
                 title,
+                actor=CONSOLE,
                 workspace_path=workspace_path or None,
                 recorded_at=recorded_at or None,
             )
             if not workspace_path:
-                managed.ensure_managed_workspace(registry, meeting)
+                managed.ensure_managed_workspace(registry, meeting, actor=CONSOLE)
         except managed.UploadRejected as exc:
             # The meeting exists but its managed workspace could not be made:
             # re-render the tab with the service's message.
@@ -1760,7 +1775,7 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         tapes = [line.strip() for line in paths.splitlines() if line.strip()]
         try:
-            registry.set_recording_set(meeting_id, tapes)
+            registry.set_recording_set(meeting_id, tapes, actor=CONSOLE)
         except ValueError as exc:
             # A tape set is fixable in the form, so re-render the tab with the
             # service's message at 200 (htmx does not swap a 4xx; see base.html).
@@ -1788,10 +1803,15 @@ def create_app(
         declared = _content_length(request)
         try:
             meeting = managed.precheck_upload(
-                registry, meeting, declared, upload_id=upload_id
+                registry, meeting, declared, upload_id=upload_id, actor=CONSOLE
             )
             await _receive_tape(
-                registry, meeting, request, declared=declared, upload_id=upload_id
+                registry,
+                meeting,
+                request,
+                declared=declared,
+                upload_id=upload_id,
+                actor=CONSOLE,
             )
         except managed.UploadRejected as exc:
             return render_storage(
@@ -1811,7 +1831,7 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         lookup.tape(registry, meeting, tape_id)
         try:
-            managed.delete_tape(registry, meeting, tape_id)
+            managed.delete_tape(registry, meeting, tape_id, actor=CONSOLE)
         except managed.UploadRejected as exc:
             return render_storage(
                 request,
@@ -1831,9 +1851,13 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         try:
             # One verification for the batch: the durable copy is the meeting's,
-            # not the tape's (the same rule `delete_tapes` states).
+            # not the tape's (the same rule `delete_tapes` states) — and the
+            # console is what each drop is recorded against.
             managed.delete_tapes(
-                registry, meeting, [tape.id for tape in registry.list_tapes(meeting_id)]
+                registry,
+                meeting,
+                [tape.id for tape in registry.list_tapes(meeting_id)],
+                actor=CONSOLE,
             )
         except managed.UploadRejected as exc:
             return render_storage(
@@ -1849,7 +1873,7 @@ def create_app(
     ) -> HTMLResponse:
         meeting = lookup.meeting(registry, meeting_id)
         try:
-            archive_meeting(registry, meeting, root or None)
+            archive_meeting(registry, meeting, root or None, actor=CONSOLE)
         except ValueError as exc:
             # A missing archive root is fixable in the form, so re-render the
             # tab with the message rather than an error status htmx skips.
@@ -1924,7 +1948,11 @@ def create_app(
             return render_run_error(request, meeting_id, tr(str(exc)))
         try:
             run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin="console"
+                meeting,
+                resolved.options,
+                auto=resolved.meta,
+                origin="console",
+                actor=CONSOLE,
             )
         except ValueError as exc:
             # A conflict while a run is live: re-render the live fragment so its
@@ -1990,7 +2018,7 @@ def create_app(
         cancelled run that is already terminal is a no-op rather than an error.
         """
         lookup.run_state(runs, run_id)
-        runs.cancel(run_id)
+        runs.cancel(run_id, actor=CONSOLE)
         return render_run(request, runs.require_state(run_id))
 
     @app.post("/ui/runs/{run_id}/resume", response_class=HTMLResponse)
@@ -2003,7 +2031,7 @@ def create_app(
         """
         previous = lookup.run(registry, run_id)
         try:
-            run = runs.resume(run_id, origin="console")
+            run = runs.resume(run_id, origin="console", actor=CONSOLE)
         except ValueError as exc:
             # A refusal is the run's own message (already in flight, or no
             # recorded options to continue with), rendered where the user asked.
@@ -2239,6 +2267,7 @@ def create_app(
         try:
             project = registry.create_project(
                 body.name,
+                actor=API,
                 notes=body.notes,
                 default_archive_root=body.default_archive_root,
                 slug=body.slug,
@@ -2265,6 +2294,7 @@ def create_app(
         try:
             project = registry.update_project(
                 slug,
+                actor=API,
                 name=body.name,
                 notes=body.notes,
                 default_archive_root=body.default_archive_root,
@@ -2289,6 +2319,7 @@ def create_app(
             term = registry.add_term(
                 slug,
                 body.term,
+                actor=API,
                 reading=body.reading,
                 aliases=body.aliases,
                 definition=body.definition,
@@ -2306,6 +2337,7 @@ def create_app(
         try:
             term = registry.update_term(
                 term_id,
+                actor=API,
                 term=body.term,
                 reading=body.reading,
                 aliases=body.aliases,
@@ -2326,17 +2358,18 @@ def create_app(
         a PATCH of another status.
         """
         lookup.term(registry, term_id)
-        return TermOut.model_validate(registry.retire_term(term_id))
+        return TermOut.model_validate(registry.retire_term(term_id, actor=API))
 
     @app.post("/api/glossary/{term_id}/restore")
     def restore_term(term_id: int) -> TermOut:
         """Restore a retired term to the status the retire took it from.
 
         The counterpart of the retire above; ``PATCH status=…`` states a status
-        outright, while this puts the term back where it was (ADR-0033).
+        outright, while this puts the term back where it was (ADR-0033). The
+        move is recorded against this API, as the retire is.
         """
         lookup.term(registry, term_id)
-        return TermOut.model_validate(registry.restore_term(term_id))
+        return TermOut.model_validate(registry.restore_term(term_id, actor=API))
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)
@@ -2355,11 +2388,12 @@ def create_app(
             meeting = registry.create_meeting(
                 slug,
                 body.title,
+                actor=API,
                 recorded_at=body.recorded_at,
                 workspace_path=None if body.managed else body.workspace_path,
             )
             if body.managed:
-                meeting = managed.ensure_managed_workspace(registry, meeting)
+                meeting = managed.ensure_managed_workspace(registry, meeting, actor=API)
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
@@ -2399,9 +2433,9 @@ def create_app(
         draft = lookup.draft(agent, draft_id)
         try:
             reviewed = (
-                agent.promote(draft, version=version)
+                agent.promote(draft, actor=API, version=version)
                 if accept
-                else agent.reject(draft, version=version)
+                else agent.reject(draft, actor=API, version=version)
             )
         except (MeetingAgentError, PromotionError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2440,7 +2474,7 @@ def create_app(
         if body.paths:
             _require_local_client(request)
         try:
-            tape_set = registry.set_recording_set(meeting_id, body.paths)
+            tape_set = registry.set_recording_set(meeting_id, body.paths, actor=API)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeSetOut.model_validate(tape_set)
@@ -2467,7 +2501,7 @@ def create_app(
         declared = _content_length(request)
         try:
             meeting = managed.precheck_upload(
-                registry, meeting, declared, upload_id=upload_id
+                registry, meeting, declared, upload_id=upload_id, actor=API
             )
         except managed.UploadRejected as exc:
             raise HTTPException(
@@ -2476,7 +2510,12 @@ def create_app(
 
         try:
             tape = await _receive_tape(
-                registry, meeting, request, declared=declared, upload_id=upload_id
+                registry,
+                meeting,
+                request,
+                declared=declared,
+                upload_id=upload_id,
+                actor=API,
             )
         except managed.UploadRejected as exc:
             raise HTTPException(
@@ -2507,7 +2546,7 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         lookup.tape(registry, meeting, tape_id)
         try:
-            deletion = managed.delete_tape(registry, meeting, tape_id)
+            deletion = managed.delete_tape(registry, meeting, tape_id, actor=API)
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeDeletedOut(
@@ -2584,7 +2623,9 @@ def create_app(
         if not body.directory.strip():
             raise HTTPException(status_code=400, detail=BLANK_DIRECTORY)
         try:
-            meeting = workspace_run_meeting(registry, body.directory)
+            # The caller declares the directory, and the run request declares its
+            # ``origin``; the actor is *this transport* (ADR-0033).
+            meeting = workspace_run_meeting(registry, body.directory, actor=API)
         except ValueError as exc:
             # Both directory-path refusals: a folder whose own
             # ``.clear-record-ignore`` names every audio file it holds (so the
@@ -2630,7 +2671,7 @@ def create_app(
         if root:
             _require_local_client(request)
         try:
-            archive = archive_meeting(registry, meeting, root)
+            archive = archive_meeting(registry, meeting, root, actor=API)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ArchiveOut.model_validate(archive)

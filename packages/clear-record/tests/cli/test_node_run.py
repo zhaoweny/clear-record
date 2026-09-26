@@ -46,7 +46,8 @@ from clear_record.core import node
 from clear_record.pipeline import stages
 from clear_record.pipeline.auto import MODEL_LADDER
 from clear_record.providers import BackendBase, BackendInfo
-from clear_record.service.lifecycle import QUEUED, RUN_ORIGINS
+from clear_record.service import API
+from clear_record.service.lifecycle import QUEUE, QUEUED, RUN_ORIGINS
 from clear_record.web.app import MODEL_IS_THE_NODES
 
 #: How long a run gets to finish once nothing is gating it.
@@ -201,7 +202,10 @@ def _wait_for_line(capsys, text: str, *, timeout: float = _RUN_TIMEOUT) -> bool:
 
 def _meeting_id(node_here, workspace: Path) -> int:
     """The meeting the node registered for *workspace* (its one translation)."""
-    meeting = node_here.registry.meeting_for_workspace(str(workspace))
+    meeting = node_here.registry.meeting_for_workspace(
+        str(workspace),
+        actor="console",
+    )
     assert meeting is not None
     return meeting.id
 
@@ -348,6 +352,32 @@ def test_a_command_line_run_carries_the_command_line_as_its_origin(
     assert cli.CLI_ORIGIN == "cli"
     assert cli.CLI_ORIGIN in RUN_ORIGINS
     assert run.origin == cli.CLI_ORIGIN
+    # What the *audit record* holds for this command is the transport that
+    # carried it, not the word the client declared (ADR-0033): the request
+    # arrived on the node's HTTP API, so the rows naming the meeting the node
+    # registered and the run it enqueued are the **API's** — while the run's own
+    # ``origin`` column keeps the command line's word. The queue's moves are the
+    # queue's, and are signed as such.
+    assert [
+        (row.actor, row.action, row.target)
+        for row in gated_node.registry.list_audit_events()
+        if row.action
+        in {"project.create", "meeting.create", "meeting.tapes", "run.enqueue"}
+    ] == [
+        (API, "project.create", "project:origin"),
+        (API, "meeting.create", "meeting:origin"),
+        (API, "meeting.tapes", f"meeting:{run.meeting_id}"),
+        (API, "run.enqueue", f"meeting:{run.meeting_id}"),
+    ]
+    assert not [
+        row
+        for row in gated_node.registry.list_audit_events()
+        if row.actor == cli.CLI_ORIGIN
+    ]  # no row names the client's own word as its actor
+    assert (QUEUE, "run.claim", f"run:{run.id}", "ok") in [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in gated_node.registry.list_audit_events()
+    ]
 
 
 # --- one queue, and the node decides who runs ------------------------------ #
@@ -409,7 +439,10 @@ def test_a_run_over_a_local_directory_works_when_client_and_node_agree(
     with node_in_this_process() as node_here:
         assert _cli_run(workspace) == 0
         assert _cli_run(workspace) == 0
-        meeting = node_here.registry.meeting_for_workspace(str(workspace))
+        meeting = node_here.registry.meeting_for_workspace(
+            str(workspace),
+            actor="console",
+        )
         assert meeting is not None
         assert meeting.workspace_path == str(workspace.resolve())
         runs = node_here.registry.list_runs(meeting.id)
@@ -463,7 +496,10 @@ def test_a_run_honours_the_workspaces_exclusion_declaration(
     (workspace / ".clear-record-ignore").write_bytes(declaration)
     with node_in_this_process() as node_here:
         assert _cli_run(workspace) == 0
-        meeting = node_here.registry.meeting_for_workspace(str(workspace))
+        meeting = node_here.registry.meeting_for_workspace(
+            str(workspace),
+            actor="console",
+        )
         assert meeting is not None
         tape_set = node_here.registry.latest_recording_set(meeting.id)
     assert tape_set is not None
@@ -511,8 +547,14 @@ def test_a_run_refuses_a_folder_that_declares_away_every_tape(
             with pytest.raises(SystemExit) as ended:
                 _cli_run(wd)
             refused.append(str(ended.value))
-        first = node_here.registry.meeting_for_workspace(str(workspace))
-        fresh_meeting = node_here.registry.meeting_for_workspace(str(fresh))
+        first = node_here.registry.meeting_for_workspace(
+            str(workspace),
+            actor="console",
+        )
+        fresh_meeting = node_here.registry.meeting_for_workspace(
+            str(fresh),
+            actor="console",
+        )
         runs = node_here.registry.list_runs(first.id)
         fresh_runs = node_here.registry.list_runs(fresh_meeting.id)
 

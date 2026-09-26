@@ -19,9 +19,13 @@ One draft is one chain, on disk under ``<workspace>/agent/<draft_id>/draft.json`
 
 Properties the design holds to:
 
-- **Every version records who wrote it.** ``author`` is the identity the harness
-  declares (an agent, or a human), and it is the only provenance this store can
-  honestly claim: the app did not produce the value and never saw the model.
+- **Every version records who wrote it.** ``author`` is the **actor** the writing
+  transport supplied — ``mcp`` for the stdio adapter, the surface that asked for
+  any other caller (ADR-0033) — and it is the only provenance this store can
+  honestly claim: the app did not produce the value and never saw the model, and a
+  string the caller *declares* looks like evidence without being any (ADR-0033
+  supersedes ADR-0031's declared identity). No console route writes a version;
+  the field's name is the stored shape's, and what it holds is an actor.
 - **The chain is the state.** There is no separate review-state machine: a
   version is *pending* until a human records ``accepted`` or ``rejected`` on it,
   and the draft's review state is its newest version's decision. A harness that
@@ -50,6 +54,8 @@ import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+
+from clear_record.service.audit import require_actor
 
 if os.name == "nt":  # pragma: no cover - the Windows build's own branch
     import msvcrt
@@ -196,7 +202,8 @@ class Provenance:
     """Who wrote one version of a draft, and which chain it belongs to.
 
     The app can claim nothing else: no model, no prompt, no endpoint — it did
-    not write the value. ``author`` is the identity the writer declared.
+    not write the value. ``author`` is the **actor** the writing transport
+    supplied, not an identity the writer declared (ADR-0033).
     """
 
     draft_id: str
@@ -318,7 +325,7 @@ class Draft:
         self,
         decision: str,
         *,
-        author: str,
+        actor: str,
         at: str,
         promotion: dict | None = None,
     ) -> Draft:
@@ -340,7 +347,7 @@ class Draft:
         current = dataclasses.replace(
             self.current,
             decision=decision,
-            reviewed_by=author,
+            reviewed_by=actor,
             reviewed_at=at,
             promotion=promotion,
         )
@@ -444,6 +451,12 @@ def _replace(draft: Draft) -> Path:
 def write_draft(draft: Draft) -> Path:
     """Persist a chain, replacing the file wholesale (the chain is the document).
 
+    This is the chain's own replace, not a **service entry point**: the three
+    entry points above it (:func:`start_draft`, :func:`append_version`,
+    :func:`record_review`) are what a surface calls, and the audit record holds
+    their rows (ADR-0033) — a second row here would attribute the same write
+    twice and name no actor of its own.
+
     The chain is held for the write. A caller that *read* the chain and writes it
     back must hold it across both halves — :func:`append_version` and
     :func:`record_review` do; calling this directly is for a chain whose content
@@ -460,7 +473,7 @@ def start_draft(
     project: str,
     meeting: str,
     value: Any,
-    author: str,
+    actor: str,
     clock: Callable[[], str] = _now,
 ) -> Draft:
     """Open a chain with its first version and write it.
@@ -468,6 +481,12 @@ def start_draft(
     ``value`` is whatever the harness produced — the app stores it as it came.
     Only the ``kind`` is checked: the chain's kinds are the three jobs, and a
     typo has to fail at the write rather than at a later acceptance.
+
+    ``actor`` is the transport's own word for the surface that wrote this version
+    (:data:`~clear_record.service.lifecycle.ACTORS`) — ``mcp`` for the adapter that
+    is the only writer today — and it is what the version records as its author:
+    ADR-0033 supersedes ADR-0031's *declared* identity, because a string a caller
+    chooses looks like evidence and is not.
 
     The directory **is** the claim on the id: it is created exclusively, so two
     writers that collide inside one clock second — the console and the MCP server
@@ -478,6 +497,7 @@ def start_draft(
         raise ValueError(
             f"unknown draft kind {kind!r}; known kinds: {', '.join(TASK_KINDS)}"
         )
+    actor = require_actor(actor)
     written_at = clock()
     root = Path(directory)
     # The id is a digest of the facts plus a disambiguator, so two chains opened
@@ -499,7 +519,7 @@ def start_draft(
             kind=kind,
             project=project,
             meeting=meeting,
-            author=author,
+            author=actor,
             written_at=written_at,
         ),
         value=value,
@@ -528,7 +548,7 @@ def append_version(
     path: str | Path,
     *,
     value: Any,
-    author: str,
+    actor: str,
     clock: Callable[[], str] = _now,
 ) -> Draft:
     """Add a version to an existing chain (a re-run, or a human's edit).
@@ -538,14 +558,16 @@ def append_version(
     another appender wrote in between is appended **after**, never lost. The
     chain's kind and meeting are the ones it was opened with — a caller cannot
     retarget a draft by appending to it — and a chain that cannot be read raises
-    :class:`UnreadableChain` rather than being written over.
+    :class:`UnreadableChain` rather than being written over. ``actor`` is the
+    surface the appended version's author is recorded as (ADR-0033).
     """
+    actor = require_actor(actor)
     source = Path(path)
     with _held(source):
         draft = _read_chain(source)
         version = Version(
             provenance=dataclasses.replace(
-                draft.provenance, author=author, written_at=clock()
+                draft.provenance, author=actor, written_at=clock()
             ),
             value=value,
         )
@@ -558,7 +580,7 @@ def record_review(
     draft: Draft,
     decision: str,
     *,
-    author: str,
+    actor: str,
     version: int,
     clock: Callable[[], str] = _now,
     apply: Callable[[Draft], dict | None] | None = None,
@@ -584,6 +606,7 @@ def record_review(
     """
     if decision not in REVIEW_DECISIONS:
         raise ValueError(f"unknown draft decision {decision!r}")
+    actor = require_actor(actor)
     source = Path(draft.path)
     with _held(source):
         stored = _read_chain(source)
@@ -598,7 +621,7 @@ def record_review(
             else {"kind": stored.kind, "at": clock(), "summary": summary}
         )
         decided = stored.reviewed(
-            decision, author=author, at=clock(), promotion=promotion
+            decision, actor=actor, at=clock(), promotion=promotion
         )
         _replace(decided)
     return decided

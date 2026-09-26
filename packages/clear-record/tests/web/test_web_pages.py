@@ -176,10 +176,18 @@ def test_a_project_sub_tab_is_deep_linkable_and_refresh_safe(tmp_path) -> None:
 
 def test_the_meeting_review_is_a_page_under_the_project(tmp_path) -> None:
     registry, client = _seeded(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
 
     page = client.get("/projects/ops/meetings/kickoff")
 
@@ -196,7 +204,10 @@ def test_the_meeting_review_is_a_page_under_the_project(tmp_path) -> None:
 def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
     """Media reuses the service's storage and transcript accounting."""
     registry, client = _seeded(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     write_json(
@@ -207,9 +218,18 @@ def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
             segments=(Segment(start=0.0, end=1.0, text="hello", source="mic"),),
         ),
     )
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     registry.register_tape(
-        meeting.id, path=str(workspace / "a.wav"), sha256="a" * 64, bytes=2048
+        meeting.id,
+        path=str(workspace / "a.wav"),
+        sha256="a" * 64,
+        bytes=2048,
+        actor="console",
     )
 
     media = client.get("/ui/projects/ops/media")
@@ -226,10 +246,24 @@ def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
 def test_the_landing_shows_the_newest_meetings_across_projects(tmp_path) -> None:
     """One compact recent-activity line, from cheap registry reads only."""
     registry, client = _seeded(tmp_path)
-    registry.create_project("Ops")
-    registry.create_project("Field interviews")
-    registry.create_meeting("ops", "Kickoff")
-    registry.create_meeting("field-interviews", "Interview")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_project(
+        "Field interviews",
+        actor="console",
+    )
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    registry.create_meeting(
+        "field-interviews",
+        "Interview",
+        actor="console",
+    )
 
     home = client.get("/")
 

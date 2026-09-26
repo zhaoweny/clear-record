@@ -466,9 +466,20 @@ def test_a_run_without_tapes_or_workspace_is_400(console, tmp_path) -> None:
     )
 
     # A tape set but no workspace (created through the store, not the API).
-    console.registry.create_project("Ops")
-    no_workspace = console.registry.create_meeting("ops", "No workspace")
-    console.registry.set_recording_set(no_workspace.id, [str(tmp_path / "x.wav")])
+    console.registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    no_workspace = console.registry.create_meeting(
+        "ops",
+        "No workspace",
+        actor="console",
+    )
+    console.registry.set_recording_set(
+        no_workspace.id,
+        [str(tmp_path / "x.wav")],
+        actor="console",
+    )
     res = client.post(f"/api/meetings/{no_workspace.id}/runs", json={})
     assert res.status_code == 400
 
@@ -858,8 +869,18 @@ def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:
     """
     registry = console.registry
     meeting = _make_meeting(console, tmp_path)
-    run = registry.create_run(meeting["id"], backend="apple", model="small")
-    registry.update_run(run.id, status="done", ended_at="2026-01-01T00:01:00+00:00")
+    run = registry.create_run(
+        meeting["id"],
+        backend="apple",
+        model="small",
+        actor="console",
+    )
+    registry.update_run(
+        run.id,
+        status="done",
+        ended_at="2026-01-01T00:01:00+00:00",
+        actor="console",
+    )
 
     fragment = console.client.get(f"/ui/runs/{run.id}")
     assert fragment.status_code == 200

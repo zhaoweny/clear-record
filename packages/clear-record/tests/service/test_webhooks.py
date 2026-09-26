@@ -105,27 +105,57 @@ def _registry(tmp_path) -> Registry:
 
 
 def _meeting(registry: Registry, tmp_path: Path, tapes: list[Path]):
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    registry.set_recording_set(meeting.id, [str(tape) for tape in tapes])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape) for tape in tapes],
+        actor="console",
+    )
     return meeting
 
 
 def _seeded_archive(tmp_path):
     registry = _registry(tmp_path)
     root = tmp_path / "archive"
-    registry.create_project("Ops", default_archive_root=str(root))
+    registry.create_project(
+        "Ops",
+        default_archive_root=str(root),
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake-audio")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     record = workspace / "record.json"
     record.write_bytes(b'{"segments": []}')
-    registry.add_artifact(meeting.id, kind="record", path=str(record))
+    registry.add_artifact(
+        meeting.id,
+        kind="record",
+        path=str(record),
+        actor="console",
+    )
     return registry, meeting
 
 
@@ -350,7 +380,7 @@ def test_a_successful_run_emits_started_finished_and_transcript_ready(tmp_path) 
         try:
             manager = RunManager(registry, pipeline=pipeline, webhooks=emitter)
             state = manager.wait(
-                manager.start(meeting, origin="console").id, timeout=10
+                manager.start(meeting, origin="console", actor="console").id, timeout=10
             )
             assert state.status == "done"
             assert emitter.flush(timeout=5)
@@ -396,7 +426,7 @@ def test_a_failed_run_emits_run_failed(tmp_path) -> None:
         try:
             manager = RunManager(registry, pipeline=boom, webhooks=emitter)
             state = manager.wait(
-                manager.start(meeting, origin="console").id, timeout=10
+                manager.start(meeting, origin="console", actor="console").id, timeout=10
             )
             assert state.status == "failed"
             assert emitter.flush(timeout=5)
@@ -424,7 +454,7 @@ def test_delivery_failure_leaves_the_runs_own_status_untouched(tmp_path) -> None
         try:
             manager = RunManager(registry, pipeline=pipeline, webhooks=emitter)
             state = manager.wait(
-                manager.start(meeting, origin="console").id, timeout=10
+                manager.start(meeting, origin="console", actor="console").id, timeout=10
             )
             assert emitter.flush(timeout=5)
         finally:
@@ -449,7 +479,12 @@ def test_archive_created_is_emitted_after_a_complete_archive(tmp_path) -> None:
             [WebhookEndpoint(url=receiver.url)], backoff_base=0.001
         )
         try:
-            archive = archive_meeting(registry, meeting, webhooks=emitter)
+            archive = archive_meeting(
+                registry,
+                meeting,
+                webhooks=emitter,
+                actor="console",
+            )
             assert emitter.flush(timeout=5)
         finally:
             emitter.close(timeout=5)
@@ -472,7 +507,12 @@ def test_a_failed_archive_emits_nothing(tmp_path) -> None:
             (Path(meeting.workspace_path) / "record.json").unlink()
             # The registry still lists the artifact, so the copy fails.
             with pytest.raises(FileNotFoundError):
-                archive_meeting(registry, meeting, webhooks=emitter)
+                archive_meeting(
+                    registry,
+                    meeting,
+                    webhooks=emitter,
+                    actor="console",
+                )
         finally:
             emitter.close(timeout=5)
     assert receiver.requests == []
@@ -579,7 +619,9 @@ def test_a_bad_config_still_lets_a_run_complete(tmp_path, capsys) -> None:
     tape.write_bytes(b"RIFFfake")
     meeting = _meeting(registry, tmp_path, [tape])
     manager = RunManager(registry, pipeline=lambda *args: None, webhooks=emitter)
-    state = manager.wait(manager.start(meeting, origin="console").id, timeout=10)
+    state = manager.wait(
+        manager.start(meeting, origin="console", actor="console").id, timeout=10
+    )
 
     assert state.status == "done"
     assert registry.get_run(state.run_id).status == "done"

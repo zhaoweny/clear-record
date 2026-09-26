@@ -66,6 +66,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from clear_record.core import PipelineOptions, node
 from clear_record.service import (
+    MCP,
     TASK_KINDS,
     AgentDraftsOut,
     ArtifactOut,
@@ -126,8 +127,10 @@ INSTRUCTIONS = (
     "resolvers), read the transcript text and list the artifacts a run produced. "
     "The three LLM-shaped jobs are yours to do: read the transcript with "
     "read_transcript, then write your result for glossary collection, transcript "
-    "check or minutes with write_agent_draft — it is stored as a draft with the "
-    "author identity you declare. Review drafts with list_agent_drafts / "
+    "check or minutes with write_agent_draft — it is stored as a draft, whose "
+    "recorded author is this transport's actor (there is no author to declare: a "
+    "self-declared identity looks like evidence and is not). Review drafts with "
+    "list_agent_drafts / "
     "read_agent_draft; a human applies one with accept_agent_draft (or discards "
     "it with reject_agent_draft), and writing a new version of a draft puts it "
     "back in review. clear-record never calls a model and holds no model "
@@ -269,7 +272,9 @@ class ServiceTools:
         """
         self._project(slug)
         try:
-            updated = self.registry.update_project(slug, name=name, notes=notes)
+            updated = self.registry.update_project(
+                slug, actor=MCP, name=name, notes=notes
+            )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         return ProjectOut.model_validate(updated)
@@ -312,6 +317,7 @@ class ServiceTools:
             created = self.registry.add_term(
                 project,
                 term,
+                actor=MCP,
                 reading=reading,
                 aliases=aliases,
                 definition=definition,
@@ -337,6 +343,7 @@ class ServiceTools:
         try:
             updated: GlossaryTerm = self.registry.update_term(
                 term_id,
+                actor=MCP,
                 term=term,
                 reading=reading,
                 aliases=aliases,
@@ -384,6 +391,7 @@ class ServiceTools:
             created = self.registry.create_meeting(
                 project,
                 title,
+                actor=MCP,
                 recorded_at=recorded_at,
                 workspace_path=workspace_path,
                 slug=slug,
@@ -406,7 +414,9 @@ class ServiceTools:
         """
         found = self._meeting(project, meeting)
         try:
-            updated = self.registry.update_meeting(found.id, title=title, notes=notes)
+            updated = self.registry.update_meeting(
+                found.id, actor=MCP, title=title, notes=notes
+            )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         return MeetingOut.model_validate(updated)
@@ -417,7 +427,7 @@ class ServiceTools:
         """Set a meeting's tape set to these local audio file paths (latest wins)."""
         found = self._meeting(project, meeting)
         try:
-            tape_set = self.registry.set_recording_set(found.id, paths)
+            tape_set = self.registry.set_recording_set(found.id, paths, actor=MCP)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         return TapeSetOut.model_validate(tape_set)
@@ -494,7 +504,11 @@ class ServiceTools:
             raise ToolError(str(exc)) from exc
         try:
             run = self.manager.start(
-                found, resolved.options, auto=resolved.meta, origin="mcp"
+                found,
+                resolved.options,
+                auto=resolved.meta,
+                origin="mcp",
+                actor=MCP,
             )
         except ValueError as exc:
             raise ToolError(
@@ -601,8 +615,10 @@ class ServiceTools:
         """List a meeting's draft chains, each with its versions and review state.
 
         A draft is a **version chain with author provenance**: every version
-        records the ``author`` its writer declared and when it was written, and
-        the human's accept/reject is recorded on the version it decided. The
+        records the ``author`` the *writing transport* supplied — ``mcp``, since
+        this adapter is the only writer — and when it was written, and the
+        accept/reject decision is recorded on the version it decided, with the
+        deciding transport's actor. The
         three kinds (``glossary_collection``, ``transcript_check``, ``minutes``)
         are what a harness writes with ``write_agent_draft``; nothing is applied
         until a human accepts it with ``accept_agent_draft``. ``minutes`` is the
@@ -627,10 +643,9 @@ class ServiceTools:
         meeting: str,
         kind: str,
         value: dict[str, Any],
-        author: str = "agent",
         draft_id: str | None = None,
     ) -> DraftView:
-        """Write what you produced for a meeting as a draft version, and record who wrote it.
+        """Write what you produced for a meeting as a draft version.
 
         ``kind`` is one of ``glossary_collection``, ``transcript_check`` or
         ``minutes``, and ``value`` is the JSON object the harness produced:
@@ -647,16 +662,17 @@ class ServiceTools:
           "actions", "meeting", "project"}``. Accepting writes and registers the
           meeting's ``minutes`` artifact.
 
-        ``author`` is the identity you declare — it is the draft's only
-        provenance, because clear-record did not produce the value and never saw
-        your model. Pass ``draft_id`` to append a version to an existing chain
-        (a re-run, a refinement) instead of opening a new one; a new version puts
-        the draft back in review, so it is never accepted on the strength of an
-        earlier version. The result is a **draft** until a human accepts it.
+        There is **no author to declare**: the version records ``mcp``, the actor
+        this transport supplies, because a string the writer chooses looks like
+        evidence without being any (ADR-0033). Pass ``draft_id`` to append a
+        version to an existing chain (a re-run, a refinement) instead of opening a
+        new one; a new version puts the draft back in review, so it is never
+        accepted on the strength of an earlier version. The result is a **draft**
+        until a human accepts it.
         """
         agent = self._agent(project, meeting)
         try:
-            draft = agent.write(kind, value, author=author, draft_id=draft_id)
+            draft = agent.write(kind, value, actor=MCP, draft_id=draft_id)
         except MeetingAgentError as exc:
             raise ToolError(str(exc)) from exc
         return describe_draft(draft)
@@ -667,7 +683,6 @@ class ServiceTools:
         meeting: str,
         draft_id: str,
         version: int,
-        author: str = "human",
     ) -> DraftView:
         """Accept one version of a draft, promoting it into what its kind produces.
 
@@ -682,14 +697,15 @@ class ServiceTools:
         proposed terms as **candidate** registry terms, ``transcript_check`` writes
         the corrected revision and its change list as a new artifact (never an
         in-place overwrite of the record), and ``minutes`` writes and registers the
-        meeting's minutes document. The acceptance records ``author`` as the human
-        who decided it, and a version that already carries a decision is returned
-        unchanged — deciding twice runs no second side effect.
+        meeting's minutes document. The decision records **``mcp``** as the one who
+        decided it — the actor this transport supplies, and there is no parameter
+        to declare it (ADR-0033) — and a version that already carries a decision is
+        returned unchanged, so deciding twice runs no second side effect.
         """
         agent = self._agent(project, meeting)
         draft = self._draft(agent, draft_id)
         try:
-            promoted = agent.promote(draft, author=author, version=version)
+            promoted = agent.promote(draft, actor=MCP, version=version)
         except (MeetingAgentError, PromotionError) as exc:
             raise ToolError(str(exc)) from exc
         return describe_draft(promoted)
@@ -700,18 +716,19 @@ class ServiceTools:
         meeting: str,
         draft_id: str,
         version: int,
-        author: str = "human",
     ) -> DraftView:
         """Reject one version of a draft, keeping the whole chain on disk as history.
 
         ``version`` is **required**, as in ``accept_agent_draft``: it is the
         version you read, and one that is no longer the newest is refused rather
-        than recording a decision on a version you did not see.
+        than recording a decision on a version you did not see. The decision
+        records ``mcp`` as the one who made it — the transport's actor, not a
+        declared identity (ADR-0033).
         """
         agent = self._agent(project, meeting)
         draft = self._draft(agent, draft_id)
         try:
-            rejected = agent.reject(draft, author=author, version=version)
+            rejected = agent.reject(draft, actor=MCP, version=version)
         except MeetingAgentError as exc:
             raise ToolError(str(exc)) from exc
         return describe_draft(rejected)

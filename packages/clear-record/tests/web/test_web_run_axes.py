@@ -43,7 +43,10 @@ def _seeded(
 ):
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     directory = tmp_path / "ws"
     directory.mkdir()
     workspace = Workspace.at(directory)
@@ -61,7 +64,12 @@ def _seeded(
     workspace.write_record(
         RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
     )
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(directory))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(directory),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
@@ -71,9 +79,15 @@ def _seeded(
             "profile": "accurate",
             "auto": {"explanation": "chose profile (a short tape)", "chose": ["model"]},
         },
+        actor="console",
     )
     if cost is not None:
-        registry.update_run(run.id, status="done", progress={"cost": cost})
+        registry.update_run(
+            run.id,
+            status="done",
+            progress={"cost": cost},
+            actor="console",
+        )
     return registry, client, run
 
 
@@ -109,7 +123,11 @@ def test_an_unmeasured_run_says_unknown_with_the_records_reason(tmp_path) -> Non
     live = client.get(f"/ui/runs/{run.id}").text
     assert "run-axes" not in live  # a live run stays a progress fragment
 
-    registry.update_run(run.id, status="done")
+    registry.update_run(
+        run.id,
+        status="done",
+        actor="console",
+    )
     finished = client.get(f"/ui/runs/{run.id}").text
     assert "run-axes" in finished
     assert "unknown" in finished

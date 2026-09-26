@@ -240,9 +240,44 @@ class Archive(Base):
     created_at: Mapped[str] = mapped_column(Text)
 
 
+class AuditEvent(Base):
+    """``audit_event`` — one appended row per mutating service call (ADR-0033).
+
+    ``at`` is when the call happened, ``actor`` who made it (a word of
+    :data:`~clear_record.service.lifecycle.ACTORS`), ``action`` the verb,
+    ``target`` what it touched, and ``outcome`` how it ended.
+
+    ``target`` carries the service's own **address** for what was touched
+    (``project:demo``, ``run:12``, ``draft:9f2c…``) and no foreign key, so a row
+    outlives what it names: a deleted tape's audit row still says who deleted it.
+    No relationship either, like every other entity here.
+
+    The table is **append-only in the schema**, not only by convention: revision
+    0010 puts triggers on it that refuse every ``UPDATE``, every ``DELETE`` and
+    every ``REPLACE`` — the third of them by refusing an ``INSERT`` of an id the
+    table already holds, which is the shape ``REPLACE`` takes (SQLite fires
+    ``BEFORE INSERT`` before the conflict path deletes the row). The registry's
+    engine also turns ``recursive_triggers`` on for every connection it makes, so
+    the delete inside a ``REPLACE`` reaches the delete trigger too. The trigger is
+    the file-level guarantee — nothing that reaches the file rewrites a row — and
+    the pragma is the connection-level one, for every connection the registry
+    makes. See :meth:`~clear_record.service.store.Registry.record_audit`.
+    """
+
+    __tablename__ = "audit_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(Text)
+
+
 __all__ = [
     "Archive",
     "Artifact",
+    "AuditEvent",
     "Base",
     "GlossaryTerm",
     "Meeting",

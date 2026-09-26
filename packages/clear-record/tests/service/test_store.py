@@ -139,7 +139,11 @@ def _seed_project(db_path: Path) -> None:
 
 def test_create_and_list_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    project = reg.create_project("Weekly Ops", notes="ops sync")
+    project = reg.create_project(
+        "Weekly Ops",
+        notes="ops sync",
+        actor="console",
+    )
 
     assert project.slug == "weekly-ops"
     assert project.name == "Weekly Ops"
@@ -151,7 +155,16 @@ def test_create_and_list_projects(tmp_path) -> None:
 
 def test_slug_collision_gets_a_suffix(tmp_path) -> None:
     reg = _registry(tmp_path)
-    assert (reg.create_project("Sync").slug, reg.create_project("Sync").slug) == (
+    assert (
+        reg.create_project(
+            "Sync",
+            actor="console",
+        ).slug,
+        reg.create_project(
+            "Sync",
+            actor="console",
+        ).slug,
+    ) == (
         "sync",
         "sync-2",
     )
@@ -159,9 +172,17 @@ def test_slug_collision_gets_a_suffix(tmp_path) -> None:
 
 def test_duplicate_explicit_slug_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("A", slug="shared")
+    reg.create_project(
+        "A",
+        slug="shared",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.create_project("B", slug="shared")
+        reg.create_project(
+            "B",
+            slug="shared",
+            actor="console",
+        )
 
 
 def test_unsafe_explicit_slugs_are_rejected(tmp_path) -> None:
@@ -169,103 +190,204 @@ def test_unsafe_explicit_slugs_are_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     for bad in ("../escaped", "a/b", "UPPER", "with space", "."):
         with pytest.raises(ValueError, match="slug must match"):
-            reg.create_project("Ops", slug=bad)
+            reg.create_project(
+                "Ops",
+                slug=bad,
+                actor="console",
+            )
 
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     with pytest.raises(ValueError, match="slug must match"):
-        reg.create_meeting("ops", "Kickoff", slug="../escaped")
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            slug="../escaped",
+            actor="console",
+        )
 
 
 def test_blank_project_name_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     with pytest.raises(ValueError):
-        reg.create_project("   ")
+        reg.create_project(
+            "   ",
+            actor="console",
+        )
 
 
 def test_state_survives_reopen(tmp_path) -> None:
     db = tmp_path / "registry.sqlite3"
-    Registry(db).create_project("Persist")
+    Registry(db).create_project("Persist", actor="console")
     assert [p.slug for p in Registry(db).list_projects()] == ["persist"]
 
 
 def test_update_project(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    updated = reg.update_project("ops", name="Ops Weekly", notes="n")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    updated = reg.update_project(
+        "ops",
+        name="Ops Weekly",
+        notes="n",
+        actor="console",
+    )
     assert (updated.name, updated.notes) == ("Ops Weekly", "n")
     with pytest.raises(KeyError):
-        reg.update_project("missing", name="x")
+        reg.update_project(
+            "missing",
+            name="x",
+            actor="console",
+        )
 
 
 def test_glossary_lifecycle(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     term = reg.add_term(
-        "ops", "李工", reading="Li Gong", aliases="老李", definition="lead"
+        "ops",
+        "李工",
+        reading="Li Gong",
+        aliases="老李",
+        definition="lead",
+        actor="console",
     )
     assert term.status == "candidate" and term.added_by == "human"
     assert reg.list_terms("ops") == [term]
 
-    assert reg.update_term(term.id, status="confirmed").status == "confirmed"
-    assert reg.update_term(term.id, definition="team lead").definition == "team lead"
+    assert (
+        reg.update_term(
+            term.id,
+            status="confirmed",
+            actor="console",
+        ).status
+        == "confirmed"
+    )
+    assert (
+        reg.update_term(
+            term.id,
+            definition="team lead",
+            actor="console",
+        ).definition
+        == "team lead"
+    )
 
-    retired = reg.retire_term(term.id)
+    retired = reg.retire_term(term.id, actor="console")
     assert retired.status == "retired"
     # A retire is a status change, not a row delete: the history survives.
     assert retired.added_by == "human" and retired.created_at
     assert reg.list_terms("ops") == [retired]
     assert reg.list_terms("ops", status="confirmed") == []
 
-    assert reg.update_term(term.id, status="confirmed").status == "confirmed"
+    assert (
+        reg.update_term(term.id, status="confirmed", actor="console").status
+        == "confirmed"
+    )
     with pytest.raises(KeyError):
-        reg.retire_term(9999)
+        reg.retire_term(9999, actor="console")
 
 
 def test_retire_records_the_status_a_restore_returns_the_term_to(tmp_path) -> None:
     """A retire is reversible to where the term was, not to "confirmed"."""
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    draft = reg.add_term("ops", "AgentTerm", added_by="agent")  # candidate
-    owner = reg.add_term("ops", "Falcon", status="confirmed")
-    noted = reg.add_term("ops", "Mars", status="confirmed", notes="call it Mars")
+    reg.create_project("Ops", actor="console")
+    draft = reg.add_term("ops", "AgentTerm", added_by="agent", actor="console")
+    owner = reg.add_term("ops", "Falcon", status="confirmed", actor="console")
+    noted = reg.add_term(
+        "ops", "Mars", status="confirmed", notes="call it Mars", actor="console"
+    )
 
     for term in (draft, owner, noted):
-        assert reg.retire_term(term.id).status == "retired"
+        assert reg.retire_term(term.id, actor="console").status == "retired"
     # The marker a retire records stays inside the registry: it is never the
     # term's published notes.
     assert reg.get_term(noted.id).notes == "call it Mars"
 
-    assert reg.restore_term(draft.id).status == "candidate"  # un-reviewed, still
-    assert reg.restore_term(owner.id).status == "confirmed"
-    restored = reg.restore_term(noted.id)
+    # Un-reviewed, still; then the status the retire took each term from.
+    assert reg.restore_term(draft.id, actor="console").status == "candidate"
+    assert reg.restore_term(owner.id, actor="console").status == "confirmed"
+    restored = reg.restore_term(noted.id, actor="console")
     assert (restored.status, restored.notes) == ("confirmed", "call it Mars")
     assert reg.list_terms("ops", status="retired") == []
 
 
 def test_duplicate_term_in_one_project_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.add_term("ops", "Falcon")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Falcon",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "Falcon")
+        reg.add_term(
+            "ops",
+            "Falcon",
+            actor="console",
+        )
 
 
 def test_same_term_is_allowed_in_two_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "Falcon")
-    reg.add_term("research", "Falcon")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Falcon",
+        actor="console",
+    )
+    reg.add_term(
+        "research",
+        "Falcon",
+        actor="console",
+    )
     assert len(reg.list_terms()) == 2
 
 
 def test_cross_project_table_filters_by_status_and_project(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "Alpha", status="confirmed")
-    reg.add_term("ops", "Beta", status="candidate")
-    reg.add_term("research", "Gamma", status="confirmed")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Alpha",
+        status="confirmed",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Beta",
+        status="candidate",
+        actor="console",
+    )
+    reg.add_term(
+        "research",
+        "Gamma",
+        status="confirmed",
+        actor="console",
+    )
 
     assert [t.term for t in reg.list_terms(status="confirmed")] == ["Alpha", "Gamma"]
     assert [t.term for t in reg.list_terms("ops")] == ["Alpha", "Beta"]
@@ -275,110 +397,262 @@ def test_cross_project_table_filters_by_status_and_project(tmp_path) -> None:
 
 def test_term_counts_include_empty_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "A")
-    reg.add_term("ops", "B")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "A",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "B",
+        actor="console",
+    )
     assert reg.term_counts() == {"ops": 2, "research": 0}
 
 
 def test_invalid_status_and_author_are_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "A", status="maybe")
+        reg.add_term(
+            "ops",
+            "A",
+            status="maybe",
+            actor="console",
+        )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "A", added_by="robot")
+        reg.add_term(
+            "ops",
+            "A",
+            added_by="robot",
+            actor="console",
+        )
     with pytest.raises(KeyError):
-        reg.add_term("nope", "A")
+        reg.add_term(
+            "nope",
+            "A",
+            actor="console",
+        )
 
 
 def test_agent_terms_are_marked_as_such(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    term = reg.add_term("ops", "Falcon", added_by="agent")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    term = reg.add_term(
+        "ops",
+        "Falcon",
+        added_by="agent",
+        actor="console",
+    )
     assert term.added_by == "agent"
     assert term.status == "candidate"
 
 
 def test_meeting_lifecycle_and_tape_set(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff", recorded_at="2026-09-14")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        recorded_at="2026-09-14",
+        actor="console",
+    )
     assert meeting.slug == "kickoff"
     assert meeting.status == "new"
     assert meeting.notes == ""
     assert reg.list_meetings("ops") == [meeting]
 
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff-2"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff-2"
+    )
     assert reg.get_meeting("ops", "kickoff") == meeting
     assert reg.get_meeting("ops", "nope") is None
 
-    selected = reg.set_recording_set(meeting.id, ["/a.wav", "/b.wav"])
+    selected = reg.set_recording_set(
+        meeting.id,
+        ["/a.wav", "/b.wav"],
+        actor="console",
+    )
     assert selected.paths == ("/a.wav", "/b.wav")
     assert reg.latest_recording_set(meeting.id) == selected
 
     # A newer selection supersedes the old one.
-    newer = reg.set_recording_set(meeting.id, ["/c.wav"])
+    newer = reg.set_recording_set(
+        meeting.id,
+        ["/c.wav"],
+        actor="console",
+    )
     assert reg.latest_recording_set(meeting.id) == newer
 
     with pytest.raises(ValueError):
-        reg.set_recording_set(meeting.id, [])
+        reg.set_recording_set(
+            meeting.id,
+            [],
+            actor="console",
+        )
 
 
 def test_update_meeting_notes_and_title(tmp_path) -> None:
     """The story has a durable home: meeting notes (and title) are writable."""
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
 
-    updated = reg.update_meeting(meeting.id, notes="tell the story here")
+    updated = reg.update_meeting(
+        meeting.id,
+        notes="tell the story here",
+        actor="console",
+    )
     assert updated.notes == "tell the story here"
     assert reg.get_meeting("ops", "kickoff").notes == "tell the story here"
 
-    assert reg.update_meeting(meeting.id, notes="").notes == ""
-    assert reg.update_meeting(meeting.id, title="Kickoff v2").title == "Kickoff v2"
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="",
+            actor="console",
+        ).notes
+        == ""
+    )
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            title="Kickoff v2",
+            actor="console",
+        ).title
+        == "Kickoff v2"
+    )
 
     with pytest.raises(ValueError):
-        reg.update_meeting(meeting.id, title="   ")
+        reg.update_meeting(
+            meeting.id,
+            title="   ",
+            actor="console",
+        )
     with pytest.raises(KeyError):
-        reg.update_meeting(999, notes="nope")
+        reg.update_meeting(
+            999,
+            notes="nope",
+            actor="console",
+        )
 
 
 def test_run_and_artifact_rows(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
 
-    run = reg.create_run(meeting.id, backend="apple", model="small")
+    run = reg.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        actor="console",
+    )
     assert run.status == "queued"
     assert reg.get_run(run.id) == run
     assert [r.id for r in reg.list_runs(meeting.id)] == [run.id]
 
-    updated = reg.update_run(run.id, status="running", started_at="now")
+    updated = reg.update_run(
+        run.id,
+        status="running",
+        started_at="now",
+        actor="console",
+    )
     assert updated.status == "running"
     with pytest.raises(ValueError):
-        reg.update_run(run.id, status="bogus")
+        reg.update_run(
+            run.id,
+            status="bogus",
+            actor="console",
+        )
 
     # RUN-02: origin is one of the four surfaces, and only a start path has one.
     assert run.origin is None
     with pytest.raises(ValueError):
-        reg.create_run(meeting.id, origin="grafana")
+        reg.create_run(
+            meeting.id,
+            origin="grafana",
+            actor="console",
+        )
     # A meeting carries one active run (revision 0009's index), so the run the
     # origin is read back from is the meeting's next one.
-    reg.update_run(run.id, status="done")
-    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+    reg.update_run(
+        run.id,
+        status="done",
+        actor="console",
+    )
+    assert (
+        reg.create_run(
+            meeting.id,
+            origin="cli",
+            actor="console",
+        ).origin
+        == "cli"
+    )
 
     artifact = reg.add_artifact(
-        meeting.id, run_id=run.id, kind="record", path="/ws/record.json", sha256="ab"
+        meeting.id,
+        run_id=run.id,
+        kind="record",
+        path="/ws/record.json",
+        sha256="ab",
+        actor="console",
     )
     assert artifact.kind == "record"
     assert artifact.produced_by == "pipeline"
     assert reg.list_artifacts(meeting.id) == [artifact]
 
-    assert reg.set_meeting_status(meeting.id, "recorded").status == "recorded"
+    assert (
+        reg.set_meeting_status(
+            meeting.id,
+            "recorded",
+            actor="console",
+        ).status
+        == "recorded"
+    )
     with pytest.raises(ValueError):
-        reg.set_meeting_status(meeting.id, "bogus")
+        reg.set_meeting_status(
+            meeting.id,
+            "bogus",
+            actor="console",
+        )
 
 
 def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None:
@@ -401,14 +675,29 @@ def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
-    assert reg.update_meeting(meeting.id, notes="story").notes == "story"
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="story",
+            actor="console",
+        ).notes
+        == "story"
+    )
     # The baseline's own shapes answer over the migrated registry: an uploaded
     # tape joins the meeting's tape set, and a run carries its durable options.
-    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    tape = reg.register_tape(
+        meeting.id,
+        path="/tapes/a.wav",
+        sha256="0" * 64,
+        bytes=3,
+        actor="console",
+    )
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
     run = reg.create_run(
-        meeting.id, run_options=dataclasses.asdict(PipelineOptions(backend="apple"))
+        meeting.id,
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     assert reg.get_run(run.id).run_options == dataclasses.asdict(
         PipelineOptions(backend="apple")
@@ -418,26 +707,65 @@ def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None
     # owner. The claim runs on a *second* meeting's run: one meeting has one
     # active run, which revision 0009's index enforces.
     assert reg.get_run(run.id).origin is None  # a seeded row has no origin
-    second = reg.create_meeting("ops", "Second pass")
-    queued = reg.create_run(second.id, origin="console")
-    claimed = reg.claim_run(queued.id, owner="peer:1")
+    second = reg.create_meeting(
+        "ops",
+        "Second pass",
+        actor="console",
+    )
+    queued = reg.create_run(
+        second.id,
+        origin="console",
+        actor="console",
+    )
+    claimed = reg.claim_run(
+        queued.id,
+        owner="peer:1",
+        actor="console",
+    )
     assert claimed is not None
     assert (claimed.origin, claimed.owner) == ("console", "peer:1")
     assert claimed.heartbeat_at is not None
     # Delta 0008: a run can be linked to the run it resumes, and carry a cancel request.
     assert claimed.resumes_run_id is None and claimed.cancel_requested_at is None
     with pytest.raises(KeyError):
-        reg.create_run(meeting.id, resumes_run_id=999)  # no such run
-    assert reg.request_cancel(claimed.id).cancel_requested_at is not None
+        reg.create_run(
+            meeting.id,
+            resumes_run_id=999,
+            actor="console",
+        )  # no such run
+    assert (
+        reg.request_cancel(
+            claimed.id,
+            actor="console",
+        ).cancel_requested_at
+        is not None
+    )
     assert reg.cancel_requested(claimed.id) is True
     # A queued run is cancelled outright: it never reaches a pipeline.
-    stopped = reg.stop_run(run.id, ended_at="now", progress={})
+    stopped = reg.stop_run(
+        run.id,
+        ended_at="now",
+        progress={},
+        actor="console",
+    )
     assert stopped is not None and stopped.status == "stopped"
     # And a run that is not queued any more is left to its owner.
-    assert reg.stop_run(claimed.id, ended_at="now", progress={}) is None
+    assert (
+        reg.stop_run(
+            claimed.id,
+            ended_at="now",
+            progress={},
+            actor="console",
+        )
+        is None
+    )
     # Delta 0009: the meeting's run has ended, so the meeting runs again — and
     # the new run continues the stopped one.
-    resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
+    resumed = reg.create_run(
+        meeting.id,
+        resumes_run_id=run.id,
+        actor="console",
+    )
     assert resumed.resumes_run_id == run.id
 
 
@@ -463,11 +791,35 @@ def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     # Every delta is in place: a run's ownership (0007), its cancel and resume
     # columns (0008) and the one-active-run index (0009) all answer.
-    meeting = reg.create_meeting("ops", "Kickoff")
-    assert reg.update_meeting(meeting.id, notes="story").notes == "story"
-    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="story",
+            actor="console",
+        ).notes
+        == "story"
+    )
+    tape = reg.register_tape(
+        meeting.id,
+        path="/tapes/a.wav",
+        sha256="0" * 64,
+        bytes=3,
+        actor="console",
+    )
     assert reg.list_tapes(meeting.id) == [tape]
-    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+    assert (
+        reg.create_run(
+            meeting.id,
+            origin="cli",
+            actor="console",
+        ).origin
+        == "cli"
+    )
 
 
 @pytest.mark.parametrize("version", [0, 3, 7, 8])
@@ -558,13 +910,13 @@ def test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy(
         ]
 
 
-@pytest.mark.parametrize("version", [99, 9])
+@pytest.mark.parametrize("version", [99, 10])
 def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path, version) -> None:
     """The guard the retired ladder enforced survives: a newer version is refused.
 
-    Both numbers are pinned, and **9** is the one that earns its place: 9 is the
-    head revision's id, so a ladder number of 9 used to be read as revision
-    ``0009`` and the registry was silently stamped at it — the coincidence of
+    Both numbers are pinned, and **10** is the one that earns its place: 10 is
+    the head revision's id, so a ladder number of 10 used to be read as revision
+    ``0010`` and the registry was silently stamped at it — the coincidence of
     numbering the ladder path had. 99 names no revision in this chain and refused
     even before the bound existed, which is exactly why it alone could not keep
     the bound honest.
@@ -603,7 +955,13 @@ def test_a_registry_path_with_a_query_character_opens(tmp_path) -> None:
 
     reg = Registry(db)
 
-    assert reg.create_project("Ops").slug == "ops"
+    assert (
+        reg.create_project(
+            "Ops",
+            actor="console",
+        ).slug
+        == "ops"
+    )
     assert db.exists()
     assert not (tmp_path / "what").exists()  # the file the text form creates
 
@@ -870,8 +1228,8 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
     The ladder's row in ``schema_version`` is the only version state such a build
     reads, and it compares that row with its **own** last version: the row is
     therefore levelled at the ladder's own number (8), never at the head revision's
-    id (9 today) — a number above what that build supports is refused outright
-    ("registry schema version 9 is newer than this build supports (8)"), which
+    id (10 today) — a number above what that build supports is refused outright
+    ("registry schema version 10 is newer than this build supports (8)"), which
     makes an upgrade one-way for no reason at all.
 
     The retired build runs here rather than being described: its own store module
@@ -892,7 +1250,10 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
         ("ops", "Ops")
     ]
     assert reg.get_project("ops").notes == ""
-    meeting = reg.create_meeting("ops", "Kickoff")  # and writes with its own DDL
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+    )  # and writes with its own DDL
     assert reg.get_meeting("ops", "kickoff").id == meeting.id
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
@@ -1100,9 +1461,20 @@ def test_the_active_run_index_arrives_with_revision_0009(tmp_path) -> None:
     # Both active states are refused for a meeting that has one, and a finished
     # run is not refused at all: the index is partial, and the states it names
     # are the states the guard reads.
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
-    active = reg.create_run(meeting.id, origin="console")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    active = reg.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     with closing(sqlite3.connect(str(db))) as conn, conn:
         for status in ("queued", "running"):
             with pytest.raises(sqlite3.IntegrityError):
@@ -1224,7 +1596,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     assert _index_sql(db, "pipeline_run_active_meeting") is not None
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0009",
+            "0010",
         )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -1247,9 +1619,19 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     statement's own parameters.
     """
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
-    run = reg.create_run(meeting.id)
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    run = reg.create_run(
+        meeting.id,
+        actor="console",
+    )
 
     seen: list[tuple[str, tuple]] = []
 
@@ -1257,9 +1639,16 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     def _record(_conn, _cursor, statement, parameters, _context, _many) -> None:
         seen.append((" ".join(statement.split()), parameters))
 
-    claimed = reg.claim_run(run.id, owner="host:1")
+    claimed = reg.claim_run(
+        run.id,
+        owner="host:1",
+        actor="console",
+    )
     assert claimed is not None and claimed.status == "running"
-    assert len(seen) == 2, seen  # the transition, and the row it wrote read back
+    # The transition, the row it wrote read back, and the audit row the call
+    # appends for itself (ADR-0033) — which is a statement of its own, after the
+    # claim's unit of work has closed.
+    assert len(seen) == 3, seen
     statement, parameters = seen[0]
     assert statement.startswith("UPDATE pipeline_run")
     assert "EXISTS" in statement.upper()  # the node's rule, inside the WHERE
@@ -1267,10 +1656,15 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
 
     seen.clear()
     reaped = reg.interrupt_run(
-        run.id, observed=claimed, ended_at="now", error="gone", progress={}
+        run.id,
+        observed=claimed,
+        ended_at="now",
+        error="gone",
+        progress={},
+        actor="console",
     )
     assert reaped is not None and reaped.status == "interrupted"
-    assert len(seen) == 2, seen
+    assert len(seen) == 3, seen  # the compare-and-set, the read back, the audit row
     statement, parameters = seen[0]
     assert statement.startswith("UPDATE pipeline_run")
     assert claimed.owner in parameters and claimed.heartbeat_at in parameters
@@ -1279,7 +1673,12 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     # a stale observation does not interrupt a row it no longer describes.
     assert (
         reg.interrupt_run(
-            run.id, observed=claimed, ended_at="later", error="stale", progress={}
+            run.id,
+            observed=claimed,
+            ended_at="later",
+            error="stale",
+            progress={},
+            actor="console",
         )
         is None
     )
@@ -1305,10 +1704,17 @@ def test_a_version_table_holding_two_revisions_opens_and_is_reduced(tmp_path) ->
     reg = Registry(db)
 
     assert [project.slug for project in reg.list_projects()] == ["ops"]
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff"
+    )
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0010",)
         ]
 
 
@@ -1337,11 +1743,18 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
     reg = Registry(db)
 
     assert [project.slug for project in reg.list_projects()] == ["ops"]
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff"
+    )
     assert _index_sql(db, "pipeline_run_active_meeting") == index_before
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0010",)
         ]
 
 
@@ -1473,7 +1886,7 @@ def test_a_successors_widened_index_is_left_as_this_revisions_own(tmp_path) -> N
     assert _index_sql(db, "pipeline_run_active_meeting") == widened
     with closing(sqlite3.connect(str(db))) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0010",)
         ]
 
 
@@ -1540,9 +1953,9 @@ def test_a_revision_written_the_documented_way_is_numbered_like_the_chain(
     )
 
     assert made.returncode == 0, made.stderr
-    written = sorted(script_location.glob("versions/0010_a_next_change.py"))
-    assert [path.name for path in written] == ["0010_a_next_change.py"]
-    assert 'revision: str = "0010"' in written[0].read_text(encoding="utf-8")
+    written = sorted(script_location.glob("versions/0011_a_next_change.py"))
+    assert [path.name for path in written] == ["0011_a_next_change.py"]
+    assert 'revision: str = "0011"' in written[0].read_text(encoding="utf-8")
 
 
 def test_the_alembic_ini_names_the_history_this_build_opens() -> None:
@@ -1621,13 +2034,13 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     """
     script_location = tmp_path / "migrations"
     shutil.copytree(_MIGRATIONS, script_location)
-    (script_location / "versions" / "0010_pragma_probe.py").write_text(
+    (script_location / "versions" / "0011_pragma_probe.py").write_text(
         '"""A probe revision: record the FK pragma this migration runs under."""\n'
         "\n"
         "from alembic import op\n"
         "\n"
-        'revision: str = "0010"\n'
-        'down_revision: str | None = "0009"\n'
+        'revision: str = "0011"\n'
+        'down_revision: str | None = "0010"\n'
         "branch_labels = None\n"
         "depends_on = None\n"
         "\n"

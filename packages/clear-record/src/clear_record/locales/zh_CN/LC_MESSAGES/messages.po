@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-26 15:36+0800\n"
+"POT-Creation-Date: 2026-09-26 16:39+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -380,7 +380,7 @@ msgid ""
 "{unsupported}. It supports: {supported}."
 msgstr "[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupported}。它支持：{supported}。"
 
-#: packages/clear-record/src/clear_record/pipeline/workspace.py:176
+#: packages/clear-record/src/clear_record/pipeline/workspace.py:190
 msgid ""
 "the workspace's .clear-record-ignore cannot be read, so which of its "
 "files are inputs is unknown; make it readable or remove it"
@@ -634,41 +634,41 @@ msgstr "该运行未记录工作进程内存"
 msgid "there is no run record, so this axis is unknown"
 msgstr "没有运行记录，因此该指标未知"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:263
+#: packages/clear-record/src/clear_record/service/benchmark.py:287
 #, python-brace-format
 msgid "[bench] accuracy: WER {wer} (similarity {similarity})"
 msgstr "[bench] 准确度：WER {wer}（相似度 {similarity}）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:271
+#: packages/clear-record/src/clear_record/service/benchmark.py:295
 #, python-brace-format
 msgid ""
 "[bench] accuracy: coverage {coverage}, mean confidence {confidence}, "
 "{words} words"
 msgstr "[bench] 准确度：覆盖率 {coverage}，平均置信度 {confidence}，{words} 个词"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:285
+#: packages/clear-record/src/clear_record/service/benchmark.py:309
 #, python-brace-format
 msgid "[bench] speed: {rate}x realtime ({audio}s audio / {wall}s wall)"
 msgstr "[bench] 速度：{rate} 倍速（音频 {audio} 秒 / 墙钟 {wall} 秒）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:298
+#: packages/clear-record/src/clear_record/service/benchmark.py:322
 #, python-brace-format
 msgid ""
 "[bench] memory: {mib} MiB peak across the transcribe stage's decoder "
 "workers"
 msgstr "[bench] 内存：转写阶段解码工作进程的峰值 {mib} MiB"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:312
+#: packages/clear-record/src/clear_record/service/benchmark.py:336
 #, python-brace-format
 msgid "[bench] fit: --auto chose {chose}"
 msgstr "[bench] 适配：--auto 选择了 {chose}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:313
+#: packages/clear-record/src/clear_record/service/benchmark.py:337
 #: packages/clear-record/src/clear_record/web/templates/_run.html:61
 msgid "nothing (chosen by hand)"
 msgstr "无（人工选择）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:319
+#: packages/clear-record/src/clear_record/service/benchmark.py:343
 #, python-brace-format
 msgid ""
 "[bench] fit facts: backend={backend} model={model} language={language} "
@@ -677,58 +677,58 @@ msgstr ""
 "[bench] 适配事实：backend={backend} model={model} language={language} "
 "profile={profile} jobs={jobs} chunk={chunk}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:336
+#: packages/clear-record/src/clear_record/service/benchmark.py:360
 #, python-brace-format
 msgid "[bench] {axis}: unknown -- {reason}"
 msgstr "[bench] {axis}：未知 -- {reason}"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:338
+#: packages/clear-record/src/clear_record/service/benchmark.py:362
 msgid "no reason was recorded"
 msgstr "未记录原因"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:363
+#: packages/clear-record/src/clear_record/service/benchmark.py:387
 msgid "pass either --run-id or --meeting-id, not both"
 msgstr "请传入 --run-id 或 --meeting-id，二者不可同时使用"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:365
+#: packages/clear-record/src/clear_record/service/benchmark.py:389
 msgid "pass --directory or a run id, not both"
 msgstr "请传入 --directory 或运行 ID，二者不可同时使用"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:368
+#: packages/clear-record/src/clear_record/service/benchmark.py:392
 #, python-brace-format
 msgid "{path} is not a readable reference transcript"
 msgstr "{path} 不是可读取的参考转写文本"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:378
+#: packages/clear-record/src/clear_record/service/benchmark.py:402
 #, python-brace-format
 msgid "no registry at {path}: there is no run to measure"
 msgstr "{path} 处没有注册表：没有可测量的运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:387
+#: packages/clear-record/src/clear_record/service/benchmark.py:411
 msgid "no run found in the registry"
 msgstr "注册表中未找到运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:408
+#: packages/clear-record/src/clear_record/service/benchmark.py:432
 msgid "show one run's four axes: accuracy, speed, memory, fit"
 msgstr "显示单次运行的四个指标：准确度、速度、内存、适配"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:410
+#: packages/clear-record/src/clear_record/service/benchmark.py:434
 msgid "a run to measure"
 msgstr "要测量的运行"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:415
+#: packages/clear-record/src/clear_record/service/benchmark.py:439
 msgid "the meeting whose latest run to measure"
 msgstr "要测量其最近一次运行的会议"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:421
+#: packages/clear-record/src/clear_record/service/benchmark.py:445
 msgid "a workspace to measure without a run record"
 msgstr "在没有运行记录时测量的工作区"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:426
+#: packages/clear-record/src/clear_record/service/benchmark.py:450
 msgid "a reference transcript file to compare (WER/similarity)"
 msgstr "用于对比的参考转写文本文件（WER/相似度）"
 
-#: packages/clear-record/src/clear_record/service/benchmark.py:434
+#: packages/clear-record/src/clear_record/service/benchmark.py:458
 msgid "override the app data directory (default: CR_DATA_DIR / platform dir)"
 msgstr "覆盖应用数据目录（默认：CR_DATA_DIR / 平台目录）"
 
@@ -786,73 +786,73 @@ msgid ""
 "delete its tapes"
 msgstr "此会议尚无已验证的归档；请先归档此会议，然后再删除其录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:631
+#: packages/clear-record/src/clear_record/service/managed.py:633
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:688
+#: packages/clear-record/src/clear_record/service/managed.py:690
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:695
+#: packages/clear-record/src/clear_record/service/managed.py:697
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:707
+#: packages/clear-record/src/clear_record/service/managed.py:709
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:714
+#: packages/clear-record/src/clear_record/service/managed.py:716
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:719
+#: packages/clear-record/src/clear_record/service/managed.py:721
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 bytes"
 msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:739
+#: packages/clear-record/src/clear_record/service/managed.py:741
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:784
+#: packages/clear-record/src/clear_record/service/managed.py:786
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:804
+#: packages/clear-record/src/clear_record/service/managed.py:806
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:825
+#: packages/clear-record/src/clear_record/service/managed.py:827
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1130
+#: packages/clear-record/src/clear_record/service/managed.py:1132
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1141
+#: packages/clear-record/src/clear_record/service/managed.py:1143
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -862,7 +862,7 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1154
+#: packages/clear-record/src/clear_record/service/managed.py:1156
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
@@ -888,29 +888,29 @@ msgstr ""
 "\n"
 "本构建无法读取的已存选项按原文保留如下：\n"
 
-#: packages/clear-record/src/clear_record/service/runs.py:551
+#: packages/clear-record/src/clear_record/service/runs.py:555
 msgid ""
 "every audio file in this workspace is named in .clear-record-ignore, so "
 "this run would have no inputs; remove a line from that declaration"
 msgstr "此工作区中的每个音频文件都已在 .clear-record-ignore 中列出，本次运行将没有输入；请从该声明中删除一行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1090
+#: packages/clear-record/src/clear_record/service/runs.py:1102
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1096
+#: packages/clear-record/src/clear_record/service/runs.py:1108
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1276
+#: packages/clear-record/src/clear_record/service/runs.py:1288
 msgid "this run is still in flight; cancel it first"
 msgstr "该运行仍在进行中；请先取消它"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1282
+#: packages/clear-record/src/clear_record/service/runs.py:1294
 msgid "this run did not record the options it ran with, so it cannot be resumed"
 msgstr "该运行未记录其运行参数，无法继续"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1288
+#: packages/clear-record/src/clear_record/service/runs.py:1300
 msgid "the run's meeting no longer exists"
 msgstr "该运行所属的会议已不存在"
 
@@ -939,14 +939,14 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 msgid "setup does not record {key!r}"
 msgstr "初始设置不记录 {key!r}"
 
-#: packages/clear-record/src/clear_record/service/store.py:397
+#: packages/clear-record/src/clear_record/service/store.py:399
 #, python-brace-format
 msgid ""
 "registry schema revision {revision} is not one this build carries (its "
 "newest is {head}); upgrade clear-record"
 msgstr "注册表的架构修订版本 {revision} 不是本构建所携带的修订版本（最新为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:405
+#: packages/clear-record/src/clear_record/service/store.py:407
 #, python-brace-format
 msgid ""
 "the registry at {db_path} records schema revision {revision}, which an "
@@ -956,14 +956,14 @@ msgstr ""
 "{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 "
 "{db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:426
+#: packages/clear-record/src/clear_record/service/store.py:428
 #, python-brace-format
 msgid ""
 "registry schema version {version} is newer than this build carries (its "
 "newest revision is {head}); upgrade clear-record"
 msgstr "注册表的架构版本 {version} 比本构建所携带的更新（最新修订版本为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:437
+#: packages/clear-record/src/clear_record/service/store.py:439
 #, python-brace-format
 msgid ""
 "the registry at {db_path} was written by an unreleased development build,"
@@ -971,7 +971,7 @@ msgid ""
 "record again"
 msgstr "{db_path} 处的注册表由未发布的开发构建写入，本次发布不携带此类注册表；请删除 {db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:569
+#: packages/clear-record/src/clear_record/service/store.py:571
 #, python-brace-format
 msgid ""
 "another surface is migrating the registry at {db_path} and still holds "
@@ -1506,8 +1506,8 @@ msgid ""
 msgstr "完整跑一次整条链路：一段 hello-world 录音经过转写，再按 MCP 智能体收到的那样读回转写文本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:18
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:29
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:20
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:25
 msgid "missing"
 msgstr "缺失"
 
@@ -1525,17 +1525,16 @@ msgid "{count} file verified"
 msgid_plural "{count} files verified"
 msgstr[0] "已校验 {count} 个文件"
 
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:13
-msgid "failed"
-msgstr "失败"
-
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:16
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:24
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
 msgid "unverifiable"
 msgstr "无法验证"
 
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:19
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:34
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:18
+msgid "failed"
+msgstr "失败"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:21
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:30
 msgid "mismatched"
 msgstr "不匹配"
 
@@ -2350,7 +2349,10 @@ msgid ""
 "and a tape in a user-chosen workspace is refused regardless. Set the "
 "managed root in {path}; a project's archive root is edited on the "
 "project."
-msgstr "保留仅限手动：clear-record 绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} 中设置托管根目录；项目的归档根目录在项目页中编辑。"
+msgstr ""
+"保留仅限手动：clear-record "
+"绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} "
+"中设置托管根目录；项目的归档根目录在项目页中编辑。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:2
 msgid "Loading webhook status…"
@@ -2878,5 +2880,3 @@ msgstr "完成初始设置"
 msgid "Dismiss setup"
 msgstr "忽略初始设置"
 
-# Per-option help: left English on purpose (the terminal is not the
-# interface).

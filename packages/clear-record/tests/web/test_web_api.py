@@ -13,8 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import (
     DECODER_KNOBS,
     PROFILE_CUSTOM,
@@ -25,6 +24,7 @@ from clear_record.core import (
 )
 from clear_record.service import AutoProbe, Registry, RunManager
 from clear_record.web.app import RunCreate, WorkspaceRunCreate, create_app
+from fastapi.testclient import TestClient
 
 #: The knobs a person sets in the console's run form: the declaration's rows that
 #: are **not** decoder knobs. A preset trades the decoder — the picker offers every
@@ -62,7 +62,7 @@ LOCAL_ORIGIN = "http://127.0.0.1:8765"
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    return TestClient(app, base_url=LOCAL_ORIGIN)
+    return signed_in(TestClient(app, base_url=LOCAL_ORIGIN))
 
 
 @pytest.fixture()
@@ -113,8 +113,8 @@ def console(tmp_path) -> SimpleNamespace:
     manager = RunManager(registry, pipeline=fake_pipeline)
     try:
         yield SimpleNamespace(
-            client=TestClient(
-                create_app(registry, runs=manager), base_url=LOCAL_ORIGIN
+            client=signed_in(
+                TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN)
             ),
             registry=registry,
             manager=manager,
@@ -224,10 +224,20 @@ def test_ui_unknown_project_is_404(client) -> None:
 
 
 # --- JSON API ------------------------------------------------------------- #
-def test_health_reports_the_registry(client) -> None:
-    body = client.get("/api/health").json()
-    assert body["status"] == "ok"
-    assert body["registry"].endswith("registry.sqlite3")
+def test_health_reports_the_status_and_nothing_else(client) -> None:
+    """``GET /health`` is exactly ``{"status": "ok"}`` — no registry, no session.
+
+    It is the tray's and a supervisor's probe, so it answers without a
+    credential and reveals nothing: the old ``/api/health`` named the registry's
+    path, which is a fact about the node a liveness probe has no business
+    carrying (ADR-0033). The whole body is asserted, not just ``status``, so a
+    field added later has to be a decision.
+    """
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert response.text == '{"status":"ok"}'
 
 
 def test_project_and_glossary_flow(client) -> None:
@@ -1155,7 +1165,7 @@ def test_a_slow_run_resolution_does_not_stall_the_node(
         submitted.start()
         assert probing.wait(10), "the run was never resolved"
         began = time.monotonic()
-        health = console.client.get("/api/health")
+        health = console.client.get("/health")
         waited = time.monotonic() - began
         submitted.join(30)
         assert not submitted.is_alive(), "the submission never returned"

@@ -17,7 +17,6 @@ exercise the first run or the update notice opt out with the
 from __future__ import annotations
 
 import pytest
-
 from clear_record.service import setup
 
 

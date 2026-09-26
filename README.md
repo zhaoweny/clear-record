@@ -477,9 +477,11 @@ ends it as it does an unsupervised node. That is the stand-in when there is no
 systemd/launchd unit — see the
 [deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
 `--no-browser` is `web`'s only; `--port`, `--host` and `--data-dir` control either
-launch; the server binds `127.0.0.1` by default and needs no account — leave
-`--host` on loopback and let your proxy be the ingress
-([ADR-0021](docs/adr/0021-localhost-only-deployment.md)). The UI language comes from
+launch; the server binds `127.0.0.1` by default and asks for **one console
+password** — set on the first run at `/setup`, replaceable from a terminal with
+`clear-record password` — so leave `--host` on loopback and let your proxy be the
+ingress ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
+[ADR-0033](docs/adr/0033-the-auth-position.md)). The UI language comes from
 `--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the
 console also resolves this machine's tailnet name, runs a **foreground**
@@ -492,8 +494,8 @@ untouched. If Serve cannot start, the console still starts and says why. The
 the macOS App Store install symlinks `~/.local/bin/tailscale` into
 `Tailscale.app`, whose bundle aborts when the CLI is invoked through that
 symlink; `CR_TAILSCALE` points at a non-standard install. **The
-tailnet is then the authentication — anyone on your tailnet can reach the
-console**
+tailnet then decides who can reach the console**, which still asks for its own
+password
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
 [deployment guide](docs/service-deployment.md#tailscale)). The app-owned
 **project registry** (SQLite) lives in the platform-native data directory —

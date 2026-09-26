@@ -19,7 +19,6 @@ import threading
 import urllib.request
 
 import pytest
-
 from clear_record.core import node
 from clear_record.tray.app import status_text
 from clear_record.tray.service import ServiceController, ServiceState
@@ -35,11 +34,11 @@ class _Node(http.server.BaseHTTPRequestHandler):
     """A listener that answers the node's health path exactly as a node does."""
 
     def do_GET(self) -> None:
-        if self.path != "/api/health":
+        if self.path != "/health":
             self.send_response(404)
             self.end_headers()
             return
-        body = b'{"status":"ok","registry":"registry.sqlite3"}'
+        body = b'{"status":"ok"}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -136,7 +135,7 @@ def test_controller_serves_health_and_stops(tmp_path) -> None:
         assert controller.wait_until_ready(timeout=15), "server did not become ready"
         assert controller.running
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/health", timeout=5
+            f"http://127.0.0.1:{port}/health", timeout=5
         ) as response:
             assert b'"status":"ok"' in response.read()
     finally:
@@ -189,7 +188,7 @@ def test_restart_serves_the_same_url_again(tmp_path) -> None:
         assert controller.restart(timeout=15), "server did not come back"
         assert controller.state() is ServiceState.RUNNING
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/health", timeout=5
+            f"http://127.0.0.1:{port}/health", timeout=5
         ) as response:
             assert response.status == 200
     finally:
@@ -359,3 +358,40 @@ def test_the_status_line_and_the_restart_offer_share_one_live_read(
     assert status_text(controller, state=live) == "Not responding"
     assert controller.offers_restart(state=live) is True
     assert len(reads) == 1, "a reader probed the node again"
+
+
+def test_the_trays_own_node_publishes_the_local_session(tmp_path, monkeypatch) -> None:
+    """The tray's posture is a node: the command line is not asked to sign in.
+
+    The tray starts its node **in this process** rather than through ``serve``, so
+    the session the command line presents has to belong to the server every
+    posture runs (:class:`~clear_record.web.app.NodeServer`) rather than to one
+    entry point — otherwise the desktop posture, where the tray *is* the node,
+    refuses the operator's own `clear-record run`.
+    """
+    monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
+    controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "data"))
+    controller.start()
+    try:
+        assert controller.wait_until_ready(timeout=15), "the tray's node never came up"
+        assert node.local_session(), "the tray's node published no local session"
+
+        address = node.ask()  # the recorded node, probed anonymously
+        answer = node.request(address, "POST", "/api/runs", {})
+
+        # Past the gate: the shape of the body is what refuses this, not a session.
+        assert answer.status == 422, answer.detail()
+        assert _anonymous_status(address, "/api/projects") == 401
+    finally:
+        controller.stop(timeout=15)
+
+    assert node.local_session() is None, "the session outlived the node"
+
+
+def _anonymous_status(address: node.NodeAddress, path: str) -> int:
+    """One request with no cookie at all, as a client that holds none makes it."""
+    try:
+        with urllib.request.urlopen(address.url_for(path), timeout=5) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code

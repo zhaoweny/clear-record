@@ -74,8 +74,8 @@ _COMMON_CONSOLE_OPTIONS = (
         help=tr(
             "set up Tailscale Serve for this port, trust this machine's tailnet "
             "name, and print its https URL. Serve runs in the foreground "
-            "alongside the console and stops with it. The tailnet is the "
-            "authentication: anyone on your tailnet can reach the console."
+            "alongside the console and stops with it. The tailnet decides who "
+            "can reach the console; the console still asks for its own password."
         ),
     ),
     click.option(
@@ -242,6 +242,8 @@ def _run(
             serve_port=tailscale_port if tailscale_port is not None else port,
             override=tailscale_host,
         )
+    else:
+        _require_declared_trust(host)
     from clear_record.web.app import serve
 
     if session is not None:
@@ -281,6 +283,48 @@ def _run(
             restore()
         if session is not None:
             session.stop()
+
+
+def _require_declared_trust(host: str) -> None:
+    """Refuse a bind past loopback that declares no way it is trusted.
+
+    The console holds one credential now (ADR-0033), and that is not what this
+    checks: it checks the **request guard**, which answers ``403`` to a ``Host``
+    that is neither loopback nor named by the operator. So a console told to bind
+    another address, with nothing saying how it will be reached, would start and
+    then refuse every request it received — a bind that serves nobody, and a
+    misconfiguration that looks like it worked. Refusing here says so before a
+    port is taken, and names the four ways forward.
+
+    The declaration is read from the environment, which is where the operator
+    puts it (``CR_TRUSTED_HOSTS``, ``CR_TRUSTED_PROXIES``) — the same values the
+    guard above already reads for its own checks, so the two cannot disagree
+    about what was declared. ``--tailscale`` needs no declaration of its own: it
+    resolves the tailnet name and passes it to :func:`create_app` in-process, and
+    it refuses a non-loopback bind before this is reached.
+    """
+    from clear_record.web import guard
+
+    if guard.is_loopback_host(guard.host_name(host)):
+        return
+    if guard.has_declared_trust():
+        return
+    raise SystemExit(
+        tr(
+            "refusing to bind {host!r}: the request guard answers 403 to any Host "
+            "but loopback, and nothing declares how this console is reached, so it "
+            "would serve nobody.\n"
+            "  Ways forward:\n"
+            "    - keep the loopback bind (the default) and let your reverse proxy "
+            "be the ingress: drop --host\n"
+            "    - name the hostname this console answers to: "
+            "CR_TRUSTED_HOSTS=<hostname>\n"
+            "    - declare the reverse proxy that fronts it: "
+            "CR_TRUSTED_PROXIES=<peer address>\n"
+            "    - let Tailscale Serve front it: --tailscale",
+            host=host,
+        )
+    )
 
 
 def _guard_termination(session: ServeSession | None):
@@ -404,8 +448,8 @@ def _tailscale_setup(
                 tr(
                     "[tailscale] console is now shared on your tailnet:\n"
                     "    {url}\n"
-                    "    The tailnet is the authentication: anyone on your tailnet "
-                    "can reach this console.\n"
+                    "    The tailnet decides who can reach this console; the "
+                    "console still asks for its own password.\n"
                     "    Serve runs in the foreground and stops with this console.",
                     url=tailscale.console_url(name, serve_port),
                 )

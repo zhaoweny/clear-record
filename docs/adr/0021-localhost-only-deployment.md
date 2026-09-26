@@ -4,10 +4,13 @@ Status: active
 Date: 2026-09-15
 
 Superseded **in part** by [ADR-0033](0033-the-auth-position.md) (2026-09-26): the
-in-app auth position is decided, so this ADR's "ships no authentication" clause is
-superseded by that decision — the code still ships no auth until its build lands —
-while the ingress posture (the operator's reverse proxy is the only ingress)
-stands.
+in-app auth position is decided, and **its build has landed** (the auth gate of
+2026-09-26: one credential in the registry, human sessions, `/setup` and
+`/health` the anonymous surface). This ADR's "ships no authentication" clause is
+superseded by that decision and by that code; the ingress posture (the
+operator's reverse proxy is the only ingress) stands, and its "the bind stays
+localhost-only" reading is now **enforced**: a non-loopback bind with no declared
+trust source refuses to start.
 
 ## Context
 
@@ -34,7 +37,10 @@ stands.
 
 - [DECISION] The app **stays bound to `127.0.0.1` and ships no authentication**,
   **for now**. Option (b) — in-app LAN auth — is **deferred, not rejected**; the
-  proxy is where auth lives today.
+  proxy is where auth lives today. *(Superseded 2026-09-26 by
+  [ADR-0033](0033-the-auth-position.md): the console now carries one credential
+  and its own sessions, and a bind past loopback needs a declared trust source.
+  The loopback bind stays the default and the proxy stays the ingress.)*
 - [DECISION] **Remote access and authentication are the operator's reverse
   proxy** (nginx, Caddy, Tailscale, …). The app is the backend behind it and
   **never the ingress**.
@@ -49,10 +55,16 @@ stands.
   trusted proxy (`CR_TRUSTED_PROXIES`) — deferred, not built.** The owner's steer
   was to accept forwarded headers from a declared proxy, with a **quick path for
   Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
-  instead of asking the operator to declare it. No code reads `X-Forwarded-*` or
-  `CR_TRUSTED_PROXIES` today, so trusting forwarded headers from *anything else*
-  remains a risk to the request guard; the bind stays localhost-only, and the UI's
-  relative URLs mean nothing is lost by refusing. Revisit when a proxy deployment
+  instead of asking the operator to declare it. What is true today, scoped: the
+  console's own code reads and honours **no** `X-Forwarded-*` header, while
+  `CR_TRUSTED_PROXIES` is read as a **declaration** by the auth gate's startup
+  check (§ADR-0033) — naming a proxy is one way a non-loopback bind is allowed to
+  start. (The server under the console, uvicorn, does rewrite the scheme from a
+  *loopback* peer's `X-Forwarded-Proto` by default, which is the shape this item
+  narrows.) Honouring a declared peer's headers is this item's, so trusting
+  forwarded headers from *anything else* remains a risk to the request guard; the
+  bind stays localhost-only, and the UI's relative URLs mean nothing is lost by
+  refusing. Revisit when a proxy deployment
   genuinely needs the client's scheme or host. *(Direction 2026-09-26:
   [ADR-0033](0033-the-auth-position.md) puts trusted proxies in the auth build's
   scope; the code still reads neither header, so this item stays open-not-built

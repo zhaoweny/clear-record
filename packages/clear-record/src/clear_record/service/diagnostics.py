@@ -157,17 +157,57 @@ def redact_text(text: str) -> str:
     return _TOKEN.sub(_replace, text)
 
 
+#: What a credential value becomes when one reaches a log line. The *key* — or
+#: the word "password" — survives: knowing a credential was sent is useful, its
+#: value is the one thing this bundle must never carry (ADR-0033).
+_CREDENTIAL_PLACEHOLDER = "[redacted]"
+
+#: A credential-shaped **field name**, matched whole: a structured log record
+#: whose key is one of these has its value replaced regardless of its shape.
+_CREDENTIAL_KEY = re.compile(
+    r"(?i)(?:password|passwd|passphrase|secret|token|credential)"
+)
+
+#: A credential **value in free text**: a key word followed by `:`/`=`, as a query
+#: string (`password=x`), a form post (`password: x`) or a JSON body
+#: (`"password":"x"`). The credential is stored hashed and is never logged, so
+#: this is the second line — the one that keeps a future change which logged a
+#: request body from putting a password into a bundle.
+_CREDENTIAL_FIELD = re.compile(
+    r"""(?i)\b(password|passwd|passphrase|secret|token|credential)"""
+    r"""(\"?\s*[:=]\s*\"?)([^\s\"&,;}]+)"""
+)
+
+
+def redact_credential(text: str) -> str:
+    """Replace any credential-shaped value in ``text`` with a placeholder."""
+    return _CREDENTIAL_FIELD.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{_CREDENTIAL_PLACEHOLDER}",
+        text,
+    )
+
+
 def redact_log_line(line: str) -> str:
-    """Redact a structured log line's string values (or free text, if not JSON)."""
+    """Redact a structured log line's string values (or free text, if not JSON).
+
+    Paths and filenames are hashed; a credential-shaped key or value is replaced
+    outright, whatever it looks like — the one thing the bundle must never carry
+    is the console's own password, and a log line is the only route by which it
+    could reach one.
+    """
     try:
         record = json.loads(line)
     except (ValueError, TypeError):
-        return redact_text(line)
+        return redact_credential(redact_text(line))
     if not isinstance(record, dict):
-        return redact_text(line)
+        return redact_credential(redact_text(line))
     for key, value in list(record.items()):
-        if isinstance(value, str):
-            record[key] = redact_text(value)
+        if not isinstance(value, str):
+            continue
+        if key and _CREDENTIAL_KEY.fullmatch(key):
+            record[key] = _CREDENTIAL_PLACEHOLDER
+        else:
+            record[key] = redact_credential(redact_text(value))
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -678,6 +718,7 @@ __all__ = [
     "collect_bundle",
     "console_log_config",
     "hash_component",
+    "redact_credential",
     "redact_log_line",
     "redact_path",
     "redact_text",

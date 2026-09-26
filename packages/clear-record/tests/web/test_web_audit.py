@@ -15,10 +15,10 @@ callers.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import API, CONSOLE, MCP, MeetingAgent, Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The address the console's own client dials (see ``test_web_api``): a client on
 #: the node's machine, which is what a route taking a local path requires.
@@ -33,6 +33,13 @@ class App:
         self.registry = registry
 
     def rows(self) -> list[tuple[str, str, str, str]]:
+        """**Every** row the registry holds, oldest first — nothing filtered out.
+
+        The fixture's own sign-in writes one ``credential.set`` row (the act a
+        real first run performs), so it is the first row of every expected list
+        here: a filter would hide a spurious or misplaced credential row written
+        by the route under test, which is a row this surface is meant to see.
+        """
         return [
             (row.actor, row.action, row.target, row.outcome)
             for row in self.registry.list_audit_events()
@@ -51,8 +58,8 @@ def app(tmp_path) -> App:
     manager = RunManager(registry, pipeline=lambda *a, **k: None, start_queue=False)
     try:
         yield App(
-            client=TestClient(
-                create_app(registry, runs=manager), base_url=LOCAL_ORIGIN
+            client=signed_in(
+                TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN)
             ),
             registry=registry,
         )
@@ -65,7 +72,10 @@ def test_the_console_records_itself_as_the_actor(app: App) -> None:
     res = app.client.post("/ui/projects", data={"name": "Ops"})
 
     assert res.status_code == 200
-    assert app.rows() == [(CONSOLE, "project.create", "project:Ops", "ok")]
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (CONSOLE, "project.create", "project:Ops", "ok"),
+    ]
 
 
 def test_the_json_api_records_itself_as_the_actor(app: App) -> None:
@@ -73,7 +83,10 @@ def test_the_json_api_records_itself_as_the_actor(app: App) -> None:
     res = app.client.post("/api/projects", json={"name": "Ops"})
 
     assert res.status_code == 201
-    assert app.rows() == [(API, "project.create", "project:Ops", "ok")]
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (API, "project.create", "project:Ops", "ok"),
+    ]
 
 
 def test_a_client_declared_origin_is_not_the_audit_actor(app: App) -> None:
@@ -139,6 +152,7 @@ def test_a_console_acceptance_records_console_as_the_reviewer(app: App) -> None:
     # the promotion runs inside the decision's hold on the chain, so the terms it
     # adds are recorded before the decision that caused them is (ADR-0031).
     assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
         (CONSOLE, "project.create", "project:Ops", "ok"),
         (CONSOLE, "meeting.create", "meeting:Kickoff", "ok"),
         (MCP, "draft.write", f"draft:{draft.draft_id}", "ok"),

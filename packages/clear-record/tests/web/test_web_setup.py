@@ -10,8 +10,7 @@ tests run behind the conftest marker fixture so they stay a returning user.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry, setup
 from clear_record.service.agent_flow import (
     LEG_BACKEND,
@@ -21,6 +20,7 @@ from clear_record.service.agent_flow import (
 )
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 def _app(tmp_path, **kwargs):
@@ -32,7 +32,7 @@ def _app(tmp_path, **kwargs):
 
 
 def _client(tmp_path, **kwargs) -> TestClient:
-    return TestClient(_app(tmp_path, **kwargs), follow_redirects=False)
+    return signed_in(TestClient(_app(tmp_path, **kwargs), follow_redirects=False))
 
 
 # --- first run --------------------------------------------------------------- #
@@ -137,7 +137,7 @@ def test_a_first_run_shows_the_setup_link_but_no_update_notice(tmp_path) -> None
 
 
 def test_the_setup_page_renders_the_numbered_steps(tmp_path) -> None:
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert page.count('class="setup-step"') == 4
     for step in ("setup-welcome", "setup-transcription", "setup-agent", "setup-try"):
@@ -179,7 +179,7 @@ def test_the_transcription_step_says_a_model_free_backend_needs_no_checkpoint(
         lambda *args, **kwargs: _status(LEG_OK, backend="apple-speech"),
     )
 
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert 'id="setup-transcription"' in page
     assert "Transcription is ready here: the apple-speech backend" in page
@@ -199,7 +199,7 @@ def test_the_transcription_step_shows_the_checkpoint_for_a_ggml_backend(
         lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
     )
 
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert "Transcription is ready here: the apple backend" in page
     assert "Checkpoint on disk: /home/u/models/ggml-small.bin." in page
@@ -212,7 +212,7 @@ def test_the_transcription_step_names_a_missing_backend(tmp_path, monkeypatch) -
         lambda *args, **kwargs: _status(LEG_BACKEND, backend=None),
     )
 
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert "No ASR backend is available on this machine yet" in page
     assert "/home/u/models" in page
@@ -227,7 +227,7 @@ def test_the_transcription_step_offers_to_download_a_missing_checkpoint(
         lambda *args, **kwargs: _status(LEG_MODEL, models_present=("ggml-small.bin",)),
     )
 
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert "The apple backend needs a model checkpoint" in page
     assert "Download it here" in page
@@ -249,7 +249,7 @@ def test_a_ready_step_offers_no_download(tmp_path, monkeypatch) -> None:
         lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
     )
 
-    page = TestClient(_app(tmp_path)).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
 
     assert 'hx-post="/ui/setup/download-model"' not in page
 
@@ -272,7 +272,7 @@ def test_downloading_the_default_model_refreshes_the_step_to_ready(
 
     monkeypatch.setattr(web_app, "transcription_status", status)
 
-    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
 
     assert response.status_code == 200
     assert calls == [1]
@@ -303,7 +303,7 @@ def test_downloading_the_model_offloads_the_synchronous_fetch(
     monkeypatch.setattr(web_app, "download_transcription_model", fake_download)
     monkeypatch.setattr(web_app, "transcription_status", fake_status)
 
-    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
 
     assert response.status_code == 200
     assert seen["download"] is not seen["status"]
@@ -318,7 +318,7 @@ def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
         web_app, "transcription_status", lambda *args, **kwargs: _status(LEG_MODEL)
     )
 
-    response = TestClient(_app(tmp_path)).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
 
     assert response.status_code == 200
     assert "The download did not finish: RuntimeError: no network" in response.text
@@ -348,7 +348,7 @@ def test_an_unknown_model_shows_the_translated_error(tmp_path, monkeypatch) -> N
 def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:
     setup.update_setup_state(seen_version="0.0.0-old")
 
-    page = TestClient(_app(tmp_path)).get("/setup?reason=update").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/setup?reason=update").text
 
     assert "setup-update" in page
     assert "was updated to" in page
@@ -356,7 +356,7 @@ def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:
 
 def test_the_setup_page_mounts_the_same_agent_panel_as_settings(tmp_path) -> None:
     """One agent implementation, two entry points; /setup/agent is the same page."""
-    client = TestClient(_app(tmp_path))
+    client = signed_in(TestClient(_app(tmp_path)))
 
     for path in ("/setup", "/setup/agent", "/settings/agent"):
         page = client.get(path).text

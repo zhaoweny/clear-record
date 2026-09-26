@@ -35,7 +35,10 @@ Design notes:
   lost claim, a state the move is not legal from), and a **key miss**, append
   nothing, because nothing happened. The table refuses every ``UPDATE`` and
   ``DELETE`` (revision 0010), and :meth:`Registry.record_audit` is the only way a
-  row is written at all.
+  row is written at all. The credential's *set* is recorded; the credential and
+  session tables' other writes — sign-in, the idle clock, sign-out, the expired
+  prune — are bookkeeping and append nothing, because a session is not history of
+  the project data and one row per request would bury the record that is.
 - **A session per operation.** :meth:`Registry._session` is one unit of work:
   the sessionmaker is bound to the engine this registry owns, the session
   commits on a clean exit, and a session whose body raises is rolled back and
@@ -87,6 +90,7 @@ from sqlalchemy import (
     Text,
     case,
     create_engine,
+    delete,
     event,
     func,
     insert,
@@ -126,6 +130,7 @@ from clear_record.service.models import (
     Archive,
     Artifact,
     AuditEvent,
+    ConsoleSession,
     GlossaryTerm,
     Meeting,
     PipelineRun,
@@ -501,6 +506,31 @@ def _now() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
 
 
+def _instant(value: _dt.datetime) -> str:
+    """A datetime in the registry's text form, microseconds included.
+
+    Everything else the registry stamps keeps the second's precision audit rows
+    want; a session's two clocks do not, because the idle timeout is a duration a
+    test may shorten below a second — and a deadline that had been rounded to the
+    second would make that test's verdict a coin toss.
+    """
+    return value.astimezone(_dt.UTC).isoformat(timespec="microseconds")
+
+
+def _parsed_instant(text: str) -> _dt.datetime | None:
+    """The datetime :func:`_instant` wrote, or ``None`` for anything else.
+
+    ``None`` rather than an exception: a timestamp this build cannot read is a row
+    it cannot judge, and a session row's reader must answer "that session is not
+    usable" instead of failing the request it arrived on.
+    """
+    try:
+        value = _dt.datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=_dt.UTC)
+
+
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
     return slug or "project"
@@ -604,6 +634,12 @@ def _term_query() -> Select[tuple[entities.GlossaryTerm, str]]:
     return select(entities.GlossaryTerm, entities.Project.slug).join(
         entities.Project, entities.Project.id == entities.GlossaryTerm.project_id
     )
+
+
+#: The console credential's one row. The table's ``CHECK`` says the same thing
+#: in the file: one install has one credential, so a *second* row is refused by
+#: the schema rather than by whichever statement remembered to look.
+_CREDENTIAL_ROW = 1
 
 
 class RegistryLocked(RuntimeError):
@@ -803,6 +839,153 @@ class Registry:
             if limit is not None:
                 statement = statement.limit(limit)
             return [self._audit_event(row) for row in session.scalars(statement)]
+
+    # --- the console credential and its sessions (the auth gate) ----------- #
+    #
+    # Two operational tables, not project data: the credential that gates the
+    # console and the server-side sessions a sign-in opens. They live in the
+    # registry because that is where the app's own state lives and because they
+    # must survive a restart — a session in process memory would be a session a
+    # restart forgives — and they carry no secret: the credential is a salted
+    # hash and a session row is a token's digest
+    # (:mod:`clear_record.service.auth`). Only the credential's *set* appends an
+    # audit row; the session rows are bookkeeping (sign-in, the idle clock,
+    # sign-out, the prune) and are excluded for the reason the setup marker is:
+    # they are not history of what the operator's data did.
+
+    def credential(self) -> str | None:
+        """The stored credential hash, or ``None`` when none has been set.
+
+        The registry's answer to the first run's one question. It is read on the
+        sign-in path too, so the value never leaves the process except into
+        :func:`~clear_record.service.auth.verify_password`.
+        """
+        with self._session() as session:
+            return session.scalar(select(entities.ConsoleCredential.encoded))
+
+    @audit.recorded("credential.set", "credential:console")
+    def store_credential(self, encoded: str, *, actor: str) -> None:
+        """Set or replace the console's one credential row.
+
+        One row, id :data:`_CREDENTIAL_ROW`: the schema's ``CHECK`` makes a second
+        impossible, so "there is one credential" is the file's own rule and not a
+        convention this method has to keep. The previous value is overwritten —
+        it was a hash, and a history of hashes is a list of things to attack
+        rather than a record of anything.
+        """
+        with self._session() as session:
+            row = session.get(entities.ConsoleCredential, _CREDENTIAL_ROW)
+            if row is None:
+                session.add(
+                    entities.ConsoleCredential(
+                        id=_CREDENTIAL_ROW, encoded=encoded, updated_at=_now()
+                    )
+                )
+            else:
+                row.encoded = encoded
+                row.updated_at = _now()
+
+    def create_session(
+        self,
+        digest: str,
+        *,
+        created_at: _dt.datetime,
+        seen_at: _dt.datetime,
+        idle_deadline: _dt.datetime,
+        absolute_deadline: _dt.datetime,
+    ) -> None:
+        """Record one signed-in session, keyed by its token's digest.
+
+        Four instants and no identity: which *human* this is was settled when the
+        credential was checked, and there is one human (ADR-0033). The deadlines
+        are computed by the caller's policy — this layer stores what it is told.
+        """
+        with self._session() as session:
+            session.add(
+                entities.ConsoleSession(
+                    token_digest=digest,
+                    created_at=_instant(created_at),
+                    seen_at=_instant(seen_at),
+                    idle_deadline=_instant(idle_deadline),
+                    absolute_deadline=_instant(absolute_deadline),
+                )
+            )
+
+    def get_session(self, digest: str) -> ConsoleSession | None:
+        """The session ``digest`` names, or ``None``.
+
+        A row whose timestamps this build cannot read answers ``None`` as well: it
+        is not a session anyone can be inside, and the request it arrived on is
+        answered rather than failed.
+        """
+        with self._session() as session:
+            row = session.get(entities.ConsoleSession, digest)
+            return None if row is None else self._console_session(row)
+
+    def touch_session(
+        self,
+        digest: str,
+        *,
+        seen_at: _dt.datetime,
+        idle_deadline: _dt.datetime,
+    ) -> None:
+        """Move a live session's idle clock forward — the write an accepted request makes."""
+        with self._session() as session:
+            session.execute(
+                update(entities.ConsoleSession)
+                .where(entities.ConsoleSession.token_digest == digest)
+                .values(
+                    seen_at=_instant(seen_at), idle_deadline=_instant(idle_deadline)
+                )
+            )
+
+    def end_session(self, digest: str) -> bool:
+        """Delete the one session ``digest`` names; True when a row was there.
+
+        A conditional write, read off its own ``rowcount``: a cookie naming a
+        session that is already gone ends nothing, and there is nothing to say
+        about it.
+        """
+        with self._session() as session:
+            result = session.execute(
+                delete(entities.ConsoleSession).where(
+                    entities.ConsoleSession.token_digest == digest
+                )
+            )
+            return bool(result.rowcount)
+
+    def end_all_sessions(self) -> int:
+        """Delete every session; the count of rows that were there."""
+        with self._session() as session:
+            result = session.execute(delete(entities.ConsoleSession))
+            return int(result.rowcount or 0)
+
+    def prune_expired_sessions(self, now: _dt.datetime) -> int:
+        """Delete every session past a deadline, and every unreadable row.
+
+        Housekeeping, not an act: these sessions are already over — the next
+        request bearing one is refused by the same test this delete applies — so
+        the write only keeps the table from growing a row per sign-in forever. A
+        row whose timestamps do not parse is deleted here too: nothing can be
+        inside it.
+        """
+        dead: list[str] = []
+        with self._session() as session:
+            for row in session.scalars(select(entities.ConsoleSession)):
+                session_row = self._console_session(row)
+                if (
+                    session_row is None
+                    or session_row.idle_deadline <= now
+                    or session_row.absolute_deadline <= now
+                ):
+                    dead.append(row.token_digest)
+            if dead:
+                session.execute(
+                    delete(entities.ConsoleSession).where(
+                        entities.ConsoleSession.token_digest.in_(dead)
+                    )
+                )
+        return len(dead)
 
     # --- projects ---------------------------------------------------------- #
     @staticmethod
@@ -2243,6 +2426,26 @@ class Registry:
             action=row.action,
             target=row.target,
             outcome=row.outcome,
+        )
+
+    @staticmethod
+    def _console_session(row: entities.ConsoleSession) -> ConsoleSession | None:
+        """The row as the auth gate reads it, or ``None`` when it is unreadable."""
+        instants = (
+            _parsed_instant(row.created_at),
+            _parsed_instant(row.seen_at),
+            _parsed_instant(row.idle_deadline),
+            _parsed_instant(row.absolute_deadline),
+        )
+        if any(instant is None for instant in instants):
+            return None
+        created_at, seen_at, idle_deadline, absolute_deadline = instants
+        assert created_at and seen_at and idle_deadline and absolute_deadline
+        return ConsoleSession(
+            created_at=created_at,
+            seen_at=seen_at,
+            idle_deadline=idle_deadline,
+            absolute_deadline=absolute_deadline,
         )
 
     @staticmethod

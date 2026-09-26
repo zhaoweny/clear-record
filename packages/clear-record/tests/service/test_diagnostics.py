@@ -352,7 +352,7 @@ def test_console_log_config_routes_uvicorn_to_the_sink(tmp_path) -> None:
             logging.INFO,
             __file__,
             1,
-            '127.0.0.1 - "GET /api/health HTTP/1.1" 200',
+            '127.0.0.1 - "GET /health HTTP/1.1" 200',
             None,
             None,
         )
@@ -367,7 +367,7 @@ def test_console_log_config_routes_uvicorn_to_the_sink(tmp_path) -> None:
     console_records = [record for record in records if record["event"] == "console.log"]
     assert [record["component"] for record in console_records] == ["console", "console"]
     assert console_records[0]["level"] == "info"
-    assert "GET /api/health" in console_records[0]["message"]
+    assert "GET /health" in console_records[0]["message"]
     assert console_records[1]["level"] == "warning"
 
 

@@ -38,6 +38,14 @@
   </form>
 </div>
 
+<h3>{{ tr("Sessions") }}</h3>
+<p class="muted">{{ tr("This browser holds a session on this node. Signing out ends it here; signing out everywhere ends every session this node has issued — this browser included — and takes effect on the very next request, with no restart.") }}</p>
+<div class="row">
+  <form method="post" action="/ui/sessions/revoke-all">
+    <button type="submit" class="btn btn-danger-ghost">{{ tr("Sign out everywhere") }}</button>
+  </form>
+</div>
+
 <h3>{{ tr("Backend availability") }}</h3>
 {% include "_backend_list.html" %}
 

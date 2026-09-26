@@ -1,10 +1,11 @@
 """A thin request guard for the localhost console (ADR-0021).
 
-The console binds ``127.0.0.1`` and ships **no authentication**, but "bound to
-localhost" bounds **who can connect**, not **who can act**: a hostile page open
-in the same browser can be induced to POST to ``127.0.0.1`` (CSRF), and DNS
-rebinding can point a remote name at localhost. This module rejects the two
-browser-borne shapes:
+The console binds ``127.0.0.1`` and gates what it serves behind one credential
+(ADR-0033), but "bound to localhost" bounds **who can connect**, not **who can
+act**: a hostile page open in the same browser can be induced to POST to
+``127.0.0.1`` (CSRF), and DNS rebinding can point a remote name at localhost.
+This module rejects the two browser-borne shapes — and it runs *outside* the auth
+gate, so both are answered before a session is looked at:
 
 - a ``Host`` that is not a trusted host — the DNS-rebinding defence, checked on
   **every** request because a rebound request is no less readable for being a
@@ -22,6 +23,12 @@ Trusted hosts are the loopback names — ``127.0.0.1``, ``::1``, ``localhost``
 ``CR_TRUSTED_HOSTS`` environment variable. That variable is the documented
 escape hatch for a console reached through a reverse proxy: the proxy's public
 hostname (and the name the browser puts in ``Origin``) goes there.
+
+A second declaration lives here too and is **not** a check: the peers in
+``CR_TRUSTED_PROXIES``, whose forwarded headers the console may honour. Nothing
+reads ``X-Forwarded-*`` today (ADR-0021's open item, the trusted-proxy change);
+what the guard answers is whether the operator declared anything at all, which is
+what the startup refusal asks of a non-loopback bind.
 
 No domain logic lives here and nothing is stored; the guard is a pure function
 of the request headers and the configured host set.
@@ -41,6 +48,15 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Comma-separated extra hostnames the console may be reached by. Empty by
 #: default, so a stock install trusts loopback only.
 TRUSTED_HOSTS_ENV = "CR_TRUSTED_HOSTS"
+
+#: Comma-separated peers whose forwarded headers the console may honour. Empty by
+#: default. **Declared, not yet honoured**: no ``X-Forwarded-*`` header is read
+#: today (ADR-0021's open item; the trusted-proxy change is what reads a declared
+#: peer's headers and lets them drive the session cookie's scheme and the
+#: console's absolute URLs). What *is* read from it now is the declaration
+#: itself: a console that binds beyond loopback has to say how it is reached, and
+#: naming the proxy that fronts it is one of the ways to say so.
+TRUSTED_PROXIES_ENV = "CR_TRUSTED_PROXIES"
 
 _LOOPBACK_HINT = "127.0.0.1, localhost, ::1 or a name in CR_TRUSTED_HOSTS"
 
@@ -100,6 +116,31 @@ def trusted_extra_hosts(env: Mapping[str, str] | None = None) -> frozenset[str]:
     """The extra trusted hosts from ``CR_TRUSTED_HOSTS`` (empty when unset)."""
     source = os.environ if env is None else env
     return normalize_hosts(source.get(TRUSTED_HOSTS_ENV, "").split(","))
+
+
+def trusted_proxies(env: Mapping[str, str] | None = None) -> frozenset[str]:
+    """The peers declared in ``CR_TRUSTED_PROXIES`` (empty when unset).
+
+    Normalized the way the trusted hosts are — a bare address or hostname, ports
+    and brackets stripped — so one spelling serves both the declaration the
+    startup check reads and the peer comparison the trusted-proxy change will
+    make. Nothing reads a forwarded header from these peers yet.
+    """
+    source = os.environ if env is None else env
+    return normalize_hosts(source.get(TRUSTED_PROXIES_ENV, "").split(","))
+
+
+def has_declared_trust(env: Mapping[str, str] | None = None) -> bool:
+    """Whether the operator declared how a not-loopback console is reached.
+
+    Two declarations count, and both are the operator's own: a hostname the
+    console answers to (:data:`TRUSTED_HOSTS_ENV`) and a peer whose forwarded
+    headers it may honour (:data:`TRUSTED_PROXIES_ENV`). The startup refusal asks
+    this of a non-loopback bind, because without one of them the guard below
+    would answer ``403`` to every request the console received: it trusts
+    loopback and what the operator named, and nothing else.
+    """
+    return bool(trusted_extra_hosts(env) or trusted_proxies(env))
 
 
 def is_trusted(name: str | None, extra: frozenset[str]) -> bool:

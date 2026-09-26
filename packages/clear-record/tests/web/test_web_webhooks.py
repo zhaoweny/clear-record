@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry, WebhookEndpoint
 from clear_record.service.webhooks import DELIVERY_HISTORY, WebhookEmitter
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 class _Response:
@@ -51,7 +51,7 @@ def _refused(message: str = "connection refused"):
 
 def _client(tmp_path, emitter: WebhookEmitter) -> TestClient:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    return TestClient(create_app(registry, webhooks=emitter))
+    return signed_in(TestClient(create_app(registry, webhooks=emitter)))
 
 
 def _deliver(emitter: WebhookEmitter, event_type: str = "run.finished") -> None:

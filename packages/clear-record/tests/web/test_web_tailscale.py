@@ -25,12 +25,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web import _guard_termination, tailscale
 from clear_record.web.app import create_app
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
 
 PORT = 8765
 EXPOSED_PORT = 443
@@ -465,7 +465,10 @@ def test_tailscale_flag_serves_trusts_and_prints_the_url(
     assert result.exit_code == 0, result.output
     assert captured_serve["trusted_hosts"] == [TAILNET_NAME]
     assert f"https://{TAILNET_NAME}:{PORT}/" in result.output
-    assert "anyone on your tailnet" in result.output
+    # The tailnet is the perimeter, not the authentication: the console asks for
+    # its own password (ADR-0033), and the message says both.
+    assert "tailnet decides who can reach this console" in result.output
+    assert "asks for its own password" in result.output
     assert "stops with this console" in result.output
     assert fake.spawned() == [
         ["tailscale", "serve", f"--https={PORT}", f"http://127.0.0.1:{PORT}"]
@@ -690,7 +693,7 @@ def test_no_env_var_is_needed_for_the_host_to_be_trusted(
         Registry.open(db_path=tmp_path / "registry.sqlite3"),
         trusted_hosts=captured_serve["trusted_hosts"],
     )
-    client = TestClient(app, base_url=f"https://{TAILNET_NAME}")
+    client = signed_in(TestClient(app, base_url=f"https://{TAILNET_NAME}"))
     res = client.post(
         "/ui/projects",
         data={"name": "Tailnet"},
@@ -736,4 +739,5 @@ def test_help_states_the_security_shape_and_the_port_flag() -> None:
     assert result.exit_code == 0
     assert "--tailscale" in result.output
     assert "--tailscale-port" in result.output
-    assert "tailnet is the authentication" in result.output
+    assert "tailnet decides who can reach the console" in result.output
+    assert "asks for its own password" in result.output

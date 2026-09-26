@@ -20,11 +20,7 @@ from contextlib import closing
 
 import click
 import pytest
-from fastapi.testclient import TestClient
-
-from clear_record.pipeline import stages
 from clear_record.cli.cli import _build_group, _split_value
-from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     PipelineOptions,
     RecordDocument,
@@ -32,9 +28,13 @@ from clear_record.core import (
     log_event,
     log_path,
 )
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager, managed, setup
 from clear_record.service.diagnostics import BundleFacts, build_bundle
+from clear_record.service.lifecycle import CONSOLE
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 class _Pseudo(gettext.NullTranslations):
@@ -54,12 +54,35 @@ def pseudo() -> gettext.NullTranslations:
     return translations
 
 
+#: The password this module's clients sign in with. The console has a credential
+#: (ADR-0033), so every route these tests drive needs a session — set through the
+#: same service call the app's first-run route makes, and handed to the client as
+#: a cookie. ``tests/web/_console.py`` holds the shared version of this for the
+#: web suite; it is a module of that directory, which is not importable from here.
+_LOGGED_IN_PASSWORD = "console-password-for-the-suite"
+
+
+def _logged_in(client: TestClient) -> TestClient:
+    """Give ``client`` a console session, the way a browser gets one.
+
+    The credential is set through the service seam the app's own first-run route
+    uses, and the session then comes from the **real sign-in form** — the same two
+    steps ``tests/web/_console.py``'s shared helper makes, which is not importable
+    from this directory (it is a module of ``tests/web/``).
+    """
+    client.app.state.auth.set_password(_LOGGED_IN_PASSWORD, actor=CONSOLE)
+    client.post("/setup/sign-in", data={"password": _LOGGED_IN_PASSWORD})
+    return client
+
+
 # --- tr is consulted ------------------------------------------------------- #
 def test_tr_is_consulted_in_a_template(pseudo, tmp_path) -> None:
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
     assert "«No projects yet.»" in client.get("/ui/projects").text
@@ -84,10 +107,12 @@ def test_tr_is_consulted_in_python(pseudo) -> None:
 def _managed_app(tmp_path, monkeypatch):
     """A console app whose managed root is ``tmp_path`` (no ASR, no network)."""
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
     client.post("/api/projects", json={"name": "Ops"})
@@ -188,8 +213,8 @@ def _console_over_a_refused_row(tmp_path, stored: str):
     )
     _store_run_options(registry, run.id, stored)
     manager = RunManager(registry, start_queue=False)
-    client = TestClient(
-        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    client = _logged_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
     )
     return client, registry, run.id
 
@@ -347,13 +372,15 @@ def test_log_records_stay_untranslated(pseudo, tmp_path, monkeypatch) -> None:
 
 def test_json_api_stays_untranslated(pseudo, tmp_path) -> None:
     """Status values in the JSON API are machine-read, not UI text."""
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
-    assert client.get("/api/health").json()["status"] == "ok"
+    assert client.get("/health").json()["status"] == "ok"
 
     assert client.post("/api/projects", json={"name": "Ops"}).status_code == 201
     term = client.post("/api/projects/ops/glossary", json={"term": "Falcon"}).json()
@@ -395,12 +422,11 @@ def test_the_backends_command_stays_english_under_a_catalog(
     pseudo, monkeypatch
 ) -> None:
     """The terminal reads the message's English form, never the catalog's."""
-    from click.testing import CliRunner
-
     import clear_record.providers.backends as provider_backends
     from clear_record.core.i18n import deferred
     from clear_record.core.message import Message
     from clear_record.providers import Availability, BackendBase, BackendInfo
+    from click.testing import CliRunner
 
     class _FakeSystemBackend(BackendBase):
         def __init__(self) -> None:
@@ -491,8 +517,8 @@ UNTRANSLATED_IDS = frozenset(
         "log is written to the app state directory, never to stdout",
         "set up Tailscale Serve for this port, trust this machine's tailnet "
         "name, and print its https URL. Serve runs in the foreground alongside "
-        "the console and stops with it. The tailnet is the authentication: "
-        "anyone on your tailnet can reach the console.",
+        "the console and stops with it. The tailnet decides who can reach the "
+        "console; the console still asks for its own password.",
         "the tailnet HTTPS port Serve exposes (default: the same as --port); "
         "requires --tailscale",
         "trust NAME instead of the machine's resolved tailnet name (requires "

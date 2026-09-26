@@ -197,10 +197,16 @@ class ServiceController:
         so the tray asks the node the same question they ask — of the node it
         joined as much as of the one it started.
         Only a 200 counts and redirects are **not** followed: a 3xx (e.g. a
-        redirect to the setup page) is not a healthy server. The path stays the
-        current one — B3 replaces it with a dedicated credential-free
-        ``GET /health`` (AUTH-06/AUTH-07), whose response must not carry the
-        registry path.
+        redirect to the sign-in page) is not a healthy server, and the client
+        answers the 3xx itself rather than the page behind it
+        (:class:`clear_record.core.node._NoRedirect`). The path is the dedicated
+        credential-free ``GET /health`` (``core.node.HEALTH_PATH``), which is
+        anonymous and answers exactly ``{"status": "ok"}`` — no session, no
+        token, no registry path — so a tray tells a healthy node from a page that
+        wants a sign-in without holding any credential of its own. The tray holds
+        none: with the gate in place the **browser** is what asks for the
+        password, and the console it opens does the writing as the console's own
+        actor (ADR-0033).
         """
         try:
             node.reach(self.address)

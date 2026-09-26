@@ -207,3 +207,90 @@ def test_serve_supervise_ends_when_the_node_is_asked_to_stop(
         == 0
     )
     assert runs == [1], "an asked stop is not restarted"
+
+
+# --- the bind's declared trust (ADR-0033) ------------------------------------ #
+
+
+def _started(monkeypatch, argv: list[str], *, env: dict[str, str] | None = None):
+    """Invoke a console command with the real ``_run`` and a recorder for ``serve``.
+
+    ``_run`` is *not* replaced here — the refusal lives inside it — so the one
+    seam replaced is the server itself, which records the arguments it was handed
+    and returns 0. A command that never reaches that seam is a command that
+    refused, and the recorder is empty.
+    """
+    captured: dict = {}
+
+    def fake_serve(**kwargs) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("clear_record.web.app.serve", fake_serve)
+    result = CliRunner().invoke(cli._build_group(), argv, env=env or {})
+    return result, captured
+
+
+def _output(result) -> str:
+    """Everything the command said, on either stream (Click keeps them apart)."""
+    return result.output + (getattr(result, "stderr", "") or "")
+
+
+def test_a_non_loopback_bind_with_no_declared_trust_refuses_to_start(
+    monkeypatch,
+) -> None:
+    """A bind the guard would refuse every request to is not a bind that works.
+
+    The guard trusts loopback and what the operator named, so a console told to
+    bind another address with nothing declared would answer 403 to everything it
+    received. It refuses before a port is taken, and the message names the four
+    ways forward.
+    """
+    monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
+    monkeypatch.delenv("CR_TRUSTED_PROXIES", raising=False)
+
+    result, captured = _started(monkeypatch, ["serve", "--host", "0.0.0.0"])
+
+    assert result.exit_code == 1
+    assert captured == {}, "the console started despite nothing declaring its trust"
+    message = _output(result)
+    assert "refusing to bind" in message
+    for way_forward in (
+        "--host",
+        "CR_TRUSTED_HOSTS",
+        "CR_TRUSTED_PROXIES",
+        "--tailscale",
+    ):
+        assert way_forward in message
+
+
+def test_a_declared_hostname_lets_the_bind_start(monkeypatch) -> None:
+    monkeypatch.setenv("CR_TRUSTED_HOSTS", "console.example.com")
+
+    result, captured = _started(monkeypatch, ["serve", "--host", "192.168.1.5"])
+
+    assert result.exit_code == 0, _output(result)
+    assert captured["host"] == "192.168.1.5"
+
+
+def test_a_declared_proxy_is_a_trust_source_too(monkeypatch) -> None:
+    """The knob ADR-0021 documents: declaring the peer is declaring the trust."""
+    monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
+    monkeypatch.setenv("CR_TRUSTED_PROXIES", "10.0.0.7")
+
+    result, captured = _started(monkeypatch, ["serve", "--host", "192.168.1.5"])
+
+    assert result.exit_code == 0, _output(result)
+    assert captured["host"] == "192.168.1.5"
+
+
+def test_the_loopback_default_still_starts(monkeypatch) -> None:
+    monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
+    monkeypatch.delenv("CR_TRUSTED_PROXIES", raising=False)
+
+    result, captured = _started(
+        monkeypatch, ["serve", "--host", "127.0.0.1", "--port", "9999"]
+    )
+
+    assert result.exit_code == 0, _output(result)
+    assert (captured["host"], captured["port"]) == ("127.0.0.1", 9999)

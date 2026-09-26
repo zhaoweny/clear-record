@@ -19,7 +19,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from clear_record.web import tailscale
 
 TAILNET_NAME = "myhost.tailnet.ts.net"

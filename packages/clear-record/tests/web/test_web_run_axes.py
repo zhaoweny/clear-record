@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
-from clear_record.pipeline.workspace import Workspace
+from _console import signed_in
 from clear_record.core import RecordDocument, Segment, Source
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 COST = {
     "audio_seconds": 3600.0,
@@ -31,7 +31,9 @@ def _console(registry: Registry) -> TestClient:
     by whether the first pass or the shutdown gets there first.
     """
     manager = RunManager(registry, start_queue=False)
-    return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    return signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    )
 
 
 def _documents(

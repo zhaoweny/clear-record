@@ -48,7 +48,11 @@ promotes nothing the owner did not say beyond the label each clause carries.
 - [FACT] **The server already exists** and is not a new component: uvicorn +
   FastAPI, started by `clear-record web`, `clear-record serve` or the tray;
   loopback by default, with **no authentication by decision** (ADR-0021: remote
-  access is the operator's reverse proxy). Its run API is
+  access is the operator's reverse proxy). *(Superseded 2026-09-26 by
+  [ADR-0033](0033-the-auth-position.md)'s auth gate: the server bound to loopback
+  now holds one console credential and every route but the setup page, the
+  liveness route and the compiled assets needs a signed-in session. The ingress
+  posture — the proxy is where a *remote* client enters — stands.)* Its run API is
   `POST /api/meetings/{id}/runs` → 202, `GET /api/runs/{id}`, and
   `GET /api/runs/{id}/events?after=<cursor>` — cursor-paged progress events.
 - [FACT] **A client is already written.** `tray/service.py` supervises the server,

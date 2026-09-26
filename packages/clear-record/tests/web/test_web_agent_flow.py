@@ -11,8 +11,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.pipeline.auto import Message
 from clear_record.service import Registry
 from clear_record.service.agent_flow import (
@@ -24,6 +23,7 @@ from clear_record.service.agent_flow import (
 from clear_record.service.hello_tape import HelloTape
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 STAGES = (
     ("agent-stage-harness", "Harness"),
@@ -33,10 +33,12 @@ STAGES = (
 
 
 def _client(tmp_path) -> TestClient:
-    return TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    return signed_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
 

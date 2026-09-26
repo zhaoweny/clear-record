@@ -14,16 +14,16 @@ negotiation helper directly with an injected environment.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web.app import LANG_COOKIE, create_app, resolve_web_locale
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    return TestClient(app)
+    return signed_in(TestClient(app))
 
 
 # --- the switcher lives in the console, legible in both locales ------------- #
@@ -76,7 +76,7 @@ def test_accept_language_overrides_cr_lang(client, monkeypatch) -> None:
 def test_cr_lang_applies_when_no_cookie_or_header(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CR_LANG", "zh_CN")
     app = create_app(Registry.open(db_path=tmp_path / "r.sqlite3"))
-    home = TestClient(app).get("/")
+    home = signed_in(TestClient(app)).get("/")
     assert "添加项目" in home.text
 
 
@@ -89,7 +89,7 @@ def test_unsupported_preference_falls_back_to_english(client) -> None:
 # --- the cookie ------------------------------------------------------------- #
 def test_switcher_persists_only_the_language_cookie(tmp_path) -> None:
     app = create_app(Registry.open(db_path=tmp_path / "r.sqlite3"))
-    client = TestClient(app, follow_redirects=False)
+    client = signed_in(TestClient(app, follow_redirects=False))
     response = client.post("/ui/language", data={"lang": "zh_CN"})
     assert response.status_code == 303
     assert response.headers["location"] == "/"
@@ -105,7 +105,7 @@ def test_switcher_persists_only_the_language_cookie(tmp_path) -> None:
 
 def test_switcher_ignores_an_unknown_value(tmp_path) -> None:
     app = create_app(Registry.open(db_path=tmp_path / "r.sqlite3"))
-    client = TestClient(app, follow_redirects=False)
+    client = signed_in(TestClient(app, follow_redirects=False))
     response = client.post("/ui/language", data={"lang": "xx"})
     assert response.status_code == 303
     assert "set-cookie" not in response.headers
@@ -115,7 +115,7 @@ def test_switcher_ignores_an_unknown_value(tmp_path) -> None:
 def test_json_api_stays_english_under_a_chinese_console(client) -> None:
     client.cookies.set(LANG_COOKIE, "zh_CN")
     assert "添加项目" in client.get("/").text
-    assert client.get("/api/health").json()["status"] == "ok"
+    assert client.get("/health").json()["status"] == "ok"
     assert client.post("/api/projects", json={"name": "Ops"}).status_code == 201
     term = client.post("/api/projects/ops/glossary", json={"term": "Falcon"}).json()
     assert term["status"] == "candidate"

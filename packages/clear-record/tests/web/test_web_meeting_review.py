@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.pipeline.workspace import Workspace, publish_run
 from clear_record.service import (
@@ -26,6 +25,7 @@ from clear_record.service import (
     RunManager,
 )
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 _ANSWERS: dict[str, dict] = {
     "glossary_collection": {
@@ -113,7 +113,10 @@ def _console(tmp_path: Path) -> SimpleConsole:
     )
     app = create_app(registry, RunManager(registry))
     return SimpleConsole(
-        client=TestClient(app), registry=registry, meeting=meeting, workspace=workspace
+        client=signed_in(TestClient(app)),
+        registry=registry,
+        meeting=meeting,
+        workspace=workspace,
     )
 
 

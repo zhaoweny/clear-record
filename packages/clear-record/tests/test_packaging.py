@@ -213,6 +213,7 @@ EXPECTED_WEB_TEMPLATES = frozenset(
         "409.html",
         "activity.html",
         "agent.html",
+        "auth.html",
         "base.html",
         "index.html",
         "meeting.html",

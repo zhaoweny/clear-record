@@ -14,11 +14,11 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import paths
 from clear_record.service import Registry, managed
 from clear_record.web.app import AUDIO_ACCEPT, LANG_COOKIE, create_app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -32,9 +32,11 @@ def client(tmp_path) -> TestClient:
     # A client **on the node's machine** (ADR-0032): naming a ``workspace_path``
     # is a local client's noun, and the suite's default ``testserver`` client is a
     # proxied one — see ``test_web_naming.py``.
-    return TestClient(
-        create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
-        base_url="http://127.0.0.1:8765",
+    return signed_in(
+        TestClient(
+            create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
+            base_url="http://127.0.0.1:8765",
+        )
     )
 
 

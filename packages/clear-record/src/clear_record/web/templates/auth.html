@@ -1,0 +1,47 @@
+<!doctype html>
+{# The console's one anonymous page, in its two states: the first run's
+   credential step, and the sign-in form once a credential exists (ADR-0033).
+
+   It wears no nav and loads no script on purpose. Every target the nav would
+   offer is behind the credential, so a header of links that bounce back here
+   would be a page lying about what is reachable; the plain form is what works
+   from a stripped-down browser, and the only asset it needs is the stylesheet.
+   No language switcher either: the switcher's own POST is behind the gate, and
+   the request's locale — the `cr_lang` cookie if this browser has one, else the
+   `Accept-Language` header — already picks this page's catalog. #}
+<html lang="{{ request.state.locale | replace('_', '-') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>clear-record</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <section class="content setup">
+      {% if first_run %}
+      <h2>{{ tr("Set the console password") }}</h2>
+      <p class="muted">{{ tr("Nothing else on this console is reachable until a password is set. It is the one credential this node checks: the console and its API need it, the registry stores only a salted hash of it, and the password itself is never written to a file, a log or a bundle.") }}</p>
+      <form class="stack" method="post" action="/setup/credential">
+        <input name="password" type="password" placeholder="{{ tr('New password') }}"
+               autocomplete="new-password" minlength="{{ password_min_length }}"
+               required autofocus>
+        <input name="confirm" type="password" placeholder="{{ tr('Repeat the password') }}"
+               autocomplete="new-password" minlength="{{ password_min_length }}" required>
+        <p class="muted">{{ tr("At least {count} characters.", count=password_min_length) }}</p>
+        <button class="primary" type="submit">{{ tr("Set password and continue") }}</button>
+      </form>
+      {% else %}
+      <h2>{{ tr("Sign in") }}</h2>
+      <p class="muted">{{ tr("This console asks for the password set on this node. Lost or forgotten, it can be replaced from a terminal where the node runs — the password command needs no session, no browser and no running node.") }}</p>
+      <form class="stack" method="post" action="/setup/sign-in">
+        <input name="password" type="password" placeholder="{{ tr('Password') }}"
+               autocomplete="current-password" required autofocus>
+        <button class="primary" type="submit">{{ tr("Sign in") }}</button>
+      </form>
+      {% endif %}
+      {% if error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
+    </section>
+  </main>
+</body>
+</html>

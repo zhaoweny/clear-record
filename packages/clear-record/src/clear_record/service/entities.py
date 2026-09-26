@@ -280,11 +280,61 @@ class AuditEvent(Base):
     outcome: Mapped[str] = mapped_column(Text)
 
 
+class ConsoleCredential(Base):
+    """``console_credential`` — the one credential that gates the console.
+
+    **One row**, enforced by the table rather than by the code that writes it:
+    ``CHECK (id = 1)`` means a second credential cannot exist, so "there is one
+    human and one credential" (ADR-0033) is a property of the file. ``encoded`` is
+    the salted hash :func:`~clear_record.service.auth.hash_password` produces
+    (``scrypt$n$r$p$salt$hash``) — never a password, and never logged — and
+    ``updated_at`` is when it was last set or replaced.
+
+    No interface column, no username, no ``added_by``: who set it is an audit
+    question, answered by the ``credential.set`` row, and an identity stored
+    beside a shared secret is one more thing to leak.
+    """
+
+    __tablename__ = "console_credential"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    encoded: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[str] = mapped_column(Text)
+
+
+class ConsoleSession(Base):
+    """``console_session`` — one signed-in browser's server-side session.
+
+    The primary key is the **digest** of the cookie's token
+    (:func:`~clear_record.service.auth.token_digest`), so a registry leak hands
+    out no cookie that works and the process holds no session state at all: every
+    request re-reads this row, which is what makes sign-out and revoke-all take
+    effect on the next request with no restart. Four instants and nothing else —
+    there is no user to name, and the client's address is deliberately not kept
+    (one local human, and an address is a fact to leak for no question it
+    answers).
+
+    The two deadlines are absolute instants, computed when the session was opened
+    or last touched: ``idle_deadline`` moves forward with each accepted request,
+    ``absolute_deadline`` never moves.
+    """
+
+    __tablename__ = "console_session"
+
+    token_digest: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[str] = mapped_column(Text)
+    seen_at: Mapped[str] = mapped_column(Text)
+    idle_deadline: Mapped[str] = mapped_column(Text)
+    absolute_deadline: Mapped[str] = mapped_column(Text)
+
+
 __all__ = [
     "Archive",
     "Artifact",
     "AuditEvent",
     "Base",
+    "ConsoleCredential",
+    "ConsoleSession",
     "GlossaryTerm",
     "Meeting",
     "PipelineRun",

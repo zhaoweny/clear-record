@@ -1639,7 +1639,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     assert _index_sql(db, "pipeline_run_active_meeting") is not None
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0010",
+            "0011",
         )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -1757,7 +1757,7 @@ def test_a_version_table_holding_two_revisions_opens_and_is_reduced(tmp_path) ->
     )
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0010",)
+            ("0011",)
         ]
 
 
@@ -1797,7 +1797,7 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
     assert _index_sql(db, "pipeline_run_active_meeting") == index_before
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0010",)
+            ("0011",)
         ]
 
 
@@ -1929,7 +1929,7 @@ def test_a_successors_widened_index_is_left_as_this_revisions_own(tmp_path) -> N
     assert _index_sql(db, "pipeline_run_active_meeting") == widened
     with closing(sqlite3.connect(str(db))) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0010",)
+            ("0011",)
         ]
 
 
@@ -1996,9 +1996,9 @@ def test_a_revision_written_the_documented_way_is_numbered_like_the_chain(
     )
 
     assert made.returncode == 0, made.stderr
-    written = sorted(script_location.glob("versions/0011_a_next_change.py"))
-    assert [path.name for path in written] == ["0011_a_next_change.py"]
-    assert 'revision: str = "0011"' in written[0].read_text(encoding="utf-8")
+    written = sorted(script_location.glob("versions/0012_a_next_change.py"))
+    assert [path.name for path in written] == ["0012_a_next_change.py"]
+    assert 'revision: str = "0012"' in written[0].read_text(encoding="utf-8")
 
 
 def test_the_alembic_ini_names_the_history_this_build_opens() -> None:
@@ -2077,13 +2077,13 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     """
     script_location = tmp_path / "migrations"
     shutil.copytree(_MIGRATIONS, script_location)
-    (script_location / "versions" / "0011_pragma_probe.py").write_text(
+    (script_location / "versions" / "0012_pragma_probe.py").write_text(
         '"""A probe revision: record the FK pragma this migration runs under."""\n'
         "\n"
         "from alembic import op\n"
         "\n"
-        'revision: str = "0011"\n'
-        'down_revision: str | None = "0010"\n'
+        'revision: str = "0012"\n'
+        'down_revision: str | None = "0011"\n'
         "branch_labels = None\n"
         "depends_on = None\n"
         "\n"

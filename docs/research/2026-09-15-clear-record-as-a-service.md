@@ -56,6 +56,11 @@ Two cross-cutting truths:
 - **[FACT, repo]** There is a health endpoint: `GET /api/health` returns
   `{"status": "ok", "registry": "<path>"}`.
   — `packages/clear-record/src/clear_record/web/app.py:463–465`.
+  — **Superseded 2026-09-26 (ADR-0033's auth gate):** that route is gone. The
+  credential-free liveness route is `GET /health`, answering exactly
+  `{"status": "ok"}` with no registry path, and everything under `/api/` needs a
+  signed-in session — so every `/api/health` named later in this note (the
+  container `HEALTHCHECK` included) reads as `GET /health`.
 - **[FACT, repo]** The **`tray`** entry point supervises the same app from a
   **Qt-free `ServiceController`**: it starts uvicorn on a daemon thread, polls
   `/api/health` via `wait_until_ready`, and stops by setting `should_exit`;

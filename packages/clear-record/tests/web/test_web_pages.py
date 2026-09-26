@@ -8,19 +8,21 @@ distinct from the fragment 404s htmx must not swap.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import RecordDocument, Segment, write_json
 from clear_record.service import Registry, setup
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 def _client(tmp_path, **kwargs) -> TestClient:
-    return TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "registry.sqlite3"),
-            trusted_hosts=("testserver",),
-            **kwargs,
+    return signed_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "registry.sqlite3"),
+                trusted_hosts=("testserver",),
+                **kwargs,
+            )
         )
     )
 
@@ -28,7 +30,7 @@ def _client(tmp_path, **kwargs) -> TestClient:
 def _seeded(tmp_path):
     """A TestClient plus the registry it renders, for seeding real content."""
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
+    client = signed_in(TestClient(create_app(registry, trusted_hosts=("testserver",))))
     return registry, client
 
 

@@ -9,20 +9,23 @@ Provenance: [FACT] claims are verifiable in this repo or in the sources the
 research note cites; [DESIGN] is a chosen shape; [OPEN] is unresolved.
 
 This guide is the operator half of [ADR-0021](adr/0021-localhost-only-deployment.md).
-The reasoning — why localhost-only, why the proxy owns authentication, what was
-deferred — lives in
+The reasoning — why localhost-only, why the proxy stays the ingress, what the
+console's own credential adds to that (ADR-0033), and what was deferred — lives
+in
 [`docs/research/2026-09-15-clear-record-as-a-service.md`](research/2026-09-15-clear-record-as-a-service.md);
 this page does not repeat it. Read that for the *why*; read this for the *how*.
 
 ## The shape, in one paragraph
 
 [FACT, repo] `clear-record web` / `clear-record serve` start a uvicorn server that
-**binds `127.0.0.1:8765` by default and ships no authentication**
-(ADR-0013/ADR-0014).
+**binds `127.0.0.1:8765` by default and gates everything it serves behind one
+console password** (ADR-0013/ADR-0014; the credential itself is ADR-0033's —
+[§1](#the-console-credential-adr-0033) below).
 [DESIGN] It is a **backend**. Your reverse proxy is the **only ingress**: it
-terminates TLS, authenticates you, and forwards to `127.0.0.1:8765`. Nothing
-else should be able to reach that port — if another device can open
-`http://<host>:8765/` directly, it bypasses every control on this page.
+terminates TLS and forwards to `127.0.0.1:8765`. Nothing else should be able to
+reach that port — a device that opens `http://<host>:8765/` directly reaches the
+sign-in page rather than the console, but a password typed over plain HTTP on a
+network is a password in the clear, so the port still belongs to loopback alone.
 
 Say this out loud once, because it is the whole posture: **bound to localhost is
 not the same as safe from the browser.** A hostile page open in the same browser
@@ -99,7 +102,8 @@ webhooks are configured, their signing secret is read from the process
 environment at delivery time — put it in an `EnvironmentFile=` with mode
 `0600` and accept that systemd warns environment variables are not a secret
 store (research note §1.4). Readiness can be polled from `ExecStartPost=` at
-`GET /api/health`.
+`GET /health` — it and the setup page are what answer without a credential (the
+compiled assets aside), and its whole body is `{"status": "ok"}`.
 
 No service manager? `clear-record serve --supervise` is the stand-in: the node
 keeps **itself** up — a server that stops without being asked is started again
@@ -168,19 +172,92 @@ docker run --detach --name clear-record \
   --volume clear-record-models:/models \
   --volume /path/to/workspace:/workspace \
   -e CR_DATA_DIR=/data -e CR_MODELS_DIR=/models \
+  -e CR_TRUSTED_HOSTS=console.example.com \
   clear-record-web:local \
   clear-record serve --host 0.0.0.0 --port 8765
 ```
 
 Two honest notes. `--host 0.0.0.0` is **inside** the container only — the
 `--publish 127.0.0.1:8765:8765` keeps the exposed port loopback-only on the
-host, and the request guard is what still refuses a rebound `Host` there. Add a
+host, and the request guard is what still refuses a rebound `Host` there;
+`CR_TRUSTED_HOSTS` is required all the same, because a bind past loopback with
+nothing declaring how the console is reached refuses to start (the paragraph
+below). Add a
 GPU with `--gpus all` (NVIDIA, via the Container Toolkit) or
 `--device /dev/dri` (Vulkan), and a health probe against
-`GET /api/health`; if the proxy is itself a container, put both on one network
+`GET /health`; if the proxy is itself a container, put both on one network
 and publish nothing at all.
 
+### The console credential (ADR-0033)
+
+[FACT, repo] The console gates everything it serves behind **one password**. A
+fresh install has none: every route but `/setup`, `/health` and the compiled
+assets redirects to `/setup` (the machine API answers `401` instead of a
+redirect), and that page is where the first run sets the credential. The password
+is stored in the registry as a salted `scrypt` hash — never in `config.toml`, in
+the agent setup file, in a log line or in the diagnostics bundle — and signing in
+holds a **server-side session**: the browser gets an opaque cookie (`HttpOnly`,
+`SameSite=Lax`, scoped to the console, and `Secure` once TLS reaches the app), the
+registry holds only that cookie's digest, and every request re-reads the row.
+
+| Window | Default | What it means |
+|---|---|---|
+| Idle timeout | 12 hours | a session that sits unused this long is over; every accepted request moves the clock |
+| Absolute lifetime | 30 days | a session never outlives this, however busy it is |
+
+Sign out from the console's header. Settings → Status carries **Sign out
+everywhere**, which ends every session this node has issued — both take effect on
+the **next** request, with no restart.
+
+**The rescue.** Lost the password, or the page will not let you in? On the machine
+the node runs on:
+
+```sh
+clear-record password     # --data-dir / CR_DATA_DIR points at another registry
+```
+
+It prompts twice, writes the credential into the registry itself, prints the next
+step, and needs no session, no browser and no running node. Replacing a credential
+ends every session the old one opened, and a registry it cannot read is refused
+rather than half-written.
+
+**A bind past loopback needs a declared trust source.** A non-loopback `--host`
+with nothing declared refuses to start, with a message naming the four ways
+forward:
+
+```
+refusing to bind '0.0.0.0': the request guard answers 403 to any Host but
+loopback, and nothing declares how this console is reached, so it would serve
+nobody.
+  Ways forward:
+    - keep the loopback bind (the default) and let your reverse proxy be the ingress: drop --host
+    - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>
+    - declare the reverse proxy that fronts it: CR_TRUSTED_PROXIES=<peer address>
+    - let Tailscale Serve front it: --tailscale
+```
+
+**The node's own machine.** A surface running as the same operating-system user
+as the node — the command line first — is inside the boundary this gate defends
+(ADR-0033), so it is never asked for the password: the node opens **one session
+for its own machine** through the same path a sign-in uses and publishes its token
+at `local-session` in its state directory (beside the address record), mode
+`0600`, removed when the node exits cleanly. Anything that can read that file —
+your own account, and root — can act on the console as you; nothing on the network
+can, because the file is not served and a browser carries its own cookie. The node
+keeps it current while it runs: a fresh one is minted when the old reaches a
+deadline of its own clocks, or after **Sign out everywhere**, and a stale file is
+refused exactly like any other dead session. Labelled machine tokens are the
+scripting story of their own, and are not built yet.
+
+The loopback default is unaffected: `clear-record serve` with no `--host` always
+starts. `CR_TRUSTED_HOSTS` and `CR_TRUSTED_PROXIES` are the two declarations; §6
+says exactly what is honoured from the second one today.
+
 ## 2. The request guard (on by default)
+
+[FACT, repo] The guard runs **outside** the auth gate: a request with a `Host` the
+console does not trust is refused `403` before a session is looked at, so DNS
+rebinding and CSRF are answered whatever cookie a request carries.
 
 [FACT, repo] `clear_record.web.guard`, installed as middleware in
 `clear_record.web.app`, rejects a hostile browser's requests before any handler
@@ -379,10 +456,11 @@ independently refuses a second listener on a busy port, so the snapshot is a
 courtesy on top of that safety net.) If the existing rule is not the console,
 pick a free port with `--tailscale-port`.
 
-> **The tailnet is the authentication.** The console still ships no accounts of
-> its own, so **anyone who can reach your tailnet can reach the console.** If
-> that is not what you want, use tailnet access controls and device approval —
-> there is no second password on this path (ADR-0021).
+> **The tailnet is the perimeter; the console has its own password.** The
+> tailnet still decides *who can reach the console*, and since ADR-0033's gate
+> landed the console also asks for its own credential — one password, its own
+> sessions — so a device on your tailnet that is not yours still cannot read your
+> meetings. Keep tailnet access controls and device approval as the outer layer.
 
 [DESIGN] A **refused Serve is a warning, not a dead console**: the flag is a
 convenience, so if Serve cannot start the console starts anyway with the tailnet
@@ -490,9 +568,11 @@ owner-accepted truth).
 
 [DESIGN] Every surface before this one could only **read** local files. This one
 **writes** multi-GB files to the node. ADR-0021's shape does not change — the
-app still binds loopback and ships no auth — but the reason the proxy must be
-the **only** ingress is now sharper: anything that can reach an upload endpoint
-can fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
+app still binds loopback, and the console's one credential is now in front of
+every route but `/setup`, `/health` and the compiled assets — but the reason the
+proxy must be
+the **only** ingress is now sharper: anything that can *sign in* can reach an
+upload endpoint and fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
 treat `CR_TRUSTED_HOSTS` as the minimal, explicit hatch it is (§2). The managed
 root's permissions and free space are operator concerns; the guards bound an
 upload, they do not make a public port safe.
@@ -576,15 +656,25 @@ cheap (`docs/architecture.md` §8).
 
 ## 6. What this does not cover
 
-- **In-app authentication.** There is none, by design, for now (ADR-0021
-  defers, not rejects, LAN auth). The proxy is the auth.
+- **Per-user accounts, RBAC, and machine tokens.** The console has **one**
+  credential and no usernames (ADR-0033), and the machine API carries no bearer
+  token yet — what exists is: the salted hash in the registry, the human sessions
+  and their two windows, the `/setup` + `/health` anonymous surface, and the
+  rescue command (§1). A token for scripts, per-project authorization, and an
+  approvals ceremony are all deferred, not rejected; the rule they will meet is
+  ADR-0033's — a credential alone may not destroy something no durable copy can
+  reconstruct.
 - **A published container image.** You build it, whisper.cpp and all.
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
   Flatpak is the desktop bundle (ADR-0015), not the node.
-- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 (deferred, not built: no
-  code reads `X-Forwarded-*` or `CR_TRUSTED_PROXIES`); the UI uses relative
-  URLs, so a proxy that terminates TLS does not need them today.
+- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 — deferred, not built: no
+  code reads a forwarded header yet, so a proxied request is judged by the socket
+  it arrived on and the session cookie follows *that* scheme. What `CR_TRUSTED_PROXIES`
+  does today is the declaration half — naming the peer that fronts the console is
+  one of the ways a non-loopback bind is allowed to start (§1) — while honouring
+  the headers from exactly those peers is the trusted-proxy change's. The UI uses
+  relative URLs, so a proxy that terminates TLS does not need them meanwhile.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
 
@@ -592,6 +682,9 @@ cheap (`docs/architecture.md` §8).
 
 - [ADR-0024](adr/0024-managed-workspace-tape-upload.md) — the managed workspace.
 - [ADR-0021](adr/0021-localhost-only-deployment.md) — the decision.
-- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — localhost-only, no auth.
+- [ADR-0033](adr/0033-the-auth-position.md) — the credential, the sessions, and
+  what the auth position does *not* build.
+- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — localhost-only by
+  default; its "no auth" note is superseded by ADR-0033.
 - [Research: clear-record as a service](research/2026-09-15-clear-record-as-a-service.md)
   — systemd/container/Flatpak/launchd, the auth options, and state durability.

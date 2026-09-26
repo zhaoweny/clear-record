@@ -21,11 +21,11 @@ import json
 import sqlite3
 from contextlib import closing
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The key the released line wrote and this build does not have (see
 #: ``core.options.SUPERSEDED_KEYS``).
@@ -59,8 +59,8 @@ def _console(tmp_path) -> tuple[TestClient, Registry, int]:
         actor="console",
     )
     manager = RunManager(registry, start_queue=False)
-    client = TestClient(
-        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    client = signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
     )
     return client, registry, run.id
 

@@ -16,6 +16,7 @@ one-active-run rule and what each move announces. What stays here is a run's
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 
 #: A glossary term's lifecycle. ``candidate`` is what an agent's draft produces;
 #: ``confirmed`` is owner-accepted truth; ``retired`` is kept for history.
@@ -240,11 +241,30 @@ class AuditEvent:
     outcome: str
 
 
+@dataclasses.dataclass(frozen=True)
+class ConsoleSession:
+    """One signed-in browser's session, as the auth gate judges it.
+
+    Four instants, and the token's digest is the row's key rather than a field
+    here: anything reading a session already holds the token and digests it
+    itself, so carrying the digest would only be one more place it could be
+    printed. The deadlines are absolute instants — the idle one moves with each
+    accepted request, the absolute one never moves — so a session's verdict is a
+    comparison, never a recomputation of a policy that may have changed since.
+    """
+
+    created_at: _dt.datetime
+    seen_at: _dt.datetime
+    idle_deadline: _dt.datetime
+    absolute_deadline: _dt.datetime
+
+
 __all__ = [
     "Archive",
     "Artifact",
     "AuditEvent",
     "CANDIDATE",
+    "ConsoleSession",
     "GlossaryTerm",
     "Meeting",
     "MEETING_STATUSES",

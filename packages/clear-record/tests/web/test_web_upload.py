@@ -11,12 +11,11 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import paths as core_paths
-from clear_record.service import Registry, RunManager
-from clear_record.service import managed
+from clear_record.service import Registry, RunManager, managed
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -31,9 +30,11 @@ def client(tmp_path) -> TestClient:
     # (``core.node``), which is what lets it name a ``workspace_path`` (ADR-0032;
     # the suite's default ``testserver`` client is a *proxied* one, and is refused
     # a path — see ``test_web_naming.py``).
-    return TestClient(
-        create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
-        base_url="http://127.0.0.1:8765",
+    return signed_in(
+        TestClient(
+            create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
+            base_url="http://127.0.0.1:8765",
+        )
     )
 
 
@@ -294,7 +295,7 @@ def test_an_uploaded_tape_feeds_the_existing_run(tmp_path, monkeypatch) -> None:
         Path(directory, "record.json").write_text("{}", encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    client = TestClient(create_app(registry, runs=manager))
+    client = signed_in(TestClient(create_app(registry, runs=manager)))
     meeting = _managed_meeting(client)
     tape = _upload(client, meeting["id"], "a.wav", b"RIFF").json()
 

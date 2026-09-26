@@ -22,14 +22,17 @@ from types import SimpleNamespace
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
-
 from clear_record.core import node
 from clear_record.service import Registry, RunManager
-from clear_record.web.app import create_app
+from clear_record.web.app import NodeServer, create_app
+from fastapi.testclient import TestClient
 
 #: How long a node gets to answer before a test calls it a bug.
 READY_TIMEOUT = 20.0
+
+#: The credential the fixture's console client signs in with (the app sets it
+#: through the service seam and takes the session from the real sign-in form).
+_CONSOLE_PASSWORD = "cli-fixture-password"
 
 
 def free_port() -> int:
@@ -40,7 +43,7 @@ def free_port() -> int:
 
 
 @pytest.fixture()
-def node_in_this_process(tmp_path):
+def node_in_this_process(tmp_path, monkeypatch):
     """A factory: bring a node up here, and take it down at the end of the block.
 
     ``pipeline`` overrides the run manager's pipeline (a test that only needs the
@@ -57,6 +60,10 @@ def node_in_this_process(tmp_path):
 
     @contextlib.contextmanager
     def bring_up(*, pipeline=None, root=None) -> Iterator[SimpleNamespace]:
+        # Hermetic state: the address record and the local-session file a node
+        # publishes are per-test, so one test's node cannot hand its session to
+        # another's client (and nothing lands in the user's own state dir).
+        monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
         home = tmp_path if root is None else root
         registry = Registry.open(db_path=home / "registry.sqlite3")
         manager = (
@@ -66,9 +73,14 @@ def node_in_this_process(tmp_path):
         )
         app = create_app(registry, runs=manager, trusted_hosts=("testserver",))
         port = free_port()
-        server = uvicorn.Server(
+        # NodeServer, not a bare uvicorn server: it is what every node posture
+        # runs, and it is what records the address and publishes the local session
+        # this machine's clients present — so the fixture mirrors a node rather
+        # than hand-calling either.
+        server = NodeServer(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         )
+        app.state.server = server
         thread = threading.Thread(target=server.run, name="test-node", daemon=True)
         thread.start()
         address = node.NodeAddress.of("127.0.0.1", port)
@@ -81,19 +93,26 @@ def node_in_this_process(tmp_path):
                 if time.monotonic() > deadline:
                     pytest.fail("the node never answered")
                 time.sleep(0.02)
-        # Every posture records where it bound; this one does the same, so the
-        # surfaces under test resolve it exactly as they resolve `serve`'s.
-        node.record(address)
+        # The address record and the local session are the server's own work
+        # (NodeServer's startup), so the surfaces under test resolve this node
+        # exactly as they resolve `serve`'s — and the command line's access is
+        # that published session, which is what these tests are about.
+        assert node.recorded() == address, "the node did not record its address"
+        # The console client reads the same app a browser does, so it takes a
+        # session the way a browser does: the credential through the service seam
+        # the app's first-run route uses, then the real sign-in form.
+        console = TestClient(app)
+        app.state.auth.set_password(_CONSOLE_PASSWORD, actor="console")
+        console.post("/setup/sign-in", data={"password": _CONSOLE_PASSWORD})
         try:
             yield SimpleNamespace(
                 address=address,
                 registry=registry,
                 manager=manager,
-                console=TestClient(app),
+                console=console,
                 server=server,
             )
         finally:
-            node.forget()
             server.should_exit = True
             thread.join(READY_TIMEOUT)
             assert not thread.is_alive(), "the node did not stop"

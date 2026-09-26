@@ -13,11 +13,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web import guard
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The console's own origin: what a real browser would put in ``Origin`` and the
 #: host it would send in ``Host``.
@@ -29,7 +29,7 @@ def client(tmp_path: Path) -> TestClient:
     app = create_app(
         Registry.open(db_path=tmp_path / "registry.sqlite3"), trusted_hosts=()
     )
-    return TestClient(app, base_url=LOOPBACK_ORIGIN)
+    return signed_in(TestClient(app, base_url=LOOPBACK_ORIGIN))
 
 
 def _projects(client: TestClient) -> list[dict]:
@@ -116,7 +116,9 @@ def test_absent_host_is_rejected(client: TestClient) -> None:
 # --- Ordinary same-origin use is unaffected ------------------------------- #
 def test_same_origin_gets_and_posts_still_work(client: TestClient) -> None:
     assert client.get("/ui/projects").status_code == 200
-    assert client.get("/api/health").json()["status"] == "ok"
+    # The liveness route is anonymous and is *not* under /api: the guard still
+    # applies to it (Host), and nothing else does.
+    assert client.get("/health").json()["status"] == "ok"
 
     # htmx form POST with no Origin (a non-browser default) and with the browser's
     # own Origin both pass.
@@ -146,7 +148,7 @@ def test_trusted_hosts_env_allows_a_proxys_public_hostname(
     """A proxy hostname in CR_TRUSTED_HOSTS is trusted without opening loopback."""
     monkeypatch.setenv("CR_TRUSTED_HOSTS", "console.example.com")
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    client = TestClient(app, base_url=LOOPBACK_ORIGIN)
+    client = signed_in(TestClient(app, base_url=LOOPBACK_ORIGIN))
 
     res = client.post(
         "/ui/projects",

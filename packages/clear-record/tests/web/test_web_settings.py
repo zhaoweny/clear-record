@@ -12,13 +12,13 @@ from __future__ import annotations
 import json
 import re
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import paths
 from clear_record.service import Registry, managed
 from clear_record.service.setup import MCP_SERVER_NAME
 from clear_record.web import app as web_app
 from clear_record.web.app import LANG_COOKIE, SETTINGS_SECTIONS, create_app
+from fastapi.testclient import TestClient
 
 #: The slugs the pinned section list must expose, in order.
 SECTIONS = tuple(slug for slug, _label, _template in SETTINGS_SECTIONS)
@@ -31,10 +31,12 @@ WRITE_ROUTES = (
 
 
 def _client(tmp_path) -> TestClient:
-    return TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "registry.sqlite3"),
-            trusted_hosts=("testserver",),
+    return signed_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "registry.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
 
@@ -283,7 +285,7 @@ def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> No
         actor="console",
     )
     meeting = managed.ensure_managed_workspace(registry, meeting, actor="console")
-    client = TestClient(create_app(registry, trusted_hosts=("testserver",)))
+    client = signed_in(TestClient(create_app(registry, trusted_hosts=("testserver",))))
 
     page = client.get("/settings/storage").text
 
@@ -363,8 +365,8 @@ def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> N
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     release = threading.Event()
     manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
-    client = TestClient(
-        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    client = signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
     )
 
     registry.create_project(

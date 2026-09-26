@@ -26,11 +26,13 @@ Two surfaces over the same **thin** service adapter:
 No domain logic lives here, which is what lets the GUI, the MCP server and
 scripts share one tested service seam.
 
-The app binds localhost by default and has no authentication —
-it is a local-first tool, not a hosted service (ADR-0013). "Localhost-only"
-bounds who can connect, not who can act: the :mod:`clear_record.web.guard`
-middleware rejects a hostile page's cross-origin or rebound requests (ADR-0021),
-while remote access stays the operator's reverse proxy.
+The app binds localhost by default and holds one credential (ADR-0033): every
+route but the setup page, the liveness route and the compiled assets needs a
+signed-in session, and the anonymous surface is a list the route-table test
+enumerates. "Localhost-only" bounds who can connect, not who can act: the
+:mod:`clear_record.web.guard` middleware rejects a hostile page's cross-origin or
+rebound requests before the auth middleware looks at a session (ADR-0021), while
+remote access stays the operator's reverse proxy.
 """
 
 from __future__ import annotations
@@ -48,18 +50,19 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob
-from clear_record.core import i18n
-from clear_record.core import node
+from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob, i18n, node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
+from clear_record.core.node import HEALTH_PATH
 from clear_record.service import (
     API,
     BUNDLE_FILENAME,
     CONSOLE,
     RUN_IN_FLIGHT,
+    TASK_KINDS,
     AgentDraftsOut,
     ArchiveOut,
     ArtifactOut,
@@ -82,7 +85,6 @@ from clear_record.service import (
     RunState,
     RunSummary,
     Shape,
-    TASK_KINDS,
     Tape,
     TapeOut,
     TapeSetOut,
@@ -105,24 +107,14 @@ from clear_record.service.agent_flow import (
     transcription_status,
 )
 from clear_record.service.archive import ArchiveVerification
-from clear_record.service.auto import (
-    DEFAULT_MODEL,
-    MODEL_LADDER,
-    render_message as render_service_message,
+from clear_record.service.auth import (
+    LOCAL_SESSION_REFRESH_S,
+    PASSWORD_MIN_LENGTH,
+    ConsoleAuth,
+    SessionState,
+    refresh_local_session,
+    require_password,
 )
-from clear_record.service.setup import (
-    SetupError,
-    SetupStatusOut,
-    clear_seen_version,
-    record_seen_version,
-    remember_harness,
-    resolve_harness,
-    seen_version,
-    setup_view,
-    write_mcp_config,
-)
-from clear_record.service.webhooks import WebhookEmitter, default_emitter
-from clear_record.web import guard, lookup, views
 
 # --- the process adapters the view seam reads from *this* module ----------- #
 # These names are bound here on purpose and are deliberately unused *here*: the
@@ -151,20 +143,46 @@ from clear_record.web import guard, lookup, views
 # (``tests/web/test_web_agent_setup.py``) are read through the seam *and* called
 # by a route, so both hazards apply to them at once.
 from clear_record.service.auto import (  # noqa: F401
+    DEFAULT_MODEL,
+    MODEL_LADDER,
     available_backend_ids,
     models_on_disk,
 )
+from clear_record.service.auto import (
+    render_message as render_service_message,
+)
 from clear_record.service.diagnostics import backend_status  # noqa: F401
-from clear_record.service.setup import find_harness  # noqa: F401
+from clear_record.service.setup import (
+    SetupError,
+    SetupStatusOut,
+    clear_seen_version,
+    find_harness,  # noqa: F401
+    record_seen_version,
+    remember_harness,
+    resolve_harness,
+    seen_version,
+    setup_view,
+    write_mcp_config,
+)
+from clear_record.service.webhooks import WebhookEmitter, default_emitter
+from clear_record.web import auth as auth_edge
+from clear_record.web import guard, lookup, views
+from clear_record.web.auth import (
+    CREDENTIAL_PATH,
+    REVOKE_ALL_PATH,
+    SETUP_PATH,
+    SIGN_IN_PATH,
+    SIGN_OUT_PATH,
+)
 
 # ``_auto_view``, ``ACTIVE_RUN_LABELS`` and ``SETTINGS_SECTIONS`` moved to the
 # view seam; they are imported here because the console's tests read them from
 # **this** module (`tests/test_i18n_boundaries.py`, `tests/web/test_web_activity.py`,
 # `tests/web/test_web_settings.py`) — the seam moved the code, not the names.
 from clear_record.web.views import (  # noqa: F401
-    _auto_view,
     ACTIVE_RUN_LABELS,
     SETTINGS_SECTIONS,
+    _auto_view,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -545,13 +563,6 @@ class ArchiveCreate(BaseModel):
 # data boundary, and what a template needs is a context, not a shape.
 
 
-class HealthOut(Shape):
-    """`/api/health`: the process is up, and which registry it opened."""
-
-    status: str
-    registry: str
-
-
 class NodeOut(Shape):
     """`/api/node`: where this node is, as every surface resolves it."""
 
@@ -792,12 +803,69 @@ async def _receive_tape(
     )
 
 
+#: How long :meth:`LocalSessionKeeper.stop` waits for the keeper thread. The
+#: thread is parked on the refresh interval's event, which ``stop`` sets, so the
+#: wait ends at once in every case but a keeper mid-write.
+_LOCAL_SESSION_JOIN_S = 5.0
+
+
+class LocalSessionKeeper:
+    """The session a node publishes for its own machine, kept live while it runs.
+
+    ADR-0033's boundary: a surface running as the node's own operating-system user
+    is inside it, so the command line is not asked for a password — it presents
+    the session the node published for that user (ADR-0032 makes it a client of
+    the node like any other). What is kept here is the *node's* half: publish one
+    at startup, look again on a timer, and re-open it when the published one no
+    longer names a live session (an idle window, the absolute lifetime, or
+    ``revoke_all``). One look-up a minute, and a write only when the answer
+    changed — so the file's bytes are a fact about the registry, not a value that
+    moves under a reader.
+    """
+
+    def __init__(self, console: ConsoleAuth) -> None:
+        self._console = console
+        self._stopping = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> str:
+        """Publish a session for this machine and keep it live until :meth:`stop`."""
+        self._stopping.clear()
+        token = refresh_local_session(self._console)
+        self._thread = threading.Thread(
+            target=self._keep, name="cr-local-session", daemon=True
+        )
+        self._thread.start()
+        return token
+
+    def stop(self) -> None:
+        """Stop the keeper and take the node's session file down with it."""
+        self._stopping.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(_LOCAL_SESSION_JOIN_S)
+        node.forget_local_session()
+
+    def _keep(self) -> None:
+        while not self._stopping.wait(LOCAL_SESSION_REFRESH_S):
+            try:
+                refresh_local_session(self._console)
+            except Exception:  # noqa: BLE001 - the next tick retries; the node stays up
+                logging.getLogger("uvicorn.error").warning(
+                    "clear-record: could not refresh the local session; retrying"
+                )
+
+
 class NodeServer(uvicorn.Server):
     """A uvicorn server that records the node's address while it listens.
 
     Every node posture starts its server through this class — the ``serve`` and
     ``web`` commands (one entry point) and the tray's supervisor — so the address
     is published and cleared in one place, the same way, wherever a node runs.
+    The **local session** is published and kept here for the same reason: the
+    command line is a client of *every* node posture, including the one the tray
+    runs in its own process, so the session belongs to the node's start and stop
+    rather than to whichever entry point remembered to ask for it.
 
     :meth:`startup` records **after** ``super().startup()``: uvicorn binds its
     sockets there (0.53 runs the app's lifespan startup first), so that is the
@@ -830,10 +898,60 @@ class NodeServer(uvicorn.Server):
                 address.url,
                 exc,
             )
+        self._publish_local_session()
 
     async def shutdown(self, sockets=None) -> None:
+        self._stop_local_session()
         await super().shutdown(sockets)
         node.forget()
+
+    def _publish_local_session(self) -> None:
+        """Publish the session this machine's clients present, or say why not.
+
+        Same posture as the address record beside it: a state directory that
+        cannot be written is not a reason to refuse to serve — the node runs, and
+        its own command line is refused like any other anonymous client, which the
+        refusal spells out.
+        """
+        console = self._auth()
+        if console is None:
+            return
+        try:
+            keeper = LocalSessionKeeper(console)
+            keeper.start()
+        except (OSError, SQLAlchemyError) as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "clear-record: could not publish this node's local session (%s); "
+                "the command line on this machine will be asked to sign in",
+                exc,
+            )
+            return
+        self._local_session = keeper
+
+    def _stop_local_session(self) -> None:
+        keeper = getattr(self, "_local_session", None)
+        if keeper is None:
+            return
+        self._local_session = None
+        keeper.stop()
+
+    def _auth(self) -> ConsoleAuth | None:
+        """The auth seam the app this server runs carries, if it has one.
+
+        ``config.app`` is the object the caller handed uvicorn — a FastAPI app for
+        every posture here — while ``loaded_app`` is uvicorn's own resolution of
+        it and is only set once the server loads, so it is tried first for a
+        caller that named the app as an import string and ``config.app`` is what
+        covers the rest.
+        """
+        for candidate in (
+            getattr(self.config, "loaded_app", None),
+            getattr(self.config, "app", None),
+        ):
+            seam = getattr(getattr(candidate, "state", None), "auth", None)
+            if seam is not None:
+                return seam
+        return None
 
     def bound(self) -> node.NodeAddress | None:
         """The TCP address this server bound, or ``None`` (e.g. a unix socket).
@@ -948,6 +1066,13 @@ def create_app(
     # embedder reach the same seam.
     app.state.runs = runs
     app.state.webhooks = emitter
+    # The auth seam this app gates every request with, and the registry it reads
+    # and writes the credential and the sessions through. Both are exposed the
+    # way the run manager is: the process that started the app (or a test driving
+    # it) can reach the same seam rather than a second copy of it.
+    console = ConsoleAuth(registry)
+    app.state.auth = console
+    app.state.registry = registry
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
@@ -985,6 +1110,50 @@ def create_app(
             chosen = i18n.current_locale() or i18n.SOURCE_LOCALE
         request.state.locale = chosen
         return await call_next(request)
+
+    @app.middleware("http")
+    async def request_auth(request: Request, call_next):
+        """Hold every request to the anonymous surface or a live session.
+
+        The gate reads the cookie on **every** request, so the answer is the
+        registry's and never a copy the process cached: revoking a session, or
+        signing out in another browser, takes effect on the next request these
+        two make. An anonymous request is not gated but is still *read* — the
+        setup page and the sign-in form ask whether the visitor already has a
+        session — and reading never moves the idle clock (``touch=False``), so a
+        probe or a shared link cannot keep a session alive.
+
+        The refusal is a redirect for a browser and ``401`` for the machine
+        surface, and it clears a cookie it knows to be dead rather than leaving a
+        value that will be refused again. An htmx request is answered with
+        ``HX-Redirect`` **and no redirect of its own** — the header has to be on
+        the response htmx actually sees, and a 303 is followed transparently by
+        the browser's own request before htmx looks at anything, which is what
+        would swap a whole sign-in page into whichever fragment asked.
+        """
+        anonymous = auth_edge.answers_anonymously(request.method, request.url.path)
+        token = request.cookies.get(auth_edge.SESSION_COOKIE)
+        state = console.session(token, touch=not anonymous)
+        request.state.session_state = state
+        request.state.session_token = token if state is SessionState.ACTIVE else None
+        if anonymous or state is SessionState.ACTIVE:
+            return await call_next(request)
+        if auth_edge.machine_request(request):
+            return JSONResponse(
+                status_code=401, content={"detail": auth_edge.AUTH_REQUIRED}
+            )
+        if request.headers.get("hx-request"):
+            # htmx is told to navigate the window; the 303 below would be followed
+            # by the browser itself and its target swapped into the fragment.
+            response: Response = Response(status_code=200)
+            response.headers["HX-Redirect"] = auth_edge.SETUP_PATH
+        else:
+            response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        if token is not None:
+            auth_edge.clear_session_cookie(
+                response, secure=auth_edge.secure_request(request)
+            )
+        return response
 
     @app.middleware("http")
     async def request_guard(request: Request, call_next):
@@ -1407,17 +1576,28 @@ def create_app(
             )
         return page(request, "settings.html", nav="settings", **context)
 
-    @app.get("/setup", response_class=HTMLResponse)
+    @app.get(SETUP_PATH, response_class=HTMLResponse)
     def page_setup(request: Request) -> HTMLResponse:
-        """Setup: system readiness, a numbered sequence.
+        """Setup: the credential step, the sign-in form, or system readiness.
 
-        The Transcription step states ASR backend and checkpoint readiness from
-        the service (transcription_status), so the wizard says what is actually
-        ready instead of describing theory. The Agent step embeds the one agent
-        flow (the same #agent-setup mount Settings -> Agent uses), and the Try it
-        step points at that flow's Try it check and at the permanent copy in
-        Settings -> Status. Nothing here is a second tape implementation.
+        Which of the three is the registry's state and this request's: with no
+        credential yet it is the **first run's step** — set one, and you are
+        signed in; with a credential set but no session it is the **sign-in
+        form**; signed in it is the readiness wizard it has always been
+        (ADR-0027). The two anonymous states are the whole of the anonymous
+        surface's one page, and neither reads a project, a meeting or a
+        transcript: the wizard's own content is only ever rendered to a session.
+
+        The wizard's steps are unchanged: the Transcription step states ASR
+        backend and checkpoint readiness from the service
+        (``transcription_status``), the Agent step embeds the one agent flow
+        (the same #agent-setup mount Settings -> Agent uses), and the Try it step
+        points at that flow's Try it check and at the permanent copy in
+        Settings -> Status. Nothing here is a second tape implementation — this
+        gate is a state in front of it, not a replacement for it.
         """
+        if request.state.session_state is not SessionState.ACTIVE:
+            return render(request, "auth.html", _auth_context(request, error=""))
         return page(
             request,
             "setup.html",
@@ -1427,6 +1607,112 @@ def create_app(
             model_ladder=MODEL_LADDER,
             default_model=DEFAULT_MODEL,
         )
+
+    def _auth_context(request: Request, *, error: str) -> dict:
+        """The anonymous page's context: which step, and what went wrong.
+
+        ``first_run`` is the registry's answer, and it decides whether the page
+        asks for a new password or for the existing one. The password rule rides
+        along so the form can state it before the operator types, rather than
+        after a round trip.
+        """
+        return {
+            "first_run": not console.configured(),
+            "error": error,
+            "password_min_length": PASSWORD_MIN_LENGTH,
+        }
+
+    @app.post(CREDENTIAL_PATH, response_class=HTMLResponse)
+    async def set_credential(request: Request) -> Response:
+        """Set the console's credential on the first run, and sign in with it.
+
+        **Refused once a credential exists.** This form is anonymous — it has to
+        be, nobody can sign in yet — so if it could also *replace* the credential,
+        anyone who could reach the page could take the console over. The rescue
+        command is the way back for a credential that is lost or broken
+        (``clear-record password``), and it runs as the operator on the node.
+
+        The new password is checked against the one rule
+        (:data:`~clear_record.service.auth.PASSWORD_MIN_LENGTH`) and confirmed,
+        then hashed in a worker thread (the KDF is deliberately slow, and the
+        event loop is serving a node), and the reply starts the session the
+        operator just earned.
+        """
+        if console.configured():
+            return render(
+                request,
+                "auth.html",
+                _auth_context(
+                    request,
+                    error=tr(
+                        "a password is already set for this console; sign in, "
+                        "or replace it on the node with the password command "
+                        "(clear-record password)."
+                    ),
+                ),
+                status_code=409,
+            )
+        form = await request.form()
+        password = str(form.get("password") or "")
+        confirm = str(form.get("confirm") or "")
+        error = ""
+        if password != confirm:
+            error = tr("the two passwords do not match.")
+        else:
+            try:
+                require_password(password)
+            except ValueError as exc:
+                error = str(exc)
+        if error:
+            return render(request, "auth.html", _auth_context(request, error=error))
+        await run_in_threadpool(console.set_password, password, actor=CONSOLE)
+        token = await run_in_threadpool(console.sign_in, password)
+        return _signed_in(request, token, redirect_to="/")
+
+    @app.post(SIGN_IN_PATH, response_class=HTMLResponse)
+    async def sign_in(request: Request) -> Response:
+        """Start a session from the sign-in form, or re-render it refused.
+
+        One answer for a wrong password and for a registry with no credential:
+        the page already says which state it is in, and the request learns
+        nothing a guess could use. The KDF runs in a worker thread for the same
+        reason the set does.
+        """
+        form = await request.form()
+        password = str(form.get("password") or "")
+        token = await run_in_threadpool(console.sign_in, password)
+        if token is None:
+            return render(
+                request,
+                "auth.html",
+                _auth_context(
+                    request,
+                    error=tr("that password does not match this console's."),
+                ),
+                status_code=401,
+            )
+        return _signed_in(request, token, redirect_to="/")
+
+    def _signed_in(
+        request: Request, token: str | None, *, redirect_to: str
+    ) -> Response:
+        """Answer a session's first request: the cookie, then the console.
+
+        The cookie's ``Secure`` follows the scheme this request arrived by
+        (:func:`clear_record.web.auth.secure_request`), and its ``Max-Age`` is the
+        session's **absolute lifetime** — the browser need not keep it a second
+        past the registry's own ceiling, and the registry is what decides either
+        way.
+        """
+        response = RedirectResponse(redirect_to, status_code=303)
+        if token is not None:
+            auth_edge.set_session_cookie(
+                response,
+                token,
+                secure=auth_edge.secure_request(request),
+                max_age=int(console.policy.absolute_lifetime.total_seconds()),
+            )
+        return response
 
     @app.post("/ui/setup/download-model", response_class=HTMLResponse)
     async def ui_setup_download_model(request: Request) -> HTMLResponse:
@@ -1515,6 +1801,40 @@ def create_app(
         """Dismiss the update notice: the same marker write as COMPLETE."""
         record_seen_version()
         return RedirectResponse("/", status_code=303)
+
+    @app.post(SIGN_OUT_PATH)
+    def sign_out(request: Request) -> RedirectResponse:
+        """End this session and land on the sign-in form.
+
+        Gated like every other mutation: an anonymous POST here has no session to
+        end and is answered with the setup page's redirect like any other. The
+        row goes first and the cookie is cleared in this response, so the *next*
+        request — from this browser or from a stolen copy of the cookie — is
+        refused whether or not the browser kept its half of the bargain.
+        """
+        console.sign_out(request.state.session_token)
+        response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        auth_edge.clear_session_cookie(
+            response, secure=auth_edge.secure_request(request)
+        )
+        return response
+
+    @app.post(REVOKE_ALL_PATH)
+    def revoke_all_sessions(request: Request) -> RedirectResponse:
+        """End **every** session — this one included — and land on sign-in.
+
+        The remedy for a browser the operator no longer trusts: it takes effect
+        on the next request any of them makes, with no restart. Settings → Status
+        posts it, and the response ends the session that asked, so the browser
+        that clicked is signed out too — which is the point rather than a
+        surprise, and it lands on the sign-in form.
+        """
+        console.revoke_all()
+        response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        auth_edge.clear_session_cookie(
+            response, secure=auth_edge.secure_request(request)
+        )
+        return response
 
     @app.post("/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
@@ -2203,11 +2523,32 @@ def create_app(
         """
         return setup_view().as_dict()
 
-    # --- JSON API (machines, scripts and integrations) ---------------------- #
-    @app.get("/api/health")
-    def health() -> HealthOut:
-        return HealthOut(status="ok", registry=str(registry.db_path))
+    # --- liveness: the one route that reveals nothing ---------------------- #
+    @app.api_route(HEALTH_PATH, methods=["GET", "HEAD"])
+    def health(request: Request) -> Response:
+        """The liveness route: ``{"status": "ok"}``, and no other fact.
 
+        Anonymous and deliberately outside ``/api``: a tray, a supervisor's probe
+        or a monitor has to tell a healthy node from a sign-in page without a
+        session — and without learning anything else about the node. It names no
+        registry, no version, no address and no session, and the body is the same
+        whether or not a browser is signed in, so a probe can require *exactly*
+        this answer (:func:`clear_record.core.node.reach` requires its 200 and
+        follows no redirect). The old ``/api/health`` named the registry path and
+        is gone; this is the only liveness route, and the tray probes it.
+
+        The request guard still applies (a rebound ``Host`` is refused here as
+        everywhere), and nothing else does: no session is looked for, no token is
+        accepted, and none is issued.
+        """
+        if request.method == "HEAD":
+            # A supervisor's HEAD probe reads the status line, and a route that
+            # answered 405 to it would read as an unhealthy node. The body is
+            # what GET adds; the answer is the same ``200``.
+            return Response(status_code=200)
+        return {"status": "ok"}
+
+    # --- JSON API (machines, scripts and integrations) ---------------------- #
     @app.get("/api/node")
     def node_address() -> NodeOut:
         """Where the node is — the record, vouched for by the socket this app holds.
@@ -2791,6 +3132,31 @@ def serve(
     what ``serve --supervise`` passes.
     """
     registry = Registry.open(data_dir=data_dir)
+    # The node's own files — the address record and the session its machine's
+    # clients present — are published and cleared by the server this runs
+    # (:class:`NodeServer`), so every posture that serves the console has them.
+    return _serve_forever(
+        registry,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+        trusted_hosts=trusted_hosts,
+        log_config=log_config,
+        supervise=supervise,
+    )
+
+
+def _serve_forever(
+    registry: Registry,
+    *,
+    host: str,
+    port: int,
+    open_browser: bool,
+    trusted_hosts: Sequence[str] | None,
+    log_config: dict | None,
+    supervise: bool,
+) -> int:
+    """The node's own loop: one server, restarted while supervising (ADR-0013)."""
     while True:
         app = create_app(registry, trusted_hosts=trusted_hosts)
         extra = {} if log_config is None else {"log_config": log_config}

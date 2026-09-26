@@ -252,3 +252,34 @@ verbatim answers and the direction they answer are the
   (the spec lets the set vary by authorization), or add an upload-based verb.
 - **Session model**: stateless versus the SDK's session-id stateful mode, and
   concurrency with the node's single run queue.
+
+## Update (2026-09-26) — the auth gate lands
+
+- [FACT] The authentication half's first landing is in the build: **one
+  credential** in the registry (`console_credential`, one row by the schema's
+  own `CHECK`, holding a salted `scrypt` hash and never the password), **human
+  sessions** (`console_session`, keyed by the cookie's digest, with an idle
+  timeout and an absolute lifetime, both re-read on every request), and the
+  **anonymous surface** as a list the route-table test enumerates: the setup route
+  (the first run's credential step, then the sign-in form), `GET /health`
+  (exactly `{"status": "ok"}`, the tray's probe), and the compiled assets under
+  `/static`. Every other route needs a session — pages redirect to the setup
+  route, the machine API answers `401` — and the old `/api/health`, which
+  named the registry path, is gone.
+- [FACT] **The rescue is a command**: `clear-record password` sets or replaces
+  the credential in the registry itself, with no session, no browser and no
+  running node, and fails closed on a registry it cannot read. Replacing a
+  credential ends every session the old one opened.
+- [FACT] **A non-loopback bind with no declared trust source refuses to start**
+  (`CR_TRUSTED_HOSTS` or `CR_TRUSTED_PROXIES` is the declaration;
+  `--tailscale` trusts its own resolved name), because the request guard would
+  answer `403` to every request such a bind received. The loopback default is
+  unchanged.
+- [FACT] What is **not** built, and stays with its own tickets: the trusted-proxy
+  half — the console's own code reads no `X-Forwarded-*` header, and what is left
+  is narrowing the header to **declared** peers (`CR_TRUSTED_PROXIES` is the
+  declaration the startup check reads, not yet the header's gate; uvicorn's own
+  default already believes `X-Forwarded-Proto` from any loopback peer), machine
+  tokens for scripts, and the `/web` + `/api/v1` re-root. The credential's *act* — a
+  fresh password at a destructive operation — still has no member of its class to
+  gate.

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv("CR_LOG_DIR", str(tmp_path / "logs"))
     app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
-    return TestClient(app)
+    return signed_in(TestClient(app))
 
 
 def test_console_offers_the_bundle_as_a_download(tmp_path, monkeypatch) -> None:

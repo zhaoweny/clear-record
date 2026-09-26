@@ -324,8 +324,14 @@ curl -s -X POST localhost:8790/api/projects -H 'content-type: application/json' 
 # the candidate, from the scratch project above, over a copy of that directory
 cp -r /tmp/cr-prev-data /tmp/cr-candidate-data
 CR_DATA_DIR=/tmp/cr-candidate-data uv run clear-record serve --port 8791 &
-curl -s localhost:8791/api/projects   # the project is there, and /api/health names the registry
+curl -s localhost:8791/health          # {"status":"ok"}: the node opened the registry and migrated it
+sqlite3 /tmp/cr-candidate-data/registry.sqlite3 \
+  'select slug from project'           # the project the released line wrote is still there
 ```
+
+The console has a credential now (ADR-0033), so `/api/projects` would answer
+`401` to a bare `curl`; `/health` is the credential-free route, and reading the
+registry directly is what proves the migration kept the data.
 
 It opens in place: the same file, `alembic_version` at the chain's head, the
 `schema_version` row levelled, and the projects, meetings, tapes and glossary

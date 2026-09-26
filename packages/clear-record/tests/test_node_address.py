@@ -51,6 +51,10 @@ from clear_record.web.app import create_app
 _CHILD = "from clear_record.cli.cli import main\nraise SystemExit(main(['node']))\n"
 
 #: How long a real node gets to record its address before a test calls it a bug.
+#: The credential this file's console client signs in with; the app sets it
+#: through the service seam and takes the session from the sign-in form.
+_CONSOLE_PASSWORD = "node-address-test-password"
+
 _READY_TIMEOUT = 20.0
 
 
@@ -100,9 +104,24 @@ def _wait_for_record(timeout: float = _READY_TIMEOUT) -> node.NodeAddress:
     pytest.fail("the node never recorded its address")
 
 
+def _local_cookie() -> dict[str, str]:
+    """The session the node published for a client on its own machine.
+
+    These tests are such a client: they talk to the node over HTTP, so they
+    present the local session the node publishes exactly as the command line does
+    (:data:`clear_record.core.node.LOCAL_SESSION_FILENAME`). Without it every
+    request here is anonymous and the gate refuses it — which is the point of the
+    gate, and why a node-driving test says who it is.
+    """
+    token = node.local_session()
+    return {} if token is None else {"Cookie": f"{node.SESSION_COOKIE}={token}"}
+
+
 def _stop(address: node.NodeAddress) -> None:
     """Ask a node to stop the way a surface does — a request, never a signal."""
-    request = urllib.request.Request(address.url_for("/api/shutdown"), method="POST")
+    request = urllib.request.Request(
+        address.url_for("/api/shutdown"), method="POST", headers=_local_cookie()
+    )
     try:
         urllib.request.urlopen(request, timeout=5).read()
     except OSError:
@@ -111,21 +130,27 @@ def _stop(address: node.NodeAddress) -> None:
 
 def _get(address: node.NodeAddress, path: str) -> tuple[int, str]:
     """One request to a running node's route, as a client would make it."""
+    request = urllib.request.Request(address.url_for(path), headers=_local_cookie())
     try:
-        with urllib.request.urlopen(address.url_for(path), timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             return response.status, response.read().decode()
     except urllib.error.HTTPError as exc:  # a refusal is an answer, not an error
         return exc.code, exc.read().decode()
 
 
 @pytest.fixture
-def serve_node(tmp_path):
+def serve_node(tmp_path, monkeypatch):
     """A real node in the ``serve`` posture, on an ephemeral port.
 
     Started in a thread (a node is a process the tests may not become) and
     stopped through its own shutdown route, exactly as the desktop build stops
     one. Yields the address the node recorded.
+
+    The node's own state directory is this test's, so the address record and the
+    local session it publishes are the test's too — the node hands *this* test the
+    session ``_local_cookie`` presents, and nothing lands in the real one.
     """
+    monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
     thread = threading.Thread(
         name="node-address-test",
         daemon=True,
@@ -369,12 +394,19 @@ def test_a_record_that_answers_nowhere_is_a_refusal_not_a_search(
 
 
 def _console_answer(tmp_path) -> tuple[int, str]:
-    """``GET /api/node`` on an app that is not a listening node."""
+    """``GET /api/node`` on an app that is not a listening node.
+
+    The route is behind the console's credential (ADR-0033), so this asks it the
+    way a browser does: a credential set through the service seam the app itself
+    uses, and a session taken from the real sign-in form.
+    """
     app = create_app(
         Registry.open(data_dir=str(tmp_path / "console-data")),
         trusted_hosts=("testserver",),
     )
+    app.state.auth.set_password(_CONSOLE_PASSWORD, actor="console")
     with TestClient(app) as client:
+        client.post("/setup/sign-in", data={"password": _CONSOLE_PASSWORD})
         response = client.get("/api/node")
         return response.status_code, response.json()["detail"]
 
@@ -482,7 +514,7 @@ def test_a_record_naming_a_listener_that_is_not_http_states_the_one_answer(
 def test_the_console_answers_concurrent_readers(serve_node) -> None:
     """``GET /api/node`` spends one request per reader, so readers cannot crowd it out.
 
-    The route proved the node answered by requesting ``/api/health`` from itself,
+    The route proved the node answered by requesting the health route from itself,
     which took a second threadpool token per reader: a full pool turned into
     "nothing is listening" with the node answering right there. Every reader now
     gets the address the socket this app holds is bound to, and more readers than

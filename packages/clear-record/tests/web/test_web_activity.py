@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import dataclasses
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import JobEvent, PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The claiming owner a live run is seeded with. A host this machine is not, so
 #: "the row names its owner's host" cannot pass by accident.
@@ -36,7 +36,9 @@ COST = {
 def _console(registry: Registry) -> TestClient:
     """A console over ``registry`` whose run queue is stopped (see the module)."""
     manager = RunManager(registry, start_queue=False)
-    return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    return signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    )
 
 
 def _chip(page: str) -> str:

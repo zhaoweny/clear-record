@@ -24,13 +24,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import node
 from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The address a surface on this machine dials — ``node.NodeAddress.url`` for the
 #: loopback a node binds, and the address the command line's own client uses.
@@ -71,7 +71,7 @@ def _console(
     manager = RunManager(registry, pipeline=fake_pipeline)
     app = create_app(registry, runs=manager, trusted_hosts=trust)
     return SimpleNamespace(
-        client=TestClient(app, base_url=origin, client=peer),
+        client=signed_in(TestClient(app, base_url=origin, client=peer)),
         registry=registry,
         manager=manager,
         entered=entered,

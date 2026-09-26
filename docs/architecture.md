@@ -491,13 +491,13 @@ workspace and the **archive view**; the **MCP surface** carries the **tuning
 loop** and the **draft chain** (ADR-0017, ADR-0031). Every mutating service call
 appends one row — `(at, actor, action, target, outcome)` — to an **append-only**
 audit record (`audit_event`); a **conditional** write that matched no row (a lost
-claim, a state the move is not legal from) appends nothing, because nothing
-happened to record. The **actor is a required argument** on the mutating entry
-points, supplied by the transport that calls (`console`, `api`, `mcp`, `cli`, or
-`queue` for the node's own queue): a surface can neither forget it nor forge it,
-and a run's `origin` — the surface that asked, which a
-run request may name — is a **separate column** from the actor, so a client
-cannot write itself into the record by filling in a field (ADR-0033).
+claim, a state the move is not legal from), and a **key miss**, append nothing,
+because nothing happened. The **actor is a required argument** on the mutating
+entry points, supplied by the transport that calls (`console`, `api`, `mcp`,
+`cli`, or `queue` for the node's own queue): a surface can neither forget it nor
+forge it, and a run's `origin` — the surface that asked, which a run request may
+name — is a **separate column** from the actor, so a client cannot write itself
+into the record by filling in a field (ADR-0033).
 clear-record calls no model: every draft is written by the user's harness over
 MCP, its recorded author is the **actor its transport supplies** — `mcp` for the
 stdio adapter, never a string a caller declares; the *decision* is recorded

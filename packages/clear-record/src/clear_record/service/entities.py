@@ -241,7 +241,10 @@ class Archive(Base):
 
 
 class AuditEvent(Base):
-    """``audit_event`` — one appended row per mutating service call (ADR-0033).
+    """``audit_event`` — the row one mutating service call appends (ADR-0033).
+
+    A **conditional** write that matched no row, and a **key miss**, append
+    nothing, because nothing happened.
 
     ``at`` is when the call happened, ``actor`` who made it (a word of
     :data:`~clear_record.service.lifecycle.ACTORS`), ``action`` the verb,

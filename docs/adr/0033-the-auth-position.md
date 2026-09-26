@@ -100,9 +100,9 @@ verbatim answers and the direction they answer are the
   step-up-at-the-act, AUTH-03 gains *no destructive verbs*.
 - [DECISION: owner, 2026-09-26] **Audit.** Every mutating service call appends
   `(at, actor, action, target, outcome)` to an append-only record — a conditional
-  write that matched no row appends nothing, because nothing happened — and
-  `actor` is a required argument on mutating service entry points so it cannot be
-  forgotten.
+  write that matched no row, and a key miss, append nothing, because nothing
+  happened — and `actor` is a required argument on mutating service entry points so
+  it cannot be forgotten.
 - [DECISION: owner, 2026-09-26] **`/mcp` over HTTP: the story is decided, the
   mount is deferred.** The network transport's credential is the node's own
   machine-token story (a pre-shared bearer; the MCP spec makes authorization

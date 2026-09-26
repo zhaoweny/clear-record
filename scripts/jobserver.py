@@ -16,19 +16,24 @@ checkouts contend for — so the path lives under ``XDG_RUNTIME_DIR`` (a per-use
 ``/tmp`` path when there is none) and is keyed to the user id.
 
 **A pipe's tokens live exactly as long as some process holds it open.** Closing
-the seeding descriptor frees the FIFO's in-memory pipe, buffered tokens
-included, so ``init`` leaves a detached **keeper** process holding the pipe open
-for the machine's (user session's) lifetime, records its pid beside the pipe,
-and reuses a pipe only while that keeper answers. A pipe whose keeper is gone is
-stale — its tokens are gone with it — and is replaced. Over-seeding from a
-benign init race would inflate the pool, so a lock file serialises seeding.
+the last descriptor frees the FIFO's in-memory pipe, buffered tokens included,
+so ``init`` leaves a detached **keeper** process holding the pipe open for the
+machine's (user session's) lifetime, records its pid beside the pipe, and reuses
+a pipe only while that keeper answers.
 
-**A token also dies with a worker killed while holding one**, and a pool that
-has leaked empty hangs its readers rather than failing them — silently, behind
-a healthy-looking pipe. The keeper therefore probes: a token it finds goes
-straight back (no net change to the pool), and a pipe it has watched empty for
-several consecutive probes is reseeded. A momentary over-fill while running
-tests happen to hold every token is the accepted side of that trade.
+**A pipe is never unlinked while anyone still holds it.** A worker parked on a
+replaced path can never be woken — its descriptor points at the old inode, and
+no keeper will ever seed it again. So when the path exists without a live keeper
+``init`` *attaches* a keeper to the same inode if any process holds it open, and
+only replaces the path when nobody does. A keeper is recycled only when no run
+is live; ``init`` makes that recycling safe rather than forbidden.
+
+**A token also dies with a worker killed while holding one.** The keeper probes:
+a token it finds goes straight back (no net change), and a pipe it has watched
+empty for several consecutive probes is topped up. The top-up writes only what
+the pool is missing — ``tokens`` minus the processes holding the pipe — so
+attaching to a live pool cannot inflate it, and an empty pool with no holders
+comes back whole.
 
 **Best-effort by design**: a convenience that cannot be set up must not fail
 the gate it speeds up. A failure prints nothing to stdout, which leaves
@@ -47,8 +52,10 @@ import os
 import select
 import signal
 import stat
+import struct
 import subprocess
 import sys
+import termios
 import time
 from pathlib import Path
 
@@ -109,18 +116,68 @@ def keeper_pid(path: Path) -> int | None:
     return None
 
 
+def holders(path: Path) -> set[int]:
+    """The pids holding this pipe open, found through ``/proc`` (empty with no procfs)."""
+    try:
+        inode = path.stat().st_ino
+        entries = os.listdir("/proc")
+    except OSError:
+        return set()
+    mine = os.getpid()
+    found: set[int] = set()
+    for entry in entries:
+        if not entry.isdigit() or int(entry) == mine:
+            continue
+        fd_dir = f"/proc/{entry}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.stat(f"{fd_dir}/{fd}").st_ino == inode:
+                    found.add(int(entry))
+                    break
+            except OSError:
+                continue
+    return found
+
+
+def _pool_size(fd: int) -> int | None:
+    """The tokens currently in the pipe, or ``None`` where the ioctl is unsupported."""
+    try:
+        buf = fcntl.ioctl(fd, termios.FIONREAD, struct.pack("I", 0))
+    except OSError:
+        return None
+    return struct.unpack("I", buf)[0]
+
+
+def top_up(path: Path, fd: int, tokens: int) -> None:
+    """Write the tokens the pool is missing, and only those.
+
+    A pool with tokens in it has not leaked — every byte in flight is one a
+    worker holds — so this is a no-op. An empty pool is sized against the
+    processes holding the pipe: a keeper attaching to a live pool writes
+    ``tokens`` minus those holders, and a drained pool with no holders comes
+    back whole.
+    """
+    if _pool_size(fd):
+        return
+    missing = tokens - len(holders(path))
+    if missing > 0:
+        os.write(fd, TOKEN * missing)
+
+
 def keep(
     path: Path,
     tokens: int,
     probe_seconds: float,
     empty_probes: int,
 ) -> int:
-    """Hold ``path`` open, seed it, and top the pool back up — the keeper itself."""
+    """Hold ``path`` open, seed what it needs, and probe — the keeper itself."""
     fd = os.open(path, os.O_RDWR)  # holds the pipe object alive
     os.set_blocking(fd, False)  # a probe must never park behind another reader
-    written = os.write(fd, TOKEN * tokens)
-    if written != tokens:
-        raise OSError(f"short seed write: {written} of {tokens} bytes")
+    top_up(path, fd, tokens)
     pid_path(path).write_text(f"{os.getpid()}\n")
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     empty = 0
@@ -141,15 +198,12 @@ def keep(
             continue
         empty += 1
         if empty >= empty_probes:
-            try:
-                os.write(fd, TOKEN * tokens)  # leak recovery, not the seed
-            except BlockingIOError:
-                pass  # the pool refilled itself; not a leak
+            top_up(path, fd, tokens)  # leak recovery, sized by the holders
             empty = 0
 
 
 def spawn_keeper(path: Path, tokens: int) -> bool:
-    """Start a detached keeper and wait until it has seeded the pipe."""
+    """Start a detached keeper and wait until it has seeded or attached."""
     subprocess.Popen(
         [
             sys.executable,
@@ -184,7 +238,13 @@ def init(path: Path, tokens: int) -> Path | None:
                     raise OSError(f"{path} exists and is not a fifo")
                 if keeper_pid(path) is not None:
                     return path
-                # A pipe without a live keeper lost its tokens: replace it.
+                # No live keeper. A pipe someone still holds keeps its inode: the
+                # pool and every parked worker live there, so attach to it rather
+                # than replace it. Only a pipe nobody holds is safely rebuilt.
+                if holders(path):
+                    if not spawn_keeper(path, tokens):
+                        raise OSError("keeper did not attach in time")
+                    return path
                 path.unlink(missing_ok=True)
             pid_path(path).unlink(missing_ok=True)
             os.mkfifo(path, 0o600)

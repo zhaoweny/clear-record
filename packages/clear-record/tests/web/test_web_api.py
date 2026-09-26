@@ -285,6 +285,40 @@ def test_a_retired_candidate_restores_as_a_candidate(client) -> None:
     assert restored.json()["status"] == "candidate"
 
 
+def test_restoring_a_term_that_is_not_retired_is_refused(client) -> None:
+    """Restore returns the status a retire took the term from, so a term that is
+    not retired has nothing to return to: the API answers 400 with the service's
+    own message, never a 500 and never a silent status invention."""
+    client.post("/api/projects", json={"name": "Ops"})
+    term = client.post(
+        "/api/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
+    ).json()
+
+    refused = client.post(f"/api/glossary/{term['id']}/restore")
+
+    assert refused.status_code == 400
+    assert "not retired" in refused.json()["detail"]
+    assert client.get("/api/projects/ops/glossary").json()[0]["status"] == "confirmed"
+
+
+def test_the_console_renders_a_refused_restore(client) -> None:
+    """The console's own Restore reads the service's refusal, not a 500.
+
+    htmx does not swap a 4xx, so a refusal the user can act on re-renders the
+    tab with the service's message — and the term keeps the status it held.
+    """
+    client.post("/api/projects", json={"name": "Ops"})
+    term = client.post(
+        "/api/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
+    ).json()
+
+    refused = client.post(f"/ui/glossary/{term['id']}/restore")
+
+    assert refused.status_code == 200
+    assert "not retired" in refused.text
+    assert client.get("/api/projects/ops/glossary").json()[0]["status"] == "confirmed"
+
+
 def test_glossary_status_filter(client) -> None:
     client.post("/api/projects", json={"name": "Ops"})
     client.post("/api/projects/ops/glossary", json={"term": "A", "status": "confirmed"})
@@ -1394,6 +1428,34 @@ def test_ui_verify_reports_a_missing_manifest(client, tmp_path) -> None:
     assert status.status_code == 200
     assert '<span class="badge">missing</span>' in status.text
     assert "no manifest" in status.text
+
+
+def test_ui_verify_reports_an_unreadable_manifest_as_unverifiable(
+    client, tmp_path
+) -> None:
+    """A manifest that is there but cannot be read is not a file that is gone.
+
+    The fragment says what the service answered: *unverifiable*, with its
+    reason — never the "missing" it used to print for a manifest sitting right
+    there.
+    """
+    _root, _tape, meeting = _seed_archivable(client, tmp_path)
+    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/projects/ops/archives").json()[0]
+    (Path(archive["root_path"]) / "archive.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+
+    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    assert status.status_code == 200
+    assert "unverifiable" in status.text
+    assert "archive.json" in status.text
+    assert "missing" not in status.text
+
+    api = client.post(f"/api/archives/{archive['id']}/verify").json()
+    assert api["ok"] is False
+    assert api["missing"] == []
+    assert api["unverifiable"]
 
 
 def test_ui_archive_without_a_root_explains_itself(client, tmp_path) -> None:

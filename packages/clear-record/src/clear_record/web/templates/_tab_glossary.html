@@ -57,7 +57,7 @@
                   title="{{ tr("Retire term") }}"
                   aria-label="{{ tr("Retire term") }}"
                   hx-delete="/ui/glossary/{{ term.id }}"
-                  hx-confirm="{{ tr('Retire this term? It stops biasing the decoder; the row is kept, and Restore returns it to the status it has now.') }}"
+                  hx-confirm="{{ tr('Retire this term? It stops biasing the decoder; the row is kept, and Restore returns it to the status it had before the retire.') }}"
                   hx-target="#detail" hx-swap="innerHTML">{{ tr("Retire") }}</button>
           {% endif %}
         </td>

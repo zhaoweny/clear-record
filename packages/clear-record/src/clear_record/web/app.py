@@ -1726,10 +1726,16 @@ def create_app(
 
         "Restore" is not "confirm": the service returns the term to the status
         the retire took it from, so a retired candidate comes back a candidate
-        (ADR-0033). The move is the console's, and is recorded as such.
+        (ADR-0033). A term that is not retired has nothing to restore *to*, and
+        the service refuses it; that refusal is fixable by looking at the row, so
+        it re-renders the tab with the service's message at 200, as the status
+        form's does. The move is the console's, and is recorded as such.
         """
         term = lookup.term(registry, term_id)
-        registry.restore_term(term_id, actor=CONSOLE)
+        try:
+            registry.restore_term(term_id, actor=CONSOLE)
+        except ValueError as exc:
+            return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
@@ -2354,8 +2360,10 @@ def create_app(
         """Retire a term: the row survives, the decoder drops it (ADR-0033).
 
         The verb is DELETE for the clients that already call it, but it no longer
-        destroys anything: the response is the retired term, and restoring it is
-        a PATCH of another status.
+        destroys anything: the response is the retired term, and
+        ``POST /api/glossary/{term_id}/restore`` puts it back — a ``PATCH`` states
+        a status outright, where Restore returns the term to the status the
+        retire took it from.
         """
         lookup.term(registry, term_id)
         return TermOut.model_validate(registry.retire_term(term_id, actor=API))
@@ -2366,10 +2374,17 @@ def create_app(
 
         The counterpart of the retire above; ``PATCH status=…`` states a status
         outright, while this puts the term back where it was (ADR-0033). The
-        move is recorded against this API, as the retire is.
+        move is recorded against this API, as the retire is. Restoring a term
+        that is not retired would invent a status, so the service refuses it —
+        the same 400, carrying the service's own message, as the other bad
+        transitions on this surface.
         """
         lookup.term(registry, term_id)
-        return TermOut.model_validate(registry.restore_term(term_id, actor=API))
+        try:
+            restored = registry.restore_term(term_id, actor=API)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return TermOut.model_validate(restored)
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)

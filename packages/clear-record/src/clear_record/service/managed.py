@@ -59,6 +59,7 @@ from clear_record.pipeline.workspace import (
     AUDIO_DIR,
     AUDIO_SUFFIXES,
     EXPORT_DIR,
+    RUN_MARKER,
     RUNS_DIR,
     Workspace,
     is_audio,
@@ -596,15 +597,19 @@ def delete_tapes(
     every delete stands on a durable copy: the meeting must have a **verified**
     archive, or the whole batch is refused with a message naming the archive
     action and nothing is unlinked (ADR-0033). The durable copy is one archive
-    for the meeting, so it is verified **once**, and every requested tape is
-    checked before any file is unlinked — a bad id refuses the batch whole.
+    for the meeting, so it is verified **once**, and every precondition — the
+    actor's own gate included — passes before the first unlink: a bad id, or a
+    word the record cannot attribute a row to, refuses the batch whole with the
+    filesystem untouched.
 
     ``actor`` is the transport's word for the surface that asked for the
-    deletion: each tape's own row is dropped against it, and the workspace
-    refusal below is recorded as a failed ``tape.forget`` for the meeting (the
-    batch's subject — one refusal covers every id asked for), so a tape that is
-    gone is still accounted for (ADR-0033).
+    deletion: each tape's own row is dropped against it, and every refusal this
+    call owns — a user-chosen workspace, or no verified archive — leaves one
+    failed ``tape.forget`` row for the meeting (the batch's subject: one refusal
+    covers every id asked for), so a tape that is gone is still accounted for
+    (ADR-0033).
     """
+    audit.require_actor(actor)
     tapes: list[Tape] = []
     for tape_id in tape_ids:
         tape = registry.get_tape(tape_id)
@@ -629,7 +634,19 @@ def delete_tapes(
         )
     for tape in tapes:
         _require_within(Path(tape.path), resolved_root)
-    archive = durable_archive(registry, meeting)
+    try:
+        archive = durable_archive(registry, meeting)
+    except ArchiveRequired:
+        # A policy answer like the workspace refusal above, and the one that
+        # guards the destroy: the refusal leaves a row (ADR-0033) — one for the
+        # batch, naming the meeting whose archive is missing.
+        registry.record_audit(
+            actor,
+            "tape.forget",
+            f"meeting:{meeting.id}",
+            outcome=audit.FAILED,
+        )
+        raise
     deletions: list[TapeDeletion] = []
     for tape in tapes:
         Path(tape.path).unlink(missing_ok=True)
@@ -948,17 +965,25 @@ def _file_bytes(path: Path, seen: set[str]) -> _Measure:
     return (size, False)
 
 
-def _run_file_bucket(rel: tuple[str, ...]) -> str | None:
-    """The bucket a file under a workspace's ``runs/`` belongs to, or ``None``.
+def _run_file_bucket(root: Path, rel: tuple[str, ...]) -> str | None:
+    """The bucket a file inside a **marked** run scope belongs to, or ``None``.
 
-    Every run keeps its own copy of its documents under
+    A run keeps its own copy of its documents under
     ``<workspace>/runs/<run id>/`` (ADR-0033), and the walk must attribute them
     where they belong: a run's **exports** are exports, and its manifest,
     segments and record are records — the same buckets the workspace root's
     published copies land in, so the machine total stays true and a run's export
     directory is not silently counted as a transcript (STO-01).
+
+    Only a **marked** directory is a run scope (:data:`RUN_MARKER`), which is the
+    rule the walk itself reads: ``runs`` is an ordinary word, so everything else
+    under it is the operator's, classified like any other file — discovery takes
+    its audio as an input, and the buckets must count that file as the source
+    tape it is.
     """
-    if rel[:1] != (RUNS_DIR,):
+    if rel[:1] != (RUNS_DIR,) or len(rel) < 2:
+        return None
+    if not (root / RUNS_DIR / rel[1] / RUN_MARKER).is_file():
         return None
     if len(rel) > 2 and rel[2] == EXPORT_DIR:
         return "exports"
@@ -971,10 +996,11 @@ def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
     A file under tapes/ -- or input audio the pipeline would discover, symlinks
     included -- is a **source** tape. audio/, export/ and agent/ are the app's
     derived output, and the manifest, segments, transcript and minutes are the
-    meeting's records; a file under a run scope's ``runs/<id>/`` is attributed by
-    :func:`_run_file_bucket` (a run's own exports are exports). Files this call
-    already counted are skipped, so a shared workspace or a linked target cannot
-    double count; every bucket carries the walk's partial flag.
+    meeting's records; a file inside a **marked** run scope's ``runs/<id>/`` is
+    attributed by :func:`_run_file_bucket` (a run's own exports are exports, and
+    an operator's unmarked ``runs/`` is classified like any other file). Files
+    this call already counted are skipped, so a shared workspace or a linked
+    target cannot double count; every bucket carries the walk's partial flag.
     """
     files, unreadable = _scan(root)
     buckets = {key: 0 for key in WORKSPACE_BUCKETS}
@@ -986,7 +1012,7 @@ def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
         top = rel[0] if rel else ""
         bucket = _BUCKET_DIRS.get(top)
         if bucket is None:
-            bucket = _run_file_bucket(rel) or (
+            bucket = _run_file_bucket(root, rel) or (
                 "tapes"
                 if top == tapestore.TAPES_DIRNAME or is_audio(path)
                 else "records"

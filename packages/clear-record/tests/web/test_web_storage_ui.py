@@ -371,6 +371,12 @@ def test_the_panel_strings_go_through_tr(client) -> None:
     assert "上传录音" in panel.text  # Upload tape
     assert "托管磁盘可用空间" in panel.text  # Free on the managed disk
 
+    # A string this batch changed: the per-tape delete confirm, which names the
+    # meeting's archive as the durable copy — never that it keeps *this* tape.
+    _upload(client, meeting["id"], "a.wav", b"x")
+    panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
+    assert "删除此录音？文件将被移除，会议的已验证归档是持久副本。" in panel.text
+
 
 def test_the_upload_id_refusal_is_translated(client) -> None:
     _project(client)

@@ -29,7 +29,7 @@ import json
 import shutil
 from pathlib import Path
 
-from clear_record.service import tapestore
+from clear_record.service import audit, tapestore
 from clear_record.service.models import Archive, Meeting
 from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
@@ -168,7 +168,13 @@ def archive_meeting(
     ``webhooks`` defaults to the shared config-driven emitter; ``archive.created``
     is emitted only after the archive is complete, and delivery (off-thread)
     can never fail the archive.
+
+    The actor's own gate runs **first**, before any file is copied: a word the
+    record cannot attribute a row to is a programming error, and it must refuse
+    before this call has written anything (``add_archive`` would run the same
+    gate — after a whole archive had been copied).
     """
+    audit.require_actor(actor)
     root_path = _resolve_root(registry, meeting, root)
 
     tape_set = registry.latest_recording_set(meeting.id)
@@ -251,6 +257,13 @@ class ArchiveVerification(Shape):
 
     Declared where it is computed: the console's archive row and
     `/api/archives/{id}/verify` publish the same shape.
+
+    ``unverifiable`` is the third answer, beside a missing and a mismatched file:
+    the manifest is there but cannot be read, parsed or trusted — or a listed
+    file cannot be hashed — so nothing in this archive can be checked. It carries
+    the reason, and ``missing``/``mismatched`` stay empty: the file is right
+    there, and "missing" would be a claim nothing supports. A manifest that is
+    *gone* is still :class:`FileNotFoundError` — there is nothing to verify.
     """
 
     ok: bool
@@ -258,29 +271,59 @@ class ArchiveVerification(Shape):
     mismatched: list[str]
     checked: int
     archive: str
+    unverifiable: str | None = None
+
+
+def _detail(exc: BaseException) -> str:
+    """An exception's own words, for a sentence that already names the file."""
+    return getattr(exc, "strerror", None) or str(exc) or type(exc).__name__
+
+
+def _unverifiable(archive_dir: Path, reason: str) -> ArchiveVerification:
+    """The answer for an archive nothing can be checked against.
+
+    ``ok`` false with nothing missing and nothing mismatched: the archive could
+    not be *read*, which is its own answer, never that a file it lists is gone.
+    """
+    return ArchiveVerification(
+        ok=False,
+        missing=[],
+        mismatched=[],
+        checked=0,
+        archive=str(archive_dir),
+        unverifiable=reason,
+    )
 
 
 def verify_archive(archive_dir: str | Path) -> ArchiveVerification:
     """Re-read an archive's manifest and re-check every file against it.
 
     ``ok`` is true only when every listed file is present with its recorded size
-    and ``sha256``. A missing manifest raises :class:`FileNotFoundError` — there
-    is nothing to verify.
+    and ``sha256``. Two ways to answer *not* ok, and the difference is the point:
+    a manifest that is **gone** raises :class:`FileNotFoundError` (there is
+    nothing to verify), while one that is there but cannot be read, parsed or
+    trusted — or a listed file that cannot be hashed — is *unverifiable*, with
+    the reason and nothing missing. Neither raises into a caller: a delete must
+    refuse, not 500.
     """
     archive_dir = Path(archive_dir)
     manifest_path = archive_dir / MANIFEST_FILENAME
     if not manifest_path.is_file():
         raise FileNotFoundError(f"no archive manifest at {manifest_path}")
 
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        entries = list(manifest["files"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return _unverifiable(archive_dir, f"{MANIFEST_FILENAME}: {_detail(exc)}")
+
     missing: list[str] = []
     mismatched: list[str] = []
     checked = 0
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for entry in manifest["files"]:
+    for entry in entries:
+        try:
             relative = entry["path"]
             target = archive_dir / relative
-            checked += 1
             if not target.is_file():
                 missing.append(relative)
             elif (
@@ -288,18 +331,13 @@ def verify_archive(archive_dir: str | Path) -> ArchiveVerification:
                 or _sha256(target) != entry["sha256"]
             ):
                 mismatched.append(relative)
-    except (OSError, ValueError, KeyError, TypeError):
-        # A manifest that cannot be read or parsed, or a file that cannot be
-        # hashed, is not a verification: nothing in this archive can be trusted,
-        # so it reports not-ok rather than raising into a caller (a delete must
-        # refuse, not 500).
-        return ArchiveVerification(
-            ok=False,
-            missing=[MANIFEST_FILENAME],
-            mismatched=[],
-            checked=0,
-            archive=str(archive_dir),
-        )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # An entry this archive cannot even be asked about. The same answer
+            # as an unreadable manifest — the reason, and no claim about a file.
+            return _unverifiable(
+                archive_dir, f"{MANIFEST_FILENAME} (one entry): {_detail(exc)}"
+            )
+        checked += 1
 
     return ArchiveVerification(
         ok=not missing and not mismatched,

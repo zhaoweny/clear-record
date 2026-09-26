@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-26 14:30+0800\n"
+"POT-Creation-Date: 2026-09-26 15:36+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -380,7 +380,7 @@ msgid ""
 "{unsupported}. It supports: {supported}."
 msgstr "[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupported}。它支持：{supported}。"
 
-#: packages/clear-record/src/clear_record/pipeline/workspace.py:154
+#: packages/clear-record/src/clear_record/pipeline/workspace.py:176
 msgid ""
 "the workspace's .clear-record-ignore cannot be read, so which of its "
 "files are inputs is unknown; make it readable or remove it"
@@ -560,45 +560,45 @@ msgid ""
 " is below"
 msgstr "hello-world 录音已通过导入与转写；转写文本如下。"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:101
+#: packages/clear-record/src/clear_record/service/agent_review.py:102
 #, python-brace-format
 msgid ""
 "the version you read ({version}) is not the newest one ({newest}), so the"
 " decision was not recorded"
 msgstr "你读到的版本（{version}）已不是最新版本（{newest}），因此该决定未被记录。"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:118
+#: packages/clear-record/src/clear_record/service/agent_review.py:119
 #, python-brace-format
 msgid "the draft {draft} cannot be read, so nothing was recorded"
 msgstr "{draft} 草稿无法读取，因此未记录该决定。"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:127
+#: packages/clear-record/src/clear_record/service/agent_review.py:128
 #, python-brace-format
 msgid "meeting {meeting} has no workspace; set one before writing an agent draft"
 msgstr "会议 {meeting} 没有工作区；请先设置后再写入智能体草稿"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:198
+#: packages/clear-record/src/clear_record/service/agent_review.py:220
 #, python-brace-format
 msgid "unknown draft kind {kind}; known kinds: {known}"
 msgstr "未知的草稿类型 {kind}；已知类型：{known}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:205
-#: packages/clear-record/src/clear_record/service/agent_review.py:228
+#: packages/clear-record/src/clear_record/service/agent_review.py:227
+#: packages/clear-record/src/clear_record/service/agent_review.py:251
 #, python-brace-format
 msgid "the {kind} draft cannot be written: {detail}"
 msgstr "无法写入 {kind} 草稿：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:221
+#: packages/clear-record/src/clear_record/service/agent_review.py:244
 #, python-brace-format
 msgid "no draft {draft} for {meeting}"
 msgstr "会议 {meeting} 没有草稿 {draft}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:567
+#: packages/clear-record/src/clear_record/service/agent_review.py:644
 #, python-brace-format
 msgid "the {kind} draft cannot be accepted: {detail}"
 msgstr "无法采纳 {kind} 草稿：{detail}"
 
-#: packages/clear-record/src/clear_record/service/agent_review.py:574
+#: packages/clear-record/src/clear_record/service/agent_review.py:651
 #, python-brace-format
 msgid "no promotion is defined for draft kind {kind}"
 msgstr "草稿类型 {kind} 未定义采纳规则"
@@ -732,127 +732,127 @@ msgstr "用于对比的参考转写文本文件（WER/相似度）"
 msgid "override the app data directory (default: CR_DATA_DIR / platform dir)"
 msgstr "覆盖应用数据目录（默认：CR_DATA_DIR / 平台目录）"
 
-#: packages/clear-record/src/clear_record/service/lifecycle.py:323
+#: packages/clear-record/src/clear_record/service/lifecycle.py:348
 msgid "a run is already in flight for this meeting"
 msgstr "此会议已有一个正在进行的运行"
 
-#: packages/clear-record/src/clear_record/service/lifecycle.py:337
+#: packages/clear-record/src/clear_record/service/lifecycle.py:362
 msgid "the console restarted while this run was in flight"
 msgstr "此运行进行期间控制台已重启"
 
-#: packages/clear-record/src/clear_record/service/managed.py:106
+#: packages/clear-record/src/clear_record/service/managed.py:108
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:16
 msgid "Tapes"
 msgstr "录音带"
 
-#: packages/clear-record/src/clear_record/service/managed.py:107
+#: packages/clear-record/src/clear_record/service/managed.py:109
 msgid "Transcripts and records"
 msgstr "转写与记录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:108
+#: packages/clear-record/src/clear_record/service/managed.py:110
 msgid "Audio copies"
 msgstr "音频副本"
 
-#: packages/clear-record/src/clear_record/service/managed.py:109
+#: packages/clear-record/src/clear_record/service/managed.py:111
 msgid "Exports"
 msgstr "导出"
 
-#: packages/clear-record/src/clear_record/service/managed.py:110
+#: packages/clear-record/src/clear_record/service/managed.py:112
 msgid "Agent run directories"
 msgstr "智能体运行目录"
 
-#: packages/clear-record/src/clear_record/service/managed.py:111
+#: packages/clear-record/src/clear_record/service/managed.py:113
 msgid "Chunk cache"
 msgstr "分块缓存"
 
-#: packages/clear-record/src/clear_record/service/managed.py:112
+#: packages/clear-record/src/clear_record/service/managed.py:114
 msgid "Model weights"
 msgstr "模型权重"
 
-#: packages/clear-record/src/clear_record/service/managed.py:299
+#: packages/clear-record/src/clear_record/service/managed.py:314
 #, python-brace-format
 msgid "{name!r} is not an audio tape; allowed extensions: {extensions}"
 msgstr "{name!r} 不是音频录音；允许的扩展名：{extensions}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:364
+#: packages/clear-record/src/clear_record/service/managed.py:383
 msgid ""
 "the disk filled while writing the upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:560
+#: packages/clear-record/src/clear_record/service/managed.py:579
 msgid ""
 "this meeting has no verified archive; archive the meeting first, then "
 "delete its tapes"
 msgstr "此会议尚无已验证的归档；请先归档此会议，然后再删除其录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:592
+#: packages/clear-record/src/clear_record/service/managed.py:631
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:629
+#: packages/clear-record/src/clear_record/service/managed.py:688
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:636
+#: packages/clear-record/src/clear_record/service/managed.py:695
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:648
+#: packages/clear-record/src/clear_record/service/managed.py:707
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:655
+#: packages/clear-record/src/clear_record/service/managed.py:714
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:660
+#: packages/clear-record/src/clear_record/service/managed.py:719
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 bytes"
 msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:680
+#: packages/clear-record/src/clear_record/service/managed.py:739
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:723
+#: packages/clear-record/src/clear_record/service/managed.py:784
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:743
+#: packages/clear-record/src/clear_record/service/managed.py:804
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:764
+#: packages/clear-record/src/clear_record/service/managed.py:825
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1042
+#: packages/clear-record/src/clear_record/service/managed.py:1130
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1053
+#: packages/clear-record/src/clear_record/service/managed.py:1141
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -862,7 +862,7 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1066
+#: packages/clear-record/src/clear_record/service/managed.py:1154
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
@@ -888,29 +888,29 @@ msgstr ""
 "\n"
 "本构建无法读取的已存选项按原文保留如下：\n"
 
-#: packages/clear-record/src/clear_record/service/runs.py:548
+#: packages/clear-record/src/clear_record/service/runs.py:551
 msgid ""
 "every audio file in this workspace is named in .clear-record-ignore, so "
 "this run would have no inputs; remove a line from that declaration"
 msgstr "此工作区中的每个音频文件都已在 .clear-record-ignore 中列出，本次运行将没有输入；请从该声明中删除一行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1064
+#: packages/clear-record/src/clear_record/service/runs.py:1090
 msgid "meeting has no workspace path; set one before running"
 msgstr "会议没有工作区路径；请先设置后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1070
+#: packages/clear-record/src/clear_record/service/runs.py:1096
 msgid "meeting has no tape set; select tapes before running"
 msgstr "会议没有录音集；请先选择录音后再运行"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1229
+#: packages/clear-record/src/clear_record/service/runs.py:1276
 msgid "this run is still in flight; cancel it first"
 msgstr "该运行仍在进行中；请先取消它"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1234
+#: packages/clear-record/src/clear_record/service/runs.py:1282
 msgid "this run did not record the options it ran with, so it cannot be resumed"
 msgstr "该运行未记录其运行参数，无法继续"
 
-#: packages/clear-record/src/clear_record/service/runs.py:1240
+#: packages/clear-record/src/clear_record/service/runs.py:1288
 msgid "the run's meeting no longer exists"
 msgstr "该运行所属的会议已不存在"
 
@@ -939,14 +939,14 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 msgid "setup does not record {key!r}"
 msgstr "初始设置不记录 {key!r}"
 
-#: packages/clear-record/src/clear_record/service/store.py:381
+#: packages/clear-record/src/clear_record/service/store.py:397
 #, python-brace-format
 msgid ""
 "registry schema revision {revision} is not one this build carries (its "
 "newest is {head}); upgrade clear-record"
 msgstr "注册表的架构修订版本 {revision} 不是本构建所携带的修订版本（最新为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:389
+#: packages/clear-record/src/clear_record/service/store.py:405
 #, python-brace-format
 msgid ""
 "the registry at {db_path} records schema revision {revision}, which an "
@@ -956,14 +956,14 @@ msgstr ""
 "{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 "
 "{db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:410
+#: packages/clear-record/src/clear_record/service/store.py:426
 #, python-brace-format
 msgid ""
 "registry schema version {version} is newer than this build carries (its "
 "newest revision is {head}); upgrade clear-record"
 msgstr "注册表的架构版本 {version} 比本构建所携带的更新（最新修订版本为 {head}）；请升级 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:421
+#: packages/clear-record/src/clear_record/service/store.py:437
 #, python-brace-format
 msgid ""
 "the registry at {db_path} was written by an unreleased development build,"
@@ -971,7 +971,7 @@ msgid ""
 "record again"
 msgstr "{db_path} 处的注册表由未发布的开发构建写入，本次发布不携带此类注册表；请删除 {db_path} 后重新启动 clear-record"
 
-#: packages/clear-record/src/clear_record/service/store.py:538
+#: packages/clear-record/src/clear_record/service/store.py:569
 #, python-brace-format
 msgid ""
 "another surface is migrating the registry at {db_path} and still holds "
@@ -1181,222 +1181,222 @@ msgstr ""
 "    tailnet 即身份验证：你 tailnet 上的任何人都能访问此控制台。\n"
 "    Serve 在前台运行，并随此控制台一起停止。"
 
-#: packages/clear-record/src/clear_record/web/app.py:771
+#: packages/clear-record/src/clear_record/web/app.py:776
 #, python-brace-format
 msgid "could not read the multipart upload: {error}"
 msgstr "无法读取 multipart 上传：{error}"
 
-#: packages/clear-record/src/clear_record/web/app.py:776
+#: packages/clear-record/src/clear_record/web/app.py:781
 msgid "attach the tape as a multipart file part named 'file'"
 msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
 
-#: packages/clear-record/src/clear_record/web/app.py:881
+#: packages/clear-record/src/clear_record/web/app.py:887
 #, python-brace-format
 msgid "{label} needs a number, not {value!r}."
 msgstr "「{label}」需要一个数字，而不是 {value!r}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1295
+#: packages/clear-record/src/clear_record/web/app.py:1308
 #, python-brace-format
 msgid "No project named {slug}."
 msgstr "没有名为 {slug} 的项目。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1345
+#: packages/clear-record/src/clear_record/web/app.py:1358
 #, python-brace-format
 msgid "No meeting named {meeting}."
 msgstr "没有名为 {meeting} 的会议。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1393
+#: packages/clear-record/src/clear_record/web/app.py:1406
 #, python-brace-format
 msgid "No settings section named {name}."
 msgstr "没有名为 {name} 的设置分区。"
 
-#: packages/clear-record/src/clear_record/web/app.py:1611
+#: packages/clear-record/src/clear_record/web/app.py:1624
 #, python-brace-format
 msgid "No draft {draft_id} for this meeting."
 msgstr "此会议没有草稿 {draft_id}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2106
+#: packages/clear-record/src/clear_record/web/app.py:2140
 #, python-brace-format
 msgid "Pointed at the agent harness {path}."
 msgstr "已指向智能体宿主 {path}。"
 
-#: packages/clear-record/src/clear_record/web/app.py:2138
+#: packages/clear-record/src/clear_record/web/app.py:2172
 #, python-brace-format
 msgid "Registered the clear-record MCP server in {path}."
 msgstr "已在 {path} 中注册 clear-record MCP 服务器。"
 
-#: packages/clear-record/src/clear_record/web/views.py:115
-#: packages/clear-record/src/clear_record/web/views.py:1303
+#: packages/clear-record/src/clear_record/web/views.py:116
+#: packages/clear-record/src/clear_record/web/views.py:1308
 msgid "Models"
 msgstr "模型"
 
-#: packages/clear-record/src/clear_record/web/views.py:116
+#: packages/clear-record/src/clear_record/web/views.py:117
 msgid "Backends"
 msgstr "后端"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:36
-#: packages/clear-record/src/clear_record/web/views.py:117
+#: packages/clear-record/src/clear_record/web/views.py:118
 msgid "Agent"
 msgstr "智能体"
 
-#: packages/clear-record/src/clear_record/web/views.py:118
+#: packages/clear-record/src/clear_record/web/views.py:119
 msgid "MCP"
 msgstr "MCP"
 
-#: packages/clear-record/src/clear_record/web/views.py:119
+#: packages/clear-record/src/clear_record/web/views.py:120
 msgid "Webhooks"
 msgstr "Webhook"
 
-#: packages/clear-record/src/clear_record/web/views.py:120
+#: packages/clear-record/src/clear_record/web/views.py:121
 msgid "Storage"
 msgstr "存储"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
-#: packages/clear-record/src/clear_record/web/views.py:121
+#: packages/clear-record/src/clear_record/web/views.py:122
 msgid "Status"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/views.py:138
+#: packages/clear-record/src/clear_record/web/views.py:139
 #, python-brace-format
 msgid "running {count}"
 msgstr "运行中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/views.py:139
+#: packages/clear-record/src/clear_record/web/views.py:140
 #, python-brace-format
 msgid "queued {count}"
 msgstr "排队中 {count} 个"
 
-#: packages/clear-record/src/clear_record/web/views.py:260
+#: packages/clear-record/src/clear_record/web/views.py:261
 msgid "chunk seconds"
 msgstr "分块秒数"
 
-#: packages/clear-record/src/clear_record/web/views.py:262
+#: packages/clear-record/src/clear_record/web/views.py:263
 msgid ""
 "how much audio one transcription pass decodes at once; a long tape wants "
 "longer chunks"
 msgstr "一次转写解码的音频长度；长录音适合更长的分块"
 
-#: packages/clear-record/src/clear_record/web/views.py:267
+#: packages/clear-record/src/clear_record/web/views.py:268
 msgid "overlap seconds"
 msgstr "重叠秒数"
 
-#: packages/clear-record/src/clear_record/web/views.py:269
+#: packages/clear-record/src/clear_record/web/views.py:270
 msgid "how much neighbouring chunks share, so a word on a boundary is not lost"
 msgstr "相邻分块共享的音频长度，以免边界处的词被漏掉"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:62
-#: packages/clear-record/src/clear_record/web/views.py:278
+#: packages/clear-record/src/clear_record/web/views.py:279
 msgid "jobs"
 msgstr "并发任务"
 
-#: packages/clear-record/src/clear_record/web/views.py:280
+#: packages/clear-record/src/clear_record/web/views.py:281
 msgid ""
 "how many transcription workers may run at once; 0 lets the node choose — "
 "process-isolated backends only, so the native apple-speech path always "
 "runs one"
 msgstr "可同时运行的转写工作进程数；0 表示由节点决定——仅限进程隔离的后端，因此原生 apple-speech 路径始终只运行一个"
 
-#: packages/clear-record/src/clear_record/web/views.py:632
+#: packages/clear-record/src/clear_record/web/views.py:633
 msgid "Not configured"
 msgstr "未配置"
 
-#: packages/clear-record/src/clear_record/web/views.py:634
+#: packages/clear-record/src/clear_record/web/views.py:635
 msgid "Configuration problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/views.py:636
+#: packages/clear-record/src/clear_record/web/views.py:637
 msgid "A delivery is failing"
 msgstr "有投递失败"
 
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:57
-#: packages/clear-record/src/clear_record/web/views.py:638
-#: packages/clear-record/src/clear_record/web/views.py:649
+#: packages/clear-record/src/clear_record/web/views.py:639
+#: packages/clear-record/src/clear_record/web/views.py:650
 msgid "No delivery yet"
 msgstr "尚未投递"
 
-#: packages/clear-record/src/clear_record/web/views.py:639
+#: packages/clear-record/src/clear_record/web/views.py:640
 msgid "Configured"
 msgstr "已配置"
 
-#: packages/clear-record/src/clear_record/web/views.py:644
+#: packages/clear-record/src/clear_record/web/views.py:645
 msgid "Config problem"
 msgstr "配置问题"
 
-#: packages/clear-record/src/clear_record/web/views.py:646
+#: packages/clear-record/src/clear_record/web/views.py:647
 msgid "Failing"
 msgstr "投递失败"
 
-#: packages/clear-record/src/clear_record/web/views.py:648
-#: packages/clear-record/src/clear_record/web/views.py:726
+#: packages/clear-record/src/clear_record/web/views.py:649
+#: packages/clear-record/src/clear_record/web/views.py:727
 msgid "Delivered"
 msgstr "已投递"
 
-#: packages/clear-record/src/clear_record/web/views.py:728
+#: packages/clear-record/src/clear_record/web/views.py:729
 msgid "Failed"
 msgstr "失败"
 
-#: packages/clear-record/src/clear_record/web/views.py:1040
+#: packages/clear-record/src/clear_record/web/views.py:1045
 msgid "No transcript yet. Run the pipeline first."
 msgstr "尚无转写文本。请先运行流水线。"
 
-#: packages/clear-record/src/clear_record/web/views.py:1080
+#: packages/clear-record/src/clear_record/web/views.py:1085
 msgid "Filename refused"
 msgstr "文件名被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1082
+#: packages/clear-record/src/clear_record/web/views.py:1087
 msgid "Not an audio tape"
 msgstr "不是音频录音"
 
-#: packages/clear-record/src/clear_record/web/views.py:1084
+#: packages/clear-record/src/clear_record/web/views.py:1089
 msgid "Upload too large"
 msgstr "上传文件过大"
 
-#: packages/clear-record/src/clear_record/web/views.py:1086
+#: packages/clear-record/src/clear_record/web/views.py:1091
 msgid "Not enough disk space"
 msgstr "磁盘空间不足"
 
-#: packages/clear-record/src/clear_record/web/views.py:1088
+#: packages/clear-record/src/clear_record/web/views.py:1093
 msgid "Invalid upload id"
 msgstr "上传 ID 无效"
 
-#: packages/clear-record/src/clear_record/web/views.py:1090
+#: packages/clear-record/src/clear_record/web/views.py:1095
 msgid "Resuming is not supported"
 msgstr "不支持续传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1091
+#: packages/clear-record/src/clear_record/web/views.py:1096
 msgid "Upload refused"
 msgstr "上传被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1114
+#: packages/clear-record/src/clear_record/web/views.py:1119
 msgid "Delete refused"
 msgstr "删除被拒绝"
 
-#: packages/clear-record/src/clear_record/web/views.py:1131
+#: packages/clear-record/src/clear_record/web/views.py:1136
 msgid "This meeting cannot take an upload"
 msgstr "此会议无法接收上传"
 
-#: packages/clear-record/src/clear_record/web/views.py:1208
+#: packages/clear-record/src/clear_record/web/views.py:1213
 msgid "needs attention"
 msgstr "需要处理"
 
-#: packages/clear-record/src/clear_record/web/views.py:1209
+#: packages/clear-record/src/clear_record/web/views.py:1214
 msgid "idle"
 msgstr "空闲"
 
-#: packages/clear-record/src/clear_record/web/views.py:1299
+#: packages/clear-record/src/clear_record/web/views.py:1304
 msgid "Data"
 msgstr "数据"
 
-#: packages/clear-record/src/clear_record/web/views.py:1300
+#: packages/clear-record/src/clear_record/web/views.py:1305
 msgid "State"
 msgstr "状态"
 
-#: packages/clear-record/src/clear_record/web/views.py:1301
+#: packages/clear-record/src/clear_record/web/views.py:1306
 msgid "Logs"
 msgstr "日志"
 
-#: packages/clear-record/src/clear_record/web/views.py:1302
+#: packages/clear-record/src/clear_record/web/views.py:1307
 msgid "Config"
 msgstr "配置"
 
@@ -1506,8 +1506,8 @@ msgid ""
 msgstr "完整跑一次整条链路：一段 hello-world 录音经过转写，再按 MCP 智能体收到的那样读回转写文本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:5
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:15
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:20
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:18
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:29
 msgid "missing"
 msgstr "缺失"
 
@@ -1530,7 +1530,12 @@ msgid "failed"
 msgstr "失败"
 
 #: packages/clear-record/src/clear_record/web/templates/_archive_status.html:16
-#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:25
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:24
+msgid "unverifiable"
+msgstr "无法验证"
+
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:19
+#: packages/clear-record/src/clear_record/web/templates/_archive_status.html:34
 msgid "mismatched"
 msgstr "不匹配"
 
@@ -1539,7 +1544,7 @@ msgid "Archives"
 msgstr "归档"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:60
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:61
 msgid "Created"
 msgstr "创建时间"
 
@@ -1549,7 +1554,7 @@ msgid "Meeting"
 msgstr "会议"
 
 #: packages/clear-record/src/clear_record/web/templates/_archives.html:5
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:57
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:58
 msgid "Path"
 msgstr "路径"
 
@@ -1796,47 +1801,48 @@ msgstr "转写文本"
 msgid "showing {first}–{last}"
 msgstr "显示第 {first}–{last} 个"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:39
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:33
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:71
+#, python-brace-format
+msgid "run {id}"
+msgstr "运行 {id}"
+
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:40
 msgid "Previous"
 msgstr "上一页"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:44
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:45
 msgid "Next"
 msgstr "下一页"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:51
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:52
 msgid "Artifacts"
 msgstr "产物"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:56
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:57
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:16
 msgid "Kind"
 msgstr "类型"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:58
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:59
 msgid "Provenance"
 msgstr "来源"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:59
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:60
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:56
 #: packages/clear-record/src/clear_record/web/templates/_tab_media.html:20
 msgid "SHA-256"
 msgstr "SHA-256"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:70
-#, python-brace-format
-msgid "run {id}"
-msgstr "运行 {id}"
-
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:80
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:81
 msgid "No artifacts yet. Run the pipeline to produce a transcript and record."
 msgstr "暂无产物。请运行流水线以生成转写文本和记录。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:83
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:84
 msgid "Agent drafts"
 msgstr "智能体草稿"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:85
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:86
 msgid ""
 "Your harness writes these over MCP: it reads the transcript, does the "
 "model work, then writes what it produced as a draft. Nothing is applied "
@@ -1846,7 +1852,7 @@ msgstr ""
 "这些草稿由你的宿主经 MCP "
 "写入：它读取转写文本、完成模型工作，然后把结果写成草稿。在你接受某个版本之前不会生效；接受即落地，而宿主写入新版本会让草稿重新进入待审阅状态。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:92
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:93
 #, python-brace-format
 msgid ""
 "{count} draft written before 0.3 by the app's own task run is not part of"
@@ -1856,117 +1862,117 @@ msgid_plural ""
 " of this chain and are still on disk."
 msgstr[0] "{count} 份 0.3 之前由本应用自身任务运行写入的草稿不属于此版本链，但仍保留在磁盘上。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:109
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:110
 #, python-brace-format
 msgid "{count} version"
 msgid_plural "{count} versions"
 msgstr[0] "{count} 个版本"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:113
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:114
 #, python-brace-format
 msgid "by {who}"
 msgstr "由 {who}"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:123
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:124
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:79
 msgid "Term"
 msgstr "术语"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:123
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:124
 msgid "Reading"
 msgstr "读音"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:123
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:124
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
 msgid "Aliases"
 msgstr "别名"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:123
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:124
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:19
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:83
 msgid "Definition"
 msgstr "释义"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:123
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:124
 msgid "Evidence"
 msgstr "依据"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:138
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:139
 msgid "The draft proposed no terms."
 msgstr "该草稿未提出任何术语。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:144
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:145
 msgid "Before"
 msgstr "修改前"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:144
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:145
 msgid "After"
 msgstr "修改后"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:144
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:145
 msgid "Reason"
 msgstr "原因"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:157
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:158
 msgid "The draft corrected nothing."
 msgstr "该草稿未做任何修改。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:159
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:160
 msgid "Corrected revision"
 msgstr "修订后的版本"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:165
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:166
 msgid "Attendees"
 msgstr "参会人"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:167
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:168
 msgid "Decisions"
 msgstr "决定事项"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:171
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:172
 msgid "Actions"
 msgstr "行动事项"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:184
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:185
 msgid "Accept"
 msgstr "接受"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:189
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:190
 msgid "Reject"
 msgstr "拒绝"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:196
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:218
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:197
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:219
 msgid "accepted"
 msgstr "已接受"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:199
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:200
 #, python-brace-format
 msgid "{added} term added as a candidate; {skipped} already in the glossary."
 msgid_plural "{added} terms added as candidates; {skipped} already in the glossary."
 msgstr[0] "已添加 {added} 个术语作为候选；{skipped} 个已在术语表中。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:201
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:202
 #, python-brace-format
 msgid "{count} correction recorded as a new revision."
 msgid_plural "{count} corrections recorded as a new revision."
 msgstr[0] "已记录 {count} 处修改，作为新版本。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:204
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:205
 msgid "Minutes recorded for this meeting."
 msgstr "已记录本会议的纪要。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:212
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:213
 msgid "No agent drafts yet."
 msgstr "暂无智能体草稿。"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:215
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:216
 #: packages/clear-record/src/clear_record/web/templates/_tab_overview.html:26
 msgid "Minutes"
 msgstr "纪要"
 
-#: packages/clear-record/src/clear_record/web/templates/_meeting.html:223
+#: packages/clear-record/src/clear_record/web/templates/_meeting.html:224
 msgid "No accepted minutes yet. Accept a minutes draft above."
 msgstr "尚无已接受的纪要。请先接受上方的纪要草稿。"
 
@@ -2339,11 +2345,14 @@ msgstr "未设置"
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:98
 #, python-brace-format
 msgid ""
-"Retention is manual only: clear-record never deletes tapes on its own, "
-"and deleting one is refused until the meeting has a verified archive as "
-"the durable copy. Set the managed root in {path}; a project's archive "
-"root is edited on the project."
-msgstr "保留仅限手动：clear-record 绝不会自行删除录音，且在会议拥有已验证的归档作为持久副本之前，删除录音会被拒绝。在 {path} 中设置托管根目录；项目的归档根目录在项目上编辑。"
+"Retention is manual only: clear-record never deletes tapes on its own. "
+"Deleting one needs the meeting's verified archive as the durable copy, "
+"and a tape in a user-chosen workspace is refused regardless. Set the "
+"managed root in {path}; a project's archive root is edited on the "
+"project."
+msgstr "保留仅限手动：clear-record 绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} 中设置托管根目录；项目的归档根目录在项目页中编辑。"
+"保留仅限手动：clear-record 绝不会自行删除录音，且在会议拥有已验证的归档作为持久副本之前，删除录音会被拒绝。在 {path} "
+"中设置托管根目录；项目的归档根目录在项目上编辑。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:2
 msgid "Loading webhook status…"
@@ -2461,9 +2470,9 @@ msgstr "录音"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:75
 msgid ""
-"Delete this tape? It is unlinked, and its meeting's verified archive "
-"keeps the durable copy."
-msgstr "删除此录音？文件将被移除，其会议的已验证归档保留持久副本。"
+"Delete this tape? It is unlinked, and the meeting's verified archive is "
+"the durable copy."
+msgstr "删除此录音？文件将被移除，会议的已验证归档是持久副本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:76
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:77
@@ -2478,8 +2487,8 @@ msgstr "尚未上传录音。"
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:103
 msgid ""
 "Delete all of this meeting's tapes? Their files are unlinked, and the "
-"meeting's verified archive keeps the durable copy."
-msgstr "删除此会议的全部录音？其文件将被移除，会议的已验证归档保留持久副本。"
+"meeting's verified archive is the durable copy."
+msgstr "删除此会议的全部录音？其文件将被移除，会议的已验证归档是持久副本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:103
 msgid "Delete all tapes"
@@ -2518,8 +2527,8 @@ msgstr "停用术语"
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:60
 msgid ""
 "Retire this term? It stops biasing the decoder; the row is kept, and "
-"Restore returns it to the status it has now."
-msgstr "停用此术语？它将不再影响解码器；该术语会保留，且恢复会将其回到当前的状态。"
+"Restore returns it to the status it had before the retire."
+msgstr "停用此术语？它将不再影响解码器；该术语会保留，恢复会把它恢复到停用之前的状态。"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:61
 msgid "Retire"
@@ -2873,330 +2882,3 @@ msgstr "忽略初始设置"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
-#~ msgid "override the app data directory (default: CR_DATA_DIR / XDG)"
-#~ msgstr ""
-
-#~ msgid "could not read the multipart upload: {error}"
-#~ msgstr "无法读取 multipart 上传：{error}"
-
-#~ msgid "attach the tape as a multipart file part named 'file'"
-#~ msgstr "请将录音作为名为 'file' 的 multipart 文件部分附加"
-
-#~ msgid ""
-#~ "the recommended model {model!r} is not"
-#~ " on disk, and --auto never downloads"
-#~ " one; pre-fetch it or pass an"
-#~ " explicit model"
-#~ msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型；请预先获取，或显式指定模型"
-
-#~ msgid "Notifications"
-#~ msgstr "通知"
-
-#~ msgid "Select or create a project."
-#~ msgstr "请选择或新建一个项目。"
-
-#~ msgid ""
-#~ "Not available yet. This is the "
-#~ "permanent end-to-end check — a "
-#~ "hello-world tape through transcription "
-#~ "and the MCP round-trip — that "
-#~ "re-runs here to localize a fault."
-#~ msgstr "暂不可用。这是永久的端到端检查——一段 hello-world 录音经过转写和 MCP 往返——可在此重新运行以定位故障。"
-
-#~ msgid "Coming next"
-#~ msgstr "即将推出"
-
-#~ msgid ""
-#~ "It arrives with the next update. "
-#~ "Until then, the permanent check lives"
-#~ " in Settings → Status."
-#~ msgstr "它会在下次更新中推出。在此之前，常驻检查位于「设置 → 状态」。"
-
-#~ msgid "Skip setup"
-#~ msgstr "跳过设置"
-
-#~ msgid "{count} segments"
-#~ msgstr "{count} 个片段"
-
-#~ msgid "the whole system worked once"
-#~ msgstr "整个系统完整跑通了一次"
-
-#~ msgid "Registered in {path}."
-#~ msgstr "已注册到 {path}。"
-
-#~ msgid ""
-#~ "To prove a real agent answers a"
-#~ " question about the tape, run "
-#~ "{recipe} against an endpoint you bring;"
-#~ " it is deliberately not part of "
-#~ "the offline test suite."
-#~ msgstr "要证明真实智能体能就这段录音回答问题，请对自带的端点运行 {recipe}；它有意不包含在离线测试套件中。"
-
-#~ msgid "Next: Models"
-#~ msgstr "下一步：模型"
-
-#~ msgid ""
-#~ "Transcription needs a model checkpoint "
-#~ "on disk. The Agent step can pull"
-#~ " a small one where the server "
-#~ "supports it, or you can fetch one"
-#~ " from Models settings."
-#~ msgstr "转写需要磁盘上有模型检查点。智能体这一步可以在服务器支持时拉取一个小模型，你也可以在模型设置中获取。"
-
-#~ msgid "Open Models settings"
-#~ msgstr "打开模型设置"
-
-#~ msgid "Next: First record"
-#~ msgstr "下一步：第一条记录"
-
-#~ msgid "First record"
-#~ msgstr "第一条记录"
-
-#~ msgid "hello-world check"
-#~ msgstr "hello-world 检查"
-
-#~ msgid "Choose a model"
-#~ msgstr "选择模型"
-
-#~ msgid "Model"
-#~ msgstr "模型"
-
-#~ msgid "refusing the filename {name!r}: it is longer than 255 characters"
-#~ msgstr "拒绝文件名 {name!r}：长度超过 255 个字符"
-
-#~ msgid "at least"
-#~ msgstr ""
-
-#~ msgid "source"
-#~ msgstr "存储"
-
-#~ msgid "derived"
-#~ msgstr "已投递"
-
-#~ msgid "there is no run record to explain"
-#~ msgstr "没有可解释的运行记录"
-
-#~ msgid "ready"
-#~ msgstr "就绪"
-
-#~ msgid "refusing to write to the symlink {path}"
-#~ msgstr "拒绝写入符号链接 {path}"
-
-#~ msgid "No runs queued or running."
-#~ msgstr "没有排队或运行中的任务。"
-
-#~ msgid "no transcript for {project}/{meeting} yet: {detail}"
-#~ msgstr "{project}/{meeting} 尚无转写文本：{detail}"
-
-#~ msgid "install Ollama from https://ollama.com, then run `ollama serve`"
-#~ msgstr "从 https://ollama.com 安装 Ollama，然后运行 `ollama serve`"
-
-#~ msgid "open LM Studio, load a model, and start its local server"
-#~ msgstr "打开 LM Studio，加载一个模型，并启动其本地服务器"
-
-#~ msgid ""
-#~ "run the llama.cpp OpenAI-compatible "
-#~ "server, e.g. `llama-server -m "
-#~ "<model.gguf>`"
-#~ msgstr "运行 llama.cpp 的 OpenAI 兼容服务器，例如 `llama-server -m <model.gguf>`"
-
-#~ msgid "start the server this address belongs to"
-#~ msgstr "启动该地址对应的服务器"
-
-#~ msgid "could not reach {url}: HTTP {status} ({detail})"
-#~ msgstr "无法访问 {url}：HTTP {status}（{detail}）"
-
-#~ msgid "could not reach {url}: {detail}"
-#~ msgstr "无法访问 {url}：{detail}"
-
-#~ msgid "{url} returned a response that is not JSON ({detail})"
-#~ msgstr "{url} 返回的响应不是 JSON（{detail}）"
-
-#~ msgid "an endpoint URL is required"
-#~ msgstr "需要提供端点 URL"
-
-#~ msgid "{endpoint} could not be used: {detail}"
-#~ msgstr "无法使用 {endpoint}：{detail}"
-
-#~ msgid "{endpoint} did not answer the test call: {detail}"
-#~ msgstr "{endpoint} 未响应测试调用：{detail}"
-
-#~ msgid "a model name is required to pull one"
-#~ msgstr "拉取模型需要提供模型名称"
-
-#~ msgid "the endpoint refused to pull {model}: {detail}"
-#~ msgstr "端点拒绝拉取 {model}：{detail}"
-
-#~ msgid "the config file {path} is not valid TOML ({detail})"
-#~ msgstr "配置文件 {path} 不是有效的 TOML（{detail}）"
-
-#~ msgid ""
-#~ "the config file {path} already has "
-#~ "an [agent] table; edit it by hand,"
-#~ " or remove it so setup can "
-#~ "manage it"
-#~ msgstr "配置文件 {path} 中已有 [agent] 表；请手动编辑，或将其删除，以便由初始设置管理"
-
-#~ msgid "The endpoint did not answer a test call."
-#~ msgstr "该端点未响应测试调用。"
-
-#~ msgid "Recorded {endpoint} in {path}."
-#~ msgstr "已将 {endpoint} 记录到 {path}。"
-
-#~ msgid "The model could not be pulled."
-#~ msgstr "无法拉取该模型。"
-
-#~ msgid "Pulled {model} and recorded it."
-#~ msgstr "已拉取 {model} 并记录。"
-
-#~ msgid "no endpoint configured"
-#~ msgstr "未配置端点"
-
-#~ msgid "Look for a local OpenAI-compatible server and test it"
-#~ msgstr "查找本地兼容 OpenAI 的服务器并测试"
-
-#~ msgid "Detect"
-#~ msgstr "探测"
-
-#~ msgid "Endpoint"
-#~ msgstr "端点"
-
-#~ msgid ""
-#~ "Connect an OpenAI-compatible model "
-#~ "endpoint. The same endpoint is what "
-#~ "the agent tasks and the MCP "
-#~ "harness use."
-#~ msgstr "连接一个兼容 OpenAI 的模型端点。智能体任务和 MCP 宿主使用的都是同一个端点。"
-
-#~ msgid "Endpoint: {endpoint}"
-#~ msgstr "端点：{endpoint}"
-
-#~ msgid "the configured command template"
-#~ msgstr "已配置的命令模板"
-
-#~ msgid "Model: {model}"
-#~ msgstr "模型：{model}"
-
-#~ msgid "Key read from the environment variable {name}; never stored."
-#~ msgstr "密钥从环境变量 {name} 读取；绝不存储。"
-
-#~ msgid "Command templates: {kinds}"
-#~ msgstr "命令模板：{kinds}"
-
-#~ msgid ""
-#~ "No agent endpoint is configured yet, "
-#~ "so agent tasks cannot run. Start a"
-#~ " local OpenAI-compatible server (Ollama,"
-#~ " LM Studio or llama.cpp) and detect"
-#~ " it, or enter an address below."
-#~ msgstr ""
-#~ "尚未配置智能体端点，因此智能体任务无法运行。请启动本地兼容 OpenAI 的服务器（Ollama、LM "
-#~ "Studio 或 llama.cpp）并探测它，或在下方输入地址。"
-
-#~ msgid "verified"
-#~ msgstr "已验证"
-
-#~ msgid "reachable"
-#~ msgstr "可访问"
-
-#~ msgid "not running"
-#~ msgstr "未运行"
-
-#~ msgid "Verified with a test call to {model}."
-#~ msgstr "已通过一次测试调用验证 {model}。"
-
-#~ msgid "the server's model"
-#~ msgstr "服务器的模型"
-
-#~ msgid "Models:"
-#~ msgstr "模型："
-
-#~ msgid "The server answers but serves no model yet."
-#~ msgstr "服务器有响应，但尚未提供任何模型。"
-
-#~ msgid "Verify and use"
-#~ msgstr "验证并使用"
-
-#~ msgid "model to pull"
-#~ msgstr "要拉取的模型"
-
-#~ msgid "Pull a small model"
-#~ msgstr "拉取一个小模型"
-
-#~ msgid "Look for Ollama, LM Studio or a llama.cpp server"
-#~ msgstr "查找 Ollama、LM Studio 或 llama.cpp 服务器"
-
-#~ msgid "key environment variable name (optional)"
-#~ msgstr "密钥环境变量名（可选）"
-
-#~ msgid "Verify and record"
-#~ msgstr "验证并记录"
-
-#~ msgid ""
-#~ "clear-record never stores a key: a"
-#~ " hosted endpoint names the environment "
-#~ "variable that holds it, and a "
-#~ "local endpoint needs none."
-#~ msgstr "clear-record 从不存储密钥：托管端点只需指定保存密钥的环境变量名，本地端点则不需要。"
-
-#~ msgid ""
-#~ "Run that export in the shell that"
-#~ " launches clear-record (or restart "
-#~ "the server after setting it), then "
-#~ "type the same variable name in the"
-#~ " field above. A local endpoint needs"
-#~ " no key."
-#~ msgstr ""
-#~ "在启动 clear-record 的 shell 中执行该 "
-#~ "export（设置后需重启服务器），然后在上方输入框中填入同一个变量名。本地端点无需密钥。"
-
-#~ msgid "Agent tasks"
-#~ msgstr "智能体任务"
-
-#~ msgid ""
-#~ "No agent is configured. Set "
-#~ "CR_AGENT_ENDPOINT to an OpenAI-compatible "
-#~ "endpoint, or an [agent.commands] template "
-#~ "for a task kind, then restart the"
-#~ " clear-record server so it reads "
-#~ "the variable."
-#~ msgstr ""
-#~ "尚未配置智能体。请将 CR_AGENT_ENDPOINT 设为兼容 OpenAI "
-#~ "的端点，或为某个任务类型配置 [agent.commands] 模板，然后重启 clear-"
-#~ "record 服务器以读取该变量。"
-
-#~ msgid "Collect glossary terms"
-#~ msgstr "收集术语"
-
-#~ msgid "Check the transcript"
-#~ msgstr "检查转写文本"
-
-#~ msgid "Write minutes"
-#~ msgstr "撰写纪要"
-
-#~ msgid ""
-#~ "A launch produces a draft. Nothing "
-#~ "is applied until you accept it; "
-#~ "accepting is what promotes it."
-#~ msgstr "启动只会生成草稿。在你接受之前不会应用任何内容；接受即完成采纳。"
-
-#~ msgid "context"
-#~ msgstr "上下文"
-
-#~ msgid "prompt"
-#~ msgstr "提示词"
-
-#~ msgid "port (default 8765)"
-#~ msgstr ""
-
-#~ msgid "Delete this tape? The archive is the durable copy."
-#~ msgstr "删除此录音？归档才是持久副本。"
-
-#~ msgid "Delete all of this meeting's tapes? The archive is the durable copy."
-#~ msgstr "删除此会议的全部录音？归档才是持久副本。"
-
-#~ msgid "delete"
-#~ msgstr "删除"
-
-#~ msgid "Delete term"
-#~ msgstr "删除术语"

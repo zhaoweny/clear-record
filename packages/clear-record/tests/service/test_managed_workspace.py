@@ -17,7 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.pipeline.workspace import RUN_MARKER, Workspace, discover_audio
+from clear_record.pipeline.workspace import (
+    RUN_MARKER,
+    RUNS_DIR,
+    Workspace,
+    discover_audio,
+    discover_inputs,
+)
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths
 from clear_record.service import Registry, archive_meeting
@@ -794,6 +800,62 @@ def test_deleting_all_tapes_verifies_the_durable_copy_once(
     assert all(not Path(tape.path).exists() for tape in tapes)
 
 
+def test_a_refused_delete_leaves_the_files_and_the_rows_alone(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Every precondition precedes the first unlink — the actor's gate included.
+
+    ``forget_tape`` is what carries the actor gate, and it runs per tape, after
+    that tape's file is unlinked: a word the record cannot attribute a row to
+    must refuse *before* anything is touched, or a programming error in a surface
+    would destroy the data and leave the row that names it.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    before = registry.list_audit_events()
+
+    for bad in ("", "bogus", None):
+        with pytest.raises(ValueError):
+            managed.delete_tapes(registry, meeting, [tape.id], actor=bad)
+        assert Path(tape.path).exists()
+        assert registry.list_tapes(meeting.id) == [tape]
+
+    assert registry.list_audit_events() == before
+
+
+def test_a_delete_refused_for_want_of_an_archive_leaves_a_row(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The refusal that guards the destroy is in the record (ADR-0033).
+
+    The same call's other policy answer — a user-chosen workspace — appends one
+    failed ``tape.forget`` row for the meeting; a meeting with no verified
+    archive is the answer this rule exists for, and it reads the same: one row,
+    naming the meeting, and nothing unlinked.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    before = len(registry.list_audit_events())
+
+    with pytest.raises(managed.ArchiveRequired):
+        managed.delete_tapes(registry, meeting, [tape.id], actor="api")
+
+    (row,) = registry.list_audit_events()[before:]
+    assert (row.actor, row.action, row.target, row.outcome) == (
+        "api",
+        "tape.forget",
+        f"meeting:{meeting.id}",
+        "failed",
+    )
+    assert Path(tape.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
 def test_deleting_a_tape_outside_the_managed_root_is_refused(
     registry, tmp_path, monkeypatch
 ) -> None:
@@ -1257,3 +1319,33 @@ def test_a_runs_own_copy_is_attributed_where_its_files_belong(
     assert buckets["exports"]["bytes"] == 5
     assert buckets["records"]["bytes"] == 3 + marker
     assert project["total_bytes"] == 8 + marker
+
+
+def test_an_unmarked_runs_directory_is_the_operator_s_audio(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Only a **marked** scope is the app's, and the buckets say what the walk says.
+
+    ``runs`` is an ordinary word: a capture folder an operator named ``runs``
+    with a take in it is an input the pipeline discovers, so the storage walk
+    must count that file as the source tape it is — never as a run's record.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models"))
+    (tmp_path / "models").mkdir()
+
+    workspace = Workspace.at(meeting.workspace_path)
+    takes = workspace.root / RUNS_DIR / "takes"
+    takes.mkdir(parents=True)
+    (takes / "a.wav").write_bytes(b"a" * 12)
+
+    audio, _walked_past = discover_inputs(workspace.root)
+    assert [path.relative_to(workspace.root).as_posix() for path in audio] == [
+        "runs/takes/a.wav"
+    ]
+
+    (project,) = managed.machine_storage(registry)["projects"]
+    buckets = {bucket["id"]: bucket for bucket in project["buckets"]}
+    assert buckets["tapes"]["bytes"] == 12
+    assert buckets["records"]["bytes"] == 0

@@ -20,6 +20,7 @@ from clear_record.service import (
     write_project_snapshot,
     write_snapshot,
 )
+from clear_record.service.glossary import filter_terms
 
 
 def _term(term: str, status: str = "confirmed") -> GlossaryTerm:
@@ -85,6 +86,26 @@ def test_snapshot_from_text_ignores_comments_and_blanks() -> None:
 
     assert snapshot.terms == ("Aero", "Falcon")
     assert snapshot.text == "Aero\nFalcon\n"
+
+
+def test_filter_terms_reads_a_body_as_snapshot_from_text_does() -> None:
+    """A filtered body and the file it came from hold the same terms.
+
+    The run hands the pipeline ``filter_terms``'s answer instead of the user's
+    file, and its own decision — "the file stands as it is" — compares those
+    terms with ``snapshot_from_text``'s. Blanks and ``#`` comments have to read
+    the same on both sides, or a file that carries a comment always looks
+    changed, and the comment reaches the run's published glossary as a term.
+    """
+    body = "# the crew's callsigns\nFalcon\n\n  Aero  \n# trailing\n"
+
+    filtered = filter_terms(body.splitlines(), ["Draft"])
+    assert filtered.terms == ("Aero", "Falcon")
+    assert filtered.text == "Aero\nFalcon\n"
+    assert filtered.terms == snapshot_from_text(body).terms
+
+    blocked = filter_terms(body.splitlines(), ["falcon"])
+    assert blocked.terms == ("Aero",)
 
 
 def test_project_snapshot_and_writer_produce_the_pipeline_file(tmp_path: Path) -> None:

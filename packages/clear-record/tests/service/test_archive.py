@@ -208,6 +208,58 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
         verify_archive(tmp_path / "nothing-here")
 
 
+def test_verify_archive_reports_a_manifest_it_cannot_read(tmp_path) -> None:
+    """A manifest that is there but unreadable is *unverifiable*, never missing.
+
+    The console prints what the service answers, so a file sitting on the disk
+    must not be reported gone; an entry the manifest cannot be asked about is the
+    same answer, and a manifest that is actually absent is still its own
+    (``FileNotFoundError``: there is nothing to verify).
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    manifest.write_text("{not json", encoding="utf-8")
+
+    result = verify_archive(archive_dir)
+    assert result.ok is False
+    assert result.missing == []
+    assert result.mismatched == []
+    assert result.checked == 0
+    assert result.unverifiable is not None
+    assert MANIFEST_FILENAME in result.unverifiable
+
+    manifest.write_text(
+        json.dumps({"files": [{"path": "tapes/a.wav"}]}), encoding="utf-8"
+    )
+    entryless = verify_archive(archive_dir)
+    assert entryless.ok is False
+    assert entryless.missing == []
+    assert entryless.unverifiable is not None
+
+    manifest.unlink()
+    with pytest.raises(FileNotFoundError):
+        verify_archive(archive_dir)
+
+
+def test_a_refused_archive_copies_nothing(tmp_path) -> None:
+    """The actor's gate precedes the copy: a bad word writes no file (ADR-0033).
+
+    ``add_archive`` runs the same gate the record has, but after the tape set and
+    every artifact have been copied — so a programming error in a surface would
+    leave a complete archive on the disk for a call the record cannot attribute.
+    """
+    registry, meeting, _tape, _record, root = _seeded(tmp_path)
+
+    for bad in ("", "bogus", None):
+        with pytest.raises(ValueError):
+            archive_meeting(registry, meeting, actor=bad)
+
+    assert registry.list_archives(meeting.id) == []
+    assert not root.exists()
+
+
 def test_archive_root_must_be_chosen(tmp_path) -> None:
     registry, meeting, _tape, _record, _root = _seeded(
         tmp_path, default_archive_root=False

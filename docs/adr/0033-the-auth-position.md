@@ -200,7 +200,7 @@ verbatim answers and the direction they answer are the
   that needs a non-local MCP transport (the `/mcp` mount, open questions below);
   the first non-reconstructible operation (its authorization flow).
 
-## Update (2026-09-26) — the run-scoped snapshots land
+## Update (2026-09-26) — the run scope and the irreversible set land
 
 - [FACT] The Context item *"Every run rewrites the meeting workspace's
   `record.json`/`segments.json` **in place**"* is no longer true of the build.
@@ -214,13 +214,22 @@ verbatim answers and the direction they answer are the
   Retention holds by construction, before any delete rule leans on it — the
   sanitize section's *"the run-scoped snapshots the rewrite rule retains"* now
   names a layout that exists.
-- [FACT] What the run only **reads** stays the workspace's — its tapes, the
-  normalized `audio/`, the app-owned chunk cache, `glossary.txt` and the
-  `.clear-record-ignore` declaration — so `ingest` stays idempotent, a resume
-  continues the same cache, and the `manifest.json` declarations an operator
-  hand-edits at the root still reach the next run. A **node** run writes under
-  `runs/<run id>/`; in place — at the workspace root, naming no run — are the
-  stage commands and `calibrate`.
+- [FACT] A run's **documents** are run-scoped, and so is what it publishes; what
+  it **reads** stays the workspace's — its tapes, the normalized `audio/`, the
+  app-owned chunk cache, `glossary.txt` and the `.clear-record-ignore`
+  declaration — so `ingest` stays idempotent, a resume continues the same cache,
+  and the `manifest.json` declarations an operator hand-edits at the root still
+  reach the next run. Two things a **node** run writes in place at the workspace
+  root all the same: the normalized `audio/` (the ingest stage writes it there,
+  not under `runs/<run id>/`) and the durable `transcribe.log` a running pipeline
+  appends to. The stage commands and `calibrate` are the writers that leave
+  **everything** in place, at the root and naming no run.
+- [FACT] Two decisions above now hold in the build, recorded in
+  [ADR-0024](0024-managed-workspace-tape-upload.md)'s Update: a managed tape's
+  delete requires a **verified archive** of its meeting — refused with nothing
+  unlinked, and the archive action named, when none verifies — and deleting a
+  glossary term is a **retire**: the row keeps `added_by`/`created_at`, stops
+  biasing the decoder, and Restores to the status the retire took it from.
 
 ## Open questions — the `/mcp` mount's revisit
 

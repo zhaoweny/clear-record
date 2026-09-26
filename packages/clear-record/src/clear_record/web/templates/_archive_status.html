@@ -12,9 +12,18 @@
 {% else %}
 <span class="status status-failed"><span class="badge">{{ tr("failed") }}</span>
 <span class="muted">
+  {% if row.verification.unverifiable %}
+  {{ tr("unverifiable") }}
+  {% else %}
   {{ row.verification.missing | length }} {{ tr("missing") }},
   {{ row.verification.mismatched | length }} {{ tr("mismatched") }}
+  {% endif %}
 </span></span>
+{% if row.verification.unverifiable %}
+<div class="muted status-detail">
+  {{ tr("unverifiable") }}: {{ row.verification.unverifiable }}
+</div>
+{% endif %}
 {% if row.verification.missing %}
 <div class="muted status-detail">
   {{ tr("missing") }}: {{ row.verification.missing | join(", ") }}

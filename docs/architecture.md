@@ -497,6 +497,23 @@ have landed, and the harness is the only agent integration — see
 localizing a failure to a leg (`tts`, `backend`, `model`, `transcribe`), and the
 optional `just agent-drive` stands in for a harness over the MCP tools.
 
+A run's **outputs are its own copy**. The service writes each run's documents —
+`manifest.json`, `segments.json`, `record.json` and the `export/` files — into
+`<workspace>/runs/<run id>/`, and a **finished** run publishes that copy at the
+workspace root, which stays the default read. The run's own documents name the
+run that wrote them — `run_id` in the manifest, in the segments' `meta`, in the
+record's `metadata` and so in the JSON export, while the Markdown/SRT/VTT
+exports carry no run id — and the run's artifact rows point at its own copy, so a
+reader can say which run produced the transcript it holds. A run that stops,
+fails or dies publishes nothing, so neither the workspace's copy nor an earlier
+run's can be rewritten by it: prior versions are retained, not covered
+(ADR-0033). What a run only *reads* stays the workspace's — its tapes, the
+normalized `audio/`, the app-owned chunk cache, the `glossary.txt` a glossary
+edit lands in and the `.clear-record-ignore` declaration — so `ingest` stays
+idempotent and a resume continues the same cache. A **node** run always writes
+under `runs/<run id>/`; the in-place full-pipeline writers are the stage commands
+and `calibrate`, and what they leave at the workspace root names no run.
+
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves
   per-speaker channels; re-ingest is idempotent. A recording folder accumulates

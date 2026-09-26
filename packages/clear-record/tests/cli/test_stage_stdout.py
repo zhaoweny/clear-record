@@ -14,6 +14,14 @@ and the follower prints every message it carries. That block's other two lines
 are the surface's own — ``[run] #<id> <status>`` and the ``[next]`` pointer
 (``_cmd_run``) — where every other block's lines are all its own.
 
+The ``run`` block's **document paths are its own copy's** (``runs/1/…``): a run
+writes its manifest, record and exports into its own directory and a finished run
+publishes that copy at the workspace root (ADR-0033), which is what the block's
+``[next]`` line points at — so the stage lines name where the run wrote and the
+pointer names where a reader finds it. Every other block is a stage command over
+the directory it was given, so its paths are that directory's; ``audio/`` stays
+the workspace's in both, because the normalized inputs are not a run's output.
+
 What makes it a stable pin rather than a flaky one:
 
 - ``CR_JOBS=1``: the chunk pool is then serial, so the lines the transcriber
@@ -128,7 +136,7 @@ $ clear-record run
 [ingest] decode a.wav -> a.wav
 [ingest] decode b.wav -> b.wav
 [ingest] decode c.wav -> c.wav
-[ingest] 3 source(s) -> $FIXTURE/run/manifest.json
+[ingest] 3 source(s) -> $FIXTURE/run/runs/1/manifest.json
   a                        $FIXTURE/run/audio/a.wav
   b                        $FIXTURE/run/audio/b.wav
   c                        $FIXTURE/run/audio/c.wav
@@ -148,14 +156,14 @@ $ clear-record run
   a                        segments=   1  duration=6.0  chunks=1
   b                        segments=   1  duration=6.0  chunks=1
   c                        segments=   1  duration=6.0  chunks=1
-[reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/record.json
+[reconcile] 1 segment(s), 1 attributed speaker(s) -> $FIXTURE/run/runs/1/record.json
 [reconcile] 1 unplaced source(s) left out: 1 segment(s), 6.0s of transcript
   c                        UNPLACED (no alignment offset)
   00:00:00.000 [Speaker 1] chunk
-[export] md   -> $FIXTURE/run/export/record.md
-[export] srt  -> $FIXTURE/run/export/record.srt
-[export] vtt  -> $FIXTURE/run/export/record.vtt
-[export] json -> $FIXTURE/run/export/record.json
+[export] md   -> $FIXTURE/run/runs/1/export/record.md
+[export] srt  -> $FIXTURE/run/runs/1/export/record.srt
+[export] vtt  -> $FIXTURE/run/runs/1/export/record.vtt
+[export] json -> $FIXTURE/run/runs/1/export/record.json
 [run] #1 done
 [next] the record is in $FIXTURE/run/export; review it and accept the minutes in the console: `clear-record web`
 $ clear-record calibrate

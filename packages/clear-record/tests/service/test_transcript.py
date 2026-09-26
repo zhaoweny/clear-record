@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from clear_record.core import RecordDocument, Segment, to_dict, write_json
+from clear_record.pipeline.workspace import Workspace, publish_run
 from clear_record.service import Registry, read_transcript
 
 
@@ -179,3 +180,72 @@ def test_zero_limit_is_rejected(tmp_path: Path) -> None:
     _write_record(workspace, [Segment(start=0.0, end=1.0, text="x", source="a")])
     with pytest.raises(ValueError, match="at least 1"):
         read_transcript(meeting, limit=0)
+
+
+# --- the run the page came from (ADR-0033) ---------------------------------- #
+def _published_record(workspace: Path, run_id: int, text: str) -> None:
+    """Publish one finished run's record, as the run path leaves it."""
+    scope = Workspace.at(workspace).run_scope(run_id)
+    scope.write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=0.0, end=1.5, text=text, source="a"),),
+        )
+    )
+    publish_run(scope)
+
+
+def test_a_transcript_names_the_run_that_produced_it(tmp_path: Path) -> None:
+    """A reader can say which run's transcript this is.
+
+    The documents a run writes name it, so the page carries the name too — and
+    the run's own, unrewritten copy stays readable beside the published one.
+    """
+    _, meeting, workspace = _meeting(tmp_path)
+    _published_record(workspace, 7, "hello")
+
+    page = read_transcript(meeting)
+
+    assert page.run_id == 7
+    assert page.path == str(workspace / "record.json")
+    assert page.text == "00:00:00.000 [a] hello"
+    assert Workspace.at(workspace).run_scope(7).record_path.read_text(
+        encoding="utf-8"
+    ) == (workspace / "record.json").read_text(encoding="utf-8")
+
+
+def test_the_newest_run_is_the_default_read(tmp_path: Path) -> None:
+    """A re-run publishes its own copy; the workspace read follows it."""
+    _, meeting, workspace = _meeting(tmp_path)
+    _published_record(workspace, 1, "first")
+    assert read_transcript(meeting).text == "00:00:00.000 [a] first"
+
+    _published_record(workspace, 2, "second")
+    page = read_transcript(meeting)
+
+    assert page.run_id == 2
+    assert page.text == "00:00:00.000 [a] second"
+
+
+def test_a_transcript_written_without_a_run_names_none(tmp_path: Path) -> None:
+    """A transcript written outside a run — a stage command's, ``calibrate``'s —
+    names no run id, and reads as none."""
+    _, meeting, workspace = _meeting(tmp_path)
+    _write_record(workspace, [Segment(start=0.0, end=1.0, text="hello", source="a")])
+    assert read_transcript(meeting).run_id is None
+
+
+def test_a_hand_edited_run_id_is_no_run(tmp_path: Path) -> None:
+    """Only an ``int`` names a run: a string or a ``bool`` is a hand-edit, not one."""
+    _, meeting, workspace = _meeting(tmp_path)
+    write_json(
+        workspace / "segments.json",
+        {
+            "sources": {
+                "a": [to_dict(Segment(start=0.0, end=1.0, text="hi", source="a"))]
+            },
+            "meta": {"run_id": "7"},
+        },
+    )
+    assert read_transcript(meeting).run_id is None

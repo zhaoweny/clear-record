@@ -1033,6 +1033,10 @@ def meeting_context(
             "returned": page.returned,
             "next": page.next,
             "prev": max(0, page.offset - TRANSCRIPT_PAGE) if page.offset else None,
+            # The run this page came from, so the pane says what the artifact
+            # table and the API payload already say: a reader can tell which run
+            # produced the transcript in hand (ADR-0033).
+            "run_id": page.run_id,
         }
         transcript_error = None
     except FileNotFoundError:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from clear_record.pipeline.workspace import Workspace, discover_audio
+from clear_record.pipeline.workspace import RUN_MARKER, Workspace, discover_audio
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths
 from clear_record.service import Registry
@@ -950,3 +950,34 @@ def test_a_symlinked_tape_to_an_outside_file_is_counted_once(
         bucket["id"]: bucket for bucket in managed.machine_storage(registry)["buckets"]
     }
     assert buckets["tapes"]["bytes"] == 37
+
+
+def test_a_runs_own_copy_is_attributed_where_its_files_belong(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """A run's own exports are exports, and its documents are records (STO-01).
+
+    Every run keeps its copy under ``<workspace>/runs/<run id>/`` (ADR-0033). The
+    walk used to call every byte under ``runs/`` a record, so each run's export
+    directory inflated the transcript bucket while the ``exports`` bucket counted
+    only the workspace root's published copy.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("CR_MODELS_DIR", str(tmp_path / "models"))
+    (tmp_path / "models").mkdir()
+
+    workspace = Workspace.at(meeting.workspace_path)
+    scope = workspace.begin_scope(1)
+    scope.export_dir.mkdir(parents=True, exist_ok=True)
+    (scope.export_dir / "record.md").write_text("e" * 5, encoding="utf-8")
+    scope.record_path.write_text("r" * 3, encoding="utf-8")
+    marker = (scope.outputs / RUN_MARKER).stat().st_size
+
+    storage = managed.machine_storage(registry)
+    (project,) = storage["projects"]
+    buckets = {bucket["id"]: bucket for bucket in project["buckets"]}
+
+    assert buckets["exports"]["bytes"] == 5
+    assert buckets["records"]["bytes"] == 3 + marker
+    assert project["total_bytes"] == 8 + marker

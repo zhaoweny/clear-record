@@ -30,6 +30,7 @@
     {{ transcript.source }} &middot;
     {{ trn("{count} segment", "{count} segments", transcript.total, count=transcript.total) }} &middot;
     {{ tr("showing {first}–{last}", first=transcript.offset + 1, last=transcript.offset + transcript.returned) }}
+    {% if transcript.run_id %} &middot; {{ tr("run {id}", id=transcript.run_id) }}{% endif %}
   </div>
   <pre class="transcript">{{ transcript.text }}</pre>
   <div class="row">

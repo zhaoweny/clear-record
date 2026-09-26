@@ -33,6 +33,8 @@ verbatim answers and the direction they answer are the
 - [FACT] Every run rewrites the meeting workspace's `record.json`/`segments.json`
   **in place**; only accepted transcript revisions are versioned (the draft chain
   plus the revision artifacts). History can be covered with no delete at all.
+  *(Landed 2026-09-26 — see the Update below: a run now writes and retains its own
+  copy, and no run rewrites another's.)*
 - [FACT] Draft versions record *"the author identity the writer declared"*
   ([ADR-0031](0031-harness-is-the-only-agent.md)) — over MCP that parameter's
   default is the literal string `human`, so a harness can be recorded as its own
@@ -197,6 +199,28 @@ verbatim answers and the direction they answer are the
 - **Revisit triggers**: a second human or per-project sharing (RBAC); a client
   that needs a non-local MCP transport (the `/mcp` mount, open questions below);
   the first non-reconstructible operation (its authorization flow).
+
+## Update (2026-09-26) — the run-scoped snapshots land
+
+- [FACT] The Context item *"Every run rewrites the meeting workspace's
+  `record.json`/`segments.json` **in place**"* is no longer true of the build.
+  A run writes its manifest, transcript segments, reconciled record and exports
+  into its **own copy** (`<workspace>/runs/<run id>/`) and a **finished** run
+  publishes that copy at the workspace root, which stays the default read. A run
+  that stops, fails or dies publishes nothing, so no run can cover an earlier
+  run's record or the workspace's copy; the run's manifest, its segments' `meta`,
+  its record's `metadata` and so its JSON export name the run, and its artifact
+  rows point at its own copy (the Markdown/SRT/VTT exports carry no run id).
+  Retention holds by construction, before any delete rule leans on it — the
+  sanitize section's *"the run-scoped snapshots the rewrite rule retains"* now
+  names a layout that exists.
+- [FACT] What the run only **reads** stays the workspace's — its tapes, the
+  normalized `audio/`, the app-owned chunk cache, `glossary.txt` and the
+  `.clear-record-ignore` declaration — so `ingest` stays idempotent, a resume
+  continues the same cache, and the `manifest.json` declarations an operator
+  hand-edits at the root still reach the next run. A **node** run writes under
+  `runs/<run id>/`; in place — at the workspace root, naming no run — are the
+  stage commands and `calibrate`.
 
 ## Open questions — the `/mcp` mount's revisit
 

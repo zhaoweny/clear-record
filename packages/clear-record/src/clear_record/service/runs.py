@@ -51,6 +51,7 @@ from clear_record.pipeline.workspace import (
     Workspace,
     discover_inputs,
     is_audio,
+    publish_run,
     report_line,
 )
 from clear_record.core import (
@@ -1672,6 +1673,15 @@ class RunManager:
         self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
     ) -> None:
         assert meeting.workspace_path is not None
+        # This run's own copy of its outputs: the pipeline writes its documents
+        # into ``<workspace>/runs/<run id>/``, so a run that dies half-way cannot
+        # touch the workspace's published copy or an earlier run's — nothing is
+        # rewritten in place (ADR-0033). Everything the run only *reads* (its
+        # tapes, the normalized audio, the glossary, the chunk cache) stays the
+        # meeting workspace's, so a resume keeps its cache. ``begin_scope`` makes
+        # the directory and marks it, so opening it again resolves back to this
+        # workspace — the mark, not the name, is what makes a directory a scope.
+        scope = Workspace.at(meeting.workspace_path).begin_scope(run.id)
         # The row is already ``running``: the claim wrote that status, its
         # ``started_at`` and its first heartbeat in one conditional update. A
         # second write here would be a second, unconditional source of truth.
@@ -1706,7 +1716,7 @@ class RunManager:
             # ``RunCancelled`` — and a stop is an outcome, not a failure, whether
             # it arrives before the first stage line or during one.
             report_declaration_exclusions(meeting, options, sink)
-            self._pipeline(meeting.workspace_path, options, sink)
+            self._pipeline(str(scope.outputs), options, sink)
         except RunCancelled:
             # A cancel is an outcome, not a failure (RUN-04): the run stopped
             # where its own signal said to, so it is recorded as ``stopped`` with
@@ -1752,6 +1762,12 @@ class RunManager:
             )
             return
 
+        # The run finished: its own copy becomes the workspace's published copy,
+        # which is the default read from here on, and its artifacts are the files
+        # in its own copy — so a later run's publication cannot change what an
+        # artifact points at (ADR-0033). A run that stopped or failed returned
+        # above and publishes nothing.
+        publish_run(scope)
         artifacts = self._register_artifacts(meeting, run.id)
         ended_at = _now()
         self._registry.update_run(
@@ -1988,27 +2004,17 @@ class RunManager:
         """
         row = self._registry.get_run(run_id)
         stages: dict[str, float | None] = dict.fromkeys(_STAGES)
-        finished: set[str] = set()
         for event in events:
             if event.stage not in stages or event.elapsed_s is None:
                 continue
             stages[event.stage] = event.elapsed_s
-            if event.done:
-                finished.add(event.stage)
-            else:
-                finished.discard(event.stage)
-        # ``segments.json`` is written at the **end** of the transcribe stage,
-        # and transcribe's own terminal event is emitted by the chunk pool
-        # *before* that write (``pipeline/stages.py``). Only a stage that runs
-        # strictly after the write proves the transcript on disk is this run's:
-        # reconcile and export both do. A run that finished transcribe and then
-        # died before the write would otherwise report the previous run's
-        # transcript as its own.
-        meta = (
-            self._segments_meta(row)
-            if "reconcile" in finished or "export" in finished
-            else {}
-        )
+        # The meta is read from **this run's own copy** (``_segments_meta``): the
+        # run scope's ``segments.json``, or nothing. A previous run's transcript
+        # lives in its own scope, so it can never be read as this run's — the
+        # "a stage ran strictly after transcribe's write" guard the in-place
+        # workspace needed is gone with the in-place write (ADR-0033). A run that
+        # wrote no transcript carries ``{}`` and reports unknown.
+        meta = self._segments_meta(row)
         report = meta.get("chunk_report")
         report = report if isinstance(report, dict) else {}
         reused = int_or_none(report.get("reused"))
@@ -2030,12 +2036,10 @@ class RunManager:
             "model": meta.get("model") or (row.model if row else None),
             "jobs": int_or_none(meta.get("jobs")),
             "chunk_seconds": chunk_seconds,
-            # The transcribe stage's worker-memory measurement, read from
-            # the same guarded meta as the transcript: segments.json belongs
-            # to whichever run wrote it last, so the axis needs this run's
-            # own copy (BENCH-01). A run that never reached the guarded meta
-            # carries None/None and reports unknown -- never a previous
-            # run's peak.
+            # The transcribe stage's worker-memory measurement, read from the
+            # same meta as the transcript: it is this run's own copy (BENCH-01),
+            # so a run that never wrote one carries None/None and reports
+            # unknown -- never a previous run's peak.
             "peak_rss_bytes": int_or_none(meta.get("peak_rss_bytes")),
             "peak_rss_reason": (
                 meta.get("peak_rss_reason")
@@ -2049,14 +2053,22 @@ class RunManager:
         }
 
     def _segments_meta(self, row: PipelineRun | None) -> dict:
-        """The transcript meta the run's workspace holds (``{}`` when none)."""
+        """The transcript meta **this run's own copy** holds (``{}`` when none).
+
+        The run's scope is written by this run alone, so a transcript read here is
+        this run's and a previous run's can never be mistaken for it — the read
+        goes to ``<workspace>/runs/<run id>/segments.json``, not to whatever the
+        workspace's published copy happens to hold (ADR-0033).
+        """
         if row is None:
             return {}
         meeting = self._registry.meeting_by_id(row.meeting_id)
         if meeting is None or not meeting.workspace_path:
             return {}
         try:
-            _, meta = Workspace.at(meeting.workspace_path).load_segments()
+            _, meta = (
+                Workspace.at(meeting.workspace_path).run_scope(row.id).load_segments()
+            )
         except (OSError, ValueError, TypeError, AttributeError):
             # No transcript yet (or none this process can read): every
             # transcript-derived primitive is simply unknown.
@@ -2066,8 +2078,16 @@ class RunManager:
     def _register_artifacts(
         self, meeting: Meeting, run_id: int
     ) -> list[tuple[str, Path]]:
+        """Record this run's documents as artifacts of **its own copy**.
+
+        The paths are the run scope's — ``<workspace>/runs/<run id>/record.json``
+        and its siblings — so the row names the run that produced the file and a
+        later run's copy can never change what an earlier run's artifact points
+        at (ADR-0033).
+        """
         assert meeting.workspace_path is not None
-        artifacts = collect_artifacts(Path(meeting.workspace_path))
+        scope = Workspace.at(meeting.workspace_path).run_scope(run_id)
+        artifacts = collect_artifacts(scope.outputs)
         for kind, path in artifacts:
             try:
                 digest = _sha256(path)

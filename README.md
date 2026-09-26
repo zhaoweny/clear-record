@@ -279,7 +279,10 @@ before you type it:
   and after it finishes, and its progress is read back from the node. The
   workspace keeps every file it kept before — `manifest.json`, `audio/`,
   `segments.json`, `record.json`, `export/` — and the node's registry only
-  records that the run happened.
+  records that the run happened. Re-running is not destructive: each run's own
+  copy of `manifest.json`, `segments.json`, `record.json` and `export/` is kept
+  under `runs/<run id>/`, the workspace root keeps the newest **finished** run's
+  copy (the default read), and a run that dies publishes nothing (ADR-0033).
 - **The directory and the model are named the node's way.** The run's
   `<directory>` argument is sent as a path **the node resolves**: `run` talks to
   the node, so the directory has to be the node's — in the ordinary case a client

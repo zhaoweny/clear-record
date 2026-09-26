@@ -27,6 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clear_record.core import node
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
@@ -130,7 +131,13 @@ def test_a_local_client_names_a_directory_and_the_node_runs_it(local, tmp_path) 
     assert meeting is not None
     assert meeting.workspace_path == str(workspace.resolve())
     assert local.manager.wait(run["id"], timeout=10).status == "done"
-    assert local.entered == [workspace.resolve()]
+    # The pipeline runs in the run's **own copy** of the directory the client
+    # named — ``<workspace>/runs/<run id>/`` (ADR-0033) — which is what the
+    # scoped outputs are; a finished run publishes that copy at the workspace
+    # root. What this test is about is that the node ran *that* directory.
+    assert local.entered == [
+        Workspace.at(workspace.resolve()).run_scope(run["id"]).outputs
+    ]
 
 
 def test_a_local_client_names_a_glossary_and_the_node_decodes_with_it(
@@ -335,7 +342,9 @@ def test_the_nodes_own_address_counts_as_local(monkeypatch, tmp_path) -> None:
     assert answered.status_code == 202, answered.text
     run_id = answered.json()["run"]["id"]
     assert at_home.manager.wait(run_id, timeout=10).status == "done"
-    assert at_home.entered == [workspace.resolve()]
+    assert at_home.entered == [
+        Workspace.at(workspace.resolve()).run_scope(run_id).outputs
+    ]
 
     # The same app, reached by a name that is not its own: still elsewhere.
     elsewhere = _console(
@@ -376,7 +385,9 @@ def test_the_peer_address_is_not_part_of_the_test(monkeypatch, tmp_path) -> None
     assert answered.status_code == 202, answered.text
     run_id = answered.json()["run"]["id"]
     assert elsewhere_on_the_wire.manager.wait(run_id, timeout=10).status == "done"
-    assert elsewhere_on_the_wire.entered == [workspace.resolve()]
+    assert elsewhere_on_the_wire.entered == [
+        Workspace.at(workspace.resolve()).run_scope(run_id).outputs
+    ]
 
 
 # --- the registry-addressed route is unchanged ---------------------------- #
@@ -398,7 +409,7 @@ def test_a_non_local_client_runs_a_registry_meeting_the_way_it_always_did(
     run = answered.json()["run"]
     assert run["origin"] == "api"
     assert remote.manager.wait(run["id"], timeout=10).status == "done"
-    assert remote.entered == [workspace]
+    assert remote.entered == [Workspace.at(workspace).run_scope(run["id"]).outputs]
 
 
 # --- a model is the node's, not a path ------------------------------------- #

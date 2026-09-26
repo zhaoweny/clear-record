@@ -24,8 +24,15 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from clear_record.pipeline.workspace import Workspace
-from clear_record.core import JobEvent, Progress, resolve_options
+from clear_record.pipeline.workspace import Workspace, discover_audio
+from clear_record.core import (
+    JobEvent,
+    Progress,
+    RecordDocument,
+    Segment,
+    load_json,
+    resolve_options,
+)
 from clear_record.service import (
     MalformedRunOptions,
     PipelineOptions,
@@ -34,6 +41,7 @@ from clear_record.service import (
     RunManager,
     estimate_eta_s,
     project_snapshot,
+    read_transcript,
     snapshot_from_text,
 )
 
@@ -2481,3 +2489,225 @@ def test_the_run_names_a_file_discovery_cannot_use(tmp_path) -> None:
         "[ingest] cannot use take.aup: not a recognized audio file (.aup)"
     ]
     assert [(event.level, event.stage) for event in events] == [("warn", "ingest")]
+
+
+# --- ADR-0033: a run's outputs are its own copy ------------------------------ #
+def _documented_pipeline(directory, options, on_event) -> None:
+    """The shape a finished run leaves, keyed by the run's own id.
+
+    The run path hands a pipeline its run's **scope** (``<workspace>/runs/<run
+    id>/``), so ``Workspace.at(directory).run_id`` is the run writing here — which
+    is what makes the documents of one run tell themselves apart from another's.
+    """
+    workspace = Workspace.at(directory)
+    assert workspace.run_id is not None
+    workspace.write_manifest([])
+    workspace.write_segments({"a": []}, {"backend": "fake"})
+    workspace.write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(0.0, 1.0, str(workspace.run_id), "a"),),
+        )
+    )
+    workspace.export_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.export_dir / "record.md").write_text(
+        str(workspace.run_id), encoding="utf-8"
+    )
+
+
+def test_a_runs_artifacts_are_its_own_copy_and_the_newest_is_the_default_read(
+    tmp_path,
+) -> None:
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    manager = RunManager(registry, pipeline=_documented_pipeline)
+    first = manager.start(meeting, origin="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+    second = manager.start(meeting, origin="console")
+    assert manager.wait(second.id, timeout=10).status == "done"
+
+    workspace = Workspace.at(meeting.workspace_path)
+    # The workspace's copy is the newest run's ...
+    assert workspace.load_record().segments[0].text == str(second.id)
+    assert workspace.load_segments()[1]["run_id"] == second.id
+    # ... and the earlier run's own copy is intact and readable.
+    earlier = workspace.run_scope(first.id)
+    assert earlier.load_record().segments[0].text == str(first.id)
+    assert earlier.load_segments()[1]["run_id"] == first.id
+    assert load_json(earlier.manifest_path)["run_id"] == first.id
+    assert (earlier.export_dir / "record.md").read_text(encoding="utf-8") == str(
+        first.id
+    )
+
+    # The artifacts of the earlier run point at *its* copy, and each one names the
+    # run it came from — the artifact a reader is handed says which run it is.
+    artifacts = [
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.run_id == first.id
+    ]
+    assert {artifact.kind for artifact in artifacts} == {
+        "record",
+        "transcript",
+        "export",
+    }
+    by_kind = {artifact.kind: Path(artifact.path) for artifact in artifacts}
+    assert all(path.is_relative_to(earlier.outputs) for path in by_kind.values())
+    assert by_kind["export"].read_text(encoding="utf-8") == str(first.id)
+    assert load_json(by_kind["record"])["metadata"]["run_id"] == first.id
+    assert load_json(by_kind["transcript"])["meta"]["run_id"] == first.id
+
+
+def test_a_run_that_dies_mid_way_spares_the_earlier_run_and_the_published_copy(
+    tmp_path,
+) -> None:
+    """The retention rule's whole point: a half-written run touches nothing else."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    dying = {"mid-way": False}
+
+    def pipeline(directory, options, on_event) -> None:
+        if dying["mid-way"]:
+            workspace = Workspace.at(directory)
+            workspace.write_record(
+                RecordDocument(
+                    sources=(),
+                    alignment=None,
+                    segments=(Segment(0.0, 1.0, "half", "a"),),
+                )
+            )
+            workspace.export_dir.mkdir(parents=True, exist_ok=True)
+            (workspace.export_dir / "record.md").write_text("half", encoding="utf-8")
+            raise RuntimeError("died mid-way")
+        _documented_pipeline(directory, options, on_event)
+
+    manager = RunManager(registry, pipeline=pipeline)
+    first = manager.start(meeting, origin="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+
+    workspace = Workspace.at(meeting.workspace_path)
+    published = {
+        name: (workspace.root / name).read_bytes()
+        for name in ("manifest.json", "segments.json", "record.json")
+    }
+    export = (workspace.export_dir / "record.md").read_bytes()
+
+    dying["mid-way"] = True
+    second = manager.start(meeting, origin="console")
+    assert manager.wait(second.id, timeout=10).status == "failed"
+
+    # The workspace still holds the last *finished* run, byte for byte ...
+    assert {
+        name: (workspace.root / name).read_bytes()
+        for name in ("manifest.json", "segments.json", "record.json")
+    } == published
+    assert (workspace.export_dir / "record.md").read_bytes() == export
+    # ... the earlier run's own copy is untouched ...
+    earlier = workspace.run_scope(first.id)
+    assert earlier.load_record().segments[0].text == str(first.id)
+    assert earlier.load_segments()[1]["run_id"] == first.id
+    assert (earlier.export_dir / "record.md").read_text(encoding="utf-8") == str(
+        first.id
+    )
+    # ... and the run that died left no artifacts behind.
+    assert [
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.run_id == second.id
+    ] == []
+    # Its own half-written copy is its own, and readable as what it is.
+    assert (
+        Workspace.at(meeting.workspace_path)
+        .run_scope(second.id)
+        .load_record()
+        .segments[0]
+        .text
+        == "half"
+    )
+
+
+def test_a_resumed_run_continues_in_the_workspaces_chunk_cache(tmp_path) -> None:
+    """A resume is a new run with its own copy, over the *same* cache (ADR-0007)."""
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    seen: list[tuple[bool, str]] = []
+
+    def pipeline(directory, options, on_event) -> None:
+        seen.append(
+            (
+                bool(options.resume),
+                str(Workspace.at(directory).chunk_cache("a").directory),
+            )
+        )
+        _documented_pipeline(directory, options, on_event)
+
+    manager = RunManager(registry, pipeline=pipeline)
+    first = manager.start(meeting, origin="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+    resumed = manager.resume(first.id, origin="console")
+    assert manager.wait(resumed.id, timeout=10).status == "done"
+
+    assert registry.get_run(resumed.id).resumes_run_id == first.id
+    cache = str(Workspace.at(meeting.workspace_path).chunk_cache("a").directory)
+    assert [directory for _, directory in seen] == [cache, cache]
+    assert seen[1][0] is True  # a resume never re-decodes everything
+    # The resumed run published its own copy in turn, naming itself.
+    assert (
+        Workspace.at(meeting.workspace_path).load_segments()[1]["run_id"] == resumed.id
+    )
+
+
+def test_a_workspace_that_lives_under_runs_slash_a_number_is_a_workspace(
+    tmp_path,
+) -> None:
+    """The leaf name is not evidence; only the mark makes a scope.
+
+    A meeting workspace whose own path ends in ``runs/<digits>`` used to open as
+    a *scope of its parent*: the run's documents were written outside the
+    workspace, the parent's ``runs/`` was skipped by name so the workspace's own
+    tapes fell out of the walk, and ``read_transcript`` raised. The whole path is
+    exercised here — the run, its publication **into** the workspace, the walk
+    that must still find the tape, and the transcript read back.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    workspace = tmp_path / "runs" / "7"
+    workspace.mkdir(parents=True)
+    tape = workspace / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.set_recording_set(meeting.id, [str(tape)])
+
+    manager = RunManager(registry, pipeline=_documented_pipeline)
+    run = manager.start(meeting, origin="console")
+    assert manager.wait(run.id, timeout=10).status == "done"
+
+    home = Workspace.at(workspace)
+    assert home.run_id is None, (
+        "a workspace is not a scope because it is named like one"
+    )
+    assert home.root == workspace
+    assert home.record_path == workspace / "record.json"
+    # The run's own copy is *inside* the workspace, and it is what was published.
+    own = workspace / "runs" / str(run.id)
+    assert (own / "record.json").is_file()
+    assert (workspace / "record.json").read_bytes() == (
+        own / "record.json"
+    ).read_bytes()
+    assert (workspace / "segments.json").is_file()
+    # The workspace's own tape is still an input, not swallowed by a skip rule.
+    assert [path.name for path in discover_audio(workspace)] == ["a.wav"]
+    # And the transcript reads back, naming its run.
+    page = read_transcript(meeting)
+    assert page.run_id == run.id
+    assert page.text == f"00:00:00.000 [a] {run.id}"

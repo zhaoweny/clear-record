@@ -24,6 +24,7 @@ import pytest
 import soundfile as sf
 
 from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     Progress,
     Segment,
@@ -132,6 +133,18 @@ def _workspace(tmp_path) -> tuple[Path, Path]:
     _tape(tape)
     stages.ingest(str(directory), split="mix")
     return directory, tape
+
+
+def _adopt_workspace_declaration(directory: str, workspace: Path) -> None:
+    """Hand a run scope the workspace's own manifest.
+
+    ``run`` ingests first, and ``ingest`` is what writes a manifest; these tests
+    compose a **stage-only** pipeline (``transcribe`` onward) over a workspace
+    that is already ingested, so the run's own copy has no manifest yet. The
+    manifest the CLI's own ``transcribe <dir>`` would read out of the directory is
+    handed to the run's copy here — the sources it names are the same.
+    """
+    Workspace.at(directory).write_manifest(*Workspace.at(workspace).load_manifest())
 
 
 def _meeting(registry: Registry, directory: Path, tape: Path):
@@ -277,10 +290,11 @@ def test_a_cancel_stops_a_decode_that_is_already_running(tmp_path, monkeypatch) 
     monkeypatch.setattr(stages, "get_backend", lambda _id: backend)
 
     registry = _registry(tmp_path)
-    directory, tape = _workspace(tmp_path)
-    meeting = _meeting(registry, directory, tape)
+    workspace, tape = _workspace(tmp_path)
+    meeting = _meeting(registry, workspace, tape)
 
     def pipeline(directory, options, on_event) -> None:
+        _adopt_workspace_declaration(directory, workspace)
         stages.transcribe(
             directory,
             "child",
@@ -355,10 +369,11 @@ def test_a_resume_re_uses_the_cached_chunks(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(stages, "get_backend", lambda _id: backend)
 
     registry = _registry(tmp_path)
-    directory, tape = _workspace(tmp_path)
-    meeting = _meeting(registry, directory, tape)
+    workspace, tape = _workspace(tmp_path)
+    meeting = _meeting(registry, workspace, tape)
 
     def pipeline(directory, options, on_event) -> None:
+        _adopt_workspace_declaration(directory, workspace)
         stages.transcribe(
             directory,
             "counting",
@@ -394,6 +409,22 @@ def test_a_resume_re_uses_the_cached_chunks(tmp_path, monkeypatch) -> None:
     assert cost["chunks_reused"] >= 1, "the resumed run continued from the cache"
     assert cost["chunks_redecoded"] >= 1, "and decoded the chunks the stop left"
     assert cost["chunks"] == cost["chunks_reused"] + cost["chunks_redecoded"]
+
+    # The real stages wrote the resumed run's own copy, and the workspace
+    # publishes exactly that copy (ADR-0033): what a reader opens at the root is
+    # the run's own bytes, and the run that stopped has no transcript in its copy
+    # of its own to be mistaken for one.
+    home = Workspace.at(workspace)
+    own = home.run_scope(resumed.id)
+    assert own.segments_path.is_file()
+    assert home.segments_path.read_bytes() == own.segments_path.read_bytes()
+    assert home.load_segments()[1]["run_id"] == resumed.id
+    assert home.export_file("record.md").is_file()
+    assert (
+        home.export_file("record.md").read_bytes()
+        == own.export_file("record.md").read_bytes()
+    )
+    assert not home.run_scope(first.id).segments_path.exists()
 
 
 def test_a_resume_refuses_a_run_that_is_still_in_flight(tmp_path) -> None:

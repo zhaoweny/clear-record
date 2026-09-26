@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+import shutil
 import threading
 from collections.abc import Iterable, Mapping
 from fnmatch import fnmatchcase
@@ -61,6 +62,24 @@ RECORD = "record.json"
 EXPORT_DIR = "export"
 AUDIO_DIR = "audio"
 CHUNKS_DIR = "chunks"
+#: The workspace's per-run copy area: ``<workspace>/runs/<run id>/`` holds one
+#: run's own manifest, transcript segments, reconciled record and exports, so a
+#: later run writes *its* own copies and the earlier run's stay readable
+#: (ADR-0033: rewrite-in-place is destructive in kind; run outputs are
+#: run-scoped snapshots and prior versions are retained). The workspace root
+#: holds the **published** copy of the newest run — the default read — and a
+#: finished run publishes its own copy there (see :func:`publish_run`).
+RUNS_DIR = "runs"
+
+#: The marker a run scope carries (:meth:`Workspace.begin_scope`), naming the
+#: workspace it belongs to and the run it is. It is what makes a directory a
+#: scope: ``runs`` is an ordinary word, so a workspace that happens to sit at
+#: ``…/runs/7`` must not be mistaken for one — only a **marked** directory
+#: resolves back to the workspace whose run wrote it, and only a marked
+#: directory is skipped by discovery (everything else under ``runs/`` is the
+#: operator's, and is classified like any other file). Hidden, like
+#: :data:`IGNORE_FILE`, so it is not itself an input or a file the walk narrates.
+RUN_MARKER = ".clear-record-run.json"
 GLOSSARY = "glossary.txt"
 TRANSCRIBE_LOG = "transcribe.log"
 GROUND_TRUTH = "ground_truth.json"
@@ -88,7 +107,10 @@ def is_audio(path: Path) -> bool:
 
 
 # Workspace-managed subdirectories that must never be re-discovered as sources
-# (they hold our own normalized/derived output).
+# (they hold our own normalized/derived output). ``runs/`` is **not** here: only
+# a *marked* run scope under it is the app's own, so it is handled by
+# :func:`_run_scopes` — an operator's own `runs/` audio would otherwise be
+# dropped without a word.
 SKIP_DIRS = {AUDIO_DIR, EXPORT_DIR, CHUNKS_DIR}
 
 #: The workspace's own bookkeeping files, by name, wherever the walk meets them.
@@ -180,6 +202,27 @@ class DeclarationUnreadable(ValueError):
         super().__init__(f"cannot read {path}: {detail}")
 
 
+def _run_scopes(directory: Path) -> frozenset[str]:
+    """The names under ``<directory>/runs/`` that are **marked run scopes**.
+
+    A marked scope is the app's own output for one run (:data:`RUN_MARKER`), so
+    the walk never takes anything under it as an input. Any *other* directory
+    under ``runs/`` is the operator's — a capture folder that happens to be
+    named ``runs`` with a take in it, say — and its files are classified like
+    any other: narrowing the rule to marked scopes is what keeps a workspace's
+    own audio from being dropped without a word (the previous name-based skip
+    silently swallowed it, and the pass then refused with "no audio files
+    found"). An unlistable ``runs/`` has no scopes to name, and the walk
+    underneath it is ``rglob``'s to skip.
+    """
+    runs = directory / RUNS_DIR
+    try:
+        children = list(runs.iterdir())
+    except OSError:
+        return frozenset()
+    return frozenset(child.name for child in children if (child / RUN_MARKER).is_file())
+
+
 def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
     """Recursively classify *directory*: ``(audio inputs, files walked past)``.
 
@@ -198,8 +241,9 @@ def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
 
     Not every other file is narrated, because not every other file is a tape:
     the workspace's own output dirs (:data:`SKIP_DIRS`), its bookkeeping files
-    (:data:`WORKSPACE_FILES`) and the app's own agent-artifact directory
-    (:data:`AGENT_DIRNAME`) are its own state, and a hidden entry (a checkout's
+    (:data:`WORKSPACE_FILES`), the app's own agent-artifact directory
+    (:data:`AGENT_DIRNAME`) and each **marked run scope** under ``runs/``
+    (:func:`_run_scopes`) are its own state, and a hidden entry (a checkout's
     ``.git``, a stray ``.DS_Store``, the upload scratch file
     ``.cr-upload-*.part``) is machinery, not an input. Only *this* walk is kept
     off the agent directory: audio beneath it still discovers, so it is not in
@@ -208,11 +252,14 @@ def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
     audio: list[Path] = []
     skipped: list[Path] = []
     patterns = Workspace.at(directory).ignore_patterns()
+    scopes = _run_scopes(directory)
     for p in sorted(directory.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(directory).parts
         if rel and rel[0] in SKIP_DIRS:
+            continue
+        if rel and rel[0] == RUNS_DIR and len(rel) > 1 and rel[1] in scopes:
             continue
         if is_audio(p):
             if _ignored("/".join(rel), patterns):
@@ -441,6 +488,53 @@ class ChunkCache:
         _publish_json(self.segments_path(index), [to_dict(s) for s in segments])
 
 
+def _run_scope(directory: Path) -> tuple[Path, int | None]:
+    """``(workspace, run id)`` for a directory: a marked run scope, or a workspace.
+
+    A **run scope** is a directory the app made for one run and marked as such
+    with :data:`RUN_MARKER` — ``<workspace>/runs/<run id>/.clear-record-run.json``,
+    naming the workspace it belongs to and the run it is
+    (:meth:`Workspace.begin_scope`). Only a marked directory opens as a scope.
+    ``runs`` is an ordinary word: a meeting workspace that happens to sit at
+    ``…/runs/7`` is a workspace like any other, and inferring a scope from the
+    leaf name alone put its outputs in a *different* directory, left its own
+    tapes outside the walk, and made ``read_transcript`` raise.
+
+    Within a scope, :attr:`Workspace.root` is the workspace the marker names —
+    where the tapes' normalized ``audio/``, the ``glossary.txt`` a hand-edit
+    lands in, the ``.clear-record-ignore`` declaration, the chunk cache's key
+    and the published copy live — and the documents go to the scope itself.
+    Anything unmarked is the workspace itself, which is what keeps a stage
+    command, ``calibrate`` and a test's temporary directory writing exactly
+    where they wrote before. A marker that cannot be read declares nothing and
+    opens the directory as its own workspace; a scope's writes then land in the
+    scope directory itself, which is where they were going anyway.
+    """
+    try:
+        marker = load_json(directory / RUN_MARKER)
+    except (OSError, ValueError):
+        return directory, None
+    if not isinstance(marker, Mapping):
+        return directory, None
+    workspace = marker.get("workspace")
+    run_id = marker.get("run_id")
+    if not isinstance(workspace, str) or not workspace:
+        return directory, None
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id < 1:
+        return directory, None
+    return Path(workspace), run_id
+
+
+def _read_manifest(path: Path) -> tuple[list[Source], Alignment | None]:
+    """Parse one manifest file: ``(sources, alignment)``."""
+    data = load_json(path)
+    sources = [source_from_dict(s) for s in data["sources"]]
+    alignment = (
+        alignment_from_dict(data["alignment"]) if data.get("alignment") else None
+    )
+    return sources, alignment
+
+
 @dataclasses.dataclass(frozen=True)
 class Workspace:
     """The single owner of a workspace's on-disk layout and read/writes.
@@ -448,26 +542,90 @@ class Workspace:
     Open one with :meth:`at`. Every path and every read/write on workspace state
     goes through this object, so the layout lives in one place and a temporary
     directory can substitute for it in tests.
+
+    A workspace opened at a directory **marked** as one run's scope
+    (:func:`_run_scope`, :data:`RUN_MARKER`) is that run's own copy area: the
+    run's documents are written there, as the run's retained copy, and
+    :attr:`root` stays the workspace the run belongs to. What that changes is
+    only *where the documents go* (:attr:`outputs`); the inputs and the shared
+    state — normalized audio, the glossary, the ignore declaration, the
+    transcription log, the chunk cache — are the workspace's, so a re-run resumes
+    the same cache and a resumed run reads the same glossary as before
+    (ADR-0033). An unmarked directory is never a scope, however it is named.
     """
 
     root: Path
+    #: The run this workspace is the copy area of (``None``: the workspace
+    #: itself, which is where a stage command and ``calibrate`` write).
+    run_id: int | None = None
 
     @classmethod
     def at(cls, directory: str | Path) -> Workspace:
-        return cls(Path(directory))
+        return cls(*_run_scope(Path(directory)))
+
+    def run_scope(self, run_id: int) -> Workspace:
+        """This workspace's own copy area for one run (``<root>/runs/<run_id>``).
+
+        A value, not a creator: the directory and its marker are
+        :meth:`begin_scope`'s to make. A scope value is all a caller needs to
+        *read or write* a known run's own copy (the run path does exactly that
+        for a run whose scope was begun when it was claimed).
+        """
+        return dataclasses.replace(self, run_id=run_id)
+
+    def begin_scope(self, run_id: int) -> Workspace:
+        """Create this workspace's own copy area for one run, and mark it.
+
+        The marker (:data:`RUN_MARKER`) is what makes the directory a scope:
+        it names the workspace and the run, so opening the directory again — by
+        a stage, by a reader, by the run path after a restart or a re-claim —
+        resolves back to this workspace instead of guessing from the path.
+        Reopening an existing scope rewrites the same marker, so a resumed run
+        continues in its own copy.
+        """
+        scope = self.run_scope(run_id)
+        scope.outputs.mkdir(parents=True, exist_ok=True)
+        write_json(
+            scope.outputs / RUN_MARKER,
+            {"workspace": str(scope.root), "run_id": run_id},
+        )
+        return scope
 
     # --- paths ------------------------------------------------------------- #
     @property
+    def outputs(self) -> Path:
+        """Where this workspace's documents are written and read.
+
+        The workspace itself (:attr:`root`) for a plain workspace; the run's own
+        directory for a run's scope. It is the one difference between the two, and
+        it is derived here so no caller composes a run path by hand.
+        """
+        if self.run_id is None:
+            return self.root
+        return self.root / RUNS_DIR / str(self.run_id)
+
+    @property
     def manifest_path(self) -> Path:
-        return self.root / MANIFEST
+        return self.outputs / MANIFEST
 
     @property
     def segments_path(self) -> Path:
-        return self.root / SEGMENTS
+        return self.outputs / SEGMENTS
 
     @property
     def record_path(self) -> Path:
-        return self.root / RECORD
+        return self.outputs / RECORD
+
+    @property
+    def published_manifest_path(self) -> Path:
+        """The workspace's manifest at its root — the copy a reader opens.
+
+        It is the **published** copy of the newest finished run, and it is also
+        where an operator's hand-edit lands, which is why a run scope reads its
+        declarations here and not from its own copy
+        (:meth:`load_published_manifest`).
+        """
+        return self.root / MANIFEST
 
     @property
     def glossary_path(self) -> Path:
@@ -475,7 +633,7 @@ class Workspace:
 
     @property
     def export_dir(self) -> Path:
-        return self.root / EXPORT_DIR
+        return self.outputs / EXPORT_DIR
 
     @property
     def audio_dir(self) -> Path:
@@ -514,15 +672,28 @@ class Workspace:
         data: dict = {"sources": [to_dict(s) for s in sources]}
         if alignment is not None:
             data["alignment"] = to_dict(alignment)
+        if self.run_id is not None:
+            # A run's own copy names the run that wrote it, and the published copy
+            # is that same body: a reader of the workspace's manifest can tell
+            # which run's inputs it is looking at (ADR-0033).
+            data["run_id"] = self.run_id
         write_json(self.manifest_path, data)
 
     def load_manifest(self) -> tuple[list[Source], Alignment | None]:
-        data = load_json(self.manifest_path)
-        sources = [source_from_dict(s) for s in data["sources"]]
-        alignment = (
-            alignment_from_dict(data["alignment"]) if data.get("alignment") else None
-        )
-        return sources, alignment
+        """This workspace's own copy: the run's, or the published one."""
+        return _read_manifest(self.manifest_path)
+
+    def load_published_manifest(self) -> tuple[list[Source], Alignment | None]:
+        """The workspace root's manifest — the newest **published** copy.
+
+        The declarations a run carries over are read from here and not from the
+        run's own copy: ``manifest.json`` is also where an operator declares a
+        source's start or role by hand, and a run scope's copy is written fresh by
+        its own ``ingest`` (``_manifest_starts``/``_manifest_roles``), so reading
+        the run's copy would drop exactly the declarations that flow exists for.
+        For a plain workspace this is the same file :meth:`load_manifest` reads.
+        """
+        return _read_manifest(self.published_manifest_path)
 
     # --- segments ---------------------------------------------------------- #
     def write_segments(
@@ -535,8 +706,15 @@ class Workspace:
                 src: [to_dict(s) for s in segs] for src, segs in per_source.items()
             }
         }
-        if meta:
-            payload["meta"] = meta
+        stamped = dict(meta) if meta else {}
+        if self.run_id is not None:
+            # The transcript names the run that produced it, so a reader (or an
+            # agent) reading the workspace's copy can say which run it is
+            # (ADR-0033); the workspace's own documents — a stage command's,
+            # ``calibrate``'s — have no run to name.
+            stamped["run_id"] = self.run_id
+        if stamped:
+            payload["meta"] = stamped
         write_json(self.segments_path, payload)
 
     def load_segments(self) -> tuple[dict[str, list[Segment]], dict]:
@@ -549,6 +727,13 @@ class Workspace:
 
     # --- record ------------------------------------------------------------ #
     def write_record(self, record: RecordDocument) -> None:
+        if self.run_id is not None:
+            # As in ``write_segments``: the reconciled record names the run whose
+            # copy it is, in its own metadata, so the artifact carries its
+            # provenance rather than needing the registry beside it.
+            record = dataclasses.replace(
+                record, metadata={**record.metadata, "run_id": self.run_id}
+            )
         write_json(self.record_path, record)
 
     def load_record(self) -> RecordDocument:
@@ -641,6 +826,61 @@ class Workspace:
                 pass
 
 
+#: The documents the workspace publishes from a finished run's own copy: its
+#: manifest, its transcript segments and its reconciled record. The exports are
+#: published beside them, one file each (:func:`publish_run`).
+PUBLISHED_DOCUMENTS = (MANIFEST, SEGMENTS, RECORD)
+
+
+def _publish_file(source: Path, target: Path) -> None:
+    """Copy *source* over *target* by rename: a reader sees all of one or the other.
+
+    The same publish-by-rename the workspace's own writers use: the workspace root
+    is what a reader (the console, an archive, an agent) opens while a run is
+    finishing, and a half-copied document would be a transcript that is neither
+    run's.
+    """
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, tmp)
+    os.replace(tmp, target)
+
+
+def publish_run(scope: Workspace) -> list[Path]:
+    """Copy a finished run's own documents over the workspace's published copy.
+
+    Called only for a run that **finished**: a run that stopped, failed or died
+    returns before this, so it publishes nothing and the workspace keeps the last
+    complete run's copy — the property that makes rewrite no longer destructive
+    (ADR-0033). What it copies is the run's own manifest, segments and record,
+    and every export file, so the root holds the newest complete run exactly as
+    the run's own copy does; the run's copy itself is left untouched, which is
+    what keeps an earlier run's record readable after a later one.
+
+    Returns the paths written, in the order they landed. A document the run never
+    wrote is skipped rather than published as an absence.
+    """
+    if scope.run_id is None:
+        return []
+    home = Workspace(scope.root)
+    published: list[Path] = []
+    for name in PUBLISHED_DOCUMENTS:
+        source = scope.outputs / name
+        if source.is_file():
+            target = home.root / name
+            _publish_file(source, target)
+            published.append(target)
+    if scope.export_dir.is_dir():
+        home.export_dir.mkdir(parents=True, exist_ok=True)
+        for source in sorted(scope.export_dir.iterdir()):
+            if not source.is_file():
+                continue
+            target = home.export_dir / source.name
+            _publish_file(source, target)
+            published.append(target)
+    return published
+
+
 def report_line(
     workspace: Workspace,
     sink: EventSink | None,
@@ -725,6 +965,9 @@ __all__ = [
     "ChunkCache",
     "DeclarationUnreadable",
     "IGNORE_FILE",
+    "PUBLISHED_DOCUMENTS",
+    "RUNS_DIR",
+    "RUN_MARKER",
     "Workspace",
     "cache_plan",
     "chunk_cache_key",
@@ -734,5 +977,6 @@ __all__ = [
     "glossary_digest",
     "is_audio",
     "plan_matches",
+    "publish_run",
     "report_line",
 ]

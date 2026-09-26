@@ -467,19 +467,22 @@ def _manifest_starts(w: Workspace) -> dict[str, float]:
     A manifest this pass cannot take a declaration out of declares nothing, and
     that is not this pass's refusal: the pass has not been asked to *use* the
     manifest, only not to lose what it says, so a broken one costs the record its
-    declarations and nothing else. **The shapes a hand-edit produces are exactly
-    what that has to cover** — an operator editing ``manifest.json`` to declare a
-    start is who this function is for — so every way the read can fail is named
-    here: bytes that cannot be read (``OSError``), bytes that are not JSON
-    (``ValueError``), a body that is not a mapping (``TypeError``), a mapping
-    with no ``sources`` key (``KeyError``), a ``sources`` that is not a list or
-    an entry without ``path`` or ``id`` (``TypeError``), an entry that is not a
-    mapping at all (``AttributeError``, which is also what iterating a plain
-    string yields), and a ``start_s`` no clock can render
-    (:func:`_usable_start`).
+    declarations and nothing else. The manifest read is the workspace's **root**
+    one (:meth:`Workspace.load_published_manifest`): a run writes its own copy
+    fresh in its scope, while a hand-edit lands at the root, which is where the
+    run it precedes publishes and reads (ADR-0033). **The shapes a hand-edit
+    produces are exactly what that has to cover** — an operator editing
+    ``manifest.json`` to declare a start is who this function is for — so every
+    way the read can fail is named here: bytes that cannot be read (``OSError``),
+    bytes that are not JSON (``ValueError``), a body that is not a mapping
+    (``TypeError``), a mapping with no ``sources`` key (``KeyError``), a
+    ``sources`` that is not a list or an entry without ``path`` or ``id``
+    (``TypeError``), an entry that is not a mapping at all (``AttributeError``,
+    which is also what iterating a plain string yields), and a ``start_s`` no
+    clock can render (:func:`_usable_start`).
     """
     try:
-        sources, _ = w.load_manifest()
+        sources, _ = w.load_published_manifest()
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
     starts: dict[str, float] = {}
@@ -583,14 +586,11 @@ def _manifest_roles(w: Workspace) -> dict[str, str]:
     A manifest this pass cannot take a declaration out of declares nothing, and
     that is not this pass's refusal — it was not asked to *use* the manifest, only
     not to lose what it says — so the read covers exactly the shapes
-    :func:`_manifest_starts` names: bytes that cannot be read (``OSError``), bytes
-    that are not JSON (``ValueError``), a body that is not a mapping
-    (``TypeError``), a mapping with no ``sources`` key (``KeyError``), and a
-    ``sources`` that is not a list or an entry that is not a mapping
-    (``TypeError`` / ``AttributeError``).
+    :func:`_manifest_starts` names, and reads the same **published** manifest
+    (the workspace root's) for the same reason.
     """
     try:
-        sources, _ = w.load_manifest()
+        sources, _ = w.load_published_manifest()
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
     roles: dict[str, str] = {}

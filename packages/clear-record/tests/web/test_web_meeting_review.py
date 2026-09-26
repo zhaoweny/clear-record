@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from clear_record.core import RecordDocument, Segment, write_json
+from clear_record.pipeline.workspace import Workspace, publish_run
 from clear_record.service import AGENT_DIRNAME, MeetingAgent, Registry, RunManager
 from clear_record.web.app import create_app
 
@@ -324,3 +325,28 @@ def test_an_unknown_draft_is_a_404(tmp_path: Path) -> None:
         ).status_code
         == 404
     )
+
+
+def test_the_transcript_pane_names_the_run_that_produced_it(tmp_path: Path) -> None:
+    """The pane is a reader too, so it says which run's transcript this is.
+
+    The documents a run writes name it (ADR-0033); the pane showed the source,
+    the segment count and the paging window but not the run, while the artifact
+    table beside it and the API payload both carried it.
+    """
+    console = _console(tmp_path)
+    scope = Workspace.at(console.workspace).begin_scope(7)
+    scope.write_record(
+        RecordDocument(
+            sources=(),
+            alignment=None,
+            segments=(Segment(start=3.0, end=4.0, text="run seven", source="a"),),
+        )
+    )
+    publish_run(scope)
+
+    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+
+    assert page.status_code == 200
+    assert "run seven" in page.text
+    assert "run 7" in page.text  # the pane's own line

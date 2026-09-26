@@ -58,6 +58,7 @@ from clear_record.pipeline.workspace import (
     AUDIO_DIR,
     AUDIO_SUFFIXES,
     EXPORT_DIR,
+    RUNS_DIR,
     Workspace,
     is_audio,
 )
@@ -840,15 +841,33 @@ def _file_bytes(path: Path, seen: set[str]) -> _Measure:
     return (size, False)
 
 
+def _run_file_bucket(rel: tuple[str, ...]) -> str | None:
+    """The bucket a file under a workspace's ``runs/`` belongs to, or ``None``.
+
+    Every run keeps its own copy of its documents under
+    ``<workspace>/runs/<run id>/`` (ADR-0033), and the walk must attribute them
+    where they belong: a run's **exports** are exports, and its manifest,
+    segments and record are records — the same buckets the workspace root's
+    published copies land in, so the machine total stays true and a run's export
+    directory is not silently counted as a transcript (STO-01).
+    """
+    if rel[:1] != (RUNS_DIR,):
+        return None
+    if len(rel) > 2 and rel[2] == EXPORT_DIR:
+        return "exports"
+    return "records"
+
+
 def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
     """One walk over a meeting's workspace, split into STO-01's buckets.
 
     A file under tapes/ -- or input audio the pipeline would discover, symlinks
     included -- is a **source** tape. audio/, export/ and agent/ are the app's
     derived output, and the manifest, segments, transcript and minutes are the
-    meeting's records. Files this call already counted are skipped, so a shared
-    workspace or a linked target cannot double count; every bucket carries the
-    walk's partial flag.
+    meeting's records; a file under a run scope's ``runs/<id>/`` is attributed by
+    :func:`_run_file_bucket` (a run's own exports are exports). Files this call
+    already counted are skipped, so a shared workspace or a linked target cannot
+    double count; every bucket carries the walk's partial flag.
     """
     files, unreadable = _scan(root)
     buckets = {key: 0 for key in WORKSPACE_BUCKETS}
@@ -860,7 +879,7 @@ def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
         top = rel[0] if rel else ""
         bucket = _BUCKET_DIRS.get(top)
         if bucket is None:
-            bucket = (
+            bucket = _run_file_bucket(rel) or (
                 "tapes"
                 if top == tapestore.TAPES_DIRNAME or is_audio(path)
                 else "records"

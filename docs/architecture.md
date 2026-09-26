@@ -490,10 +490,12 @@ workspace: the project list, then Overview / Meetings / Glossary / Media),
 workspace and the **archive view**; the **MCP surface** carries the **tuning
 loop** and the **draft chain** (ADR-0017, ADR-0031). Every mutating service call
 appends one row — `(at, actor, action, target, outcome)` — to an **append-only**
-audit record (`audit_event`), and the **actor is a required argument** on the
-mutating entry points, supplied by the transport that calls (`console`, `api`,
-`mcp`, `cli`, or `queue` for the node's own queue): a surface can neither
-forget it nor forge it, and a run's `origin` — the surface that asked, which a
+audit record (`audit_event`); a **conditional** write that matched no row (a lost
+claim, a state the move is not legal from) appends nothing, because nothing
+happened to record. The **actor is a required argument** on the mutating entry
+points, supplied by the transport that calls (`console`, `api`, `mcp`, `cli`, or
+`queue` for the node's own queue): a surface can neither forget it nor forge it,
+and a run's `origin` — the surface that asked, which a
 run request may name — is a **separate column** from the actor, so a client
 cannot write itself into the record by filling in a field (ADR-0033).
 clear-record calls no model: every draft is written by the user's harness over
@@ -518,14 +520,18 @@ reader can say which run produced the transcript it holds. A run that stops,
 fails or dies publishes nothing, so neither the workspace's copy nor an earlier
 run's can be rewritten by it: prior versions are retained, not covered
 (ADR-0033). A run's **documents** are run-scoped, and so is what it publishes;
-what it **reads** stays the workspace's — its tapes, the normalized `audio/`, the
-app-owned chunk cache, the `glossary.txt` a glossary edit lands in and the
-`.clear-record-ignore` declaration — so `ingest` stays idempotent and a resume
-continues the same cache. Two things a **node** run writes in place at the
+what a run **reads** stays the workspace's — its tapes, the `glossary.txt` a
+hand-edit lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
+idempotent and the `manifest.json` declarations an operator hand-edits at the root
+still reach the next run. Three things a **node** run writes **in place** at the
 workspace root all the same: the normalized `audio/` (the ingest stage writes it
-there, not under `runs/<run id>/`) and the durable `transcribe.log` a running
-pipeline appends to. The stage commands and `calibrate` are the writers that leave
-**everything** in place, at the root and naming no run.
+there, not under `runs/<run id>/`), the `glossary.txt` its glossary resolution
+publishes when the registry has confirmed terms (the ADR-0031 tuning loop), and
+the durable `transcribe.log` a running pipeline appends to. The app-owned chunk
+cache is neither: it lives in the app's own cache directory, keyed per workspace,
+and a run only advances it (a resume continues the same cache). The stage commands
+and `calibrate` are the writers that leave **everything** in place, at the root and
+naming no run.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves

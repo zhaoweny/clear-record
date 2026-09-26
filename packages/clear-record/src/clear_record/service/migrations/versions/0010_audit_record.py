@@ -23,11 +23,13 @@ append-only, not tamper-proof against a process that rewrites the schema. A reco
 of who did what that its own subject could rewrite is not a record.
 
 The triggers are recreated (``DROP TRIGGER IF EXISTS`` then ``CREATE``) rather
-than assumed to be absent the way the table's ``CREATE TABLE IF NOT EXISTS``
-assumes nothing lies there, so the revision converges when it is re-run over an
-already-built schema — the repair path ``store._pending_stamp`` takes after an open
-was killed part-way through the chain. A trigger is the only thing this revision
-leaves that ``CREATE TABLE IF NOT EXISTS`` cannot make idempotent by itself.
+than left to the tolerance ``CREATE TABLE IF NOT EXISTS`` shows a table already
+there: that statement accepts whatever lies at the name and never redefines it,
+where a plain ``CREATE TRIGGER`` would fail on the name — so the drop is what lets
+the revision converge on the definition this build ships whatever an earlier
+revision left, the repair path ``store._pending_stamp`` takes after an open was
+killed part-way through the chain. A trigger is the only thing this revision leaves
+that ``CREATE TABLE IF NOT EXISTS`` cannot make idempotent by itself.
 """
 
 from __future__ import annotations

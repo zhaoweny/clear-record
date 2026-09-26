@@ -31,7 +31,9 @@ Design notes:
   so one call appends one row to ``audit_event``: who called (the transport's own
   word, never a caller's), what they touched, and how it ended — a refusal
   included, in a unit of work of its own, because the transaction it belonged to
-  is rolled back with the failure. The table refuses every ``UPDATE`` and
+  is rolled back with the failure. A **conditional** write that matched no row (a
+  lost claim, a state the move is not legal from) appends nothing: the record
+  holds what happened, and nothing did. The table refuses every ``UPDATE`` and
   ``DELETE`` (revision 0010), and :meth:`Registry.record_audit` is the only way a
   row is written at all.
 - **A session per operation.** :meth:`Registry._session` is one unit of work:

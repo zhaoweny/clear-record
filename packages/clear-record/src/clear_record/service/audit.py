@@ -26,8 +26,9 @@ data, and is not in this record. Mutating store methods are audited by
 :func:`recorded`; the operations above them — a draft write, a run's start — use
 :func:`refused_call` for the refusals *they* own.
 
-:func:`recorded` is how a store method is audited. It wraps the method, so the
-row is appended for every call, whatever the call did:
+:func:`recorded` is how a store method is audited. It wraps the method, so a call
+appends a row whether it returned or raised — with one exception, the
+**conditional** write whose statement matched no row, which appends nothing:
 
 - the call returned — one row, ``outcome='ok'``, appended in a unit of work of
   its own, immediately after the write it names. A **conditional** write is the

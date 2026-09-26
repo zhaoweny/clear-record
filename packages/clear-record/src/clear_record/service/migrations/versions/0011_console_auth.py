@@ -22,10 +22,12 @@ project data and its audit record:
   ``absolute_deadline`` never moves; both are absolute instants, so the verdict
   is a comparison rather than a recomputation of a policy that may have changed.
 
-Neither table is audited, and both are excluded from the audit record's rule the
-same way the setup marker is: they are not history of the operator's data. The
-one mutation of security state that *is* an attribution question — who set the
-credential — appends its ``credential.set`` row through
+The two tables sit outside the audit record's rule the way the setup marker does,
+with one exception: the session writes — sign-in, the idle clock, sign-out, the
+expired prune — are bookkeeping and append nothing, because they are not history
+of the operator's data. The credential's **set** is the one mutation of security
+state that *is* an attribution question — who set the credential — and it appends
+its ``credential.set`` row through
 :meth:`~clear_record.service.store.Registry.record_audit`, like any other
 mutation of durable state.
 

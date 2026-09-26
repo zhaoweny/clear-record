@@ -65,9 +65,10 @@ DEFAULT_PORT = 8765
 #: The path the client asks, and the node answers, "are you there?" on. One
 #: path, so the two sides cannot disagree about what answering means.
 #:
-#: It is the console's **liveness route**, outside ``/api`` and outside the
-#: console's own prefix, and it is anonymous: a tray, a supervisor's probe or a
-#: monitor has to tell a healthy node from a sign-in page without a session
+#: It is the console's **liveness route**, outside ``/api`` — and, once the
+#: console's ``/web`` re-root lands, outside that prefix too; at this revision the
+#: console serves at the root — and it is anonymous: a tray, a supervisor's probe
+#: or a monitor has to tell a healthy node from a sign-in page without a session
 #: (ADR-0033). Its answer is exactly ``{"status": "ok"}`` — no registry path, no
 #: version, no session — which is what lets this client require an exact 200 and
 #: follow no redirect (:func:`reach`).
@@ -258,12 +259,22 @@ def local_session() -> str | None:
     hand-edited file is no token rather than an exception — the client then makes
     its request with no cookie and is answered exactly as any other anonymous
     request, which is the safe direction.
+
+    A hand-edited file is no token *whatever* it holds. A token is one line and
+    nothing else (:func:`~clear_record.service.auth.new_session_token`), so a file
+    carrying a second line or an internal space is refused here rather than handed
+    to the HTTP client: a value with a newline in it is not a cookie — the request
+    fails to build — and the surface would report a node that is answering as
+    "no node is listening".
     """
     try:
-        token = local_session_path().read_text(encoding="utf-8").strip()
+        text = local_session_path().read_text(encoding="utf-8")
     except OSError:
         return None
-    return token or None
+    token = text.strip()
+    if not token or any(char.isspace() for char in token):
+        return None
+    return token
 
 
 def publish_local_session(token: str) -> Path:
@@ -290,13 +301,22 @@ def publish_local_session(token: str) -> Path:
 
 
 def forget_local_session() -> None:
-    """Remove the published local session; a file that is not there is fine.
+    """Remove **this node's** published local session; a missing file is fine.
 
-    Called when the node exits cleanly. The session *row* is not deleted with it —
-    it is a session like any other, and it lapses on its own clocks — because the
-    file is what a client reads and a node that dies without cleaning up must not
-    leave a live-looking token behind for a node that never issued it.
+    Called when the node exits cleanly, and gated the way :func:`forget` is: the
+    recorded pid is the test, because the two files are one node's pair. A node
+    that has been replaced leaves the record and the session to its successor,
+    and a file a *second* node published is not this process's to erase.
+
+    The session *row* is not deleted with the file — it is a session like any
+    other, and it lapses on its own clocks. What a clean exit takes down is the
+    file, because the file is what a client reads: a file left behind names a
+    token whose row may still be live, and the next node adopts it as its own
+    (which is what makes a stale file harmless rather than a way in).
     """
+    current = recorded()
+    if current is None or current.pid != os.getpid():
+        return
     try:
         local_session_path().unlink()
     except OSError:
@@ -359,11 +379,14 @@ def _send(
     never puts a live token on the wire. The address record is also the only
     target it is sent to.
 
-    The residual, said plainly: the address record is written ``0600`` in the
-    node's state directory and a same-uid process can rewrite it, so this is a
-    guard against a *stale* record pointing at a stranger's listener rather than
-    against the user's own processes — which ADR-0033 puts inside the boundary
-    anyway.
+    The residual, said plainly: the address record lives in the node's state
+    directory, where a same-uid process can rewrite it, so this is a guard against
+    a *stale* record pointing at a stranger's listener rather than against the
+    user's own processes — which ADR-0033 puts inside the boundary anyway. The
+    record itself carries the host and the port, not a secret (the state
+    directory's mode is the platform default and the file is not tightened); the
+    *session* file beside it is the secret, and that one is written ``0600`` at
+    creation (:func:`publish_local_session`).
     """
     data = None if body is None else json.dumps(body).encode("utf-8")
     sent = urllib.request.Request(target.url_for(path), data=data, method=method)

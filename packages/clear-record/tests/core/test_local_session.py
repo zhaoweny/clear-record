@@ -66,6 +66,7 @@ def _stop(listener) -> None:
 
 def test_publishing_writes_the_token_for_this_user_alone(tmp_path) -> None:
     """Mode ``0600`` at creation, the token and nothing else, gone on request."""
+    node.record(node.NodeAddress.of("127.0.0.1", 8765))  # what a node does first
     path = node.publish_local_session(TOKEN)
 
     assert path == node.local_session_path()
@@ -78,16 +79,40 @@ def test_publishing_writes_the_token_for_this_user_alone(tmp_path) -> None:
     assert node.local_session() is None
     assert not path.exists()
     node.forget_local_session()  # a second call on a file that is not there
+    node.forget()
 
 
 def test_reading_the_file_is_total(tmp_path) -> None:
-    """Nothing about the file can raise or invent a token."""
+    """Nothing about the file can raise or invent a token.
+
+    A token is one line and nothing else, so a hand-edited file that carries a
+    second line or an interior space is no token: read as one, it would reach the
+    HTTP client and the request would fail to build — and a surface would report
+    an answering node as "no node is listening".
+    """
     assert node.local_session() is None  # never written
 
     node.local_session_path().parent.mkdir(parents=True, exist_ok=True)
-    for written in ("", "   \n", "\n\n"):
+    for written in ("", "   \n", "\n\n", f"{TOKEN}\nsecond line\n", "tok en\n"):
         node.local_session_path().write_text(written, encoding="utf-8")
         assert node.local_session() is None, repr(written)
+
+
+def test_forgetting_leaves_the_session_file_another_node_published() -> None:
+    """The guard :func:`forget` makes, applied to the session file beside it.
+
+    Two nodes share a state directory (the tray's supervised node and a ``serve``)
+    and the address record names the one that holds it, so a node shutting down
+    has no business erasing the file its successor published: the record is the
+    test, exactly as it is for the address itself.
+    """
+    node.record(node.NodeAddress(host="127.0.0.1", port=8765, pid=os.getpid() + 1))
+    node.publish_local_session("a-token-the-other-node-published")
+
+    node.forget_local_session()
+
+    assert node.local_session() == "a-token-the-other-node-published"
+    node.forget()
 
 
 def test_publishing_replaces_the_previous_token(tmp_path) -> None:
@@ -132,6 +157,32 @@ def test_a_client_with_no_published_session_sends_no_cookie() -> None:
 
         assert _Capturing.seen == [""]
     finally:
+        node.forget()
+        _stop(listener)
+
+
+def test_a_hand_edited_file_is_asked_anonymously_not_as_a_broken_cookie() -> None:
+    """A file holding a token *and* something else is no cookie, not an error.
+
+    Read as one, the value would carry a newline into the request and the client
+    would fail to build it — reporting an answering node as "no clear-record node
+    is listening". The reader refuses the shape first, so the request goes out
+    with no cookie and is answered exactly as any other anonymous one.
+    """
+    listener, address = _listener()
+    try:
+        node.record(address)
+        node.local_session_path().parent.mkdir(parents=True, exist_ok=True)
+        node.local_session_path().write_text(
+            f"{TOKEN}\nsecond line\n", encoding="utf-8"
+        )
+        assert node.local_session() is None
+
+        node.request(address, "GET", "/")
+
+        assert _Capturing.seen == [""]
+    finally:
+        node.forget_local_session()
         node.forget()
         _stop(listener)
 

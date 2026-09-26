@@ -51,11 +51,11 @@ from clear_record.web.app import create_app
 _CHILD = "from clear_record.cli.cli import main\nraise SystemExit(main(['node']))\n"
 
 #: How long a real node gets to record its address before a test calls it a bug.
+_READY_TIMEOUT = 20.0
+
 #: The credential this file's console client signs in with; the app sets it
 #: through the service seam and takes the session from the sign-in form.
 _CONSOLE_PASSWORD = "node-address-test-password"
-
-_READY_TIMEOUT = 20.0
 
 
 def _free_port() -> int:

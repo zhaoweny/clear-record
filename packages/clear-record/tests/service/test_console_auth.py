@@ -17,6 +17,7 @@ import time
 from contextlib import closing
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from clear_record.service.auth import (
     DEFAULT_SESSION_POLICY,
@@ -26,6 +27,8 @@ from clear_record.service.auth import (
     SessionState,
     hash_password,
     new_session_token,
+    publish_local_session,
+    refresh_local_session,
     require_password,
     token_digest,
     verify_password,
@@ -72,7 +75,18 @@ def test_verification_refuses_a_wrong_or_unreadable_value() -> None:
     assert not verify_password(PASSWORD + "x", stored)
     assert not verify_password("", stored)
     assert not verify_password(PASSWORD, None)
-    for broken in ("", "nonsense", "scrypt$1$2$3$4", "bcrypt$1$2$3$4$5$6"):
+    for broken in (
+        "",
+        "nonsense",
+        "scrypt$1$2$3$4",
+        "bcrypt$1$2$3$4$5$6",
+        # A stored parameter the derivation cannot hold: `n` is read as a C
+        # unsigned long, so a corrupt row can carry a number that overflows it.
+        # Refusing is the answer — a damaged row must never take the sign-in page
+        # down with it (`OverflowError` is `ValueError`'s neighbour here, not
+        # something a reader of a session-bearing registry ever sees).
+        "scrypt$99999999999999999999$8$1$AAAA$AAAA",
+    ):
         assert not verify_password(PASSWORD, broken), broken
 
 
@@ -212,6 +226,126 @@ def test_a_default_policy_is_a_working_day_and_a_month() -> None:
     """The shipped windows, stated here so a change to them is a decision."""
     assert DEFAULT_SESSION_POLICY.idle_timeout == dt.timedelta(hours=12)
     assert DEFAULT_SESSION_POLICY.absolute_lifetime == dt.timedelta(days=30)
+
+
+def test_a_burst_of_requests_leaves_the_idle_deadline_where_it_was(tmp_path) -> None:
+    """The write is lazy: while more than half the window is left, nothing moves.
+
+    The gate runs this on **every** request, so a page's burst (a document and its
+    assets, htmx polls) has to be one write rather than one per request — and what
+    makes it one is that the deadline barely moved since the last write. The row
+    itself is the witness: the verdict is ACTIVE either way, and only the stored
+    deadline can tell a lazy clock from an eager one.
+    """
+    console = _console(tmp_path, idle_timeout=dt.timedelta(seconds=2))
+    console.set_password(PASSWORD, actor=CONSOLE)
+    token = console.sign_in(PASSWORD)
+    assert token is not None
+    digest = token_digest(token)
+    signed_in = console.registry.get_session(digest)
+    assert signed_in is not None
+
+    for _ in range(3):
+        assert console.session(token) is SessionState.ACTIVE
+
+    after = console.registry.get_session(digest)
+    assert after is not None
+    assert after.idle_deadline == signed_in.idle_deadline, (
+        "a request inside the first half of the window wrote the clock forward"
+    )
+
+
+def test_an_accepted_request_past_half_the_window_moves_the_idle_deadline(
+    tmp_path,
+) -> None:
+    """The forward move, on real timers, and that it is what keeps a session alive.
+
+    A session in use outlives the deadline it was *issued* with — that is the
+    "working day with room to be interrupted" the shipped policy claims — and the
+    move happens only once less than half the window is left. Both are asserted on
+    the stored deadline and on the verdict at a moment past the original one.
+    """
+    console = _console(tmp_path, idle_timeout=dt.timedelta(seconds=2))
+    console.set_password(PASSWORD, actor=CONSOLE)
+    token = console.sign_in(PASSWORD)
+    assert token is not None
+    digest = token_digest(token)
+    issued = console.registry.get_session(digest)
+    assert issued is not None
+
+    time.sleep(1.2)  # past half the window, inside it
+    assert console.session(token) is SessionState.ACTIVE
+    moved = console.registry.get_session(digest)
+    assert moved is not None
+    assert moved.idle_deadline > issued.idle_deadline, (
+        "an accepted request past half the window did not move the idle clock"
+    )
+
+    time.sleep(1.2)  # past the deadline the sign-in itself wrote
+    assert console.clock() > issued.idle_deadline
+    assert console.session(token) is SessionState.ACTIVE, (
+        "the session died at the deadline its own sign-in set, not at the moved one"
+    )
+
+
+def test_a_locked_registry_costs_the_sweep_and_never_the_verdict(
+    tmp_path, monkeypatch
+) -> None:
+    """A prune that meets another writer's lock is the prune's loss, not the request's.
+
+    The gate runs ``session`` on every request, so the two writes it makes — the
+    idle touch (which already tolerates this) and the expired-row sweep (which
+    did not) — must both answer rather than raise: a 500 here would be the gate
+    refusing a valid answer, a sign-in, or the redirect to one, because the table
+    could not be swept.
+    """
+    console = _console(tmp_path, idle_timeout=dt.timedelta(milliseconds=200))
+    console.set_password(PASSWORD, actor=CONSOLE)
+    token = console.sign_in(PASSWORD)
+    assert token is not None
+
+    def locked(_now: dt.datetime) -> int:
+        raise OperationalError(
+            "DELETE FROM console_session", {}, Exception("database is locked")
+        )
+
+    monkeypatch.setattr(console.registry, "prune_expired_sessions", locked)
+    time.sleep(0.3)
+
+    assert console.session(token) is SessionState.STALE, "the verdict, not a raise"
+    assert console.session(None) is SessionState.UNKNOWN
+    fresh = console.sign_in(PASSWORD)
+    assert fresh is not None, "the sign-in path prunes on the way in too"
+    assert console.session(fresh) is SessionState.ACTIVE
+
+
+@pytest.mark.parametrize("mint", ["publish", "refresh"])
+def test_a_local_session_that_cannot_be_published_leaves_no_row(
+    tmp_path, monkeypatch, mint
+) -> None:
+    """A publish that cannot write its file must not leave the row it opened.
+
+    The state directory can be unwritable — the node serves on and its own
+    command line is refused like any other anonymous client, which the node says
+    once in its log — and the keeper's next tick would then mint *another* live
+    row for a file that never appears, for as long as the node runs. The session
+    is ended with the failure, and the failure still reaches the caller.
+    """
+    console = _console(tmp_path)
+    console.set_password(PASSWORD, actor=CONSOLE)
+
+    def no_write(_token: str):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr("clear_record.core.node.publish_local_session", no_write)
+
+    with pytest.raises(OSError):
+        if mint == "publish":
+            publish_local_session(console)
+        else:
+            refresh_local_session(console)
+
+    assert _sessions(console.registry) == 0, "a row for a file that was never written"
 
 
 def test_a_new_session_token_is_unguessable_and_its_digest_is_stable() -> None:

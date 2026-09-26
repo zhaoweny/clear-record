@@ -12,6 +12,7 @@ build cannot read is refused rather than half-written.
 from __future__ import annotations
 
 from click.testing import CliRunner
+from sqlalchemy.exc import OperationalError
 
 from clear_record.cli import cli
 from clear_record.service.auth import ConsoleAuth, SessionState, verify_password
@@ -94,3 +95,63 @@ def test_the_rescue_fails_closed_on_an_unreadable_registry(tmp_path) -> None:
     assert result.exit_code == 1
     assert "cannot read the registry" in _output(result)
     assert broken.read_bytes() == b"this is not a database"
+
+
+def test_the_rescue_states_a_refused_write_instead_of_raising(
+    tmp_path, monkeypatch
+) -> None:
+    """A write the registry refuses is a sentence, like the open's failure.
+
+    The window is real — a running node's write lock, or another surface
+    mid-migration, both held against the driver's busy timeout — and it is the one
+    thing the rescue must not answer with: a traceback, at the moment the operator
+    has no other way in. The set's unit of work is rolled back with the failure,
+    so nothing is half-written either.
+    """
+    _registry(tmp_path)  # the registry the command opens
+
+    def locked(self, password, *, actor):
+        raise OperationalError(
+            "UPDATE console_credential", {}, Exception("database is locked")
+        )
+
+    monkeypatch.setattr(ConsoleAuth, "set_password", locked)
+
+    result = _rescue(tmp_path)
+
+    assert result.exit_code == 1
+    assert "cannot read the registry" in _output(result)
+    assert isinstance(result.exception, SystemExit), "not a traceback"
+    assert _registry(tmp_path).credential() is None
+
+
+def test_the_rescue_states_a_refused_revoke_instead_of_raising(
+    tmp_path, monkeypatch
+) -> None:
+    """The write a *replacement* follows up with gets the same sentence.
+
+    ``revoke_all`` is the half that makes a replacement a rescue — a credential
+    change that left an old device signed in would not be one — and it fails
+    against the same lock. The credential *is* set by then (the sentence names the
+    place and the error, not which half landed), and a retry is what ends the
+    sessions: it reports the credential "replaced" and revokes.
+    """
+    console = ConsoleAuth(_registry(tmp_path))
+    console.set_password(OLD_PASSWORD, actor=CLI)
+    token = console.sign_in(OLD_PASSWORD)
+    assert token is not None
+
+    def locked(self) -> int:
+        raise OperationalError(
+            "DELETE FROM console_session", {}, Exception("database is locked")
+        )
+
+    monkeypatch.setattr(ConsoleAuth, "revoke_all", locked)
+
+    result = _rescue(tmp_path)
+
+    assert result.exit_code == 1
+    assert "cannot read the registry" in _output(result)
+    assert isinstance(result.exception, SystemExit), "not a traceback"
+    assert verify_password(NEW_PASSWORD, _registry(tmp_path).credential())
+    assert ConsoleAuth(_registry(tmp_path)).session(token) is SessionState.ACTIVE

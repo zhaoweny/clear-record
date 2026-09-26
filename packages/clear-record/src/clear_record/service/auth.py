@@ -22,8 +22,10 @@ What is *not* here. No accounts, no usernames and no per-surface authority
 matrix: the trust boundary is the operating-system account — the one subject a
 surface's `actor` word is really about — and an operation that destroys something
 no durable copy can reconstruct is gated at the act, not by a token. What stays
-anonymous is one page and one route (ADR-0033); machine tokens are a sibling
-ticket's half, and this module is what they will sit beside.
+anonymous is the console's one page — the setup route, whose two form posts are
+its own — the liveness route, and the compiled assets under ``/static``
+(ADR-0033); machine tokens are a sibling ticket's half, and this module is what
+they will sit beside.
 
 Where the credential is written. :class:`ConsoleAuth` is the only writer, and it
 writes through :class:`~clear_record.service.store.Registry`, so "the credential
@@ -131,7 +133,10 @@ def verify_password(password: str, encoded: str | None) -> bool:
     same time whatever of it matched. An unparsable value — a version of the
     encoding this build does not know, or a corrupt row — verifies **nothing**:
     a credential nobody can reproduce is not a credential, and refusing is the
-    safe direction.
+    safe direction. ``OverflowError`` is in that set with the rest: a stored
+    ``n`` larger than the derivation can hold is a value this build cannot read,
+    and the one thing a damaged row must never do is take the sign-in page down
+    with it.
     """
     if not encoded:
         return False
@@ -144,7 +149,7 @@ def verify_password(password: str, encoded: str | None) -> bool:
         derived = hashlib.scrypt(
             password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=len(expected)
         )
-    except (ValueError, TypeError, MemoryError):
+    except (ValueError, TypeError, MemoryError, OverflowError):
         return False
     return hmac.compare_digest(derived, expected)
 
@@ -264,7 +269,9 @@ class ConsoleAuth:
 
         The expired rows a registry accumulates are pruned here, on the way in —
         signing in is the one moment a new row is about to be written, so it is
-        where the table is kept from growing without bound.
+        where the table is kept from growing without bound — and best-effort, so
+        a locked registry costs the sweep rather than the sign-in
+        (:meth:`_prune`).
         """
         encoded = self.registry.credential()
         if encoded is None or not verify_password(password, encoded):
@@ -289,7 +296,13 @@ class ConsoleAuth:
         return self._open_session()
 
     def _open_session(self) -> str:
-        """Write one session row and answer with the token that names it."""
+        """Write one session row and answer with the token that names it.
+
+        The expired rows a registry accumulates are swept here too, on the way
+        in — a new row is about to be written, so this is where the table is kept
+        from growing without bound — and best-effort for the reason
+        :meth:`session` states: a lock costs the sweep, never the sign-in.
+        """
         now = self.clock()
         token = new_session_token()
         self.registry.create_session(
@@ -299,8 +312,27 @@ class ConsoleAuth:
             idle_deadline=now + self.policy.idle_timeout,
             absolute_deadline=now + self.policy.absolute_lifetime,
         )
-        self.registry.prune_expired_sessions(now)
+        self._prune(now)
         return token
+
+    def _prune(self, now: _dt.datetime) -> None:
+        """Delete the expired rows, tolerating a registry another writer holds.
+
+        Housekeeping, not an act (:meth:`Registry.prune_expired_sessions`): the
+        rows this would delete are already over — the same test the caller
+        applies — so a **write** that meets the lock another surface holds costs
+        the prune and never the request. The rule is the idle touch's, for the
+        same reason: raising here would turn a valid request into a 500, and the
+        next request writes the same rows away.
+
+        What it cannot do is keep the table from growing while another surface
+        holds the registry for a whole busy timeout; that is a dead row waiting
+        for the next prune, not a refused operator.
+        """
+        try:
+            self.registry.prune_expired_sessions(now)
+        except SQLAlchemyError:
+            pass
 
     def session(self, token: str | None, *, touch: bool = True) -> SessionState:
         """What ``token`` means right now, moving the idle clock when it is live.
@@ -310,7 +342,9 @@ class ConsoleAuth:
         page cannot keep a session alive, and an anonymous request writes nothing.
 
         A stale session is pruned as it is read: the row is over, and leaving it
-        for the next sign-in would keep a dead row in every look-up's way.
+        for the next sign-in would keep a dead row in every look-up's way. The
+        prune is best-effort and the verdict is not (:meth:`_prune`): a read is
+        never refused because the table could not be swept.
 
         **The idle clock is moved lazily, and a busy registry cannot refuse a live
         session.** Two things follow from the gate running this on every request:
@@ -333,7 +367,7 @@ class ConsoleAuth:
             return SessionState.UNKNOWN
         now = self.clock()
         if now >= row.idle_deadline or now >= row.absolute_deadline:
-            self.registry.prune_expired_sessions(now)
+            self._prune(now)
             return SessionState.STALE
         if touch and now + self.policy.idle_timeout / 2 > row.idle_deadline:
             try:
@@ -381,9 +415,27 @@ def publish_local_session(console: ConsoleAuth) -> str:
     Returns the token it wrote. What the file is, who may read it and what a
     stale one means are stated with it
     (:data:`clear_record.core.node.LOCAL_SESSION_FILENAME`).
+
+    **A publish that cannot write leaves no row behind.** The file is the whole
+    point of the local session — a token nothing can read is a credential no
+    client will ever present — so a state directory that refuses the write ends
+    the session it just opened and lets the failure through (the caller's posture
+    is the caller's: :class:`~clear_record.web.app.LocalSessionKeeper` warns once
+    and retries, a startup gives up on the local session and serves on). Without
+    this, a keeper that keeps failing would mint one live row per tick, each held
+    for the idle window, for a file that never appears.
     """
     token = console.open_local_session()
-    node.publish_local_session(token)
+    try:
+        node.publish_local_session(token)
+    except OSError:
+        try:
+            console.sign_out(token)
+        except SQLAlchemyError:
+            # The registry is locked as well: the row lapses on its own clocks,
+            # and the prune is what sweeps it up later.
+            pass
+        raise
     return token
 
 
@@ -394,7 +446,9 @@ def refresh_local_session(console: ConsoleAuth) -> str:
     is in use keeps its session alive through that use, and a session that is
     still live is left exactly as it is — the file is rewritten only when the
     token in it names no live session, so the file's bytes are a fact about the
-    registry rather than a value that changes under a reader.
+    registry rather than a value that changes under a reader. The mint it does
+    need can fail to write (:func:`publish_local_session`), and then it raises
+    with the row it opened already ended.
     """
     token = node.local_session()
     if token is not None and console.session(token, touch=False) is SessionState.ACTIVE:
@@ -420,6 +474,28 @@ def _fail(message: str) -> NoReturn:
     """
     click.echo(message, err=True)
     raise SystemExit(1)
+
+
+def _unusable_registry(exc: BaseException, data_dir: str | None) -> NoReturn:
+    """The one refusal for a registry this command cannot deal with.
+
+    Every direction of :func:`_password`'s registry work answers with this
+    sentence: the open, the credential's *set*, and the revoke a replacement
+    follows it with. What the operator gets is the place and the reason — and
+    never a traceback, which is what a failure in the middle of a rescue must not
+    be. What they do *not* get told is which half of the command landed, because
+    the command does not know and does not have to: a set that committed before a
+    refused revoke is real (the new password proves it when it signs in, and a
+    retry revokes), and a refused set changed nothing at all — its unit of work is
+    rolled back with the failure.
+    """
+    _fail(
+        tr(
+            "cannot read the registry at {path}: {error}",
+            path=data_dir or tr("the default data directory"),
+            error=exc,
+        )
+    )
 
 
 @click.command(
@@ -456,13 +532,7 @@ def _password(data_dir: str | None) -> int:
         # (`RuntimeError`), unreadable on disk (`OSError`) or not a database at
         # all (`SQLAlchemyError`) — is the whole answer: nothing was written, and
         # the operator gets the place and the reason, not a traceback.
-        _fail(
-            tr(
-                "cannot read the registry at {path}: {error}",
-                path=data_dir or tr("the default data directory"),
-                error=exc,
-            )
-        )
+        _unusable_registry(exc, data_dir)
 
     console = ConsoleAuth(registry)
     replacing = console.configured()
@@ -472,9 +542,24 @@ def _password(data_dir: str | None) -> int:
     try:
         console.set_password(password, actor=_CLI)
     except ValueError as exc:
+        # The rule, in the operator's own words — the length, named once
+        # (`require_password`), is the only refusal a *password* can get.
         _fail(str(exc))
+    except SQLAlchemyError as exc:
+        # The write met the registry's own refusal (the lock another surface
+        # holds, a read-only file): nothing was written — the unit of work is
+        # rolled back — and it is stated like the open's failure above rather
+        # than escaping as a traceback (`_unusable_registry`).
+        _unusable_registry(exc, data_dir)
     if replacing:
-        console.revoke_all()
+        try:
+            console.revoke_all()
+        except SQLAlchemyError as exc:
+            # A replacement that could not end the sessions it replaced is not
+            # the rescue it promises: the credential *is* set (the sentence says
+            # the place and the error, not which half landed), and a retry is
+            # what ends them.
+            _unusable_registry(exc, data_dir)
     click.echo(
         tr(
             "the console password is {action} in {path}.",

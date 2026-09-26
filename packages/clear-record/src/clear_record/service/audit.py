@@ -22,9 +22,14 @@ client cannot name itself in the audit record by filling in a body field.
 
 What is recorded. Every mutation of the **registry** — the service's own state —
 and every mutation of a **draft chain**, which is a meeting's file the service
-owns. That is the whole of it, deliberately: what the app writes for itself (the
-setup marker, the external MCP client's config) is a preference, not project
-data, and is not in this record. Mutating store methods are audited by
+owns. One exception inside the registry, named here because the rule sounds like
+it covers it: the credential and session tables' bookkeeping writes — sign-in,
+the idle clock, sign-out, the expired prune — append nothing, because a session
+is not history of the project data and one row per request would bury the record
+that is. The credential's *set* is recorded, because who holds the key is an
+attribution question. What the app writes for itself (the setup marker, the
+external MCP client's config) is a preference, not project data, and is not in
+this record either. Mutating store methods are audited by
 :func:`recorded`; the operations above them — a draft write, a run's start — use
 :func:`refused_call` for the refusals *they* own.
 

@@ -14,14 +14,23 @@ row, the refusal, and the run whose ``origin`` and audit row are the same word.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import sqlite3
-from collections.abc import Callable
+import threading
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from contextlib import closing
 
 import pytest
-from sqlalchemy.exc import IntegrityError as SAIntegrityError
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError as SAIntegrityError, OperationalError
+from sqlalchemy.pool import NullPool
 
+import clear_record.service.store as store_module
+from clear_record.core import diagnostics
 from clear_record.service import (
     ACTORS,
     API,
@@ -29,6 +38,7 @@ from clear_record.service import (
     CONSOLE,
     MCP,
     QUEUE,
+    RUN_IN_FLIGHT,
     RUN_ORIGINS,
     Meeting,
     MeetingAgent,
@@ -459,3 +469,227 @@ def test_a_conditional_write_that_moved_nothing_records_nothing(tmp_path) -> Non
             "run.unreadable",
         }
     ] == [(QUEUE, "run.claim", f"run:{run.id}", "ok")]
+
+
+# --- the record under contention --------------------------------------------- #
+#
+# ADR-0033's promise is a row per mutating call, and the half of it that may
+# never give way is the *call's own outcome*: a refused call answers with the
+# service's refusal, never with a database error from the record of it (which is
+# what an HTTP surface would turn into a 500 where the spec says 409). The shape
+# that puts the two in conflict is the one this store's own write-ahead-log
+# rationale calls ordinary: another surface holding the registry's write lock
+# past the connection's busy timeout.
+
+#: The busy timeout these tests' engines carry. A held lock costs the driver's
+#: five seconds *per wait*, and what is under test is how many waits a call
+#: spends — so the budget is short enough to wait out several times over and
+#: keep the suite quick. The shape is ``test_store``'s
+#: (:func:`test_store._engine_timing_out_box`), with the connection state the
+#: registry's own engine sets.
+_BUSY_TIMEOUT = 0.5
+
+
+def _timing_out_engine(path: Path, timeout: float = _BUSY_TIMEOUT):
+    """An engine like the registry's own, with a busy timeout a test can wait out."""
+    engine = create_engine(
+        URL.create("sqlite", database=str(path)),
+        poolclass=NullPool,
+        connect_args={"timeout": timeout},
+    )
+
+    @event.listens_for(engine, "connect")
+    def _connection_state(dbapi_connection, _record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+        dbapi_connection.execute("PRAGMA recursive_triggers = ON")
+        store_module._write_ahead_log(dbapi_connection)
+
+    return engine
+
+
+def _release(holder: sqlite3.Connection) -> None:
+    """Give the lock back; a connection already released is not an error."""
+    try:
+        holder.rollback()
+        holder.close()
+    except sqlite3.ProgrammingError:  # a second release (the timer's, or ours)
+        pass
+
+
+@contextlib.contextmanager
+def _held_write_lock(
+    registry: Registry, *, released_after: float | None = None
+) -> Iterator[sqlite3.Connection]:
+    """Another surface's write lock, held for the block — or released on a timer.
+
+    ``BEGIN IMMEDIATE`` takes the lock and keeps it; the statement after it
+    writes a name as its own name, so what the connection holds is the lock and
+    nothing else. The connection is made thread-safe because ``released_after``
+    hands the release to a timer, which is the one shape that lets the call below
+    *wait a lock out* instead of meeting it.
+    """
+    holder = sqlite3.connect(str(registry.db_path), timeout=0, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("UPDATE project SET name = name WHERE id = 1")
+    timer = (
+        threading.Timer(released_after, _release, args=(holder,))
+        if released_after is not None
+        else None
+    )
+    if timer is not None:
+        timer.start()
+    try:
+        yield holder
+    finally:
+        if timer is not None:
+            timer.join(timeout=10)
+        _release(holder)
+
+
+def _a_run_in_flight(registry: Registry, tmp_path) -> Meeting:
+    """A meeting with a tape set and a live run: whatever starts next is refused."""
+    meeting = _meeting(registry, tmp_path)
+    registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    registry.create_run(meeting.id, origin=CLI, actor=CONSOLE)
+    return meeting
+
+
+def _lost_rows() -> list[dict]:
+    """Every ``audit.row_lost`` record the node's log holds, oldest first."""
+    try:
+        lines = diagnostics.log_path().read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    return [
+        record
+        for record in (json.loads(line) for line in lines if line.strip())
+        if record.get("event") == "audit.row_lost"
+    ]
+
+
+def test_a_refusal_under_a_held_write_lock_is_still_the_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """The record of a refusal may not replace it: the ``ValueError``, one wait, a stated loss.
+
+    The reproduction: another surface holds the registry's write lock past the
+    busy timeout while a second ``RunManager.start`` is refused for a run already
+    in flight — one of the four refusals the audit docstring names as exactly the
+    rows an audit record exists for. At the base the append paid the busy timeout
+    *inside the failure handler* and let the driver's ``OperationalError`` out as
+    the caller's answer: zero ``failed`` rows, and a 500 at the route whose spec
+    says 409. The caller now keeps the service's own refusal, the append waits
+    the busy timeout at most once (this call has spent none of it: the guard is a
+    read, and the record's log is a log), and the row the registry would not take
+    is stated as ``audit.row_lost`` instead of raised.
+    """
+    monkeypatch.setattr(store_module, "_engine", _timing_out_engine)
+    registry = _registry(tmp_path)
+    meeting = _a_run_in_flight(registry, tmp_path)
+    manager = RunManager(registry, pipeline=lambda *a, **k: None, start_queue=False)
+    before = len(registry.list_audit_events())
+
+    with _held_write_lock(registry):
+        started = time.monotonic()
+        with pytest.raises(ValueError, match=RUN_IN_FLIGHT):
+            manager.start(meeting, origin=CLI, actor=API)
+        waited = time.monotonic() - started
+
+    assert waited < 2 * _BUSY_TIMEOUT, "the append paid the busy timeout twice"
+    assert len(registry.list_audit_events()) == before  # the lock was held throughout
+    assert [
+        (row["actor"], row["action"], row["target"], row["outcome"])
+        for row in _lost_rows()
+    ] == [(API, "run.enqueue", f"meeting:{meeting.id}", "failed")]
+
+
+def test_a_refusals_row_lands_when_the_lock_lets_go_inside_the_budget(
+    tmp_path, monkeypatch
+) -> None:
+    """Tolerating the lock is not giving up the row: a wait inside the budget still writes it.
+
+    The lock is released while the append is waiting for it — the ordinary shape
+    of two surfaces sharing one registry — so the ``failed`` row lands and
+    nothing was lost to state. Without this half, "tolerate a locked registry"
+    could be read as "never write the row under contention", which is a weaker
+    record than the one ADR-0033 asks for.
+    """
+    monkeypatch.setattr(store_module, "_engine", _timing_out_engine)
+    registry = _registry(tmp_path)
+    meeting = _a_run_in_flight(registry, tmp_path)
+    manager = RunManager(registry, pipeline=lambda *a, **k: None, start_queue=False)
+    before = len(registry.list_audit_events())
+
+    with _held_write_lock(registry, released_after=_BUSY_TIMEOUT / 5):
+        with pytest.raises(ValueError, match=RUN_IN_FLIGHT):
+            manager.start(meeting, origin=CLI, actor=API)
+
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in registry.list_audit_events()[before:]
+    ] == [(API, "run.enqueue", f"meeting:{meeting.id}", "failed")]
+    assert _lost_rows() == []
+
+
+def test_a_store_refusal_under_a_held_write_lock_is_still_the_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """The same line one layer down: the policy's ``ValueError``, not the driver's error.
+
+    A store method's own policy answer (here the status vocabulary) is raised
+    before any write, so the lock costs nothing until the *record* of the refusal
+    is attempted. The refusal is the caller's answer either way (ADR-0033's
+    ``failed`` row belongs to the record, not to the answer), and the row it
+    could not write is stated.
+    """
+    monkeypatch.setattr(store_module, "_engine", _timing_out_engine)
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor=CONSOLE)
+
+    with _held_write_lock(registry):
+        started = time.monotonic()
+        with pytest.raises(ValueError, match="status must be one of"):
+            registry.add_term("ops", "Falcon", status="not-a-status", actor=CONSOLE)
+        waited = time.monotonic() - started
+
+    assert waited < 2 * _BUSY_TIMEOUT
+    assert _rows(registry, "term.add") == []
+    assert [
+        (row["actor"], row["action"], row["target"], row["outcome"])
+        for row in _lost_rows()
+    ] == [(CONSOLE, "term.add", "term:Falcon", "failed")]
+
+
+def test_a_failure_the_registry_itself_refused_costs_one_busy_timeout(
+    tmp_path, monkeypatch
+) -> None:
+    """A write the registry refused is not retried on the record's behalf.
+
+    The mutation's own insert waited the busy timeout out and was refused; an
+    append then would pay that same timeout again for the same refusal, which is
+    the double wait the base performed (two budgets, one call). The budget is
+    spent once, and the refusal the loss *states* is the call's own — the
+    distinguishing evidence, since a second attempt would have failed on the
+    audit row's insert and stated that instead. The budget here is one second so
+    that the two shapes are a second apart rather than half of one.
+    """
+    monkeypatch.setattr(
+        store_module, "_engine", lambda path: _timing_out_engine(path, 1.0)
+    )
+    registry = _registry(tmp_path)
+
+    with _held_write_lock(registry):
+        started = time.monotonic()
+        with pytest.raises(OperationalError):
+            registry.create_project("Second", actor=CONSOLE)
+        waited = time.monotonic() - started
+
+    assert waited < 1.5, "the busy timeout was paid twice for one call"
+    assert _rows(registry, "project.create") == []
+    lost = _lost_rows()
+    assert [
+        (row["actor"], row["action"], row["target"], row["outcome"]) for row in lost
+    ] == [(CONSOLE, "project.create", "project:Second", "failed")]
+    assert "audit_event" not in lost[0]["reason"], (
+        "the stated loss names a second attempt at the row, not the call's own refusal"
+    )

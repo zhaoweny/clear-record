@@ -14,11 +14,23 @@ callers.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from _console import signed_in
-from clear_record.service import API, CONSOLE, MCP, MeetingAgent, Registry, RunManager
+from clear_record.service import (
+    API,
+    CLI,
+    CONSOLE,
+    MCP,
+    RUN_IN_FLIGHT,
+    MeetingAgent,
+    Registry,
+    RunManager,
+)
 from clear_record.web.app import create_app
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 #: The address the console's own client dials (see ``test_web_api``): a client on
 #: the node's machine, which is what a route taking a local path requires.
@@ -159,3 +171,66 @@ def test_a_console_acceptance_records_console_as_the_reviewer(app: App) -> None:
         (CONSOLE, "term.add", "term:Falcon", "ok"),
         (CONSOLE, "draft.accept", f"draft:{draft.draft_id}", "ok"),
     ]
+
+
+def test_a_run_refusal_whose_row_the_registry_refused_answers_409(
+    app: App, monkeypatch
+) -> None:
+    """The route answers the refusal's own status, never the record's failure.
+
+    A second submission for a meeting with a live run is the service's refusal,
+    and ``/api/v1/`` maps it to 409 (``RUN_IN_FLIGHT``, the sentence the index and
+    the guard both answer with). The *record* of that refusal is a write of its
+    own — the row ADR-0033 exists for — and the registry can refuse it, which is
+    the shape ``tests/service/test_audit.py`` holds a real write lock to drive.
+    The injection here is at that seam, where the route's behaviour depends on
+    it: the append's ``OperationalError`` escapes ``runs.start``, and the route —
+    whose ``except ValueError`` maps the service's own refusals — answers 500
+    where the spec says 409.
+
+    The refusal has to *reach* the service for this surface to be answerable, so
+    the race the route's own 409 branch exists for is what the submission is
+    given: the read that answers the pre-check happened before the competing
+    client's run landed, so it sees nothing, and every read after it sees the
+    live run — the guard inside ``runs.start`` and the handler's re-read of the
+    state (the shape ``test_web_api``'s ``test_a_refusal_that_raced_the_pre_check
+    _is_409`` and ``test_runs``' own guard tests use: the *read* is the early
+    one). The row the append would have written is the service's half and is
+    asserted there (one stated ``audit.row_lost``); what this surface owes is the
+    status.
+    """
+    workspace = app.registry.db_path.parent / "ws"
+    workspace.mkdir(exist_ok=True)
+    app.registry.create_project("Ops", actor=CONSOLE)
+    meeting = app.registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(workspace), actor=CONSOLE
+    )
+    app.registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    app.registry.create_run(meeting.id, origin=CLI, actor=CONSOLE)
+
+    live = app.registry.active_run_for_meeting
+    reads: list[int] = []
+
+    def the_pre_checks_read_came_first(meeting_id: int):
+        reads.append(meeting_id)
+        return None if len(reads) == 1 else live(meeting_id)
+
+    def a_registry_that_refuses_the_row(*_args, **_kwargs) -> None:
+        raise OperationalError(
+            "INSERT INTO audit_event",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(
+        app.registry, "active_run_for_meeting", the_pre_checks_read_came_first
+    )
+    monkeypatch.setattr(app.registry, "record_audit", a_registry_that_refuses_the_row)
+
+    res = app.client.post(
+        f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "cli"}
+    )
+
+    assert reads, "the pre-check never read the meeting's live run"
+    assert res.status_code == 409
+    assert res.json()["detail"] == RUN_IN_FLIGHT

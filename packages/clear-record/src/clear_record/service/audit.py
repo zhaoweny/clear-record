@@ -62,6 +62,24 @@ would say only that someone asked for something that does not exist. That line i
 what :func:`refused_call` states at each entry point, as the exception types it
 records.
 
+**The row is not worth the caller's outcome.** The append is a write of its own,
+so the registry can refuse it — another surface holds its write lock past the
+driver's busy timeout, or the file cannot be written at all — and every caller
+here keeps what the *call* answered: a refused call still raises its own refusal
+(a database error from the record of it is not the service's answer, and it is
+what the HTTP surfaces would have answered a bare 500 for), and a call that
+returned still returns. The refusal is therefore tolerated, as
+:func:`~clear_record.service.store._write_ahead_log` and the token's touch
+tolerate it, and the row it costs is **stated** rather than raised: the node's log
+carries one ``audit.row_lost`` record (:data:`ROW_LOST`, component ``audit``) with
+the actor, action, target and outcome the row would have carried and the refusal
+that stopped it. That name is the whole of the narrowing: "one row per mutating
+call" holds *unless the registry will not take the row*, and where that happens a
+reader meets the loss in the log. The attempt is bounded — the connection's busy
+timeout, once
+(:meth:`~clear_record.service.store.Registry.record_refusal` is where the failure
+path spends that budget rather than paying it twice).
+
 That the row is not in the same transaction as the write is the price of
 recording refusals at all, and it is the honest shape: the record is the
 service's account of its calls, not a second copy of the write-ahead log. The
@@ -84,6 +102,7 @@ import inspect
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
+from clear_record.core.diagnostics import log_event
 from clear_record.service.lifecycle import ACTORS
 
 #: How a call ended, as the record states it. Two values, and no third: a call
@@ -93,6 +112,13 @@ FAILED = "failed"
 
 #: What the row's actor did, as a term the vocabulary accepts.
 OUTCOMES: tuple[str, ...] = (OK, FAILED)
+
+#: The log event that states a row the record owed and did not get. The record's
+#: own sentence — "one row per mutating call" — is narrower than it sounds by
+#: exactly this: a registry that refuses the append (a lock, a full disk) costs
+#: the row, and this is the name under which the loss is written to the node's
+#: log (component ``audit``) so it cannot pass unremarked.
+ROW_LOST = "audit.row_lost"
 
 #: A target rule: a format string over the call's bound arguments (``"{slug}"``),
 #: or a function of them. Read off the arguments rather than the result so that a
@@ -123,6 +149,41 @@ def require_actor(actor: object) -> str:
             + ", ".join(ACTORS)
         )
     return actor
+
+
+def row_lost(
+    actor: str, action: str, target: str, outcome: str, *, reason: str
+) -> None:
+    """State — in the node's log — a row the record owed and did not write.
+
+    The one thing this module does *not* promise is that every row lands: the row
+    is a write of its own, and the registry can refuse it (a lock another surface
+    holds past the busy timeout, a full disk). Raising the refusal would put the
+    *record* between a caller and its outcome — a refused call would report a
+    database error instead of the service's own answer — so the refusal is
+    tolerated, and what must not be tolerated is the loss going unremarked. This
+    is where it is remarked: one ``warning`` record, event :data:`ROW_LOST`,
+    component ``audit``, carrying the fields the row *would* have carried
+    (``actor``, ``action``, ``target``, ``outcome``) and ``reason``, the
+    registry's own refusal. The fields are this module's vocabulary rather than a
+    sentence of its own, so a reader of the log can line the record up with the
+    rows around it and with the call it belongs to.
+
+    The sink is :func:`clear_record.core.diagnostics.log_event`, so the record
+    lands with the node's other structured records (``$CR_LOG_DIR``, rotated and
+    bounded) and an unwritable sink is itself swallowed: stating a loss must never
+    become a second failure.
+    """
+    log_event(
+        "warning",
+        "audit",
+        ROW_LOST,
+        actor=actor,
+        action=action,
+        target=target,
+        outcome=outcome,
+        reason=reason,
+    )
 
 
 def subject(kind: str, *fields: str) -> Callable[[Mapping[str, Any]], str]:
@@ -235,8 +296,11 @@ def recorded(
                 # A key miss is a lookup that found nothing, not a decision the
                 # service made: no subject to name, no row (see the module doc).
                 raise
-            except BaseException:
-                self.record_audit(actor, action, _target(target, call), outcome=FAILED)
+            except BaseException as exc:
+                # The row is the record's, and the refusal is the caller's: the
+                # append cannot replace what the call answered (see
+                # `Registry.record_refusal`).
+                self.record_refusal(actor, action, _target(target, call), cause=exc)
                 raise
             if conditional and _no_row(result):
                 # The conditional's own answer: nothing moved, so there is no
@@ -280,8 +344,8 @@ def refused_call(
     """
     try:
         yield
-    except refusals:
-        registry.record_audit(actor, action, target, outcome=FAILED)
+    except refusals as exc:
+        registry.record_refusal(actor, action, target, cause=exc)
         raise
 
 
@@ -289,9 +353,11 @@ __all__ = [
     "FAILED",
     "OK",
     "OUTCOMES",
+    "ROW_LOST",
     "Target",
     "recorded",
     "refused_call",
     "require_actor",
+    "row_lost",
     "subject",
 ]

@@ -297,6 +297,20 @@ def _write_ahead_log(dbapi_connection: Any) -> None:
         return
 
 
+def _the_registry_refused(exc: BaseException) -> bool:
+    """Whether ``exc`` is the registry's own refusal to make a write at all.
+
+    ``OperationalError`` is what the driver raises when a write cannot be made:
+    another surface holds the write lock past the connection's busy timeout, or
+    the file cannot be written (a full disk, an I/O error). It is the failure
+    :func:`_write_ahead_log` and the token's touch already tolerate, and it is
+    **not** a decision any code of this service made — which is what makes it the
+    one failure whose retry buys nothing: the wait it cost was the driver's busy
+    timeout, and a second attempt pays that timeout again for the same refusal.
+    """
+    return isinstance(exc, OperationalError)
+
+
 def _engine(db_path: Path) -> Engine:
     """The engine one registry reads and writes through.
 
@@ -817,6 +831,21 @@ class Registry:
         An actor outside the vocabulary is refused *before* the row is attempted:
         the word a surface supplies is a value the rest of the service reads, not
         a free-form label.
+
+        **A row the registry will not take is stated, not raised.** The append is
+        a write like any other, so the registry can refuse it: another surface
+        holds the write lock past the connection's busy timeout (the shape
+        :func:`_write_ahead_log` and :meth:`touch_machine_token` already
+        tolerate), or the file cannot be written at all. Raising would make the
+        *record* the caller's answer — a refused call would report a database
+        error instead of its own refusal, and a call that returned would report a
+        failure it did not have — so the refusal is tolerated here: the row is
+        lost, and the loss is stated in the node's log as
+        :data:`~clear_record.service.audit.ROW_LOST` (component ``audit``, with
+        the actor, action, target and outcome the row would have carried). The
+        attempt is **bounded**: it waits the connection's busy timeout at most,
+        once, and :meth:`record_refusal` is where the failure path spends that
+        budget rather than spending it twice.
         """
         actor = audit.require_actor(actor)
         if outcome not in audit.OUTCOMES:
@@ -824,16 +853,55 @@ class Registry:
                 f"unknown audit outcome {outcome!r}; expected one of "
                 + ", ".join(audit.OUTCOMES)
             )
-        with self._session() as session:
-            session.add(
-                entities.AuditEvent(
-                    at=_now(),
-                    actor=actor,
-                    action=action,
-                    target=target,
-                    outcome=outcome,
+        try:
+            with self._session() as session:
+                session.add(
+                    entities.AuditEvent(
+                        at=_now(),
+                        actor=actor,
+                        action=action,
+                        target=target,
+                        outcome=outcome,
+                    )
                 )
-            )
+        except OperationalError as exc:
+            # The registry refused the row; the caller keeps its own outcome and
+            # the loss is named where a reader of the log meets it.
+            audit.row_lost(actor, action, target, outcome, reason=str(exc))
+
+    def record_refusal(
+        self, actor: str, action: str, target: str, *, cause: BaseException
+    ) -> None:
+        """Append the ``failed`` row a refused call owes — never the refusal itself.
+
+        The append the two failure handlers make
+        (:func:`~clear_record.service.audit.recorded`'s and
+        :func:`~clear_record.service.audit.refused_call`), which hold the refusal
+        the caller is owed: **nothing here may change it**, so the record of it is
+        written by this method rather than inline at each site.
+
+        - :meth:`record_audit` tolerates the registry's own refusal and states it
+          in the node's log (see its docstring), so the ordinary contention costs
+          the row and never the refusal;
+        - the append is **not attempted** when ``cause`` — the refusal the call
+          itself raised — is the registry refusing a write of its own
+          (:func:`_the_registry_refused`). That write already waited out the
+          driver's busy timeout; a second attempt would pay the same timeout for
+          the same refusal, so the budget is spent once and the loss is stated;
+        - anything else the append raises — a value the record refuses, or a
+          surprise — is caught here and stated, so no failure of the *record* can
+          replace the call's outcome.
+
+        ``KeyError`` never arrives: both callers let a key miss pass unrecorded,
+        there being no subject to name for it (see the audit module's doc).
+        """
+        if _the_registry_refused(cause):
+            audit.row_lost(actor, action, target, audit.FAILED, reason=str(cause))
+            return
+        try:
+            self.record_audit(actor, action, target, outcome=audit.FAILED)
+        except Exception as exc:  # a value the record refuses, or a surprise
+            audit.row_lost(actor, action, target, audit.FAILED, reason=str(exc))
 
     def list_audit_events(self, *, limit: int | None = None) -> list[AuditEvent]:
         """The audit record, oldest row first — the order it was written in."""

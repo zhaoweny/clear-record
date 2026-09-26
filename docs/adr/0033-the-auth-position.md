@@ -270,15 +270,17 @@ verbatim answers and the direction they answer are the
   the credential in the registry itself, with no session, no browser and no
   running node, and fails closed on a registry it cannot read. Replacing a
   credential ends every session the old one opened.
-- [FACT] **A non-loopback bind with no declared trust source refuses to start**
-  (`CR_TRUSTED_HOSTS` or `CR_TRUSTED_PROXIES` is the declaration;
+- [FACT] **A non-loopback bind with no named trust source refuses to start**
+  (`CR_TRUSTED_HOSTS` is the declaration the guard's own `Host` check reads, so it
+  is the one the startup refusal asks for — a declared `CR_TRUSTED_PROXIES` peer
+  makes no `Host` trustable and is deliberately not an admission;
   `--tailscale` trusts its own resolved name), because the request guard would
   answer `403` to every request such a bind received. The loopback default is
   unchanged.
 - [FACT] What is **not** built, and stays with its own tickets: the trusted-proxy
   half — the console's own code reads no `X-Forwarded-*` header, and what is left
-  is narrowing the header to **declared** peers (`CR_TRUSTED_PROXIES` is the
-  declaration the startup check reads, not yet the header's gate; uvicorn's own
+  is narrowing the header to **declared** peers (`CR_TRUSTED_PROXIES` is the peer
+  declaration that change will honour, and nothing consults it yet; uvicorn's own
   default already believes `X-Forwarded-Proto` from any loopback peer), machine
   tokens for scripts, and the `/web` + `/api/v1` re-root. The credential's *act* — a
   fresh password at a destructive operation — still has no member of its class to

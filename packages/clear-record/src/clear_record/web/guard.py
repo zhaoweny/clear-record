@@ -24,11 +24,15 @@ Trusted hosts are the loopback names — ``127.0.0.1``, ``::1``, ``localhost``
 escape hatch for a console reached through a reverse proxy: the proxy's public
 hostname (and the name the browser puts in ``Origin``) goes there.
 
-A second declaration lives here too and is **not** a check: the peers in
-``CR_TRUSTED_PROXIES``, whose forwarded headers the console may honour. Nothing
-reads ``X-Forwarded-*`` today (ADR-0021's open item, the trusted-proxy change);
-what the guard answers is whether the operator declared anything at all, which is
-what the startup refusal asks of a non-loopback bind.
+A second list lives here too and is **not** a check: the peers in
+``CR_TRUSTED_PROXIES``, whose forwarded headers the console may honour. The
+console's own code reads no ``X-Forwarded-*`` header today (ADR-0021's open item,
+the trusted-proxy change) — the server under it, uvicorn, does rewrite the scheme
+from a **loopback** peer's ``X-Forwarded-Proto`` by default, which is the shape
+that change narrows — so nothing consults this list yet. What admits a
+non-loopback bind is a hostname the guard will actually trust
+(:func:`names_a_trusted_host`), because the startup refusal exists to refuse a
+bind that would answer ``403`` to every request it received.
 
 No domain logic lives here and nothing is stored; the guard is a pure function
 of the request headers and the configured host set.
@@ -50,12 +54,14 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 TRUSTED_HOSTS_ENV = "CR_TRUSTED_HOSTS"
 
 #: Comma-separated peers whose forwarded headers the console may honour. Empty by
-#: default. **Declared, not yet honoured**: no ``X-Forwarded-*`` header is read
-#: today (ADR-0021's open item; the trusted-proxy change is what reads a declared
-#: peer's headers and lets them drive the session cookie's scheme and the
-#: console's absolute URLs). What *is* read from it now is the declaration
-#: itself: a console that binds beyond loopback has to say how it is reached, and
-#: naming the proxy that fronts it is one of the ways to say so.
+#: default. **Declared, not yet honoured**: the console's own code reads no
+#: ``X-Forwarded-*`` header (ADR-0021's open item; the trusted-proxy change is
+#: what reads a declared peer's headers and lets them drive the session cookie's
+#: scheme and the console's absolute URLs). The server under the console does
+#: rewrite the scheme from a **loopback** peer's ``X-Forwarded-Proto`` by default,
+#: which is the shape that change narrows. Nothing consults this list yet, and it
+#: is deliberately **not** a trust source for the ``Host`` check: the name a proxy
+#: forwards still has to be in :data:`TRUSTED_HOSTS_ENV`.
 TRUSTED_PROXIES_ENV = "CR_TRUSTED_PROXIES"
 
 _LOOPBACK_HINT = "127.0.0.1, localhost, ::1 or a name in CR_TRUSTED_HOSTS"
@@ -122,25 +128,31 @@ def trusted_proxies(env: Mapping[str, str] | None = None) -> frozenset[str]:
     """The peers declared in ``CR_TRUSTED_PROXIES`` (empty when unset).
 
     Normalized the way the trusted hosts are — a bare address or hostname, ports
-    and brackets stripped — so one spelling serves both the declaration the
-    startup check reads and the peer comparison the trusted-proxy change will
-    make. Nothing reads a forwarded header from these peers yet.
+    and brackets stripped — so one spelling serves both this declaration and the
+    peer comparison the trusted-proxy change will make. Nothing reads a forwarded
+    header from these peers yet, and this list is **not** consulted by the
+    ``Host`` check (see :func:`names_a_trusted_host`).
     """
     source = os.environ if env is None else env
     return normalize_hosts(source.get(TRUSTED_PROXIES_ENV, "").split(","))
 
 
-def has_declared_trust(env: Mapping[str, str] | None = None) -> bool:
-    """Whether the operator declared how a not-loopback console is reached.
+def names_a_trusted_host(env: Mapping[str, str] | None = None) -> bool:
+    """Whether the operator named a host this console will answer to.
 
-    Two declarations count, and both are the operator's own: a hostname the
-    console answers to (:data:`TRUSTED_HOSTS_ENV`) and a peer whose forwarded
-    headers it may honour (:data:`TRUSTED_PROXIES_ENV`). The startup refusal asks
-    this of a non-loopback bind, because without one of them the guard below
-    would answer ``403`` to every request the console received: it trusts
-    loopback and what the operator named, and nothing else.
+    The one declaration a not-loopback bind needs, because it is the one the
+    ``Host`` check below reads: a name in :data:`TRUSTED_HOSTS_ENV`. A declared
+    proxy peer (:data:`TRUSTED_PROXIES_ENV`) is *not* one — the guard answers
+    ``403`` to any ``Host`` that is neither loopback nor named, whatever peer
+    forwarded the request — so a bind admitted on the proxy alone would serve
+    nobody, which is exactly what the startup refusal exists to prevent.
+
+    The startup refusal asks this of a non-loopback bind; ``--tailscale`` does
+    not, because it resolves the tailnet name and passes it to
+    :func:`clear_record.web.app.create_app` in-process (and refuses a
+    non-loopback bind on its own).
     """
-    return bool(trusted_extra_hosts(env) or trusted_proxies(env))
+    return bool(trusted_extra_hosts(env))
 
 
 def is_trusted(name: str | None, extra: frozenset[str]) -> bool:

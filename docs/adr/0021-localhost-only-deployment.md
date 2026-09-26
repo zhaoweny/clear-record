@@ -9,7 +9,7 @@ in-app auth position is decided, and **its build has landed** (the auth gate of
 `/health` the anonymous surface). This ADR's "ships no authentication" clause is
 superseded by that decision and by that code; the ingress posture (the
 operator's reverse proxy is the only ingress) stands, and its "the bind stays
-localhost-only" reading is now **enforced**: a non-loopback bind with no declared
+localhost-only" reading is now **enforced**: a non-loopback bind with no named
 trust source refuses to start.
 
 ## Context
@@ -39,7 +39,8 @@ trust source refuses to start.
   **for now**. Option (b) — in-app LAN auth — is **deferred, not rejected**; the
   proxy is where auth lives today. *(Superseded 2026-09-26 by
   [ADR-0033](0033-the-auth-position.md): the console now carries one credential
-  and its own sessions, and a bind past loopback needs a declared trust source.
+  and its own sessions, and a bind past loopback needs a named trust source
+  (`CR_TRUSTED_HOSTS`; a declared proxy peer is not one).
   The loopback bind stays the default and the proxy stays the ingress.)*
 - [DECISION] **Remote access and authentication are the operator's reverse
   proxy** (nginx, Caddy, Tailscale, …). The app is the backend behind it and
@@ -56,14 +57,16 @@ trust source refuses to start.
   was to accept forwarded headers from a declared proxy, with a **quick path for
   Tailscale**: `--tailscale` sets the proxy up itself, so it pre-trusts that hop
   instead of asking the operator to declare it. What is true today, scoped: the
-  console's own code reads and honours **no** `X-Forwarded-*` header, while
-  `CR_TRUSTED_PROXIES` is read as a **declaration** by the auth gate's startup
-  check (§ADR-0033) — naming a proxy is one way a non-loopback bind is allowed to
-  start. (The server under the console, uvicorn, does rewrite the scheme from a
-  *loopback* peer's `X-Forwarded-Proto` by default, which is the shape this item
-  narrows.) Honouring a declared peer's headers is this item's, so trusting
-  forwarded headers from *anything else* remains a risk to the request guard; the
-  bind stays localhost-only, and the UI's relative URLs mean nothing is lost by
+  console's own code reads and honours **no** `X-Forwarded-*` header, and
+  `CR_TRUSTED_PROXIES` is read as the **peer declaration** this item will honour —
+  it is deliberately *not* what admits a non-loopback bind, because the auth
+  gate's startup check reads `CR_TRUSTED_HOSTS` (the one declaration the guard's
+  own `Host` check consults, and a proxy peer is not one). (The server under the
+  console, uvicorn, does rewrite the scheme from a *loopback* peer's
+  `X-Forwarded-Proto` by default, which is the shape this item narrows.) Honouring
+  a declared peer's headers is this item's, so trusting forwarded headers from
+  *anything else* remains a risk to the request guard; the bind is loopback by
+  default, and the UI's relative URLs mean nothing is lost by
   refusing. Revisit when a proxy deployment
   genuinely needs the client's scheme or host. *(Direction 2026-09-26:
   [ADR-0033](0033-the-auth-position.md) puts trusted proxies in the auth build's

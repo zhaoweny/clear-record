@@ -221,20 +221,30 @@ step, and needs no session, no browser and no running node. Replacing a credenti
 ends every session the old one opened, and a registry it cannot read is refused
 rather than half-written.
 
-**A bind past loopback needs a declared trust source.** A non-loopback `--host`
-with nothing declared refuses to start, with a message naming the four ways
-forward:
+**A bind past loopback needs a name the guard trusts.** The guard answers `403`
+to a `Host` that is neither loopback nor a name in `CR_TRUSTED_HOSTS`, so a
+non-loopback `--host` with none declared refuses to start — before a port is
+taken — with a message naming the ways forward:
 
 ```
 refusing to bind '0.0.0.0': the request guard answers 403 to any Host but
-loopback, and nothing declares how this console is reached, so it would serve
-nobody.
+loopback or a name in CR_TRUSTED_HOSTS, and none is named, so this console would
+serve nobody.
   Ways forward:
     - keep the loopback bind (the default) and let your reverse proxy be the ingress: drop --host
     - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>
-    - declare the reverse proxy that fronts it: CR_TRUSTED_PROXIES=<peer address>
+    - name the address your own command line and tray dial as well, so they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>
     - let Tailscale Serve front it: --tailscale
+  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the
+  forwarded-header declaration — the name it forwards still has to be in
+  CR_TRUSTED_HOSTS.
 ```
+
+`CR_TRUSTED_PROXIES` is a declaration too, and deliberately **not** a trust
+source: it names the peer whose forwarded headers the trusted-proxy change will
+honour (§6), and it makes no `Host` trustable today — which is why admitting a
+bind on the peer alone would start a console that refuses every request, the very
+thing this refusal exists to prevent.
 
 **The node's own machine.** A surface running as the same operating-system user
 as the node — the command line first — is inside the boundary this gate defends
@@ -250,8 +260,10 @@ refused exactly like any other dead session. Labelled machine tokens are the
 scripting story of their own, and are not built yet.
 
 The loopback default is unaffected: `clear-record serve` with no `--host` always
-starts. `CR_TRUSTED_HOSTS` and `CR_TRUSTED_PROXIES` are the two declarations; §6
-says exactly what is honoured from the second one today.
+starts. `CR_TRUSTED_HOSTS` names the hosts the console answers to (the one
+declaration the guard's own check reads); `CR_TRUSTED_PROXIES` names the peers
+whose forwarded headers the trusted-proxy change will honour, and §6 says exactly
+what is read from it today.
 
 ## 2. The request guard (on by default)
 
@@ -659,22 +671,26 @@ cheap (`docs/architecture.md` §8).
 - **Per-user accounts, RBAC, and machine tokens.** The console has **one**
   credential and no usernames (ADR-0033), and the machine API carries no bearer
   token yet — what exists is: the salted hash in the registry, the human sessions
-  and their two windows, the `/setup` + `/health` anonymous surface, and the
-  rescue command (§1). A token for scripts, per-project authorization, and an
-  approvals ceremony are all deferred, not rejected; the rule they will meet is
+  and their two windows, the `/setup` + `/health` + `/static` anonymous surface,
+  and the rescue command (§1). A token for scripts, per-project authorization, and
+  an approvals ceremony are all deferred, not rejected; the rule they will meet is
   ADR-0033's — a credential alone may not destroy something no durable copy can
   reconstruct.
 - **A published container image.** You build it, whisper.cpp and all.
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
   Flatpak is the desktop bundle (ADR-0015), not the node.
-- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 — deferred, not built: no
-  code reads a forwarded header yet, so a proxied request is judged by the socket
-  it arrived on and the session cookie follows *that* scheme. What `CR_TRUSTED_PROXIES`
-  does today is the declaration half — naming the peer that fronts the console is
-  one of the ways a non-loopback bind is allowed to start (§1) — while honouring
-  the headers from exactly those peers is the trusted-proxy change's. The UI uses
-  relative URLs, so a proxy that terminates TLS does not need them meanwhile.
+- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 — deferred, not built: the
+  console's own code reads no forwarded header, so a proxied request is judged by
+  the socket it arrived on and the scheme the server under the console reports.
+  That server, uvicorn, already rewrites the scheme from a **loopback** peer's
+  `X-Forwarded-Proto` by default — which is what makes a proxied console's
+  session cookie `Secure` today, and the shape the trusted-proxy change narrows.
+  `CR_TRUSTED_PROXIES` is the declaration that change will honour: it names the
+  peer whose headers may be believed, and it is not a trust source now (§1), so
+  the name a proxy forwards still belongs in `CR_TRUSTED_HOSTS`. Honouring the
+  headers from exactly those peers is what is left to build; the UI uses relative
+  URLs, so a proxy that terminates TLS does not need them meanwhile.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
 
@@ -684,7 +700,10 @@ cheap (`docs/architecture.md` §8).
 - [ADR-0021](adr/0021-localhost-only-deployment.md) — the decision.
 - [ADR-0033](adr/0033-the-auth-position.md) — the credential, the sessions, and
   what the auth position does *not* build.
-- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — localhost-only by
-  default; its "no auth" note is superseded by ADR-0033.
+- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — the console and the
+  `serve` command ship in the single dist, behind the `[web]` extra. The
+  loopback-only, no-auth posture is
+  [ADR-0021](adr/0021-localhost-only-deployment.md)'s (superseded in part by
+  ADR-0033).
 - [Research: clear-record as a service](research/2026-09-15-clear-record-as-a-service.md)
   — systemd/container/Flatpak/launchd, the auth options, and state durability.

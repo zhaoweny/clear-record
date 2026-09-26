@@ -209,7 +209,7 @@ def test_serve_supervise_ends_when_the_node_is_asked_to_stop(
     assert runs == [1], "an asked stop is not restarted"
 
 
-# --- the bind's declared trust (ADR-0033) ------------------------------------ #
+# --- the bind's named trust (ADR-0033) --------------------------------------- #
 
 
 def _started(monkeypatch, argv: list[str], *, env: dict[str, str] | None = None):
@@ -273,15 +273,24 @@ def test_a_declared_hostname_lets_the_bind_start(monkeypatch) -> None:
     assert captured["host"] == "192.168.1.5"
 
 
-def test_a_declared_proxy_is_a_trust_source_too(monkeypatch) -> None:
-    """The knob ADR-0021 documents: declaring the peer is declaring the trust."""
+def test_a_declared_proxy_alone_does_not_admit_the_bind(monkeypatch) -> None:
+    """A peer declaration is not a trustable name, so it is not an admission.
+
+    ``CR_TRUSTED_PROXIES`` is the forwarded-header declaration the trusted-proxy
+    change honours; the guard's ``Host`` check never consults it, so a bind
+    admitted on the peer alone would start and then answer ``403`` to every
+    request it received — through the proxy too, unless the proxy forwards a Host
+    the guard trusts, which is the proxy's configuration and not the console's.
+    The refusal names the declaration that is actually missing instead.
+    """
     monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
     monkeypatch.setenv("CR_TRUSTED_PROXIES", "10.0.0.7")
 
     result, captured = _started(monkeypatch, ["serve", "--host", "192.168.1.5"])
 
-    assert result.exit_code == 0, _output(result)
-    assert captured["host"] == "192.168.1.5"
+    assert result.exit_code == 1
+    assert captured == {}, "a peer declaration admitted a bind the guard would refuse"
+    assert "CR_TRUSTED_HOSTS" in _output(result)
 
 
 def test_the_loopback_default_still_starts(monkeypatch) -> None:

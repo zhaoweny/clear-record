@@ -48,6 +48,7 @@ import hashlib
 import hmac
 import secrets
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 import click
@@ -476,23 +477,40 @@ def _fail(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def _unusable_registry(exc: BaseException, data_dir: str | None) -> NoReturn:
-    """The one refusal for a registry this command cannot deal with.
+def _unusable_registry(
+    exc: BaseException, path: str | Path, *, writing: bool = False
+) -> NoReturn:
+    """The refusal for a registry this command cannot deal with, in two frames.
 
-    Every direction of :func:`_password`'s registry work answers with this
-    sentence: the open, the credential's *set*, and the revoke a replacement
-    follows it with. What the operator gets is the place and the reason — and
-    never a traceback, which is what a failure in the middle of a rescue must not
-    be. What they do *not* get told is which half of the command landed, because
-    the command does not know and does not have to: a set that committed before a
-    refused revoke is real (the new password proves it when it signs in, and a
-    retry revokes), and a refused set changed nothing at all — its unit of work is
-    rolled back with the failure.
+    The **read** frame belongs to the open, and only to the open: the file could
+    not be read at all, so nothing was written. The **write** frame belongs to the
+    *set* and to the revoke a replacement follows up with: the registry opened,
+    and the write the rescue needs met its own refusal (the lock another surface
+    holds, a read-only file). A frame that claimed the other's failure would
+    misdirect the operator — "cannot read" over a failed *write* sends them to
+    look at the file's readability, which is not what went wrong.
+
+    Both name the path the command resolved (the registry file itself, not the
+    directory it lives in) and the driver's own reason, and neither is a
+    traceback, which is what a failure in the middle of a rescue must not be.
+    Neither says which half of the command landed, because the command does not
+    know and does not have to: a set that committed before a refused revoke is
+    real (the new password proves it when it signs in, and a retry revokes), and a
+    refused set changed nothing at all — its unit of work is rolled back with the
+    failure.
     """
+    if writing:
+        _fail(
+            tr(
+                "cannot write to the registry at {path}: {error}",
+                path=path,
+                error=exc,
+            )
+        )
     _fail(
         tr(
             "cannot read the registry at {path}: {error}",
-            path=data_dir or tr("the default data directory"),
+            path=path,
             error=exc,
         )
     )
@@ -521,6 +539,7 @@ def _password(data_dir: str | None) -> int:
     left an old device signed in would not be a rescue), and it cannot be undone —
     the previous value is a hash and stays a hash.
     """
+    from clear_record.core import paths
     from clear_record.service.auth import ConsoleAuth
     from clear_record.service.lifecycle import CLI as _CLI
     from clear_record.service.store import Registry
@@ -531,8 +550,10 @@ def _password(data_dir: str | None) -> int:
         # A registry this build cannot read — refused by its schema history
         # (`RuntimeError`), unreadable on disk (`OSError`) or not a database at
         # all (`SQLAlchemyError`) — is the whole answer: nothing was written, and
-        # the operator gets the place and the reason, not a traceback.
-        _unusable_registry(exc, data_dir)
+        # the operator gets the place and the reason, not a traceback. The place
+        # is resolved rather than described, and it is the same expression the
+        # open used to find the file.
+        _unusable_registry(exc, paths.registry_path(data_dir))
 
     console = ConsoleAuth(registry)
     replacing = console.configured()
@@ -548,9 +569,9 @@ def _password(data_dir: str | None) -> int:
     except SQLAlchemyError as exc:
         # The write met the registry's own refusal (the lock another surface
         # holds, a read-only file): nothing was written — the unit of work is
-        # rolled back — and it is stated like the open's failure above rather
-        # than escaping as a traceback (`_unusable_registry`).
-        _unusable_registry(exc, data_dir)
+        # rolled back — and it is stated in the **write** frame rather than
+        # escaping as a traceback (`_unusable_registry`).
+        _unusable_registry(exc, registry.db_path, writing=True)
     if replacing:
         try:
             console.revoke_all()
@@ -559,7 +580,7 @@ def _password(data_dir: str | None) -> int:
             # the rescue it promises: the credential *is* set (the sentence says
             # the place and the error, not which half landed), and a retry is
             # what ends them.
-            _unusable_registry(exc, data_dir)
+            _unusable_registry(exc, registry.db_path, writing=True)
     click.echo(
         tr(
             "the console password is {action} in {path}.",

@@ -2524,7 +2524,15 @@ def create_app(
         return setup_view().as_dict()
 
     # --- liveness: the one route that reveals nothing ---------------------- #
-    @app.api_route(HEALTH_PATH, methods=["GET", "HEAD"])
+    #
+    # Two registrations of one handler, not one route with two methods: FastAPI
+    # names an operation from the route's *first* method, so a single route
+    # declaring ``GET`` and ``HEAD`` published ``health_health_head`` twice — an
+    # OpenAPI document no client generator can key on (one operation wins and the
+    # other is unreachable by id). Each method gets its own route and so its own
+    # id, with the HEAD probe named beside its GET in ``/api/openapi.json``.
+    @app.get(HEALTH_PATH)
+    @app.head(HEALTH_PATH)
     def health(request: Request) -> Response:
         """The liveness route: ``{"status": "ok"}``, and no other fact.
 
@@ -2538,8 +2546,10 @@ def create_app(
         is gone; this is the only liveness route, and the tray probes it.
 
         The request guard still applies (a rebound ``Host`` is refused here as
-        everywhere), and nothing else does: no session is looked for, no token is
-        accepted, and none is issued.
+        everywhere), and nothing else does: the gate **passes it through** — a
+        cookie the request happens to carry is read, never required, and the idle
+        clock is left alone (``touch=False``), so a probe cannot hold a session
+        open — and no token is issued.
         """
         if request.method == "HEAD":
             # A supervisor's HEAD probe reads the status line, and a route that

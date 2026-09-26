@@ -317,8 +317,10 @@ Write a registry with the **previous release**, then open it with the candidate:
 # the released line, in its own environment, writes a registry
 uv venv /tmp/cr-prev-env
 VIRTUAL_ENV=/tmp/cr-prev-env uv pip install 'clear-record[web]<the released version>'
-CR_DATA_DIR=/tmp/cr-prev-data /tmp/cr-prev-env/bin/clear-record serve --port 8790 &
+CR_DATA_DIR=/tmp/cr-prev-data CR_STATE_DIR=/tmp/cr-prev-state \
+  /tmp/cr-prev-env/bin/clear-record serve --port 8790 &
 curl -s -X POST localhost:8790/api/projects -H 'content-type: application/json' \
+  --cookie "cr_session=$(cat /tmp/cr-prev-state/local-session)" \
   -d '{"name":"Registry smoke"}'   # then stop the server: the registry exists now
 
 # the candidate, from the scratch project above, over a copy of that directory
@@ -326,12 +328,21 @@ cp -r /tmp/cr-prev-data /tmp/cr-candidate-data
 CR_DATA_DIR=/tmp/cr-candidate-data uv run clear-record serve --port 8791 &
 curl -s localhost:8791/health          # {"status":"ok"}: the node opened the registry and migrated it
 sqlite3 /tmp/cr-candidate-data/registry.sqlite3 \
-  'select slug from project'           # the project the released line wrote is still there
+  'select slug from project'           # must print: Registry smoke
 ```
 
-The console has a credential now (ADR-0033), so `/api/projects` would answer
-`401` to a bare `curl`; `/health` is the credential-free route, and reading the
-registry directly is what proves the migration kept the data.
+The console has a credential now (ADR-0033), so `/api/projects` answers `401` to a
+bare `curl`. The write above therefore presents `cr_session` — the session the
+node published for **this machine**, in the `local-session` file of its state
+directory (`CR_STATE_DIR`, §1 of the deployment guide), which is exactly what the
+command line itself sends. It is the only headless way in today: a *machine token*
+is 262's, and is not built. A previous line that predates the gate has no such
+file (the empty cookie is then ignored and the POST is taken), and `/health` — the
+credential-free route — is what the candidate's own start is checked with.
+
+So the `select` is the real assertion, and it must print `Registry smoke`: an empty
+result means the released line's write never landed and the smoke proved nothing,
+which a silent `curl -s` will not tell you on its own.
 
 It opens in place: the same file, `alembic_version` at the chain's head, the
 `schema_version` row levelled, and the projects, meetings, tapes and glossary

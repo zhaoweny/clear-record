@@ -30,12 +30,14 @@ from clear_record.service import Registry
 from clear_record.service.auth import (
     ConsoleAuth,
     SessionPolicy,
+    SessionState,
     refresh_local_session,
     token_digest,
     verify_password,
 )
 from clear_record.service.diagnostics import collect_bundle, redact_log_line
 from clear_record.service.lifecycle import CONSOLE
+from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 from clear_record.web.auth import (
     CONSOLE_PATH,
@@ -624,6 +626,57 @@ def test_a_stale_or_unknown_local_session_is_refused_like_any_other_cookie(
     node_module.forget_local_session()
 
 
+def test_the_keeper_republishes_a_session_that_lapsed(
+    console, monkeypatch, tmp_path
+) -> None:
+    """The loop is what keeps the node's own session live — on a real timer.
+
+    What a node publishes at startup is a session like a browser's: the idle
+    window, the absolute lifetime and ``revoke_all`` all end it, and there is
+    nobody on the client's side to sign in again. The keeper's tick is therefore
+    the mechanism, not the first publish — so this drives the tick itself (the
+    interval is shortened to make it observable; the waiting is real time, and
+    the sleep is set past the session's own window so the tick has something to
+    repair). A loop whose refresh were removed would hold the dead token here
+    until the deadline below, and the assertions name that.
+    """
+    monkeypatch.setenv("CR_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(web_app, "LOCAL_SESSION_REFRESH_S", 0.05)
+    console.app.state.auth.policy = SessionPolicy(
+        idle_timeout=timedelta(milliseconds=200), absolute_lifetime=timedelta(days=1)
+    )
+    # Every node posture records its address before it publishes the session
+    # (`NodeServer.startup`), and the two files are one node's pair: the clean
+    # exit takes the session file down only when the record is this process's.
+    node_module.record(node_module.NodeAddress.of("127.0.0.1", 8765))
+    keeper = web_app.LocalSessionKeeper(console.app.state.auth)
+
+    first = keeper.start()
+    try:
+        assert node_module.local_session() == first
+        assert console.app.state.auth.session(first, touch=False) is SessionState.ACTIVE
+
+        # Real time past the idle window, then wait for the keeper's own tick.
+        deadline = time.monotonic() + 10
+        while node_module.local_session() == first and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+        second = node_module.local_session()
+        assert second is not None and second != first, "the keeper never refreshed"
+        assert (
+            console.app.state.auth.session(second, touch=False) is SessionState.ACTIVE
+        )
+        # The lapsed token is not a way in: the file holds the fresh one only.
+        assert (
+            console.app.state.auth.session(first, touch=False)
+            is not SessionState.ACTIVE
+        )
+    finally:
+        keeper.stop()
+
+    assert node_module.local_session() is None
+
+
 def test_the_bundle_carries_no_local_session(tmp_path, monkeypatch) -> None:
     """The token lives in the state directory the bundle never reads."""
     state = tmp_path / "state"
@@ -650,3 +703,26 @@ def test_health_answers_a_head_probe(console) -> None:
 
     assert response.status_code == 200
     assert response.content == b""
+
+
+def test_the_published_schema_names_every_operation_once(console) -> None:
+    """``/health`` answers GET and HEAD, and the schema keeps them apart.
+
+    FastAPI derives an operation id from the route's *first* method, so a single
+    route declaring both published ``health_health_head`` twice — an OpenAPI
+    document no client generator can key on (FastAPI warns, one operation wins,
+    and the other is unreachable by id). The liveness route's pair is the one
+    place in the table with two methods on one path, so this asserts the whole
+    document's ids rather than only ``/health``'s.
+    """
+    schema = console.app.openapi()
+    ids = [
+        operation["operationId"]
+        for path in schema["paths"].values()
+        for operation in path.values()
+    ]
+
+    assert len(ids) == len(set(ids)), (
+        f"duplicate operation ids: {sorted(i for i in ids if ids.count(i) > 1)}"
+    )
+    assert sorted(schema["paths"]["/health"]) == ["get", "head"]

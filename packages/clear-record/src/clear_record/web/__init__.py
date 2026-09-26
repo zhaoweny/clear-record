@@ -286,42 +286,51 @@ def _run(
 
 
 def _require_declared_trust(host: str) -> None:
-    """Refuse a bind past loopback that declares no way it is trusted.
+    """Refuse a bind past loopback that nothing declares a reachable name for.
 
     The console holds one credential now (ADR-0033), and that is not what this
     checks: it checks the **request guard**, which answers ``403`` to a ``Host``
-    that is neither loopback nor named by the operator. So a console told to bind
-    another address, with nothing saying how it will be reached, would start and
-    then refuse every request it received — a bind that serves nobody, and a
+    that is neither loopback nor named in ``CR_TRUSTED_HOSTS``. So a console told
+    to bind another address, with no such name declared, would start and then
+    refuse every request it received — a bind that serves nobody, and a
     misconfiguration that looks like it worked. Refusing here says so before a
-    port is taken, and names the four ways forward.
+    port is taken, and names the ways forward.
 
-    The declaration is read from the environment, which is where the operator
-    puts it (``CR_TRUSTED_HOSTS``, ``CR_TRUSTED_PROXIES``) — the same values the
-    guard above already reads for its own checks, so the two cannot disagree
-    about what was declared. ``--tailscale`` needs no declaration of its own: it
-    resolves the tailnet name and passes it to :func:`create_app` in-process, and
-    it refuses a non-loopback bind before this is reached.
+    What admits the bind is therefore the *same* declaration the guard's own
+    ``Host`` check reads (:func:`clear_record.web.guard.names_a_trusted_host`),
+    and not ``CR_TRUSTED_PROXIES``: a declared peer is the forwarded-header
+    declaration the trusted-proxy change will honour, and it makes no ``Host``
+    trustable today — so admitting a bind on the proxy alone would reproduce
+    exactly the dead console this refusal exists to prevent.
+
+    Both come from the environment, which is where the operator puts them, so the
+    refusal and the guard cannot disagree about what was declared.
+    ``--tailscale`` needs no declaration of its own: it resolves the tailnet name
+    and passes it to :func:`create_app` in-process, and it refuses a non-loopback
+    bind before this is reached.
     """
     from clear_record.web import guard
 
     if guard.is_loopback_host(guard.host_name(host)):
         return
-    if guard.has_declared_trust():
+    if guard.names_a_trusted_host():
         return
     raise SystemExit(
         tr(
             "refusing to bind {host!r}: the request guard answers 403 to any Host "
-            "but loopback, and nothing declares how this console is reached, so it "
-            "would serve nobody.\n"
+            "but loopback or a name in CR_TRUSTED_HOSTS, and none is named, so this "
+            "console would serve nobody.\n"
             "  Ways forward:\n"
             "    - keep the loopback bind (the default) and let your reverse proxy "
             "be the ingress: drop --host\n"
             "    - name the hostname this console answers to: "
             "CR_TRUSTED_HOSTS=<hostname>\n"
-            "    - declare the reverse proxy that fronts it: "
-            "CR_TRUSTED_PROXIES=<peer address>\n"
-            "    - let Tailscale Serve front it: --tailscale",
+            "    - name the address your own command line and tray dial as well, so "
+            "they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>\n"
+            "    - let Tailscale Serve front it: --tailscale\n"
+            "  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the "
+            "forwarded-header declaration — the name it forwards still has to be in "
+            "CR_TRUSTED_HOSTS.",
             host=host,
         )
     )

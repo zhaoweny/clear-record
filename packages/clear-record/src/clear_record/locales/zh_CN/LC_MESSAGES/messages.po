@@ -16,9 +16,10 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-26 19:07+0800\n"
+"POT-Creation-Date: 2026-09-26 19:58+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
-"Last-Translator: clear-record implementing agent (awaiting native review)\n"
+"Last-Translator: clear-record implementing agent (awaiting native review)"
+"\n"
 "Language: zh_CN\n"
 "Language-Team: zh_CN <LL@li.org>\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
@@ -35,22 +36,25 @@ msgstr "clear-record：从众多录音到一份清晰的记录。"
 # interface).
 #: packages/clear-record/src/clear_record/cli/cli.py:109
 msgid ""
-"raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the log "
-"is written to the app state directory, never to stdout"
+"raise diagnostics log detail (the flag form of CR_LOG_LEVEL=debug); the "
+"log is written to the app state directory, never to stdout"
 msgstr ""
 
 #: packages/clear-record/src/clear_record/cli/cli.py:238
 msgid ""
 "Machine-local verb: `synth`, `backends`, `bench` and `diagnose` take the "
-"machine you are running them on as their subject, never the node, and are "
-"deliberately not facades — routed through a node, `backends` would silently "
-"answer about the node's machine instead of yours."
+"machine you are running them on as their subject, never the node, and are"
+" deliberately not facades — routed through a node, `backends` would "
+"silently answer about the node's machine instead of yours."
 msgstr ""
-"本机命令：`synth`、`backends`、`bench` 和 `diagnose` 的主题是你运行它们的这台机器，而不是节点；它们刻意不做成门面 "
-"—— 若经由节点转发，`backends` 会悄悄回答节点所在的那台机器，而不是你的。"
+"本机命令：`synth`、`backends`、`bench` 和 `diagnose` "
+"的主题是你运行它们的这台机器，而不是节点；它们刻意不做成门面 —— 若经由节点转发，`backends` "
+"会悄悄回答节点所在的那台机器，而不是你的。"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:304
-msgid "--split-channels and --mix-down are mutually exclusive; pass one or neither."
+msgid ""
+"--split-channels and --mix-down are mutually exclusive; pass one or "
+"neither."
 msgstr "--split-channels 与 --mix-down 互斥；只能二选一，或都不指定。"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:320
@@ -60,27 +64,27 @@ msgstr "--diarize 与 --no-diarize 互斥；只能二选一，或都不指定。
 #: packages/clear-record/src/clear_record/cli/cli.py:340
 #, python-brace-format
 msgid ""
-"{path} is a file, not a directory: this command expects a directory of audio"
-" files."
+"{path} is a file, not a directory: this command expects a directory of "
+"audio files."
 msgstr "「{path}」是文件而不是目录：本命令需要一个包含音频文件的目录。"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:706
 #, python-brace-format
 msgid ""
-"[auto] the recommended model {model!r} is not in the models directory, and "
-"--auto never downloads one.\n"
+"[auto] the recommended model {model!r} is not in the models directory, "
+"and --auto never downloads one.\n"
 "  Pre-fetch it, e.g. `hf download ggerganov/whisper.cpp ggml-{model}.bin "
 "--local-dir {models_dir}`, or pass an explicit `--model`."
 msgstr ""
 "[auto] 推荐模型 {model!r} 不在模型目录中，而 --auto 从不下载模型。\n"
-"  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-dir "
-"{models_dir}`，或显式指定 `--model`。"
+"  请预先下载，例如 `hf download ggerganov/whisper.cpp ggml-{model}.bin --local-"
+"dir {models_dir}`，或显式指定 `--model`。"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:850
 msgid ""
 "clear-record's work needs a node, and this command could not start one; "
-"start one with `clear-record serve`, or from the tray app — `serve` writes "
-"its log to the diagnostics sink"
+"start one with `clear-record serve`, or from the tray app — `serve` "
+"writes its log to the diagnostics sink"
 msgstr ""
 "clear-record 的工作需要节点，而本命令无法启动节点；请用 `clear-record serve` 启动一个，或从托盘应用启动 —— "
 "`serve` 会把日志写入诊断接收器"
@@ -107,12 +111,14 @@ msgstr "节点运行尚不能设置 {flags}：它只按节点运行 API 声明�
 #: packages/clear-record/src/clear_record/cli/cli.py:1284
 #, python-brace-format
 msgid ""
-"[next] the record is in {directory}/export; review it and accept the minutes"
-" in the console: `clear-record web`"
+"[next] the record is in {directory}/export; review it and accept the "
+"minutes in the console: `clear-record web`"
 msgstr "[下一步] 记录位于 {directory}/export；请在控制台中审阅并接受会议纪要：`clear-record web`"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:1368
-msgid "run the pipeline and report transcript quality against a reference if given"
+msgid ""
+"run the pipeline and report transcript quality against a reference if "
+"given"
 msgstr "运行流水线，并在给定参考文本时报告转写质量"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:1383
@@ -129,8 +135,8 @@ msgstr "显示或追加工作区术语表（ASR 初始提示词）"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:1404
 msgid ""
-"generate a clean scene + degraded per-device recordings with exact ground "
-"truth"
+"generate a clean scene + degraded per-device recordings with exact ground"
+" truth"
 msgstr "生成干净场景 + 各设备的降质录音，并提供精确的标准答案"
 
 #: packages/clear-record/src/clear_record/cli/cli.py:1411
@@ -148,17 +154,17 @@ msgstr "打印正在运行的节点所监听的地址，并检查它是否响应
 msgid "position {n}"
 msgstr "第 {n} 位"
 
-#: packages/clear-record/src/clear_record/core/node.py:113
+#: packages/clear-record/src/clear_record/core/node.py:114
 msgid ""
-"no clear-record node is listening; start one with `clear-record serve`, or "
-"from the tray app"
+"no clear-record node is listening; start one with `clear-record serve`, "
+"or from the tray app"
 msgstr "没有 clear-record 节点在监听；请用 `clear-record serve` 启动一个，或从托盘应用启动"
 
 #: packages/clear-record/src/clear_record/core/paths.py:190
 #, python-brace-format
 msgid ""
-"clear-record: adopting the existing pre-platformdirs {label} directory at "
-"{legacy}; move it to {native} for the platform-native layout "
+"clear-record: adopting the existing pre-platformdirs {label} directory at"
+" {legacy}; move it to {native} for the platform-native layout "
 "(ADR-0025).{hint}"
 msgstr ""
 "clear-record：正在沿用 platformdirs 之前已有的 {label} 目录 {legacy}；请将其移动到 {native} "
@@ -171,8 +177,8 @@ msgstr " 设置 CR_MODELS_DIR 可指定其他模型目录。"
 #: packages/clear-record/src/clear_record/core/scope.py:62
 #, python-brace-format
 msgid ""
-"cannot read {token!r} in re-run range {whole!r}: expected H:MM, H:MM:SS or "
-"seconds (e.g. 12:30-18:00)."
+"cannot read {token!r} in re-run range {whole!r}: expected H:MM, H:MM:SS "
+"or seconds (e.g. 12:30-18:00)."
 msgstr "无法读取重跑范围 {whole!r} 中的 {token!r}：应为 H:MM、H:MM:SS 或秒数（例如 12:30-18:00）。"
 
 #: packages/clear-record/src/clear_record/core/scope.py:76
@@ -192,15 +198,15 @@ msgstr "重跑范围为空。"
 #: packages/clear-record/src/clear_record/core/scope.py:107
 #, python-brace-format
 msgid ""
-"cannot read re-run range {whole!r}: expected START-END (e.g. 12:30-18:00 or "
-"745-1050)."
+"cannot read re-run range {whole!r}: expected START-END (e.g. 12:30-18:00 "
+"or 745-1050)."
 msgstr "无法读取重跑范围 {whole!r}：应为 START-END（例如 12:30-18:00 或 745-1050）。"
 
 #: packages/clear-record/src/clear_record/core/scope.py:117
 #, python-brace-format
 msgid ""
-"re-run range {whole!r} ends at or before it starts; the end must be later "
-"than the start."
+"re-run range {whole!r} ends at or before it starts; the end must be later"
+" than the start."
 msgstr "重跑范围 {whole!r} 的结束时间不晚于开始时间；结束必须晚于开始。"
 
 #: packages/clear-record/src/clear_record/pipeline/auto.py:141
@@ -208,16 +214,19 @@ msgstr "重跑范围 {whole!r} 的结束时间不晚于开始时间；结束必�
 msgid ""
 "--backend auto: chose {backend!r} — first available in the native-first "
 "preference order ({candidates}); available here: {here}."
-msgstr "--backend auto：选择了 {backend!r}——原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
+msgstr ""
+"--backend auto：选择了 "
+"{backend!r}——原生优先偏好顺序（{candidates}）中的第一个可用项；此处可用：{here}。"
 
 #: packages/clear-record/src/clear_record/pipeline/auto.py:155
 #, python-brace-format
 msgid ""
-"no ASR backend is available on this machine; `--backend auto` found none of:"
-" {backends}.\n"
+"no ASR backend is available on this machine; `--backend auto` found none "
+"of: {backends}.\n"
 "  Install a system `whisper-cli` + a ggml GPU plugin (on macOS, `brew "
-"install whisper-cpp`; on Linux, e.g. a distro `whisper-cpp` plus `ggml-cuda"
-"`/`ggml-vulkan`; see docs/adr/0005), or pass an explicit `--backend <id>`."
+"install whisper-cpp`; on Linux, e.g. a distro `whisper-cpp` plus `ggml-"
+"cuda`/`ggml-vulkan`; see docs/adr/0005), or pass an explicit `--backend "
+"<id>`."
 msgstr ""
 "此机器上没有可用的 ASR 后端；`--backend auto` 在以下项中一个也没找到：{backends}。\n"
 "  请安装系统级 `whisper-cli` 和一个 ggml GPU 插件（macOS 上执行 `brew install whisper-"
@@ -251,15 +260,15 @@ msgstr "符合显存/CPU 预算的最大检查点"
 #: packages/clear-record/src/clear_record/pipeline/auto.py:267
 #, python-brace-format
 msgid ""
-"already on disk; the preferred {preferred!r} is absent and --auto does not "
-"download"
+"already on disk; the preferred {preferred!r} is absent and --auto does "
+"not download"
 msgstr "已在磁盘上；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
 #: packages/clear-record/src/clear_record/pipeline/auto.py:281
 #, python-brace-format
 msgid ""
-"the only checkpoint(s) on disk; the preferred {preferred!r} is absent and "
-"--auto does not download"
+"the only checkpoint(s) on disk; the preferred {preferred!r} is absent and"
+" --auto does not download"
 msgstr "磁盘上唯一的检查点；首选 {preferred!r} 缺失，而 --auto 不会下载"
 
 #: packages/clear-record/src/clear_record/pipeline/auto.py:293
@@ -321,8 +330,8 @@ msgstr "开启按说话人归属（{channels} 声道录音）"
 #: packages/clear-record/src/clear_record/pipeline/auto.py:349
 #, python-brace-format
 msgid ""
-"tape {duration}, {channels} channel(s), language {language}, VRAM {vram}, "
-"{cpus} CPU(s), models on disk: {disk}, backends available: {backends}"
+"tape {duration}, {channels} channel(s), language {language}, VRAM {vram},"
+" {cpus} CPU(s), models on disk: {disk}, backends available: {backends}"
 msgstr ""
 "录音 {duration}，{channels} 声道，语言 {language}，显存 {vram}，{cpus} 个 "
 "CPU，磁盘上的模型：{disk}，可用后端：{backends}"
@@ -334,8 +343,8 @@ msgstr "--auto：选择了 {decisions}；输入：{inputs}。"
 
 #: packages/clear-record/src/clear_record/pipeline/transcription.py:534
 msgid ""
-"[transcribe] a re-run scope only means something when cached chunks may be "
-"reused, but resume is off; drop one of the two."
+"[transcribe] a re-run scope only means something when cached chunks may "
+"be reused, but resume is off; drop one of the two."
 msgstr "[transcribe] 只有当缓存片段可能被复用时，重新运行范围才有意义，但 resume 已关闭；请去掉两者之一。"
 
 #: packages/clear-record/src/clear_record/pipeline/transcription.py:544
@@ -373,8 +382,8 @@ msgstr "[transcribe] 后端 '{backend}' 无法支持解码器选项：{unsupport
 
 #: packages/clear-record/src/clear_record/pipeline/workspace.py:190
 msgid ""
-"the workspace's .clear-record-ignore cannot be read, so which of its files "
-"are inputs is unknown; make it readable or remove it"
+"the workspace's .clear-record-ignore cannot be read, so which of its "
+"files are inputs is unknown; make it readable or remove it"
 msgstr "无法读取工作区的 .clear-record-ignore，因此无法确定其中哪些文件是输入；请使其可读或将其删除"
 
 #: packages/clear-record/src/clear_record/providers/apple_speech.py:243
@@ -392,7 +401,8 @@ msgstr "Apple SpeechTranscriber（{source}）返回的 segment 不是对象：{e
 msgid ""
 "Apple SpeechTranscriber is reachable only through its Swift-only API, so "
 "clear-record compiles a small helper on first use. Install the Swift "
-"toolchain with `xcode-select --install`, or set {env} to a prebuilt helper."
+"toolchain with `xcode-select --install`, or set {env} to a prebuilt "
+"helper."
 msgstr ""
 "Apple SpeechTranscriber 只能通过其仅限 Swift 的 API 访问，因此 clear-record "
 "会在首次使用时编译一个小型辅助程序。请用 `xcode-select --install` 安装 Swift 工具链，或将 {env} "
@@ -504,9 +514,9 @@ msgstr "whisper-cli + ggml {families} 插件"
 #: packages/clear-record/src/clear_record/providers/ggml_hashes.py:149
 #, python-brace-format
 msgid ""
-"the downloaded model {name} failed its SHA-256 check (expected {expected}, "
-"got {actual}); it was discarded. Retry the download, or set {env}=off to "
-"accept the endpoint's bytes unchecked."
+"the downloaded model {name} failed its SHA-256 check (expected "
+"{expected}, got {actual}); it was discarded. Retry the download, or set "
+"{env}=off to accept the endpoint's bytes unchecked."
 msgstr ""
 "下载的模型 {name} 未通过 SHA-256 校验（期望 {expected}，实际 {actual}）；已将其丢弃。请重试下载，或设置 "
 "{env}=off，以不校验的方式接受该端点返回的原始数据。"
@@ -524,8 +534,8 @@ msgstr "转写失败：{detail}"
 #: packages/clear-record/src/clear_record/service/agent_flow.py:352
 #, python-brace-format
 msgid ""
-"the system voice ran but produced no audio ({detail}), so the hello-world "
-"tape could not be created"
+"the system voice ran but produced no audio ({detail}), so the hello-world"
+" tape could not be created"
 msgstr "系统语音已运行但没有产生音频（{detail}），因此无法创建 hello-world 录音。"
 
 #: packages/clear-record/src/clear_record/service/agent_flow.py:360
@@ -535,8 +545,9 @@ msgstr "本机未安装系统语音，因此无法创建 hello-world 录音。"
 #: packages/clear-record/src/clear_record/service/agent_flow.py:381
 #, python-brace-format
 msgid ""
-"no transcription model is on disk at {models_dir}; the first transcription "
-"run downloads one, or place a checkpoint there, then run the check again"
+"no transcription model is on disk at {models_dir}; the first "
+"transcription run downloads one, or place a checkpoint there, then run "
+"the check again"
 msgstr "{models_dir} 中没有转写模型；首次转写运行时会下载一个，或自行放置一个检查点，然后重新运行检查。"
 
 #: packages/clear-record/src/clear_record/service/agent_flow.py:426
@@ -545,15 +556,15 @@ msgstr "转写没有产生任何片段，因此没有可显示的转写文本。
 
 #: packages/clear-record/src/clear_record/service/agent_flow.py:439
 msgid ""
-"the hello-world tape ran through ingest and transcription; the transcript is"
-" below"
+"the hello-world tape ran through ingest and transcription; the transcript"
+" is below"
 msgstr "hello-world 录音已通过导入与转写；转写文本如下。"
 
 #: packages/clear-record/src/clear_record/service/agent_review.py:102
 #, python-brace-format
 msgid ""
-"the version you read ({version}) is not the newest one ({newest}), so the "
-"decision was not recorded"
+"the version you read ({version}) is not the newest one ({newest}), so the"
+" decision was not recorded"
 msgstr "你读到的版本（{version}）已不是最新版本（{newest}），因此该决定未被记录。"
 
 #: packages/clear-record/src/clear_record/service/agent_review.py:119
@@ -592,61 +603,62 @@ msgstr "无法采纳 {kind} 草稿：{detail}"
 msgid "no promotion is defined for draft kind {kind}"
 msgstr "草稿类型 {kind} 未定义采纳规则"
 
-#: packages/clear-record/src/clear_record/service/auth.py:157
+#: packages/clear-record/src/clear_record/service/auth.py:163
 #, python-brace-format
 msgid "the password must be at least {count} characters."
 msgstr "密码至少需要 {count} 个字符。"
 
-#: packages/clear-record/src/clear_record/service/auth.py:426
-msgid "set or replace the console password, without a browser (the rescue)"
-msgstr "无需浏览器即可设置或更换控制台密码（救援命令）"
+#: packages/clear-record/src/clear_record/service/auth.py:505
+#, python-brace-format
+msgid "cannot write to the registry at {path}: {error}"
+msgstr "无法写入位于 {path} 的注册表：{error}"
 
-#: packages/clear-record/src/clear_record/service/auth.py:434
-#: packages/clear-record/src/clear_record/web/__init__.py:67
-msgid ""
-"override the app data directory (default: CR_DATA_DIR / the platform data "
-"directory)"
-msgstr ""
-
-#: packages/clear-record/src/clear_record/service/auth.py:460
+#: packages/clear-record/src/clear_record/service/auth.py:512
 #, python-brace-format
 msgid "cannot read the registry at {path}: {error}"
 msgstr "无法读取位于 {path} 的注册表：{error}"
 
-#: packages/clear-record/src/clear_record/service/auth.py:461
-msgid "the default data directory"
-msgstr "默认数据目录"
+#: packages/clear-record/src/clear_record/service/auth.py:521
+msgid "set or replace the console password, without a browser (the rescue)"
+msgstr "无需浏览器即可设置或更换控制台密码（救援命令）"
 
-#: packages/clear-record/src/clear_record/service/auth.py:469
+#: packages/clear-record/src/clear_record/service/auth.py:529
+#: packages/clear-record/src/clear_record/web/__init__.py:67
+msgid ""
+"override the app data directory (default: CR_DATA_DIR / the platform data"
+" directory)"
+msgstr ""
+
+#: packages/clear-record/src/clear_record/service/auth.py:561
 msgid "New console password"
 msgstr "新控制台密码"
 
-#: packages/clear-record/src/clear_record/service/auth.py:479
+#: packages/clear-record/src/clear_record/service/auth.py:586
 #, python-brace-format
 msgid "the console password is {action} in {path}."
 msgstr "控制台密码已在 {path} 中{action}。"
 
-#: packages/clear-record/src/clear_record/service/auth.py:480
+#: packages/clear-record/src/clear_record/service/auth.py:587
 msgid "replaced"
 msgstr "更换"
 
-#: packages/clear-record/src/clear_record/service/auth.py:480
+#: packages/clear-record/src/clear_record/service/auth.py:587
 msgid "set"
 msgstr "设置"
 
-#: packages/clear-record/src/clear_record/service/auth.py:486
+#: packages/clear-record/src/clear_record/service/auth.py:593
 msgid "every signed-in browser is now signed out; sign in again at /setup"
 msgstr "所有已登录的浏览器现已退出登录；请在 /setup 重新登录"
 
-#: packages/clear-record/src/clear_record/service/auth.py:489
+#: packages/clear-record/src/clear_record/service/auth.py:596
 msgid "next: start the console and sign in at /setup"
 msgstr "下一步：启动控制台并在 /setup 登录"
 
 #: packages/clear-record/src/clear_record/service/auto.py:73
 #, python-brace-format
 msgid ""
-"the recommended model {model!r} is not on disk, and --auto never downloads "
-"one; pre-fetch it or pass an explicit model"
+"the recommended model {model!r} is not on disk, and --auto never "
+"downloads one; pre-fetch it or pass an explicit model"
 msgstr "推荐模型 {model!r} 不在磁盘上，而 --auto 从不下载模型；请预先获取，或显式指定模型"
 
 #: packages/clear-record/src/clear_record/service/auto.py:151
@@ -681,8 +693,8 @@ msgstr "[bench] 准确度：WER {wer}（相似度 {similarity}）"
 #: packages/clear-record/src/clear_record/service/benchmark.py:295
 #, python-brace-format
 msgid ""
-"[bench] accuracy: coverage {coverage}, mean confidence {confidence}, {words}"
-" words"
+"[bench] accuracy: coverage {coverage}, mean confidence {confidence}, "
+"{words} words"
 msgstr "[bench] 准确度：覆盖率 {coverage}，平均置信度 {confidence}，{words} 个词"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:309
@@ -692,7 +704,9 @@ msgstr "[bench] 速度：{rate} 倍速（音频 {audio} 秒 / 墙钟 {wall} 秒�
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:322
 #, python-brace-format
-msgid "[bench] memory: {mib} MiB peak across the transcribe stage's decoder workers"
+msgid ""
+"[bench] memory: {mib} MiB peak across the transcribe stage's decoder "
+"workers"
 msgstr "[bench] 内存：转写阶段解码工作进程的峰值 {mib} MiB"
 
 #: packages/clear-record/src/clear_record/service/benchmark.py:336
@@ -819,8 +833,8 @@ msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT
 
 #: packages/clear-record/src/clear_record/service/managed.py:579
 msgid ""
-"this meeting has no verified archive; archive the meeting first, then delete"
-" its tapes"
+"this meeting has no verified archive; archive the meeting first, then "
+"delete its tapes"
 msgstr "此会议尚无已验证的归档；请先归档此会议，然后再删除其录音"
 
 #: packages/clear-record/src/clear_record/service/managed.py:633
@@ -831,8 +845,8 @@ msgstr "此会议使用用户选择的工作区；此处只能删除托管录音
 
 #: packages/clear-record/src/clear_record/service/managed.py:690
 msgid ""
-"the upload has no filename; attach the tape as a file part named 'file' with"
-" a name ending in an audio extension"
+"the upload has no filename; attach the tape as a file part named 'file' "
+"with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
 #: packages/clear-record/src/clear_record/service/managed.py:697
@@ -843,8 +857,8 @@ msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 #: packages/clear-record/src/clear_record/service/managed.py:709
 #, python-brace-format
 msgid ""
-"refusing the filename {name!r}: a tape name must be a bare filename, with no"
-" directory or path separator"
+"refusing the filename {name!r}: a tape name must be a bare filename, with"
+" no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
 #: packages/clear-record/src/clear_record/service/managed.py:716
@@ -860,8 +874,8 @@ msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 #: packages/clear-record/src/clear_record/service/managed.py:741
 #, python-brace-format
 msgid ""
-"the upload id {id!r} is not valid: use 1-{max_length} characters from A-Z, "
-"a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
+"the upload id {id!r} is not valid: use 1-{max_length} characters from "
+"A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
 #: packages/clear-record/src/clear_record/service/managed.py:786
@@ -885,25 +899,25 @@ msgstr "拒绝使用 {path}：它是符号链接"
 #: packages/clear-record/src/clear_record/service/managed.py:1132
 #, python-brace-format
 msgid ""
-"the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES to "
-"allow it"
+"the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
+"to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
 #: packages/clear-record/src/clear_record/service/managed.py:1143
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
-"about {needed} needed for this upload; free space or point CR_WORKSPACE_ROOT"
-" at a larger disk"
+"about {needed} needed for this upload; free space or point "
+"CR_WORKSPACE_ROOT at a larger disk"
 msgstr ""
-"托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 CR_WORKSPACE_ROOT"
-" 指向更大的磁盘"
+"托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
+"CR_WORKSPACE_ROOT 指向更大的磁盘"
 
 #: packages/clear-record/src/clear_record/service/managed.py:1156
 #, python-brace-format
 msgid ""
-"an upload with id {id!r} is already in progress or was left interrupted, and"
-" this node cannot resume one; start again with a new upload id"
+"an upload with id {id!r} is already in progress or was left interrupted, "
+"and this node cannot resume one; start again with a new upload id"
 msgstr "ID 为 {id!r} 的上传正在进行或已中断，而此节点无法续传；请使用新的上传 ID 重新开始"
 
 #: packages/clear-record/src/clear_record/service/run_options.py:76
@@ -919,16 +933,16 @@ msgstr "运行 {run_id} 的已存选项不是 JSON"
 #: packages/clear-record/src/clear_record/service/run_options.py:148
 msgid ""
 "\n"
-"the stored options this build cannot read are kept below, exactly as the row"
-" held them:\n"
+"the stored options this build cannot read are kept below, exactly as the "
+"row held them:\n"
 msgstr ""
 "\n"
 "本构建无法读取的已存选项按原文保留如下：\n"
 
 #: packages/clear-record/src/clear_record/service/runs.py:555
 msgid ""
-"every audio file in this workspace is named in .clear-record-ignore, so this"
-" run would have no inputs; remove a line from that declaration"
+"every audio file in this workspace is named in .clear-record-ignore, so "
+"this run would have no inputs; remove a line from that declaration"
 msgstr "此工作区中的每个音频文件都已在 .clear-record-ignore 中列出，本次运行将没有输入；请从该声明中删除一行"
 
 #: packages/clear-record/src/clear_record/service/runs.py:1102
@@ -974,7 +988,7 @@ msgstr "{path} 必须包含一个 JSON 对象来存放 mcpServers"
 #: packages/clear-record/src/clear_record/service/setup.py:308
 #, python-brace-format
 msgid "setup does not record {key!r}"
-msgstr "设置"
+msgstr "初始设置不记录 {key!r}"
 
 #: packages/clear-record/src/clear_record/service/store.py:457
 #, python-brace-format
@@ -987,11 +1001,11 @@ msgstr "注册表的架构修订版本 {revision} 不是本构建所携带的修
 #, python-brace-format
 msgid ""
 "the registry at {db_path} records schema revision {revision}, which an "
-"unreleased development build wrote and this release does not carry; delete "
-"{db_path} and start clear-record again"
+"unreleased development build wrote and this release does not carry; "
+"delete {db_path} and start clear-record again"
 msgstr ""
-"{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 {db_path}"
-" 后重新启动 clear-record"
+"{db_path} 处的注册表记录的架构修订版本是 {revision}，它由未发布的开发构建写入，本次发布不携带该修订版本；请删除 "
+"{db_path} 后重新启动 clear-record"
 
 #: packages/clear-record/src/clear_record/service/store.py:486
 #, python-brace-format
@@ -1003,31 +1017,31 @@ msgstr "注册表的架构版本 {version} 比本构建所携带的更新（最�
 #: packages/clear-record/src/clear_record/service/store.py:497
 #, python-brace-format
 msgid ""
-"the registry at {db_path} was written by an unreleased development build, "
-"which this release does not carry; delete {db_path} and start clear-record "
-"again"
+"the registry at {db_path} was written by an unreleased development build,"
+" which this release does not carry; delete {db_path} and start clear-"
+"record again"
 msgstr "{db_path} 处的注册表由未发布的开发构建写入，本次发布不携带此类注册表；请删除 {db_path} 后重新启动 clear-record"
 
 #: packages/clear-record/src/clear_record/service/store.py:660
 #, python-brace-format
 msgid ""
-"another surface is migrating the registry at {db_path} and still holds its "
-"write lock; nothing was changed — retry"
+"another surface is migrating the registry at {db_path} and still holds "
+"its write lock; nothing was changed — retry"
 msgstr "另一个入口正在迁移 {db_path} 处的注册表，并且仍持有写锁；未做任何更改——请重试"
 
 #: packages/clear-record/src/clear_record/service/migrations/versions/0009_active_run_per_meeting.py:115
 #, python-brace-format
 msgid ""
-"this meeting had more than one active run, and one run per meeting is what "
-"the registry keeps; run {run_id} is the one that survives"
+"this meeting had more than one active run, and one run per meeting is "
+"what the registry keeps; run {run_id} is the one that survives"
 msgstr "本会议曾有一个以上进行中的运行，而注册表每个会议只保留一个运行；运行 {run_id} 是保留下来的那个"
 
 #: packages/clear-record/src/clear_record/service/migrations/versions/0009_active_run_per_meeting.py:305
 #, python-brace-format
 msgid ""
 "the registry carries an index named {index} that revision 0009 did not "
-"create and does not declare: {ddl}. The one-active-run rule cannot be stated"
-" over it — drop that object and open the registry again."
+"create and does not declare: {ddl}. The one-active-run rule cannot be "
+"stated over it — drop that object and open the registry again."
 msgstr ""
 "注册表带有一个名为 {index} 的索引，它并非修订版本 0009 "
 "创建或声明的：{ddl}。无法在该索引之上声明每个会议仅一个进行中的运行的规则——请删除该对象并重新打开注册表。"
@@ -1066,10 +1080,11 @@ msgstr "clear-record 控制台 — {status}"
 #: packages/clear-record/src/clear_record/web/__init__.py:34
 #, python-brace-format
 msgid ""
-"[web] the web console needs the optional 'web' extra ({missing} not found).\n"
+"[web] the web console needs the optional 'web' extra ({missing} not "
+"found).\n"
 "  Install it with:   pip install 'clear-record[web]'\n"
-"  Or run without installing:   uvx --from 'clear-record[web]' clear-record "
-"web"
+"  Or run without installing:   uvx --from 'clear-record[web]' clear-"
+"record web"
 msgstr ""
 "[web] Web 控制台需要可选的 'web' 附加组件（未找到 {missing}）。\n"
 "  请安装：   pip install 'clear-record[web]'\n"
@@ -1090,10 +1105,10 @@ msgstr ""
 
 #: packages/clear-record/src/clear_record/web/__init__.py:75
 msgid ""
-"set up Tailscale Serve for this port, trust this machine's tailnet name, and"
-" print its https URL. Serve runs in the foreground alongside the console and"
-" stops with it. The tailnet decides who can reach the console; the console "
-"still asks for its own password."
+"set up Tailscale Serve for this port, trust this machine's tailnet name, "
+"and print its https URL. Serve runs in the foreground alongside the "
+"console and stops with it. The tailnet decides who can reach the console;"
+" the console still asks for its own password."
 msgstr ""
 
 # Per-option help: left English on purpose (the terminal is not the
@@ -1108,8 +1123,8 @@ msgstr ""
 # interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:96
 msgid ""
-"the tailnet HTTPS port Serve exposes (default: the same as --port); requires"
-" --tailscale"
+"the tailnet HTTPS port Serve exposes (default: the same as --port); "
+"requires --tailscale"
 msgstr ""
 
 #: packages/clear-record/src/clear_record/web/__init__.py:142
@@ -1124,23 +1139,23 @@ msgstr ""
 
 #: packages/clear-record/src/clear_record/web/__init__.py:171
 msgid ""
-"run the headless console for a service supervisor: no browser, logs to the "
-"diagnostics sink, one run per node"
+"run the headless console for a service supervisor: no browser, logs to "
+"the diagnostics sink, one run per node"
 msgstr "为服务管理器运行无界面控制台：不打开浏览器，日志写入诊断接收器，每个节点一个运行实例"
 
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
 #: packages/clear-record/src/clear_record/web/__init__.py:180
 msgid ""
-"keep this process owning the node: a server that stops without being asked "
-"is started again, while a stop request or a signal ends it as it does an "
-"unsupervised node"
+"keep this process owning the node: a server that stops without being "
+"asked is started again, while a stop request or a signal ends it as it "
+"does an unsupervised node"
 msgstr ""
 
 #: packages/clear-record/src/clear_record/web/__init__.py:224
 msgid ""
-"--tailscale-host / --tailscale-port configure Serve; pass --tailscale too "
-"(or set CR_TRUSTED_HOSTS to trust a hostname without Serve)."
+"--tailscale-host / --tailscale-port configure Serve; pass --tailscale too"
+" (or set CR_TRUSTED_HOSTS to trust a hostname without Serve)."
 msgstr ""
 "--tailscale-host / --tailscale-port 用于配置 Serve；请同时传入 --tailscale（或设置 "
 "CR_TRUSTED_HOSTS 以在不使用 Serve 的情况下信任某个主机名）。"
@@ -1150,42 +1165,51 @@ msgstr ""
 msgid "--tailscale-port {port} is not a port number (1-65535)."
 msgstr "--tailscale-port {port} 不是有效的端口号（1–65535）。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:314
+#: packages/clear-record/src/clear_record/web/__init__.py:320
 #, python-brace-format
 msgid ""
 "refusing to bind {host!r}: the request guard answers 403 to any Host but "
-"loopback, and nothing declares how this console is reached, so it would "
-"serve nobody.\n"
+"loopback or a name in CR_TRUSTED_HOSTS, and none is named, so this "
+"console would serve nobody.\n"
 "  Ways forward:\n"
-"    - keep the loopback bind (the default) and let your reverse proxy be the"
-" ingress: drop --host\n"
-"    - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>"
-"\n"
-"    - declare the reverse proxy that fronts it: CR_TRUSTED_PROXIES=<peer "
-"address>\n"
-"    - let Tailscale Serve front it: --tailscale"
+"    - keep the loopback bind (the default) and let your reverse proxy be "
+"the ingress: drop --host\n"
+"    - name the hostname this console answers to: "
+"CR_TRUSTED_HOSTS=<hostname>\n"
+"    - name the address your own command line and tray dial as well, so "
+"they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>\n"
+"    - let Tailscale Serve front it: --tailscale\n"
+"  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the "
+"forwarded-header declaration — the name it forwards still has to be in "
+"CR_TRUSTED_HOSTS."
 msgstr ""
-"拒绝绑定 {host!r}：请求守卫会对除回环以外的任何 Host 回答 403，而没有任何声明说明如何访问此控制台，因此它将无法服务任何人。\n"
+"拒绝绑定 {host!r}：请求守卫会对除回环或 CR_TRUSTED_HOSTS 中所列名称以外的任何 Host 回答 "
+"403，而没有任何名称被列出，因此此控制台将无法服务任何人。\n"
 "  可行做法：\n"
 "    - 保留回环绑定（默认），让你的反向代理作为入口：去掉 --host\n"
 "    - 声明此控制台应答的主机名：CR_TRUSTED_HOSTS=<hostname>\n"
-"    - 声明位于其前的反向代理：CR_TRUSTED_PROXIES=<peer address>\n"
-"    - 让 Tailscale Serve 置于其前：--tailscale"
+"    - "
+"同时声明你自己的命令行和托盘所拨号的地址，以便它们直接访问该节点：CR_TRUSTED_HOSTS=<hostname>,<address>\n"
+"    - 让 Tailscale Serve 置于其前：--tailscale\n"
+"  反向代理还需声明 CR_TRUSTED_PROXIES=<peer address>，即转发头声明 —— 它所转发的主机名仍必须出现在 "
+"CR_TRUSTED_HOSTS 中。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:382
+#: packages/clear-record/src/clear_record/web/__init__.py:391
 #, python-brace-format
 msgid ""
 "--tailscale sets up Tailscale Serve against http://127.0.0.1:<port>, but "
 "--host {host!r} is not a loopback address, so Serve could not reach the "
 "console.\n"
-"  Drop --host (the console binds 127.0.0.1 by default), or drop --tailscale "
-"and front the loopback console with your own proxy (ADR-0021)."
+"  Drop --host (the console binds 127.0.0.1 by default), or drop "
+"--tailscale and front the loopback console with your own proxy "
+"(ADR-0021)."
 msgstr ""
-"--tailscale 会针对 http://127.0.0.1:<port> 配置 Tailscale Serve，但 --host {host!r}"
-" 不是回环地址，Serve 无法访问该控制台。\n"
-"  请去掉 --host（控制台默认绑定 127.0.0.1），或去掉 --tailscale，改用自己的代理置于回环控制台之前（ADR-0021）。"
+"--tailscale 会针对 http://127.0.0.1:<port> 配置 Tailscale Serve，但 --host "
+"{host!r} 不是回环地址，Serve 无法访问该控制台。\n"
+"  请去掉 --host（控制台默认绑定 127.0.0.1），或去掉 "
+"--tailscale，改用自己的代理置于回环控制台之前（ADR-0021）。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:413
+#: packages/clear-record/src/clear_record/web/__init__.py:422
 #, python-brace-format
 msgid ""
 "--tailscale-host {override!r} is not a bare hostname.\n"
@@ -1194,34 +1218,34 @@ msgstr ""
 "--tailscale-host {override!r} 不是裸主机名。\n"
 "    修正：传入 Tailscale 分配给你的名称，例如 machine.tailnet.ts.net。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:427
+#: packages/clear-record/src/clear_record/web/__init__.py:436
 #, python-brace-format
 msgid ""
 "[tailscale] {error}\n"
-"    The console is starting anyway, but it will not be reachable over the "
-"tailnet."
+"    The console is starting anyway, but it will not be reachable over the"
+" tailnet."
 msgstr ""
 "[tailscale] {error}\n"
 "    控制台仍会启动，但无法通过 tailnet 访问。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:439
+#: packages/clear-record/src/clear_record/web/__init__.py:448
 #, python-brace-format
 msgid ""
-"[tailscale] port {port} is already served by Tailscale; leaving that mapping"
-" untouched.\n"
-"    If it does not point at this console, pass --tailscale-port <port> to "
-"expose a different tailnet port."
+"[tailscale] port {port} is already served by Tailscale; leaving that "
+"mapping untouched.\n"
+"    If it does not point at this console, pass --tailscale-port <port> to"
+" expose a different tailnet port."
 msgstr ""
 "[tailscale] 端口 {port} 已由 Tailscale 提供服务；保留该映射不变。\n"
 "    如果它并未指向此控制台，请传入 --tailscale-port <port> 以暴露另一个 tailnet 端口。"
 
-#: packages/clear-record/src/clear_record/web/__init__.py:449
+#: packages/clear-record/src/clear_record/web/__init__.py:458
 #, python-brace-format
 msgid ""
 "[tailscale] console is now shared on your tailnet:\n"
 "    {url}\n"
-"    The tailnet decides who can reach this console; the console still asks "
-"for its own password.\n"
+"    The tailnet decides who can reach this console; the console still "
+"asks for its own password.\n"
 "    Serve runs in the foreground and stops with this console."
 msgstr ""
 "[tailscale] 控制台现已在你的 tailnet 上共享：\n"
@@ -1260,8 +1284,8 @@ msgstr "没有名为 {name} 的设置分区。"
 
 #: packages/clear-record/src/clear_record/web/app.py:1648
 msgid ""
-"a password is already set for this console; sign in, or replace it on the "
-"node with the password command (clear-record password)."
+"a password is already set for this console; sign in, or replace it on the"
+" node with the password command (clear-record password)."
 msgstr "此控制台已设置密码；请登录，或在节点上用密码命令更换它（clear-record password）。"
 
 #: packages/clear-record/src/clear_record/web/app.py:1660
@@ -1355,8 +1379,8 @@ msgstr "并发任务"
 #: packages/clear-record/src/clear_record/web/views.py:281
 msgid ""
 "how many transcription workers may run at once; 0 lets the node choose — "
-"process-isolated backends only, so the native apple-speech path always runs "
-"one"
+"process-isolated backends only, so the native apple-speech path always "
+"runs one"
 msgstr "可同时运行的转写工作进程数；0 表示由节点决定——仅限进程隔离的后端，因此原生 apple-speech 路径始终只运行一个"
 
 #: packages/clear-record/src/clear_record/web/views.py:633
@@ -1647,8 +1671,8 @@ msgstr "无备注。"
 #, python-brace-format
 msgid ""
 "clear-record exposes its tools over MCP as the command {command} with "
-"arguments {args}. Point an MCP-capable harness at it, then register it in "
-"that harness's client config."
+"arguments {args}. Point an MCP-capable harness at it, then register it in"
+" that harness's client config."
 msgstr ""
 "clear-record 通过 MCP 以命令 {command} 和参数 {args} 暴露其工具。让支持 MCP "
 "的宿主指向它，然后在该宿主的客户端配置中注册。"
@@ -1677,15 +1701,15 @@ msgstr "指向此路径"
 #, python-brace-format
 msgid ""
 "{name} is not bundled, and this setup will not download one for you: get "
-"{name} (or any other MCP-capable client) the way you get software yourself, "
-"then point at it above."
+"{name} (or any other MCP-capable client) the way you get software "
+"yourself, then point at it above."
 msgstr "{name} 未随本工具附带，此初始设置也不会替你下载：请按你惯常的方式获取 {name}（或任何其他支持 MCP 的客户端），然后在上方指向它。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:15
 msgid ""
-"This creates a hello-world tape with the system voice, transcribes it, and "
-"reads it back the way an MCP agent would. A failure names the leg that "
-"stopped, so a re-run localizes the fault."
+"This creates a hello-world tape with the system voice, transcribes it, "
+"and reads it back the way an MCP agent would. A failure names the leg "
+"that stopped, so a re-run localizes the fault."
 msgstr ""
 "此检查用系统语音生成一段 hello-world 录音，对其进行转写，并按 MCP "
 "智能体的方式读回。失败时会指出中断的是哪一段链路，重新运行即可定位故障。"
@@ -1732,9 +1756,9 @@ msgstr "通过 MCP 暴露"
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:39
 #, python-brace-format
 msgid ""
-"clear-record's MCP server exposes this read as the tool {tool}; a connected "
-"agent calls it with the project and meeting and receives the transcript "
-"above."
+"clear-record's MCP server exposes this read as the tool {tool}; a "
+"connected agent calls it with the project and meeting and receives the "
+"transcript above."
 msgstr "clear-record 的 MCP 服务器把这次读取暴露为工具 {tool}；连接的智能体以项目和会议为参数调用它，即可收到上面的转写文本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:40
@@ -1748,7 +1772,9 @@ msgstr "智能体集成已配置"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:45
 #, python-brace-format
-msgid "The MCP client config {config} and the harness {harness} are both in place."
+msgid ""
+"The MCP client config {config} and the harness {harness} are both in "
+"place."
 msgstr "MCP 客户端配置 {config} 与宿主 {harness} 均已就位。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:49
@@ -1757,14 +1783,14 @@ msgstr "智能体集成未配置"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:51
 msgid ""
-"Neither an MCP client config nor a harness is recorded yet; both are needed "
-"before a connected agent can answer anything about the tape."
+"Neither an MCP client config nor a harness is recorded yet; both are "
+"needed before a connected agent can answer anything about the tape."
 msgstr "尚未记录 MCP 客户端配置，也没有记录宿主；二者齐备后，连接的智能体才能就这段录音回答问题。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:53
 msgid ""
-"No MCP client config is pointed at yet; register one in the MCP config step,"
-" then point the harness at clear-record."
+"No MCP client config is pointed at yet; register one in the MCP config "
+"step, then point the harness at clear-record."
 msgstr "尚未指向任何 MCP 客户端配置；请在「MCP 配置」一步中注册一个，然后让宿主指向 clear-record。"
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:55
@@ -1799,9 +1825,9 @@ msgstr "修复上面指出的环节后重新运行检查；每个环节都是链
 
 #: packages/clear-record/src/clear_record/web/templates/_hello_check.html:76
 msgid ""
-"Not run yet. The check works in its own scratch workspace under the state "
-"directory; nothing in your projects is touched, and the clip and transcript "
-"are never committed."
+"Not run yet. The check works in its own scratch workspace under the state"
+" directory; nothing in your projects is touched, and the clip and "
+"transcript are never committed."
 msgstr "尚未运行。检查在状态目录下自己的临时工作区中完成；不会改动你的任何项目，录音和转写文本也绝不会被提交。"
 
 #: packages/clear-record/src/clear_record/web/templates/_mcp_config.html:8
@@ -1811,8 +1837,8 @@ msgstr "客户端配置：{path}"
 
 #: packages/clear-record/src/clear_record/web/templates/_mcp_config.html:10
 msgid ""
-"No MCP client config has been pointed at yet, so no agent can launch clear-"
-"record's tools."
+"No MCP client config has been pointed at yet, so no agent can launch "
+"clear-record's tools."
 msgstr "尚未指定 MCP 客户端配置，因此没有智能体能调用 clear-record 的工具。"
 
 #: packages/clear-record/src/clear_record/web/templates/_mcp_config.html:13
@@ -1836,11 +1862,11 @@ msgstr "在此注册 clear-record"
 #, python-brace-format
 msgid ""
 "Choose the path: clear-record cannot know where your client keeps its "
-"config. clear-record adds one entry to that file and leaves the rest of it "
-"alone — the command {command} with arguments {args}."
+"config. clear-record adds one entry to that file and leaves the rest of "
+"it alone — the command {command} with arguments {args}."
 msgstr ""
-"请自行选择路径：clear-record 无法知道你的客户端把配置放在哪里。clear-record 只在该文件中添加一个条目，其余内容保持原样——命令"
-" {command}，参数 {args}。"
+"请自行选择路径：clear-record 无法知道你的客户端把配置放在哪里。clear-record "
+"只在该文件中添加一个条目，其余内容保持原样——命令 {command}，参数 {args}。"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:15
 msgid "Back to the project"
@@ -1903,10 +1929,10 @@ msgstr "智能体草稿"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:86
 msgid ""
-"Your harness writes these over MCP: it reads the transcript, does the model "
-"work, then writes what it produced as a draft. Nothing is applied until you "
-"accept a version; accepting is what promotes it, and a new version puts the "
-"draft back in review."
+"Your harness writes these over MCP: it reads the transcript, does the "
+"model work, then writes what it produced as a draft. Nothing is applied "
+"until you accept a version; accepting is what promotes it, and a new "
+"version puts the draft back in review."
 msgstr ""
 "这些草稿由你的宿主经 MCP "
 "写入：它读取转写文本、完成模型工作，然后把结果写成草稿。在你接受某个版本之前不会生效；接受即落地，而宿主写入新版本会让草稿重新进入待审阅状态。"
@@ -1914,11 +1940,11 @@ msgstr ""
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:93
 #, python-brace-format
 msgid ""
-"{count} draft written before 0.3 by the app's own task run is not part of "
-"this chain and is still on disk."
+"{count} draft written before 0.3 by the app's own task run is not part of"
+" this chain and is still on disk."
 msgid_plural ""
-"{count} drafts written before 0.3 by the app's own task runs are not part of"
-" this chain and are still on disk."
+"{count} drafts written before 0.3 by the app's own task runs are not part"
+" of this chain and are still on disk."
 msgstr[0] "{count} 份 0.3 之前由本应用自身任务运行写入的草稿不属于此版本链，但仍保留在磁盘上。"
 
 #: packages/clear-record/src/clear_record/web/templates/_meeting.html:110
@@ -2048,9 +2074,9 @@ msgstr "无预设——各项参数保持你设定的值。"
 #: packages/clear-record/src/clear_record/web/templates/_profile_options.html:20
 msgid ""
 "A profile tunes the decoder knobs only; your model and backend stay as "
-"chosen. Switching profile re-transcribes: the chunk cache is keyed on the "
-"decoder knobs, the model and the glossary, so a different profile decodes "
-"again."
+"chosen. Switching profile re-transcribes: the chunk cache is keyed on the"
+" decoder knobs, the model and the glossary, so a different profile "
+"decodes again."
 msgstr "预设只调整解码器参数；模型和后端保持你所选的值。切换预设会重新转写：分块缓存以解码器参数、模型和术语表为键，因此不同的预设会重新解码。"
 
 #: packages/clear-record/src/clear_record/web/templates/_project_tabs.html:5
@@ -2146,8 +2172,9 @@ msgstr "继续"
 
 #: packages/clear-record/src/clear_record/web/templates/_run.html:84
 msgid ""
-"Resuming re-uses this workspace's cached chunks. A run elsewhere re-decodes "
-"from scratch: the cache is app-owned and keyed by this workspace's path."
+"Resuming re-uses this workspace's cached chunks. A run elsewhere re-"
+"decodes from scratch: the cache is app-owned and keyed by this "
+"workspace's path."
 msgstr "继续运行会复用此工作区已缓存的片段。在别处运行则从头重新解码：缓存由应用所有，并以工作区路径为键。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_agent.html:5
@@ -2209,8 +2236,8 @@ msgstr "可用检查点"
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:31
 msgid ""
 "Downloading a size puts that checkpoint on disk. --auto uses the largest "
-"checkpoint already on disk that fits this machine; a specific size is forced"
-" per run. Downloads are verified against a pinned checksum."
+"checkpoint already on disk that fits this machine; a specific size is "
+"forced per run. Downloads are verified against a pinned checksum."
 msgstr ""
 "下载某个规格会把对应检查点放到磁盘上。--auto "
 "会使用磁盘上已有的、适合本机的最大检查点；若要使用特定规格，需在单次运行时显式指定。下载内容会按固定的校验和进行校验。"
@@ -2248,8 +2275,8 @@ msgstr "内置预设"
 #: packages/clear-record/src/clear_record/web/templates/_settings_models.html:74
 #, python-brace-format
 msgid ""
-"These are the defaults a run uses when it sets nothing. Edit {path} or set "
-"them per run to change them."
+"These are the defaults a run uses when it sets nothing. Edit {path} or "
+"set them per run to change them."
 msgstr "这些是一次运行未做任何设置时采用的默认值。编辑 {path}，或在每次运行时单独设置即可更改。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:8
@@ -2292,9 +2319,10 @@ msgstr "会话"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:42
 msgid ""
-"This browser holds a session on this node. Signing out ends it here; signing"
-" out everywhere ends every session this node has issued — this browser "
-"included — and takes effect on the very next request, with no restart."
+"This browser holds a session on this node. Signing out ends it here; "
+"signing out everywhere ends every session this node has issued — this "
+"browser included — and takes effect on the very next request, with no "
+"restart."
 msgstr "此浏览器在本节点持有一个会话。退出登录会在此结束该会话；“在所有位置退出登录”会结束本节点签发的所有会话（包括此浏览器），并在下一次请求时立即生效，无需重启。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:45
@@ -2351,9 +2379,9 @@ msgstr "派生"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:28
 msgid ""
-"The tapes and the model weights are the disk here; transcripts, caches and "
-"agent output are small and recomputable. Clearing a cache does not free "
-"gigabytes."
+"The tapes and the model weights are the disk here; transcripts, caches "
+"and agent output are small and recomputable. Clearing a cache does not "
+"free gigabytes."
 msgstr "录音带和模型权重才是这里占磁盘的部分；转写、缓存和智能体输出都很小且可重新生成。清理缓存不会释放数 GB 空间。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_storage.html:31
@@ -2419,12 +2447,14 @@ msgstr "未设置"
 #, python-brace-format
 msgid ""
 "Retention is manual only: clear-record never deletes tapes on its own. "
-"Deleting one needs the meeting's verified archive as the durable copy, and a"
-" tape in a user-chosen workspace is refused regardless. Set the managed root"
-" in {path}; a project's archive root is edited on the project."
+"Deleting one needs the meeting's verified archive as the durable copy, "
+"and a tape in a user-chosen workspace is refused regardless. Set the "
+"managed root in {path}; a project's archive root is edited on the "
+"project."
 msgstr ""
-"保留仅限手动：clear-record 绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在"
-" {path} 中设置托管根目录；项目的归档根目录在项目页中编辑。"
+"保留仅限手动：clear-record "
+"绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} "
+"中设置托管根目录；项目的归档根目录在项目页中编辑。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:2
 msgid "Loading webhook status…"
@@ -2433,8 +2463,8 @@ msgstr "正在加载 Webhook 状态…"
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:4
 #, python-brace-format
 msgid ""
-"Endpoints are read from the config file at {path}; edit it to add or change "
-"one."
+"Endpoints are read from the config file at {path}; edit it to add or "
+"change one."
 msgstr "端点从配置文件 {path} 读取；编辑该文件即可添加或更改。"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:8
@@ -2457,8 +2487,8 @@ msgstr "磁盘上的检查点：{model}。"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:18
 msgid ""
-"No ASR backend is available on this machine yet. Install one, then reload "
-"this page; Settings → Backends names what each backend needs."
+"No ASR backend is available on this machine yet. Install one, then reload"
+" this page; Settings → Backends names what each backend needs."
 msgstr "本机尚无可用的 ASR 后端。请先安装一个，再重新加载本页；「设置 → 后端」列出了各后端所需的条件。"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:20
@@ -2492,8 +2522,8 @@ msgstr "下载模型"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:40
 msgid ""
-"It is fetched once and verified against a pinned checksum; this can take a "
-"few minutes."
+"It is fetched once and verified against a pinned checksum; this can take "
+"a few minutes."
 msgstr "它只下载一次，并会按固定的校验和进行校验；这可能需要几分钟。"
 
 #: packages/clear-record/src/clear_record/web/templates/_setup_transcription.html:44
@@ -2531,8 +2561,8 @@ msgstr "托管磁盘可用空间：{free}"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:47
 msgid ""
-"clear-record never deletes tapes on its own. Deleting here is manual: it is "
-"refused until the meeting has a verified archive as the durable copy."
+"clear-record never deletes tapes on its own. Deleting here is manual: it "
+"is refused until the meeting has a verified archive as the durable copy."
 msgstr "clear-record 绝不会自行删除录音。此处的删除是手动操作：在会议拥有已验证的归档作为持久副本之前，该删除会被拒绝。"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:54
@@ -2542,8 +2572,8 @@ msgstr "录音"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:75
 msgid ""
-"Delete this tape? It is unlinked, and the meeting's verified archive is the "
-"durable copy."
+"Delete this tape? It is unlinked, and the meeting's verified archive is "
+"the durable copy."
 msgstr "删除此录音？文件将被移除，会议的已验证归档是持久副本。"
 
 #: packages/clear-record/src/clear_record/web/templates/_storage.html:76
@@ -2598,8 +2628,8 @@ msgstr "停用术语"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:60
 msgid ""
-"Retire this term? It stops biasing the decoder; the row is kept, and Restore"
-" returns it to the status it had before the retire."
+"Retire this term? It stops biasing the decoder; the row is kept, and "
+"Restore returns it to the status it had before the retire."
 msgstr "停用此术语？它将不再影响解码器；该术语会保留，恢复会把它恢复到停用之前的状态。"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_glossary.html:61
@@ -2670,8 +2700,8 @@ msgstr "工作区路径"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:15
 msgid ""
-"Leave the path empty to let clear-record manage the workspace; a path uses a"
-" folder you choose."
+"Leave the path empty to let clear-record manage the workspace; a path "
+"uses a folder you choose."
 msgstr "路径留空即由 clear-record 管理工作区；填写路径则使用你选择的文件夹。"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:16
@@ -2704,8 +2734,8 @@ msgstr "转写预设"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:83
 msgid ""
-"inspect this machine and the tape, choose a profile and model, and explain "
-"the choice"
+"inspect this machine and the tape, choose a profile and model, and "
+"explain the choice"
 msgstr "检查本机与录音，自动选择预设和模型，并说明理由"
 
 #: packages/clear-record/src/clear_record/web/templates/_tab_meetings.html:84
@@ -2773,8 +2803,8 @@ msgstr "刷新"
 #: packages/clear-record/src/clear_record/web/templates/_webhooks.html:17
 msgid ""
 "No webhook endpoints are configured, so nothing is delivered. Set "
-"CR_WEBHOOKS or add endpoints under [webhooks.endpoints] in the config file "
-"to send notifications."
+"CR_WEBHOOKS or add endpoints under [webhooks.endpoints] in the config "
+"file to send notifications."
 msgstr ""
 "未配置任何 Webhook 端点，因此不会投递任何内容。设置 CR_WEBHOOKS，或在配置文件的 [webhooks.endpoints] "
 "下添加端点以发送通知。"
@@ -2832,10 +2862,10 @@ msgstr "智能体就绪"
 
 #: packages/clear-record/src/clear_record/web/templates/agent.html:11
 msgid ""
-"Point at an MCP harness, register clear-record's MCP server, then run the "
-"hello-world acceptance test. clear-record holds no model and asks for no key"
-" — your harness does the model work. Every step is skippable; you can return"
-" here from Settings or Setup."
+"Point at an MCP harness, register clear-record's MCP server, then run the"
+" hello-world acceptance test. clear-record holds no model and asks for no"
+" key — your harness does the model work. Every step is skippable; you can"
+" return here from Settings or Setup."
 msgstr ""
 "指向一个 MCP 宿主，注册 clear-record 的 MCP 服务器，然后运行 hello-world 验收测试。clear-record "
 "自身不持有模型，也不索取密钥 —— 模型工作由你的宿主完成。每一步都可跳过；你可以随时从「设置」或「初始设置」回到这里。"
@@ -2850,12 +2880,12 @@ msgstr "设置控制台密码"
 
 #: packages/clear-record/src/clear_record/web/templates/auth.html:24
 msgid ""
-"Nothing else on this console is reachable until a password is set. It is the"
+"Nothing else on this console is usable until a password is set. It is the"
 " one credential this node checks: the console and its API need it, the "
-"registry stores only a salted hash of it, and the password itself is never "
-"written to a file, a log or a bundle."
+"registry stores only a salted hash of it, and the password itself is "
+"never written to a file, a log or a bundle."
 msgstr ""
-"在设置密码之前，此控制台的其他任何内容都无法访问。它是本节点校验的唯一凭据：控制台及其 API "
+"在设置密码之前，此控制台的其他任何内容都无法使用。它是本节点校验的唯一凭据：控制台及其 API "
 "都需要它，注册表中只保存它的加盐哈希，而密码本身绝不写入文件、日志或诊断包。"
 
 #: packages/clear-record/src/clear_record/web/templates/auth.html:26
@@ -2882,9 +2912,9 @@ msgstr "登录"
 
 #: packages/clear-record/src/clear_record/web/templates/auth.html:36
 msgid ""
-"This console asks for the password set on this node. Lost or forgotten, it "
-"can be replaced from a terminal where the node runs — the password command "
-"needs no session, no browser and no running node."
+"This console asks for the password set on this node. Lost or forgotten, "
+"it can be replaced from a terminal where the node runs — the password "
+"command needs no session, no browser and no running node."
 msgstr "此控制台要求输入在节点上设置的密码。密码遗失或遗忘时，可在运行节点的终端上更换 —— 密码命令无需会话、无需浏览器，也无需正在运行的节点。"
 
 #: packages/clear-record/src/clear_record/web/templates/auth.html:38
@@ -2940,8 +2970,8 @@ msgstr "最近"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:15
 msgid ""
-"Setup is system readiness: get clear-record from installed to usable. Every "
-"step can be skipped — you can return whenever you like."
+"Setup is system readiness: get clear-record from installed to usable. "
+"Every step can be skipped — you can return whenever you like."
 msgstr "初始设置关乎系统就绪：让 clear-record 从「已安装」变为「可使用」。每一步都可以跳过——你随时可以回来。"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:17
@@ -2958,15 +2988,15 @@ msgstr "欢迎"
 #: packages/clear-record/src/clear_record/web/templates/setup.html:25
 msgid ""
 "clear-record records, transcribes and reviews meetings locally. Your own "
-"tape becomes a transcript under Projects → Meetings, and — once a harness is"
-" connected — drafts under that meeting's review, and minutes under that "
-"project's Minutes. Nothing here is required before you start; this path gets"
-" transcription ready, connects an MCP harness, and ends with an acceptance "
-"test."
+"tape becomes a transcript under Projects → Meetings, and — once a harness"
+" is connected — drafts under that meeting's review, and minutes under "
+"that project's Minutes. Nothing here is required before you start; this "
+"path gets transcription ready, connects an MCP harness, and ends with an "
+"acceptance test."
 msgstr ""
 "clear-record 在本地录制、转写并审阅会议。你自己的录音会在「项目 → "
-"会议」下变成转写文本；连接宿主后，还会在该会议的审阅区生成草稿，并在该项目的「纪要」下生成纪要。开始前无需完成任何步骤；这条路径会让转写就绪、连接 "
-"MCP 宿主，并以一次验收测试收尾。"
+"会议」下变成转写文本；连接宿主后，还会在该会议的审阅区生成草稿，并在该项目的「纪要」下生成纪要。开始前无需完成任何步骤；这条路径会让转写就绪、连接"
+" MCP 宿主，并以一次验收测试收尾。"
 
 #: packages/clear-record/src/clear_record/web/templates/setup.html:27
 msgid "Next: Transcription"
@@ -2985,8 +3015,8 @@ msgstr "下一步：试一下"
 #: packages/clear-record/src/clear_record/web/templates/setup.html:53
 msgid ""
 "The acceptance test this path ends on: a hello-world tape through "
-"transcription, shown back as the transcript an MCP agent receives. Run it in"
-" the Agent step's Try it stage, or from Settings → Status."
+"transcription, shown back as the transcript an MCP agent receives. Run it"
+" in the Agent step's Try it stage, or from Settings → Status."
 msgstr ""
 "这条路径最终要完成的验收测试：一段 hello-world 录音经过转写，再按 MCP "
 "智能体收到的那样显示回转写文本。可在「智能体」一步的「试一下」环节运行，或在「设置 → 状态」中运行。"
@@ -3006,12 +3036,15 @@ msgstr "忽略初始设置"
 # Per-option help: left English on purpose (the terminal is not the
 # interface).
 #~ msgid ""
-#~ "set up Tailscale Serve for this port,"
-#~ " trust this machine's tailnet name, and"
-#~ " print its https URL. Serve runs "
-#~ "in the foreground alongside the console "
-#~ "and stops with it. The tailnet is "
-#~ "the authentication: anyone on your tailnet"
-#~ " can reach the console."
+#~ "set up Tailscale Serve for this "
+#~ "port, trust this machine's tailnet name,"
+#~ " and print its https URL. Serve "
+#~ "runs in the foreground alongside the "
+#~ "console and stops with it. The "
+#~ "tailnet is the authentication: anyone on"
+#~ " your tailnet can reach the console."
 #~ msgstr ""
+
+#~ msgid "the default data directory"
+#~ msgstr "默认数据目录"
 

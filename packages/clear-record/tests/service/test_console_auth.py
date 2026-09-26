@@ -204,6 +204,33 @@ def test_the_absolute_lifetime_does_not_move_with_use(tmp_path) -> None:
     assert console.session(token) is SessionState.STALE
 
 
+def test_the_absolute_deadline_lapses_on_a_real_timer(tmp_path) -> None:
+    """The absolute half, on the real clock, with use that cannot reset it.
+
+    A month is not something a test can wait for — but the *policy* is settable,
+    so the same ceiling can be asserted in half a second, exactly as the idle
+    window is above. The idle window here is the shipped day, far longer than the
+    lifetime, so the only clock that can end this session is the absolute one; the
+    accepted request in the middle (a real ``session`` call between the two
+    sleeps) is what proves use does not move it.
+    """
+    console = _console(
+        tmp_path,
+        idle_timeout=dt.timedelta(hours=1),
+        absolute_lifetime=dt.timedelta(milliseconds=500),
+    )
+    console.set_password(PASSWORD, actor=CONSOLE)
+    token = console.sign_in(PASSWORD)
+    assert token is not None
+    assert console.session(token) is SessionState.ACTIVE
+
+    time.sleep(0.2)
+    assert console.session(token) is SessionState.ACTIVE, "well inside the lifetime"
+
+    time.sleep(0.35)
+    assert console.session(token) is SessionState.STALE
+
+
 def test_signing_out_ends_one_session_and_revoking_ends_every_one(tmp_path) -> None:
     console = _console(tmp_path)
     console.set_password(PASSWORD, actor=CONSOLE)

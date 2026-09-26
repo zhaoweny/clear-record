@@ -70,10 +70,9 @@ ANONYMOUS_POSTS = (CREDENTIAL_PATH, SIGN_IN_PATH)
 #: What a machine client is told when it has no session. Plain English on
 #: purpose: it answers a script (the JSON API's ``detail``), not a person reading
 #: a translated console — the same shape the request guard's and the naming
-#: rules' sentences have — and it names the two things a client can act on.
-#: What a machine client is told when it has no session. The whole anonymous
-#: surface is named, because a client that is refused needs to know whether it
-#: asked one of the routes that would have answered.
+#: rules' sentences have. The whole anonymous surface is named, because a client
+#: that is refused needs to know whether it asked one of the routes that would
+#: have answered.
 AUTH_REQUIRED = (
     f"request refused: this node needs a signed-in console session, and this "
     f"request carried none. Open {SETUP_PATH} in a browser and sign in; only "

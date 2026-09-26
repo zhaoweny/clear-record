@@ -21,7 +21,7 @@
     <section class="content setup">
       {% if first_run %}
       <h2>{{ tr("Set the console password") }}</h2>
-      <p class="muted">{{ tr("Nothing else on this console is reachable until a password is set. It is the one credential this node checks: the console and its API need it, the registry stores only a salted hash of it, and the password itself is never written to a file, a log or a bundle.") }}</p>
+      <p class="muted">{{ tr("Nothing else on this console is usable until a password is set. It is the one credential this node checks: the console and its API need it, the registry stores only a salted hash of it, and the password itself is never written to a file, a log or a bundle.") }}</p>
       <form class="stack" method="post" action="/setup/credential">
         <input name="password" type="password" placeholder="{{ tr('New password') }}"
                autocomplete="new-password" minlength="{{ password_min_length }}"

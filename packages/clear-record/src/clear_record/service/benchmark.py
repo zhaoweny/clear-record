@@ -170,9 +170,10 @@ def _memory_axis(directory: str | Path | None, cost: dict | None) -> dict:
     record, empty or not) both the value and the reason come from the record,
     because ``segments.json`` belongs to whichever run wrote it last: a failed
     run must not show a previous run's peak, and a later all-reused re-run
-    must not erase an earlier run's measurement — so ``directory`` is the run's
-    own copy here, and it is only read by a caller with no run at all
-    (``cost is None``), which gets the workspace meta. A zero is never a
+    must not erase an earlier run's measurement. Only a caller with no run
+    (``cost is None``) reads ``directory`` at all, and it is then the workspace
+    the caller named; with a run, :func:`run_axes` hands this function the run's
+    own copy (``_axes_directory``) and nothing here reads it. A zero is never a
     measurement on either path.
     """
     axis: dict = {"peak_rss_bytes": None, "reason": None}

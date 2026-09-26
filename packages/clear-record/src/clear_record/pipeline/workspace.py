@@ -596,13 +596,16 @@ class Workspace:
         The marker (:data:`RUN_MARKER`) is what makes the directory a scope:
         it names the workspace and the run, so opening the directory again — by
         a stage, by a reader, by the run path after a restart or a re-claim —
-        resolves back to this workspace instead of guessing from the path. It is
-        published atomically (``.tmp`` + rename), like every other writer here: a
-        reader that opens the scope mid-write must see a complete marker or none,
-        never a torn body that would silently open the scope as its own
-        workspace. The marker is rewritten for a run that begins again in a scope
-        that already exists, which is idempotent; a **resume** is a *new* run and
-        begins its own scope.
+        resolves back to this workspace instead of guessing from the path. The
+        marker is published atomically (``.tmp`` + rename, :func:`_publish_json`),
+        as the chunk cache's meta and bodies are: a reader that opens the scope
+        mid-write must see a complete marker or none, never a torn body that would
+        silently open the scope as its own workspace. The document writers
+        (:meth:`write_manifest`, :meth:`write_segments`, :meth:`write_record` and
+        :meth:`write_ground_truth`) go through ``write_json`` and write in place,
+        by contrast. The marker is rewritten for a run that begins again in a
+        scope that already exists, which is idempotent; a **resume** is a *new*
+        run and begins its own scope.
         """
         scope = self.run_scope(run_id)
         scope.outputs.mkdir(parents=True, exist_ok=True)

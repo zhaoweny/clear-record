@@ -1764,11 +1764,18 @@ class RunManager:
         # This run's own copy of its outputs: the pipeline writes its documents
         # into ``<workspace>/runs/<run id>/``, so a run that dies half-way cannot
         # touch the workspace's published copy or an earlier run's — nothing is
-        # rewritten in place (ADR-0033). Everything the run only *reads* (its
-        # tapes, the normalized audio, the glossary, the chunk cache) stays the
-        # meeting workspace's, so a resume keeps its cache. ``begin_scope`` makes
-        # the directory and marks it, so opening it again resolves back to this
-        # workspace — the mark, not the name, is what makes a directory a scope.
+        # rewritten in place (ADR-0033). What a run only *reads* stays the
+        # meeting workspace's — its tapes, the ``glossary.txt`` a hand-edit lands
+        # in and the ``.clear-record-ignore`` declaration — while three things a
+        # node run writes at the workspace root all the same: the normalized
+        # ``audio/`` the ingest stage writes there, the ``glossary.txt`` its
+        # glossary resolution publishes when the registry has confirmed terms, and
+        # the durable ``transcribe.log``. The app-owned chunk cache is neither: it
+        # lives in the app's own cache directory, keyed per workspace, and a run
+        # only advances it, so a resume continues the same cache. ``begin_scope``
+        # makes the directory and marks it, so opening it again resolves back to
+        # this workspace — the mark, not the name, is what makes a directory a
+        # scope.
         scope = Workspace.at(meeting.workspace_path).begin_scope(run.id)
         # The row is already ``running``: the claim wrote that status, its
         # ``started_at`` and its first heartbeat in one conditional update. A

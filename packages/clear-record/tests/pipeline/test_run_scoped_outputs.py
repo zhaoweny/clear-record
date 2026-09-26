@@ -6,9 +6,13 @@ reconciled record and exports into ``<workspace>/runs/<run id>/`` — its own co
 retained — and a **finished** run publishes that copy at the workspace root,
 which stays the default read. A later run writes its own copy and leaves the
 earlier run's readable; a run that dies half-way publishes nothing, so neither
-the workspace's copy nor another run's can be touched by it. What the run only
-*reads* (its tapes' normalized audio, the glossary, the chunk cache) stays the
-workspace's, so a resume keeps its cache.
+the workspace's copy nor another run's can be touched by it. What a run
+**reads** (its tapes, the ``glossary.txt`` a hand-edit lands in, the
+``.clear-record-ignore`` declaration) stays the workspace's; three things a node
+run writes at the workspace root all the same — the normalized ``audio/``, the
+``glossary.txt`` a confirmed-term registry publishes, and ``transcribe.log``.
+The app-owned chunk cache is neither: it lives in the app's own cache directory,
+keyed per workspace, and a run only advances it, so a resume keeps its cache.
 """
 
 from __future__ import annotations

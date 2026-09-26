@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import types
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -29,7 +30,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import URL, UniqueConstraint, create_engine, event
 from sqlalchemy.pool import NullPool
 
-from clear_record.core import PipelineOptions
+from clear_record.core import JobEvent, PipelineOptions
 from clear_record.core.paths import registry_path
 from clear_record.service import (
     RUN_ORIGINS,
@@ -2123,3 +2124,161 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     assert migrated.returncode == 0, migrated.stderr
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT foreign_keys FROM pragma_probe").fetchone() == (1,)
+
+
+# --- the connection's own state, and the journal it reads through ----------- #
+def test_a_read_is_not_refused_while_another_surface_holds_the_write_lock(
+    tmp_path,
+) -> None:
+    """A read does not wait behind a writer's lock — the node's own shape.
+
+    The node reads while it writes: a run appends a report per chunk, the
+    heartbeat refreshes its row, and each of those mutations appends the audit
+    row ADR-0033 requires, while the console's status page, the CLI's poll and a
+    test's ``list_run_events`` read the same registry. In SQLite's default
+    rollback journal a commit holds ``PENDING`` and then ``EXCLUSIVE`` while it
+    writes the journal, syncs the database and deletes the journal again, and
+    both locks refuse every other connection's read lock for the whole of it. A
+    read issued inside one of those windows therefore waits out the driver's
+    busy timeout (5 s) and then fails with ``database is locked`` — the flake a
+    cancel test's poll met under the gate's load, where the node's writes kept
+    the windows tiled. The write-ahead log the engine applies is what removes
+    that class: readers take no lock a writer holds, so the read below answers
+    while the writer is still holding the lock.
+
+    The writer's state is *held* here rather than raced for: ``BEGIN EXCLUSIVE``
+    is the lock a commit holds across the journal write and the syncs, kept open
+    deliberately, so a refusal is a verdict and not a timing.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor="console")
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    run = registry.create_run(meeting.id, origin="console", actor="console")
+    registry.add_run_event(run.id, JobEvent(stage="ingest"), actor="queue")
+
+    holder = sqlite3.connect(str(registry.db_path), timeout=5.0)
+    holder.execute("BEGIN EXCLUSIVE")
+    # A write that changes nothing, to hold the lock: the version table carries
+    # one row by construction, so this statement is the lock and nothing else.
+    holder.execute("UPDATE alembic_version SET version_num = version_num")
+    read: list[JobEvent] = []
+    failure: list[BaseException] = []
+
+    def read_while_the_writer_holds_the_lock() -> None:
+        try:
+            read.extend(registry.list_run_events(run.id))
+        except BaseException as exc:  # the refusal this test is about
+            failure.append(exc)
+
+    try:
+        reader = threading.Thread(
+            target=read_while_the_writer_holds_the_lock, daemon=True
+        )
+        reader.start()
+        reader.join(1.0)
+        assert not reader.is_alive(), (
+            "a read waited behind the writer's lock: this registry's journal "
+            "refuses readers while a commit holds the database"
+        )
+        assert not failure, failure[0]
+        assert [event.stage for event in read] == ["ingest"]
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+# --- a folder registered by two surfaces at once ---------------------------- #
+def test_a_registration_that_loses_the_project_race_answers_with_the_winner(
+    tmp_path, monkeypatch
+) -> None:
+    """The loser of a registration race answers with the meeting the winner wrote.
+
+    Two surfaces registering one folder at once are a real pair — the command
+    line's ``run <dir>`` asking the node, and the console adding the same folder
+    — and nothing in the registration can stop the other writer: the scan reads,
+    and the creates that follow are what the registry's unique constraints
+    decide (the project's slug, the meeting's per project). When the second write
+    loses, the folder **is** registered, which is what the call asked for, so the
+    loser answers with the winner's meeting rather than with the constraint's
+    refusal (`project slug 'second' already exists`, which the API edge turned
+    into a 500).
+
+    The winner's write is injected into the loser's read-then-write window — the
+    one place the two can interleave — so the collision is a verdict and not a
+    timing. The rollback journal used to settle this by accident: a commit
+    excludes readers, so the loser's scan saw the winner's row (see
+    ``test_a_read_is_not_refused_while_another_surface_holds_the_write_lock``);
+    the write-ahead log does not, which is what this fences.
+    """
+    winner = _registry(tmp_path)
+    loser = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+
+    real_unique = loser._unique_slug
+    injected: list[str] = []
+
+    def unique_slug_then_the_winner_registers(session, name: str) -> str:
+        slug = real_unique(session, name)  # the loser's read
+        if not injected:
+            injected.append(name)
+            winner.meeting_for_workspace(str(workspace), actor="console")
+        return slug  # ... and the loser's own insert collides
+
+    monkeypatch.setattr(loser, "_unique_slug", unique_slug_then_the_winner_registers)
+
+    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+
+    assert injected, "the winner never got into the loser's window"
+    assert (
+        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
+    )
+    assert [project.slug for project in winner.list_projects()] == ["second"]
+    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+
+
+def test_a_registration_that_loses_the_meeting_race_answers_with_the_winner(
+    tmp_path, monkeypatch
+) -> None:
+    """The meeting's own insert is the second place the race can lose.
+
+    The folder's project can already be there — registered, or created by the
+    console — and then the two surfaces race to add the **meeting** for it
+    instead: both read the project's meeting slugs, and the unique constraint
+    over ``(project_id, slug)`` refuses the second row. Same answer as the
+    project's race (see the test above), because it is the same registration.
+    """
+    winner = _registry(tmp_path)
+    loser = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    winner.create_project("second", actor="console")
+
+    real_unique = loser._unique_meeting_slug
+    injected: list[str] = []
+
+    def unique_slug_then_the_winner_registers(
+        session, project_id: int, title: str
+    ) -> str:
+        slug = real_unique(session, project_id, title)  # the loser's read
+        if not injected:
+            injected.append(title)
+            winner.meeting_for_workspace(str(workspace), actor="console")
+        return slug  # ... and the loser's own insert collides
+
+    monkeypatch.setattr(
+        loser, "_unique_meeting_slug", unique_slug_then_the_winner_registers
+    )
+
+    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+
+    assert injected, "the winner never got into the loser's window"
+    assert (
+        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
+    )
+    assert len(winner.list_meetings()) == 1, "one folder, one meeting"

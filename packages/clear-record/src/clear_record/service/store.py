@@ -67,6 +67,7 @@ import dataclasses
 import datetime as _dt
 import json
 import re
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -242,6 +243,52 @@ def _has_table(conn: Connection, name: str) -> bool:
     return inspect(conn).has_table(name)
 
 
+def _write_ahead_log(dbapi_connection: Any) -> None:
+    """Put the registry on SQLite's write-ahead log, once per file.
+
+    The default rollback journal is what makes a *reader* wait behind a writer,
+    and lose: a commit holds ``PENDING`` and then ``EXCLUSIVE`` while it writes
+    the journal, syncs the database and deletes the journal again, and both
+    locks refuse every other connection's ``SHARED`` lock for the whole of that
+    — and no busy timeout can help, because there is no wait to be won. The node
+    writes continuously (a run appends a report per chunk, the heartbeat
+    refreshes a row, and every audited mutation appends its own — ADR-0033), so
+    under load those windows tile the timeline, and a reader behind them — the
+    console's poll, the CLI's, a test's ``list_run_events`` — waits out the
+    whole busy timeout and then fails with ``database is locked``. The
+    write-ahead log removes the class instead of the wait: a reader reads the
+    last committed snapshot and takes no lock a writer holds, and a commit is
+    one append to the log rather than a journal write, two syncs and an unlink.
+    Durability is unchanged — the default ``synchronous=FULL`` syncs the log on
+    commit, so a committed event or audit row survives a crash — and what the
+    log adds on disk is the ``-wal`` and ``-shm`` files beside the registry
+    while it is open (both gone once the last connection closes, which
+    checkpoints the log back into the database; the pool holds no connection
+    between units of work).
+
+    The mode is a property of the **file**, not of the connection, so the read
+    below is the whole of the work for every connection after the first to find
+    the lock free: ``PRAGMA journal_mode`` answers from the header without
+    taking a lock. The conversion itself does need the write lock, and SQLite
+    refuses it *without waiting* while another connection holds that lock
+    (``SQLITE_BUSY`` at once, not a busy-timeout wait). That refusal is
+    tolerated: the connection that meets it works in the mode the file is
+    already in, the next connection tries again, and a registry on a filesystem
+    that cannot host the log's shared memory keeps working in the rollback
+    journal it had rather than failing to open.
+    """
+    mode = dbapi_connection.execute("PRAGMA journal_mode").fetchone()[0]
+    if str(mode).lower() == "wal":
+        return
+    try:
+        dbapi_connection.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        # The lock belongs to another surface (or the filesystem): the file
+        # keeps the mode it has, and the next connection is the next attempt.
+        # Nothing here may fail a read or a write.
+        return
+
+
 def _engine(db_path: Path) -> Engine:
     """The engine one registry reads and writes through.
 
@@ -261,16 +308,22 @@ def _engine(db_path: Path) -> Engine:
     connection had (connections are cheap; correctness beats pooling), and the
     one that keeps a connection from being handed to a second thread, since the
     console, the web app's threadpool and the MCP server read one registry. The
-    busy timeout is the driver's default, unchanged.
+    busy timeout is the driver's default (``sqlite3.connect``'s five seconds),
+    which is what makes a *writer* meet another writer by waiting instead of
+    failing; it cannot do the same for a *reader*, which SQLite's default
+    rollback journal refuses outright while a commit holds the database. The log
+    the listener below applies is the answer to that, and
+    :func:`_write_ahead_log` carries the reasoning.
     """
     engine = create_engine(
         URL.create("sqlite", database=str(db_path)), poolclass=NullPool
     )
 
     @event.listens_for(engine, "connect")
-    def _foreign_keys_on(dbapi_connection: Any, _record: Any) -> None:
+    def _connection_state(dbapi_connection: Any, _record: Any) -> None:
         dbapi_connection.execute("PRAGMA foreign_keys = ON")
         dbapi_connection.execute("PRAGMA recursive_triggers = ON")
+        _write_ahead_log(dbapi_connection)
 
     return engine
 
@@ -607,12 +660,16 @@ class Registry:
         The busy timeout is the driver's default, which is also what makes a
         second *process* (the console and an agent's MCP server share one
         registry) wait for a writer instead of raising ``database is
-        locked``. The one shape SQLite refuses to wait for is a write that has
-        to upgrade a read transaction; pysqlite keeps the hand-written
-        connection's promise here — it begins the transaction when the first
-        write executes, not when the session reads, so a read followed by a
-        write still reaches the write lock holding no read lock, and the write
-        waits on the busy timeout rather than failing.
+        locked`` — for a writer. A reader is not promised that wait: while a
+        commit holds the database, the rollback journal refuses another
+        connection's read lock outright, so no timeout can win it (see
+        :func:`_write_ahead_log`, which the engine applies to every connection).
+        What the driver *does* keep here is the hand-written connection's
+        promise about the other shape SQLite refuses to wait for: pysqlite
+        begins the transaction when the first write executes, not when the
+        session reads, so a read followed by a write still reaches the write
+        lock holding no read lock, and the write waits on the busy timeout
+        rather than failing.
 
         A session whose body raises is rolled back and closed, and the exception
         propagates unchanged: a ``ValueError`` or ``KeyError`` is the one the
@@ -1209,20 +1266,50 @@ class Registry:
         **tapes are set by the run path**, not here: the registry stores metadata
         and never walks a workspace, so ``runs.workspace_run_meeting`` is what
         reads the directory's audio into the meeting's tape set.
+
+        **Two surfaces registering one folder at once are a real pair** — the
+        command line's ``run <dir>`` and the console adding the same folder, say —
+        and neither the scan nor the creates above can stop the other writer: the
+        project's slug and the meeting's are each unique, so the write that lands
+        second is refused. That refusal is not an error to report: the folder is
+        registered, which is what the call asked for, so the loser looks once more
+        for the meeting the winner wrote and answers with it. A ``ValueError``
+        that scan does not explain is re-raised as itself.
         """
         resolved = _resolved_workspace(directory)
+        meeting = self._meeting_at(resolved)
+        if meeting is not None:
+            return meeting
+        name = Path(resolved).name or resolved
+        try:
+            project = self.get_project(_slugify(name)) or self.create_project(
+                name, actor=actor
+            )
+            return self.create_meeting(
+                project.slug, name, workspace_path=resolved, actor=actor
+            )
+        except ValueError:
+            # The rollback journal used to decide this race by accident: its
+            # commit excludes readers, so the two registrations were serialized
+            # and the second one's read found the first one's row. The
+            # write-ahead log does not serialize them (:func:`_write_ahead_log`),
+            # which leaves the loser the job the codebase already gives every
+            # read-then-write pair — read again, and answer with what the winner
+            # wrote (``runs.RunManager.start`` reads the same way over the
+            # one-active-run index).
+            meeting = self._meeting_at(resolved)
+            if meeting is None:
+                raise
+            return meeting
+
+    def _meeting_at(self, resolved: str) -> Meeting | None:
+        """The meeting registered for a resolved workspace path, or ``None``."""
         for meeting in self.list_meetings():
             if meeting.workspace_path and (
                 _resolved_workspace(meeting.workspace_path) == resolved
             ):
                 return meeting
-        name = Path(resolved).name or resolved
-        project = self.get_project(_slugify(name)) or self.create_project(
-            name, actor=actor
-        )
-        return self.create_meeting(
-            project.slug, name, workspace_path=resolved, actor=actor
-        )
+        return None
 
     # --- uploaded tapes ---------------------------------------------------- #
     @audit.recorded("tape.register", audit.subject("meeting", "meeting_id"))

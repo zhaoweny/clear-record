@@ -17,6 +17,7 @@ keyed per workspace, and a run only advances it, so a resume keeps its cache.
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,7 @@ import soundfile as sf
 
 from clear_record.core import RecordDocument, Segment, Source, load_json
 from clear_record.pipeline import stages
+from clear_record.pipeline import workspace as workspace_module
 from clear_record.pipeline.workspace import (
     MANIFEST,
     RETENTION_PREFIX,
@@ -229,6 +231,51 @@ def test_publishing_makes_a_runs_own_copy_the_workspaces_default_read(
     assert first.load_segments()[1]["run_id"] == 1
     assert load_json(first.manifest_path)["run_id"] == 1
     assert (first.export_dir / "record.md").read_text(encoding="utf-8") == "first"
+
+
+def test_a_publication_that_fails_while_copying_leaves_the_previous_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed publication is not half a new run: the root keeps the last complete one.
+
+    The reproduction: ENOSPC on the third copy left the root holding run 2's
+    manifest and segments beside run 1's record while the run was recorded
+    failed — two runs' documents presented as one, which no reader can tell
+    apart. Every copy now lands in a scratch file first and the root is touched
+    only by the renames that follow, so a failure while copying replaces nothing
+    (a rename needs no space), and the scratch a failed attempt made is cleaned
+    up with it.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    # Both runs' scopes are begun (marked), so the root's documents are held by a
+    # run's own copy and nothing is at risk: these are the publication's own
+    # copies that fail below, not the retention's.
+    first = _finish(home.begin_scope(1), "first")
+    publish_run(first)
+    published = _published(home)
+    exported = (home.export_dir / "record.md").read_bytes()
+
+    second = _finish(home.begin_scope(2), "second")
+
+    real_copy = workspace_module.shutil.copy2
+    copies: list[Path] = []
+
+    def the_disk_fills(source, target, *args, **kwargs):
+        copies.append(Path(target))
+        if len(copies) == 3:  # manifest, segments, then the record
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copy(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(workspace_module.shutil, "copy2", the_disk_fills)
+    with pytest.raises(OSError):
+        publish_run(second)
+
+    assert len(copies) == 3, "the failure did not land in the copy phase"
+    assert _published(home) == published
+    assert (home.export_dir / "record.md").read_bytes() == exported
+    assert _record_text(home) == "first"
+    assert home.load_segments()[1]["run_id"] == 1
+    assert list(home.root.glob("*.tmp")) == []
 
 
 def test_a_half_written_run_cannot_touch_the_published_copy_or_another_run(

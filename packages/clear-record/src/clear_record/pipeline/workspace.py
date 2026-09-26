@@ -892,18 +892,29 @@ PUBLISHED_DOCUMENTS = (MANIFEST, SEGMENTS, RECORD)
 RETENTION_PREFIX = "retained"
 
 
-def _publish_file(source: Path, target: Path) -> None:
-    """Copy *source* over *target* by rename: a reader sees all of one or the other.
+def _stage_file(source: Path, target: Path) -> Path:
+    """Copy *source* beside *target* under a scratch name; return that name.
 
-    The same publish-by-rename the workspace's own writers use: the workspace root
-    is what a reader (the console, an archive, an agent) opens while a run is
-    finishing, and a half-copied document would be a transcript that is neither
-    run's.
+    The half of a publication that copies bytes, and so the half that can fail
+    for want of space (the reproduction: ENOSPC on the third document). It
+    writes over nothing — the copy lands at ``<target>.tmp``, the scratch name
+    the workspace's own writers use and its walks skip — so a publication that
+    fails here has replaced nothing at the root.
     """
     tmp = target.with_name(target.name + ".tmp")
     tmp.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, tmp)
-    os.replace(tmp, target)
+    return tmp
+
+
+def _swap_file(staged: Path, target: Path) -> None:
+    """Put *staged* in *target*'s place by rename: one document, all of one run.
+
+    A rename within one directory: no bytes are copied and no space is needed, so
+    a reader sees the whole of one document or the whole of the other, and this is
+    the step :func:`publish_run` may take only once every copy has landed.
+    """
+    os.replace(staged, target)
 
 
 def _sha256(path: Path) -> str:
@@ -1034,9 +1045,23 @@ def publish_run(scope: Workspace) -> Publication:
     returns before this, so it publishes nothing and the workspace keeps the last
     complete run's copy — the property that makes rewrite no longer destructive
     (ADR-0033). What it copies is the run's own manifest, segments and record,
-    and every export file, so the root holds the newest complete run exactly as
-    the run's own copy does; the run's copy itself is left untouched, which is
-    what keeps an earlier run's record readable after a later one.
+    and every export file, so every document the run wrote is at the root exactly
+    as the run's own copy holds it (a document it never wrote is the exception,
+    stated below); the run's copy itself is left untouched, which is what keeps
+    an earlier run's record readable after a later one.
+
+    **A publication that fails replaces nothing.** The bytes are copied first,
+    each into a scratch file beside the target it will replace, and only when
+    every copy has landed are they put in place — a rename per document, inside
+    one directory, which copies nothing and so cannot fail for want of space. A
+    publication that fails while copying (the disk filling on the third document,
+    the shape the review reproduced) therefore leaves the root as the **previous
+    complete run**: the reader meets one run's documents, never two runs' side by
+    side, and "a finished run's copy becomes the root's" holds on that path too.
+    The window the swap itself opens is the one left, and a rename of files that
+    are already written does not touch bytes: nothing at the root is ever
+    half-copied, and nothing reconciles a swap that fails part-way (a rename
+    within a directory, by a process that just wrote that directory).
 
     **What it will not destroy.** For a workspace whose runs have always been
     scoped, the root's documents are the last run's published copy, which that
@@ -1052,17 +1077,36 @@ def publish_run(scope: Workspace) -> Publication:
     association can follow it (:meth:`clear_record.service.store.Registry.
     retain_artifact_paths`).
 
-    Returns the paths written and the paths preserved; a document the run never
-    wrote is skipped rather than published as an absence.
+    Returns the paths written and the paths preserved. A document the run never
+    wrote is skipped rather than published as an absence, so the root keeps the
+    last run that *did* write it: that is the one way the root's documents are
+    not all of this run, and it is why the promise above is read per document.
     """
     if scope.run_id is None:
         return Publication()
     home = Workspace(scope.root)
     targets = _publication_targets(scope, home)
     retained = _retain_unscoped_outputs(home, targets)
+    # **Every copy first, then one rename per document.** The copies are the half
+    # that copies bytes and can therefore fail for want of space, and each lands
+    # in a scratch file beside the target it will replace — so a publication that
+    # fails while copying (a disk filling on the third document, the shape the
+    # review reproduced) has replaced nothing, and the root still holds the
+    # previous complete run. What follows is a rename per target inside one
+    # directory, which needs no space; that sequence is what the docstring's
+    # claim rests on.
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for source, target in targets:
+            staged.append((_stage_file(source, target), target))
+    except BaseException:
+        # The root was never touched: the copies that did land are scratch.
+        for scratch, _target in staged:
+            scratch.unlink(missing_ok=True)
+        raise
     published: list[Path] = []
-    for source, target in targets:
-        _publish_file(source, target)
+    for scratch, target in staged:
+        _swap_file(scratch, target)
         published.append(target)
     return Publication(published=tuple(published), retained=tuple(retained.items()))
 

@@ -1046,22 +1046,44 @@ def publish_run(scope: Workspace) -> Publication:
     complete run's copy — the property that makes rewrite no longer destructive
     (ADR-0033). What it copies is the run's own manifest, segments and record,
     and every export file, so every document the run wrote is at the root exactly
-    as the run's own copy holds it (a document it never wrote is the exception,
-    stated below); the run's copy itself is left untouched, which is what keeps
-    an earlier run's record readable after a later one.
+    as the run's own copy holds it; the run's copy itself is left untouched, which
+    is what keeps an earlier run's record readable after a later one. Two kinds of
+    document it did **not** write stay as the previous publication left them, and
+    they are why the root is not this run's copy document for document:
 
-    **A publication that fails replaces nothing.** The bytes are copied first,
-    each into a scratch file beside the target it will replace, and only when
-    every copy has landed are they put in place — a rename per document, inside
-    one directory, which copies nothing and so cannot fail for want of space. A
-    publication that fails while copying (the disk filling on the third document,
-    the shape the review reproduced) therefore leaves the root as the **previous
-    complete run**: the reader meets one run's documents, never two runs' side by
-    side, and "a finished run's copy becomes the root's" holds on that path too.
-    The window the swap itself opens is the one left, and a rename of files that
-    are already written does not touch bytes: nothing at the root is ever
-    half-copied, and nothing reconciles a swap that fails part-way (a rename
-    within a directory, by a process that just wrote that directory).
+    - a document the run never wrote is skipped rather than published as an
+      absence, so the root keeps the last run that *did* write it: the root's
+      ``manifest.json`` can be a later run's while its ``record.json`` is an
+      earlier one's, and each of those names the run that wrote it, never the
+      publication's;
+    - nothing prunes the root's ``export/``, so an export file the run did not
+      write (an earlier run's export set was wider) stays published although this
+      run's own copy does not hold it — and the Markdown/SRT/VTT exports carry no
+      run id, so an export is the previous publication's until this one rewrites
+      it under the same name.
+
+    **A publication that fails while copying replaces nothing.** The bytes are
+    copied first, each into a scratch file beside the target it will replace, and
+    only when every copy has landed are they put in place — a rename per document,
+    inside one directory, which copies nothing and so cannot fail for want of
+    space. A publication that fails while copying (the disk filling on the third
+    document, the shape the review reproduced) therefore leaves the root as the
+    **previous complete run**: the reader meets one run's documents, never two
+    runs' side by side, and "a finished run's copy becomes the root's" holds on
+    that path too. The swap itself is the window that is left, and it is narrower
+    than the claim it used to carry: it is a sequence of renames of files that are
+    already written, so no read lands on a half-copied document — but nothing
+    reconciles a rename that fails part-way (an I/O error, a permission changed
+    under the process, another writer), so the documents already renamed are this
+    run's and the rest are the previous run's, and only the next publication
+    settles it. A set-level commit — a versioned directory and one atomic pointer —
+    is what would close that window; it is not built.
+
+    **Whose row it trusts.** The run comes from ``scope``'s own marker, and the
+    caller is the run path, which passes the scope and not the row: nothing here
+    re-reads the run's row (``service/runs.py`` calls it positionally), so a run
+    whose registry row a peer has reaped in the meantime still publishes its copy.
+    A caller that must not publish a rowless run has to establish that itself.
 
     **What it will not destroy.** For a workspace whose runs have always been
     scoped, the root's documents are the last run's published copy, which that
@@ -1077,10 +1099,10 @@ def publish_run(scope: Workspace) -> Publication:
     association can follow it (:meth:`clear_record.service.store.Registry.
     retain_artifact_paths`).
 
-    Returns the paths written and the paths preserved. A document the run never
-    wrote is skipped rather than published as an absence, so the root keeps the
-    last run that *did* write it: that is the one way the root's documents are
-    not all of this run, and it is why the promise above is read per document.
+    Returns the paths written and the paths preserved. It writes each document of
+    the run's own copy, and no more than that: what it did not write is the
+    previous publication's, which is why the promise above is read **per
+    document** (the two shapes are named at the top).
     """
     if scope.run_id is None:
         return Publication()

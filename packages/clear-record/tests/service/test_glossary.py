@@ -63,15 +63,24 @@ def test_an_edited_glossary_changes_the_hash() -> None:
     assert before.text != after.text
 
 
-def test_candidates_and_retired_terms_are_excluded() -> None:
-    """An unreviewed agent suggestion must not bias the decoder."""
-    snapshot = build_snapshot(
-        [
-            _term("Confirmed", status="confirmed"),
-            _term("Draft", status="candidate"),
-            _term("Old", status="retired"),
-        ]
-    )
+def test_candidates_and_retired_terms_are_excluded(tmp_path: Path) -> None:
+    """The filter is the service's, driven through the registry's own moves.
+
+    The decoder's snapshot carries the terms an operator confirmed and nothing
+    else: an agent's suggestion nobody reviewed must not bias it, and a retired
+    term must leave it. Which is why the move is driven rather than the status set
+    by hand — a ``retire_term`` that stopped marking the row, or a filter that
+    stopped reading the status, would put the retired term back into the text the
+    decoder is primed with, and this is where that is noticed.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor="console")
+    registry.add_term("ops", "Confirmed", status="confirmed", actor="console")
+    registry.add_term("ops", "Draft", added_by="agent", actor="console")  # candidate
+    old = registry.add_term("ops", "Old", status="confirmed", actor="console")
+    registry.retire_term(old.id, actor="console")
+
+    snapshot = project_snapshot(registry, "ops")
 
     assert snapshot.terms == ("Confirmed",)
     assert snapshot.text == "Confirmed\n"

@@ -269,6 +269,11 @@ def recorded(
     That is not a refusal (the service did not decide against the move) and, for
     an id that names no row at all, there is no subject to write about — the
     ``ok`` row belongs to a write that happened, which this one did not.
+
+    The wrapper carries the verb it was built with as ``audited_action``, so the
+    inventory of what is recorded — and of what each method's rows say — is
+    readable off the class itself rather than kept as a second list beside it
+    (``tests/service/test_audit.py`` reads it).
     """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -310,6 +315,9 @@ def recorded(
             self.record_audit(actor, action, _target(target, call))
             return result
 
+        # The verb this method's rows carry, on the wrapper: the audit inventory
+        # is read off the class rather than restated beside it (see the docstring).
+        wrapper.audited_action = action  # type: ignore[attr-defined]
         return wrapper
 
     return decorate

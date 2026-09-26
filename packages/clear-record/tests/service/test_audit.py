@@ -15,6 +15,7 @@ row, the refusal, and the run whose ``origin`` and audit row are the same word.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import sqlite3
 import threading
@@ -46,6 +47,7 @@ from clear_record.service import (
     PipelineOptions,
     Registry,
     RunManager,
+    audit,
 )
 
 
@@ -110,6 +112,187 @@ def test_a_mutating_service_call_must_name_its_actor(tmp_path) -> None:
 
     assert registry.list_terms("ops") == []
     assert registry.list_runs(meeting.id) == []
+
+
+#: The `Registry` methods the record holds rows for, with the verb each one's rows
+#: carry. This is the inventory the hand-kept call list above cannot be — and it is
+#: checked against the class itself (``audit.recorded`` marks its wrapper), so a
+#: method that gains or loses its decoration, or changes its action, fails here
+#: rather than leaving a hole in the record that nothing notices. Two methods
+#: share ``credential.set`` because they are the two halves of one statement
+#: (insert, or replace), and the verb is the act either way.
+_AUDITED_ACTIONS = {
+    "add_archive": "archive.add",
+    "add_artifact": "artifact.add",
+    "add_run_event": "run.event",
+    "add_term": "term.add",
+    "claim_credential": "credential.set",
+    "claim_run": "run.claim",
+    "create_meeting": "meeting.create",
+    "create_machine_token": "token.mint",
+    "create_project": "project.create",
+    "create_run": "run.enqueue",
+    "fail_unreadable_run": "run.unreadable",
+    "forget_tape": "tape.forget",
+    "heartbeat_run": "run.heartbeat",
+    "interrupt_run": "run.interrupt",
+    "register_tape": "tape.register",
+    "request_cancel": "run.cancel",
+    "restore_term": "term.restore",
+    "retain_artifact_paths": "artifact.retain",
+    "retire_term": "term.retire",
+    "revoke_machine_token": "token.revoke",
+    "set_meeting_status": "meeting.status",
+    "set_meeting_workspace": "meeting.workspace",
+    "set_recording_set": "meeting.tapes",
+    "stop_run": "run.stop",
+    "store_credential": "credential.set",
+    "update_meeting": "meeting.update",
+    "update_project": "project.update",
+    "update_run": "run.update",
+    "update_term": "term.update",
+}
+
+#: The class's members that take an ``actor`` and are **not** recorded, with the
+#: reason the record holds no row of their own. ``record_audit`` and
+#: ``record_refusal`` *are* the append, and a registration composes two calls whose
+#: rows are their own: each names an actor because every path into the record does.
+_UNRECORDED_ACTOR_TAKERS = {
+    "record_audit": "it is the append itself",
+    "record_refusal": "the failed half of the same append",
+    "meeting_for_workspace": "a registration: it composes create_project/create_meeting, whose own calls are the rows",
+}
+
+#: The class's **writers** that name no actor at all, and why the record has no row
+#: for them — the audit module's own rule, stated where a new writer can be checked
+#: against it. The session table's bookkeeping is not history of the project data
+#: and one row per request would bury the record that is; a migration runs before
+#: any record exists; and a token's *use* stamp answers nothing about who holds the
+#: key (that is the mint, which is recorded).
+#:
+#: This is the one shape the class scan cannot see: a new method that writes and
+#: takes neither an actor nor the decorator has nothing to notice it by, and the
+#: reviewer is the check. What the scan does hold is the other two — a recorded
+#: method with no *required* actor, and an actor-taking method that is not recorded.
+_WRITERS_WITHOUT_AN_ACTOR = {
+    "_migrate": "runs before the record exists",
+    "create_session": "sign-in: session bookkeeping, not project history",
+    "touch_session": "the idle clock's lazy write",
+    "end_session": "sign-out",
+    "end_all_sessions": "sign-out everywhere",
+    "prune_expired_sessions": "the expired-session sweep",
+    "touch_machine_token": "a token's use stamp: not who holds the key",
+}
+
+
+def _registry_methods() -> dict[str, Callable[..., object]]:
+    """The class's own methods, by name — the inventory's source of truth."""
+    return {
+        name: member
+        for name, member in inspect.getmembers(
+            store_module.Registry, inspect.isfunction
+        )
+    }
+
+
+def test_the_recorded_inventory_is_the_class_itself() -> None:
+    """What is recorded, and as what, is read off the class — not kept beside it.
+
+    ``audit.recorded`` marks the method it wrapped with the verb its rows carry, so
+    the class answers both halves of the question a hand-kept list has to guess at:
+    a mutating method that **forgot** the decorator is missing from the answer, and
+    one that renamed its action changes the answer. The property that makes the
+    argument's absence the method's own ``TypeError`` — required, not defaulted —
+    is checked here too, for every entry at once.
+    """
+    methods = _registry_methods()
+    recorded = {
+        name: getattr(member, "audited_action")
+        for name, member in methods.items()
+        if hasattr(member, "audited_action")
+    }
+
+    assert recorded == _AUDITED_ACTIONS
+    for name in recorded:
+        actor = inspect.signature(methods[name]).parameters["actor"]
+        assert actor.default is inspect.Parameter.empty, name
+
+
+def test_every_recorded_registry_method_refuses_a_call_that_names_no_actor(
+    tmp_path,
+) -> None:
+    """The same failure the list above drives, for **every** recorded method.
+
+    The calls here are not realistic — every argument but the actor is bound to
+    ``None`` — and that is the point: Python binds before it runs a body, so the
+    missing actor is refused whatever the other values are, and the refusal is the
+    one this test is about. (The realistic calls, with real ids and meeting, are
+    the list at the top of this module: thirteen of these methods driven as a
+    surface drives them.) A method whose ``actor`` gained a default would take
+    ``None`` here and run — which is the weakening this catches, since the row
+    would then be attributed to whatever word the default carried.
+    """
+    registry = _registry(tmp_path)
+    before = len(registry.list_audit_events())
+
+    for name, member in _registry_methods().items():
+        if not hasattr(member, "audited_action"):
+            continue
+        parameters = inspect.signature(member).parameters
+        junk = {
+            key: None
+            for key, parameter in parameters.items()
+            if key != "actor"
+            and key != "self"
+            and parameter.kind
+            not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        }
+        with pytest.raises(TypeError, match="actor"):
+            member(registry, **junk)
+        assert len(registry.list_audit_events()) == before, name
+
+
+def test_the_unrecorded_registry_methods_are_the_documented_ones() -> None:
+    """The exceptions are named, so the inventory above is complete rather than partial.
+
+    Two shapes, both stated with their reason: a method that takes an ``actor`` and
+    records nothing itself, and a writer that names no actor because nothing about
+    it is history of the project data. The first is checked as a **set** — every
+    method of the class that takes an actor is recorded or named here, which is what
+    catches a mutating method that forgot the decorator without forgetting the
+    argument. The second is a list the reviewer checks a new writer against; a
+    writer that takes neither is the one thing no scan can see (see the table).
+    """
+    methods = _registry_methods()
+    takers = {
+        name
+        for name, member in methods.items()
+        if "actor" in inspect.signature(member).parameters
+    }
+
+    assert takers == set(_AUDITED_ACTIONS) | set(_UNRECORDED_ACTOR_TAKERS)
+
+    for name, reason in _WRITERS_WITHOUT_AN_ACTOR.items():
+        member = methods[name]  # KeyError if one was renamed away
+        assert "actor" not in inspect.signature(member).parameters, reason
+        assert not hasattr(member, "audited_action"), reason
+
+
+def test_a_recorded_method_that_takes_no_actor_is_refused_at_decoration_time() -> None:
+    """The guard a new store method meets: decoration without an actor never imports.
+
+    This is why the decorator is enough for "cannot be forgotten": a method that
+    says it is audited and has no actor to attribute the row to stops the class
+    body, so it cannot reach a caller — and the failure names the method and the
+    reason rather than surfacing later as a row nobody can account for.
+    """
+    with pytest.raises(TypeError, match="takes no actor"):
+        # The decoration happens here exactly as it does in the class body, and a
+        # class body that raised here would never define the class at all.
+
+        @audit.recorded("widget.update", "widget:name")
+        def update_widget(self, name: str) -> None:  # pragma: no cover - never called
+            raise AssertionError("the decorator let a method without an actor through")
 
 
 def test_an_actor_outside_the_vocabulary_is_refused_before_anything_is_written(
@@ -347,6 +530,87 @@ def test_a_draft_refusal_is_recorded_against_the_transport(tmp_path) -> None:
         for row in _rows(registry, "draft.accept")
     ] == [(CONSOLE, "draft.accept", f"draft:{first.draft_id}", "failed")]
     assert agent.draft(first.draft_id).review_state == "draft"
+
+
+def test_a_draft_write_refusal_is_recorded_against_the_transport(tmp_path) -> None:
+    """A writer's own two answers are policy refusals, so each leaves its row.
+
+    ``draft.write`` refuses above the store: a kind the service has no shape for,
+    and a value whose shape its kind cannot use. Both are the service deciding
+    against the write — not a key miss — so both are recorded, with the transport
+    that carried the write as the actor and the chain (or the kind, when no chain
+    exists yet) as the target. The chain is untouched either way.
+    """
+    registry = _registry(tmp_path)
+    meeting = _meeting(registry, tmp_path)
+    agent = MeetingAgent(registry, meeting)
+    written = agent.write("minutes", {"body": "# One\n"}, actor=MCP)
+
+    with pytest.raises(MeetingAgentError, match="unknown draft kind"):
+        agent.write("widget", {"body": "x"}, actor=CLI)
+
+    with pytest.raises(MeetingAgentError, match="cannot be written"):
+        agent.write("minutes", {"nope": 1}, actor=API, draft_id=written.draft_id)
+
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in _rows(registry, "draft.write")
+    ] == [
+        (MCP, "draft.write", f"draft:{written.draft_id}", "ok"),
+        # A new chain that was refused names the kind it was asked for: there is
+        # no draft id to name, and the target is read off the call's arguments.
+        (CLI, "draft.write", "draft:widget", "failed"),
+        (API, "draft.write", f"draft:{written.draft_id}", "failed"),
+    ]
+    assert agent.draft(written.draft_id).version == 1
+
+
+def test_a_draft_reject_refusal_is_recorded_against_the_transport(tmp_path) -> None:
+    """The reject half of a stale decision is a row too, under its own action.
+
+    The accept path's twin: the decision names the version the reviewer read, a
+    new version makes that stale, and the refusal says so in the record — one
+    ``failed`` row, the same actor and target rules, and the chain left as it was.
+    """
+    registry = _registry(tmp_path)
+    meeting = _meeting(registry, tmp_path)
+    agent = MeetingAgent(registry, meeting)
+    first = agent.write("minutes", {"body": "# One\n"}, actor=MCP)
+    agent.write("minutes", {"body": "# Two\n"}, actor=MCP, draft_id=first.draft_id)
+
+    with pytest.raises(MeetingAgentError, match="not the newest"):
+        agent.reject(first, actor=CONSOLE, version=1)
+
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in _rows(registry, "draft.reject")
+    ] == [(CONSOLE, "draft.reject", f"draft:{first.draft_id}", "failed")]
+    assert agent.draft(first.draft_id).review_state == "draft"
+
+
+def test_a_resume_refusal_is_recorded_against_the_transport(tmp_path) -> None:
+    """``run.resume``'s guard is a policy answer, so it leaves a ``failed`` row.
+
+    A resume of a run that is still in flight (or one whose options cannot be
+    reconstructed) is the service deciding against the call, not a key miss: the
+    row names the run it was about and the transport that asked, and the refusal
+    reaches the caller unchanged. It is a different entry point from ``start``,
+    with its own action, and it was the one refusal on the run edges with no row
+    of its own asserted.
+    """
+    registry = _registry(tmp_path)
+    meeting = _meeting(registry, tmp_path)
+    registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    in_flight = registry.create_run(meeting.id, origin=CONSOLE, actor=CONSOLE)
+    manager = RunManager(registry, pipeline=lambda *a, **k: None, start_queue=False)
+
+    with pytest.raises(ValueError, match="still in flight"):
+        manager.resume(in_flight.id, origin=API, actor=API)
+
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in _rows(registry, "run.resume")
+    ] == [(API, "run.resume", f"run:{in_flight.id}", "failed")]
 
 
 def test_a_key_miss_is_not_a_row(tmp_path) -> None:

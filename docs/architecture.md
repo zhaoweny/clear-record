@@ -524,7 +524,19 @@ exports carry no run id — and the run's artifact rows point at its own copy, s
 reader can say which run produced the transcript it holds. A run that stops,
 fails or dies publishes nothing, so neither the workspace's copy nor an earlier
 run's can be rewritten by it: prior versions are retained, not covered
-(ADR-0033). A run's **documents** are run-scoped, and so is what it publishes;
+(ADR-0033). **The root is not the run's copy document for document**, and a
+reader takes each document's own `run_id` rather than the publication's: a
+document the run never wrote is left as the previous publication left it (so the
+root's `manifest.json` can be a later run's while its `record.json` is an
+earlier one's), and nothing removes an export file a previous run put at the
+root, so `export/` can hold more than one run's exports. Publication copies every
+document into a scratch file before it renames any of them, so a failure **while
+copying** (a disk filling) replaces nothing and the root stays the previous
+complete run; the renames that follow are of files already written, and one that
+fails part-way leaves the documents it had renamed as this run's and the rest as
+the previous run's — nothing reconciles it, and the root stays that mix until a
+later run publishes over those same documents again. A run's **documents** are
+run-scoped, and so is what it publishes;
 what a run **reads** stays the workspace's — its tapes, the `glossary.txt` a
 hand-edit lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
 idempotent and the `manifest.json` declarations an operator hand-edits at the root

@@ -101,6 +101,33 @@ def test_the_json_api_records_itself_as_the_actor(app: App) -> None:
     ]
 
 
+def test_a_token_authenticated_write_records_the_api_as_the_actor(app: App) -> None:
+    """The machine surface's **second** way in writes the same row: the API's.
+
+    A token reaches ``/api/v1`` without a session cookie — a client with an empty
+    jar and one header is the whole of it — and the mutation it carries is the
+    *surface's*: the row says ``api``, because the actor is the transport that
+    took the request, and a token is another credential for that same transport
+    (ADR-0033). Nothing about the credential it presented appears in the record.
+    """
+    minted, _row = app.client.app.state.auth.mint_token("script", actor=CONSOLE)
+    script = TestClient(app.client.app, base_url=LOCAL_ORIGIN)
+    assert not script.cookies, "the script's jar is empty on purpose"
+
+    res = script.post(
+        "/api/v1/projects",
+        json={"name": "Ops"},
+        headers={"Authorization": f"Bearer {minted}"},
+    )
+
+    assert res.status_code == 201
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (CONSOLE, "token.mint", "token:script", "ok"),
+        (API, "project.create", "project:Ops", "ok"),
+    ]
+
+
 def test_a_client_declared_origin_is_not_the_audit_actor(app: App) -> None:
     """A body word names the run's ``origin``; the record holds the transport.
 

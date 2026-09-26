@@ -269,6 +269,16 @@ and unlinks nothing
 when it refuses. A **third** such verb would be a decision rather than an
 accident: the suite walks the table and fails on one.
 
+**The prefix is the whole of the test.** A request is a *machine* request when
+its path starts with `/api/v1/` and a console request otherwise, so a credential
+never turns a console path into a machine one: `/api/v1` **without** its trailing
+slash, and a machine path this release retired (`/api/health`, `/api/projects`),
+are answered as console requests — a `303` to `/web/setup` for a client that
+carries no session, token or not, where the machine API would have answered
+`401`'s JSON. A script upgraded from an earlier release that kept its token must
+address `/api/v1/…`; on an old path it gets the setup redirect (and `curl -L`
+would follow it to the setup page).
+
 **A bind past loopback needs a name the guard trusts.** The guard answers `403`
 to a `Host` that is neither loopback nor a name in `CR_TRUSTED_HOSTS`, so a
 non-loopback `--host` with none declared refuses to start — before a port is

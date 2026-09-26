@@ -1125,6 +1125,45 @@ def test_a_delete_refused_for_want_of_an_archive_leaves_a_row(
     assert registry.list_tapes(meeting.id) == [tape]
 
 
+def test_a_delete_from_a_user_chosen_workspace_leaves_a_row(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The other policy refusal of the same call is a row too, under its actor.
+
+    ``delete_tapes`` refuses a meeting whose workspace the user chose — the tape
+    is the user's document, not app-owned data (ADR-0007) — and the refusal names
+    the meeting, because the batch is what was refused. Its twin (no verified
+    archive) is asserted beside this; the pair is what makes "every refusal this
+    call owns is in the record" complete rather than half-tested.
+    """
+    monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
+    registry.create_project("Ops", actor="console")
+    chosen = tmp_path / "user-docs"
+    chosen.mkdir()
+    tape_file = chosen / "a.wav"
+    tape_file.write_bytes(b"keep me")
+    meeting = registry.create_meeting(
+        "ops", "Local", workspace_path=str(chosen), actor="console"
+    )
+    tape = registry.register_tape(
+        meeting.id, path=str(tape_file), sha256="0" * 64, bytes=7, actor="console"
+    )
+    before = len(registry.list_audit_events())
+
+    with pytest.raises(managed.UploadRejected, match="user-chosen workspace"):
+        managed.delete_tapes(registry, meeting, [tape.id], actor="api")
+
+    (row,) = registry.list_audit_events()[before:]
+    assert (row.actor, row.action, row.target, row.outcome) == (
+        "api",
+        "tape.forget",
+        f"meeting:{meeting.id}",
+        "failed",
+    )
+    assert tape_file.read_bytes() == b"keep me"
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
 def test_a_refused_batch_records_one_row_whether_it_asked_for_one_tape_or_many(
     registry, tmp_path, monkeypatch
 ) -> None:

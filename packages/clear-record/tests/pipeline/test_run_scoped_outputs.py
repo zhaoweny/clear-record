@@ -281,24 +281,34 @@ def test_a_publication_that_fails_while_copying_leaves_the_previous_run(
 def test_a_half_written_run_cannot_touch_the_published_copy_or_another_run(
     tmp_path: Path,
 ) -> None:
+    """A run that is still writing leaves the root, and the earlier run, where they were.
+
+    Only a **finished** run's copy is published, and the run path is what decides
+    that — so the writing half is what this drives, through the writers a run
+    really has: a begun scope and the first stage (``ingest``), which writes that
+    scope's own documents. What the run does not do is finish: the tape the pass
+    needs is gone, so the pass that follows refuses where it dies. The workspace's
+    published documents are byte-identical through all of it and run 1's own copy
+    is untouched, which is the whole claim: what a half-written run writes is its
+    own directory.
+    """
     home = Workspace.at(tmp_path / "ws")
     first = _finish(home.run_scope(1), "first")
     publish_run(first)
     published = _published(home)
 
-    # A second run starts writing its own copy and dies before it finishes: no
-    # publication happens (the run path publishes only a finished run), and what
-    # it wrote is confined to its own directory.
-    dying = home.run_scope(2)
-    dying.outputs.mkdir(parents=True, exist_ok=True)
-    dying.record_path.write_text("{half", encoding="utf-8")
-    dying.segments_path.write_text('{"sources": {}}', encoding="utf-8")
-    dying.export_dir.mkdir(parents=True, exist_ok=True)
-    (dying.export_dir / "record.md").write_text("half", encoding="utf-8")
+    _tone(home.root / "a.wav")
+    dying = home.begin_scope(2)
+    stages.ingest(str(dying.outputs))
+    # The run died here: its input is gone and the pass that would carry on
+    # refuses. Nothing publishes, because the run path publishes on finish only.
+    (home.root / "a.wav").unlink()
+    with pytest.raises(stages.PipelineError):
+        stages.ingest(str(dying.outputs))
 
+    assert load_json(dying.manifest_path)["run_id"] == 2  # it did write its own copy
     assert _published(home) == published
     assert _record_text(home) == "first"
-    assert (home.export_dir / "record.md").read_text(encoding="utf-8") == "first"
     assert _record_text(first) == "first"
     assert (first.export_dir / "record.md").read_text(encoding="utf-8") == "first"
     assert load_json(first.manifest_path)["run_id"] == 1

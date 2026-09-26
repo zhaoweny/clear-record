@@ -354,8 +354,9 @@ def _require_named_trust(host: str) -> None:
             "    - name the address your own command line and tray dial as well, so "
             "they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>\n"
             "    - let Tailscale Serve front it: --tailscale\n"
-            "  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the "
-            "peers whose forwarded headers are honoured — but that is not a name "
+            "  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer>[,<peer>...], "
+            "a comma-separated list of the peers whose forwarded headers are "
+            "honoured — but that is not a name "
             "this console answers to: the hostname it forwards still has to be in "
             "CR_TRUSTED_HOSTS.",
             host=host,

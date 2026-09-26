@@ -21,6 +21,7 @@ import uvicorn
 from _console import CONSOLE_PASSWORD, signed_in
 from clear_record.service import Registry
 from clear_record.service.lifecycle import CONSOLE
+from clear_record.web import app as web_app
 from clear_record.web import guard
 from clear_record.web.app import NodeServer, create_app
 from clear_record.web.auth import SIGN_IN_PATH
@@ -228,6 +229,65 @@ def _proxied(
     )
 
 
+def test_a_forwarded_loopback_name_cannot_make_a_client_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared peer's forwarded name drives URLs, never the path-local rule.
+
+    ``X-Forwarded-Host`` is what the console's absolute URLs are built from, and
+    it is a value the *client* puts in its own request — so it must never be the
+    name the path-local rule reads. One declared-peer request here forwards
+    ``127.0.0.1`` while its own ``Host`` names the public host: the same request
+    reports ``https://127.0.0.1/…`` and is refused by the rule, and the route
+    that takes a path on this node answers the one ``PATH_IS_LOCAL`` sentence and
+    creates nothing.
+    """
+    monkeypatch.setenv("CR_TRUSTED_PROXIES", OUTSIDE_PEER[0])
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    app = create_app(registry, trusted_hosts=(PROXY_HOST,))
+
+    @app.get("/api/v1/url-probe")
+    def _probe(request: Request) -> dict[str, object]:
+        # The same request, read both ways: the URL the app builds (the guard's
+        # forwarded resolution) and the rule the path routes ask.
+        return {"url": str(request.url), "local": web_app._local_client(request)}
+
+    client = TestClient(
+        app, base_url=LOOPBACK_ORIGIN, client=OUTSIDE_PEER, follow_redirects=False
+    )
+    minted, _row = app.state.auth.mint_token("forwarded loopback", actor=CONSOLE)
+    headers = {
+        "host": PROXY_HOST,
+        "X-Forwarded-Host": "127.0.0.1",
+        "X-Forwarded-Proto": "https",
+        "Authorization": f"Bearer {minted}",
+    }
+
+    answer = client.get("/api/v1/url-probe", headers=headers)
+    refused = client.post(
+        "/api/v1/projects",
+        json={"name": "Elsewhere", "default_archive_root": "/srv/tapes"},
+        headers=headers,
+    )
+
+    assert answer.json() == {
+        "url": "https://127.0.0.1/api/v1/url-probe",
+        "local": False,
+    }
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == web_app.PATH_IS_LOCAL
+    assert registry.list_projects() == []
+
+
+# Pins, not discriminates: nothing in the console read a forwarded header at
+# 9b37fbe either, and ``TestClient`` never runs the server under the app, so this
+# half is green at 9b37fbe and 897fd71 on purpose. What discriminates the rule is
+# its other half —
+# `test_a_declared_proxys_forwarded_host_is_honoured_and_checked` above — and,
+# for the ignored side, the real-socket
+# `test_the_server_does_not_honour_a_forwarded_scheme_by_itself`, which fails at
+# 9b37fbe because the server trusted a loopback peer's `X-Forwarded-Proto` by
+# default.
 def test_an_undeclared_peers_forwarded_host_is_ignored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -279,6 +339,9 @@ def test_a_declared_proxys_forwarded_host_is_honoured_and_checked(
     assert "evil.example" in forwarded_but_unnamed.json()["detail"]
 
 
+# Pins too (green at 9b37fbe and 897fd71): it is the criterion's own "still", a
+# regression guard on the guard, and the discriminating tests for the same rule
+# are the declared/undeclared halves above.
 def test_a_spoofed_host_from_an_undeclared_peer_is_still_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,6 +422,10 @@ def test_a_declared_proxys_forwarded_proto_secures_the_cookie(
     assert _set_cookie(response)["secure"] == ""
 
 
+# Pins at this level (green at 9b37fbe and 897fd71): this client talks to the app
+# object, so the server whose default it would otherwise inherit never runs. The
+# discriminating property is the same one over a real socket, in
+# `test_the_server_does_not_honour_a_forwarded_scheme_by_itself` below.
 def test_an_undeclared_peers_forwarded_proto_does_not_secure_the_cookie(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -463,6 +530,11 @@ def test_the_server_does_not_honour_a_forwarded_scheme_by_itself(
     assert "secure" not in _set_cookie(response)
 
 
+# Declares 127.0.0.1, the peer a real socket always delivers here, so it would
+# pass at 9b37fbe too — for the wrong reason (the server's own loopback default
+# believed that header whatever the operator said). It pins the shape
+# `--tailscale` declares; what discriminates the declaration is its sibling
+# above, the *same* socket with nothing declared.
 def test_a_declared_loopback_proxy_secures_the_cookie_over_a_real_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -527,6 +599,9 @@ def test_a_declared_proxys_forwarded_host_and_scheme_drive_absolute_urls(
     }
 
 
+# Pins (green at 9b37fbe and 897fd71 — no console code read these headers then):
+# the other half of the URL pair above, and the one that would silently change if
+# the resolved name ever leaked into URL building from an undeclared peer.
 def test_an_undeclared_peers_forwarded_headers_leave_the_socket_urls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

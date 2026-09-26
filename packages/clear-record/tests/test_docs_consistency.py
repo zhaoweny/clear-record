@@ -34,19 +34,22 @@ def test_releasing_records_the_real_publish_state() -> None:
     assert "live on PyPI" in text
 
 
-def test_x_forwarded_is_closed_and_no_longer_deferred() -> None:
+def test_x_forwarded_is_closed_and_the_quote_is_intact() -> None:
     """ADR-0021's forwarded-header steer landed, so the record says so.
 
     While the console read no ``X-Forwarded-*`` header at all the item was
     [OPEN]; the trusted-proxy change closed it, and the two halves that keep the
     record honest are the tag that marks the closure and the Update that carries
-    what landed. The old claim — that the ADR leaves the steer unbuilt — must not
-    come back, and the operator's half must be where an operator meets it.
+    what landed. The item's own text is **quoted as it stood** — the convention
+    ADR-0032 sets — so its "deferred, not built" words stay where the history put
+    them, inside the quotation, and the closure marker is what says they no
+    longer hold. The operator's half must be where an operator meets it.
     """
     adr = _text("docs/adr/0021-localhost-only-deployment.md")
     assert "[OPEN: owner, 2026-09-15, **closed 2026-09-26**" in adr
+    assert "quoted here as it stood while the item was open" in adr
+    assert "(`CR_TRUSTED_PROXIES`) — deferred, not built.**" in adr
     assert "## Update (2026-09-26) — the trusted proxies land" in adr
-    assert "deferred, not built" not in adr
     guide = _text("docs/service-deployment.md")
     assert "CR_TRUSTED_PROXIES" in guide
     assert "it makes no `Host` trustable" in guide

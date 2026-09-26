@@ -32,7 +32,11 @@ cannot nominate its own scheme, host or address. For a declared peer the three
 headers are resolved into the request *before* the checks below and before the
 auth gate reads the scheme (:func:`forwarded_facts`, :func:`apply_forwarded`),
 which is what makes a TLS-terminating proxy's ``X-Forwarded-Proto`` the session
-cookie's ``Secure`` and its ``X-Forwarded-Host`` the console's absolute URLs.
+cookie's ``Secure`` and its ``X-Forwarded-Host`` the console's absolute URLs. The
+forwarded name drives those URLs and the ``Host`` check above; it never drives the
+path-local rule, which reads the ``Host`` the *client* itself sent
+(:func:`client_named_host`) — so a client's own ``X-Forwarded-Host: 127.0.0.1``
+does not make it local.
 
 That declaration names a **peer**, so it is not a trust source for the ``Host``
 check: the name a proxy forwards still has to be in ``CR_TRUSTED_HOSTS``, which
@@ -66,8 +70,10 @@ TRUSTED_HOSTS_ENV = "CR_TRUSTED_HOSTS"
 #: judged by the socket it arrived on and the ``Host`` it carries. Naming a peer
 #: here is the whole declaration a TLS-terminating proxy needs — its
 #: ``X-Forwarded-Proto`` then drives the session cookie's ``Secure``, its
-#: ``X-Forwarded-Host`` the console's absolute URLs, and its
-#: ``X-Forwarded-For`` the client a request is attributed to. It is deliberately
+#: ``X-Forwarded-Host`` the console's absolute URLs (never the name the
+#: path-local rule reads, which is the ``Host`` the client itself sent), and its
+#: ``X-Forwarded-For`` the address the app attributes the request to (which no
+#: reader consumes yet). It is deliberately
 #: **not** a trust source for the ``Host`` check: the name a proxy forwards still
 #: has to be in :data:`TRUSTED_HOSTS_ENV`.
 TRUSTED_PROXIES_ENV = "CR_TRUSTED_PROXIES"
@@ -77,6 +83,14 @@ TRUSTED_PROXIES_ENV = "CR_TRUSTED_PROXIES"
 FORWARDED_PROTO = "x-forwarded-proto"
 FORWARDED_HOST = "x-forwarded-host"
 FORWARDED_FOR = "x-forwarded-for"
+
+#: The ASGI scope key :func:`apply_forwarded` stashes the ``Host`` the **client**
+#: sent under, just before a declared peer's forwarded name replaces it in the
+#: scope. :func:`client_named_host` reads it, and it is what the path-local rule
+#: (:func:`clear_record.web.app._local_client`) is written on, so a forwarded name
+#: can drive the console's URLs and never its path-local decision. Namespaced
+#: because the scope is shared with every other middleware and the router.
+CLIENT_HOST_KEY = "clear_record.client_host"
 
 #: The schemes ``X-Forwarded-Proto`` may name — what a browser can be behind.
 #: Anything else (a ``ws`` hop, a whole URL, a typo) is ignored rather than
@@ -277,31 +291,77 @@ def forwarded_facts(
     )
 
 
+def _host_header(scope: Mapping[str, Any]) -> str | None:
+    """The scope's ``Host`` header, as the ASGI headers list spells it.
+
+    The bytes are decoded as latin-1 — the ASGI convention for header values,
+    and what Starlette's own ``Headers`` does — so a value survives the round
+    trip as the wire sent it.
+    """
+    for name, value in scope.get("headers", ()):
+        if name.lower() == b"host":
+            return value.decode("latin-1")
+    return None
+
+
+def client_named_host(scope: Mapping[str, Any]) -> str | None:
+    """The ``Host`` the **client** named, never a declared peer's forwarded one.
+
+    :func:`apply_forwarded` stashes the header it is about to overwrite under
+    :data:`CLIENT_HOST_KEY`, and this returns that. The scope's own ``Host`` —
+    the forwarded name, once a declared peer's header was resolved — is what URL
+    building and the guard's ``Host`` check read; the path-local rule
+    (:func:`clear_record.web.app._local_client`) reads this instead, because
+    "which name did the client address" is the fact that rule is written on, and
+    a forwarded name is a name the client itself put in the request.
+
+    A request the guard never rewrote has no stash, so the scope's own ``Host``
+    is read directly — the same header, unchanged.
+    """
+    if CLIENT_HOST_KEY in scope:
+        return scope[CLIENT_HOST_KEY]
+    return _host_header(scope)
+
+
 def apply_forwarded(scope: MutableMapping[str, Any], facts: Forwarded) -> None:
     """Write a declared peer's forwarded facts into an ASGI request scope.
 
     The guard's middleware calls this **first**, before it reads the ``Host`` and
     before the auth gate — registered inside it, so running after it — reads the
     scheme. Every reader downstream then sees the request as the proxy describes
-    it: the guard's own checks, the cookie's ``Secure``
-    (:func:`clear_record.web.auth.secure_request`), the absolute URLs the router
-    builds from the scope, and the client an access log names. A field the peer
+    it: the guard's own ``Host``/``Origin`` checks, the cookie's ``Secure``
+    (:func:`clear_record.web.auth.secure_request`), and the absolute URLs the
+    router builds from the scope. What a forwarded name may **not** become is the
+    name the path-local rule reads: the header it replaces is stashed under
+    :data:`CLIENT_HOST_KEY` first, so a peer's ``X-Forwarded-Host: 127.0.0.1``
+    never satisfies :func:`clear_record.web.app._local_client`.
+
+    The scope's ``client`` is written too, but nothing consumes it: no code in
+    the repo reads it after this write, and uvicorn's access log prints the
+    transport peer the socket delivered rather than this value. A field the peer
     did not forward is left exactly as the socket delivered it.
     """
     if facts.scheme is not None:
         scope["scheme"] = facts.scheme
     if facts.host is not None:
-        # The ``Host`` header is what Starlette builds a request's URL from, so
-        # replacing it here is what makes the forwarded name the one absolute
-        # URLs and the ``Host`` check both read.
+        # The scope's ``Host`` is what Starlette builds a request's URL from and
+        # what the guard's own ``Host`` check reads, so the forwarded name goes
+        # there — but the name the client itself sent is stashed first (once: a
+        # second pass must not stash the name the first one rewrote it to),
+        # because the path-local rule reads that one and never this one
+        # (:func:`client_named_host`).
+        if CLIENT_HOST_KEY not in scope:
+            scope[CLIENT_HOST_KEY] = _host_header(scope)
         scope["headers"] = [
             (name, value)
             for name, value in scope.get("headers", ())
             if name.lower() != b"host"
         ] + [(b"host", facts.host.encode("ascii"))]
     if facts.client is not None:
-        # A forwarded chain carries no port, and none is invented: 0 is what the
-        # server's own forwarded-header handling leaves there.
+        # A forwarded chain names an address, not a connection, so there is no
+        # port to state and none is invented: 0 is what Starlette's
+        # ``Request.client`` carries for a scope that has none, and no decision
+        # here reads the port.
         scope["client"] = (facts.client, 0)
 
 

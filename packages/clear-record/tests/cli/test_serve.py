@@ -276,8 +276,8 @@ def test_a_declared_hostname_lets_the_bind_start(monkeypatch) -> None:
 def test_a_declared_proxy_alone_does_not_admit_the_bind(monkeypatch) -> None:
     """A peer declaration is not a trustable name, so it is not an admission.
 
-    ``CR_TRUSTED_PROXIES`` is the forwarded-header declaration the trusted-proxy
-    change honours; the guard's ``Host`` check never consults it, so a bind
+    ``CR_TRUSTED_PROXIES`` is the forwarded-header declaration the console
+    honours; the guard's ``Host`` check never consults it, so a bind
     admitted on the peer alone would start and then answer ``403`` to every
     request it received — through the proxy too, unless the proxy forwards a Host
     the guard trusts, which is the proxy's configuration and not the console's.

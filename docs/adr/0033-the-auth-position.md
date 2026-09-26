@@ -277,13 +277,13 @@ verbatim answers and the direction they answer are the
   `--tailscale` trusts its own resolved name), because the request guard would
   answer `403` to every request such a bind received. The loopback default is
   unchanged.
-- [FACT] The "not built" list this Update opened with — the trusted-proxy half,
-  and machine tokens for scripts — has since emptied of both: **both clauses are
-  superseded** — tokens by the machine-token Update above, and trusted proxies by
-  [ADR-0021](0021-localhost-only-deployment.md)'s Update *the trusted proxies land*
-  (2026-09-26: the console's own code now reads `X-Forwarded-*`, and only from the
-  peers `CR_TRUSTED_PROXIES` declares). The credential's *act* — a fresh password
-  at a destructive operation — still has no member of its class to gate.
+- [FACT] This Update's "not built" list — the trusted-proxy half, and machine
+  tokens for scripts — has since emptied of both: **both clauses are
+  superseded** — tokens by the machine-token Update *below*, and trusted proxies
+  by [ADR-0021](0021-localhost-only-deployment.md)'s Update *the trusted proxies
+  land* (2026-09-26: the console's own code now reads `X-Forwarded-*`, and only
+  from the peers `CR_TRUSTED_PROXIES` declares). The credential's *act* — a fresh
+  password at a destructive operation — still has no member of its class to gate.
 - [FACT] **The re-root landed**: the console answers under `/web/` (pages at
   `/web/…`, fragments at `/web/ui/…`, the credential step at `/web/setup`), the
   machine API under `/api/v1/`, and the compiled assets stay at `/static`;

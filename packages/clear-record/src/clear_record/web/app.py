@@ -35,7 +35,9 @@ enumerates. "Localhost-only" bounds who can connect, not who can act: the
 rebound requests before the auth middleware looks at a session (ADR-0021), while
 remote access stays the operator's reverse proxy. That same middleware resolves a
 **declared** proxy's forwarded headers into the request first, so the auth gate's
-cookie and the URLs built downstream are the browser's — and the server under the
+cookie and the URLs built downstream are the browser's — while the path-local rule
+reads the ``Host`` the client itself sent (``guard.client_named_host``), so no
+forwarded name can make a client look local. The server under the
 app is told to leave those headers alone (:class:`NodeServer`), which keeps the
 operator's declaration the one decision.
 """
@@ -719,8 +721,18 @@ def _local_client(request: Request) -> bool:
     test would refuse a local client (the documented container posture) while
     accepting a remote one (every proxied deployment). What the client *named*
     is the fact that settles it.
+
+    The name read is the one the **client** sent
+    (:func:`clear_record.web.guard.client_named_host`), never the name a declared
+    peer forwards: a forwarded ``X-Forwarded-Host`` is honoured for the URLs the
+    app builds and for the guard's ``Host`` check, and for nothing here — so a
+    client-supplied ``X-Forwarded-Host: 127.0.0.1`` cannot satisfy this rule
+    through a peer the operator declared. A proxy that pins its published name in
+    ``Host`` is what keeps a client from choosing the name this rule reads; that
+    is the operator's recipe (``docs/service-deployment.md``), not this
+    function's business.
     """
-    name = guard.host_name(request.headers.get("host"))
+    name = guard.host_name(guard.client_named_host(request.scope))
     if guard.is_loopback_host(name):
         return True
     served = _served_by(request.app)

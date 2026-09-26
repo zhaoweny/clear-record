@@ -282,9 +282,10 @@ serve nobody.
     - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>
     - name the address your own command line and tray dial as well, so they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>
     - let Tailscale Serve front it: --tailscale
-  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer address>, the peers
-  whose forwarded headers are honoured — but that is not a name this console
-  answers to: the hostname it forwards still has to be in CR_TRUSTED_HOSTS.
+  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer>[,<peer>...], a
+  comma-separated list of the peers whose forwarded headers are honoured — but
+  that is not a name this console answers to: the hostname it forwards still has
+  to be in CR_TRUSTED_HOSTS.
 ```
 
 `CR_TRUSTED_PROXIES` is a declaration too, and deliberately **not** a trust
@@ -392,17 +393,21 @@ actually saw with `X-Forwarded-Proto` (and usually `X-Forwarded-Host` /
 declared**:
 
 ```sh
-Environment=CR_TRUSTED_PROXIES=127.0.0.1
+CR_TRUSTED_PROXIES=127.0.0.1
 ```
 
-That single line is the whole declaration, and it is **your responsibility** —
-nothing else makes a forwarded header readable. With a declared peer:
+That single declaration is the whole of it, and it is **your responsibility** —
+nothing else makes a forwarded header readable. The value is a comma-separated
+list (`CR_TRUSTED_PROXIES=127.0.0.1,10.0.0.7`) when more than one hop forwards to
+the console. In a systemd unit it is the
+environment form §1 uses, `Environment=CR_TRUSTED_PROXIES=127.0.0.1`; launchd and
+containers set the same variable their own way. With a declared peer:
 
 | Header | What the console does with it |
 |---|---|
-| `X-Forwarded-Proto` | the request's scheme, so the session cookie is marked `Secure` over your TLS and the console builds `https` URLs |
-| `X-Forwarded-Host` | the authority the console's absolute URLs use (port included) — and the name the guard's `Host` check then judges, so it still has to be in `CR_TRUSTED_HOSTS` |
-| `X-Forwarded-For` | the client the request is attributed to (the rightmost entry that is not itself a declared proxy) |
+| `X-Forwarded-Proto` | the request's scheme: the session cookie is marked `Secure` over your TLS, and the absolute URLs the app builds are the `https` ones (the console's own links are relative today, so this is the foundation rather than a visible change) |
+| `X-Forwarded-Host` | the authority the app's absolute URLs are built from (port included) — and the name the guard's `Host` check then judges, so it still has to be in `CR_TRUSTED_HOSTS`. It never decides whether the client addressed the node itself: that rule reads the `Host` the **client** sent (§3), so a forwarded `127.0.0.1` cannot make a remote client local |
+| `X-Forwarded-For` | the address the app attributes the request to (the rightmost entry that is not itself a declared proxy) — nothing reads it yet: the server's access log prints the transport peer, not this |
 
 A request from **any other peer** is judged by the socket it arrived on and the
 `Host` it carries: its forwarded headers are ignored rather than merged in, so a
@@ -410,6 +415,20 @@ client cannot nominate its own scheme, name or address. With nothing declared �
 stock install — no forwarded header is read at all, and uvicorn's own
 `FORWARDED_ALLOW_IPS` knob does nothing here: the console's server leaves
 forwarded headers to the declaration, so this is the only line that decides.
+
+**The forwarded name drives the URLs, never the path-local rule.** With a declared
+peer, `X-Forwarded-Host` becomes the authority the app's absolute URLs name and
+the name the guard's `Host` check judges, and that is all: whether a client may
+name a **path** on this node is decided from the `Host` the client itself sent, so
+a client's `X-Forwarded-Host: 127.0.0.1` cannot make it look local. The value is
+still the client's to choose — it puts it in its own request — so where a proxy
+*dials from* the request's own name, pin the published name instead: the recipes
+below set `X-Forwarded-Host` (and `Host`) to the hostname you published rather
+than forwarding `$host`, because a client that names `127.0.0.1` at the proxy
+would otherwise be naming the node. `Host` deserves the same care: the path-local
+rule reads the name the client addressed, so a proxy that copies the client's
+`Host` through leaves that name to the client.
+
 **If your proxy already runs on this machine, declare it:** the console no longer
 believes a loopback peer by default, and without the declaration the session
 cookie simply is not marked `Secure` (and absolute URLs, if a surface ever builds
@@ -438,27 +457,33 @@ server {
         auth_basic_user_file /etc/nginx/clear-record.htpasswd;
 
         proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $host;   # the name the browser used — do not rewrite
+        # Pin the name you published — never `$host`, which a client's own Host
+        # sets (§2: the path-local rule reads what the client named).
+        proxy_set_header Host console.example.com;
+        proxy_set_header X-Forwarded-Host console.example.com;
         proxy_set_header X-Forwarded-Proto $scheme;   # so the cookie can be Secure
     }
 }
 ```
 
 Create the password file with `htpasswd -c /etc/nginx/clear-record.htpasswd you`.
-Be explicit that `Host` is passed through: **do not** rewrite it to
-`127.0.0.1:8765`. The node reads the name the client addressed to tell a client on
-its machine from one that came in through this proxy: a name that is the node's
-own (its loopback, or the address it listens on) is what lets a client name a
-**path** for the node to resolve through the JSON API — a run's workspace
-directory, a tape, an archive root (ADR-0032) — while a client arriving through
-this proxy is told, in one sentence, to address work the registry's way instead.
-Rewriting `Host` would make every visitor look local, and a path typed on another
-machine would then be resolved here. `CR_TRUSTED_HOSTS=console.example.com` is
-required either way: `Host` is a name the guard must trust, and the browser's
-`Origin` is the public name too. Add `proxy_set_header X-Forwarded-Proto $scheme`
-and `CR_TRUSTED_PROXIES=127.0.0.1` (the address nginx dials *from*) so the console
-knows the browser is on TLS and marks the session cookie `Secure` — without them
-it falls back to the socket's own plain-HTTP facts and the cookie is not `Secure`.
+Both names are pinned to the hostname you published, and that is the point. The
+node reads the name the client addressed to tell a client on its machine from one
+that came in through this proxy: a name that is the node's own (its loopback, or
+the address it listens on) is what lets a client name a **path** for the node to
+resolve through the JSON API — a run's workspace directory, a tape, an archive
+root (ADR-0032) — while a client arriving through this proxy is told, in one
+sentence, to address work the registry's way instead. Leaving `$host` there hands
+that decision to the client, and the forwarded name drives the URLs the console
+builds, so a client that sends `Host: 127.0.0.1` — or an `X-Forwarded-Host` a
+proxy copies through — would be treated as being on this machine and have a path
+of its own resolved here.
+`CR_TRUSTED_HOSTS=console.example.com` is required: `Host` is a name the guard
+must trust, and the browser's `Origin` is the public name too.
+`proxy_set_header X-Forwarded-Proto $scheme` and `CR_TRUSTED_PROXIES=127.0.0.1`
+(the address nginx dials *from*) are what tell the console the browser is on TLS
+and make it mark the session cookie `Secure` — without them it falls back to the
+socket's own plain-HTTP facts and the cookie is not `Secure`.
 This is HTTP Basic auth: use TLS, and treat the password as the only barrier
 between the internet and a console with no accounts of its own.
 
@@ -475,14 +500,23 @@ console.example.com {
         uri /api/verify?rd=https://auth.example.com/
         copy_headers Remote-User Remote-Groups
     }
-    reverse_proxy 127.0.0.1:8765
+    reverse_proxy 127.0.0.1:8765 {
+        # Caddy mirrors the request's Host into X-Forwarded-Host; pin both to the
+        # published name rather than leaving the client to choose it (§2).
+        header_up Host console.example.com
+        header_up X-Forwarded-Host console.example.com
+    }
 }
 ```
 
-Caddy passes the original `Host` through and sets the forwarded headers itself,
-so set `CR_TRUSTED_HOSTS=console.example.com` — the guard will accept both the
-`Host` and the browser's `Origin`, and the name Caddy forwards is the one checked
-— and `CR_TRUSTED_PROXIES=127.0.0.1`, the address Caddy dials from, so its
+Caddy passes incoming headers through and sets the forwarded headers itself,
+including `X-Forwarded-Host`, which it copies from the request's `Host` (it
+ignores incoming `X-Forwarded-*` values unless you configure `trusted_proxies`).
+Pinning `Host` and `X-Forwarded-Host` to the hostname you published is what keeps
+the client from choosing the name the console's path-local rule reads (§2), and
+`CR_TRUSTED_HOSTS=console.example.com` is required either way: the guard accepts
+the `Host` and the browser's `Origin`, and the name Caddy forwards is the one
+checked. Set `CR_TRUSTED_PROXIES=127.0.0.1`, the address Caddy dials from, so its
 `X-Forwarded-Proto` is believed and the session cookie is `Secure`. Caddy obtains
 and renews TLS automatically.
 

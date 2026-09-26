@@ -523,9 +523,9 @@ run's can be rewritten by it: prior versions are retained, not covered
 what a run **reads** stays the workspace's — its tapes, the `glossary.txt` a
 hand-edit lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
 idempotent and the `manifest.json` declarations an operator hand-edits at the root
-still reach the next run. Three things a **node** run writes **in place** at the
-workspace root all the same: the normalized `audio/` (the ingest stage writes it
-there, not under `runs/<run id>/`), the `glossary.txt` its glossary resolution
+still reach the next run. Three things a **node** run writes at the workspace
+root all the same: the normalized `audio/` (the ingest stage writes it there, not
+under `runs/<run id>/`), the `glossary.txt` its glossary resolution
 publishes when the registry has confirmed terms (the ADR-0031 tuning loop), and
 the durable `transcribe.log` a running pipeline appends to. The app-owned chunk
 cache is neither: it lives in the app's own cache directory, keyed per workspace,

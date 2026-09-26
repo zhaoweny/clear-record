@@ -1,9 +1,11 @@
 """The audit record: who called the service, what they touched, and how it ended.
 
-ADR-0033 decides it: **every mutating service call appends one row** —
+ADR-0033 decides it: **a mutating service call appends one row** —
 ``(at, actor, action, target, outcome)`` — to a record that is **append-only**,
 and the **actor is a required argument** on the service's mutating entry points,
-so no surface can forget it and no surface can forge it.
+so no surface can forget it and no surface can forge it. Two calls append nothing,
+because nothing happened: a **conditional** write whose statement matched no row,
+and a **key miss** — an id that names no row at all.
 
 What an actor is. One of the words the transport supplies about itself, never a
 string a *caller* chose (:data:`~clear_record.service.lifecycle.ACTORS`):
@@ -27,8 +29,9 @@ data, and is not in this record. Mutating store methods are audited by
 :func:`refused_call` for the refusals *they* own.
 
 :func:`recorded` is how a store method is audited. It wraps the method, so a call
-appends a row whether it returned or raised — with one exception, the
-**conditional** write whose statement matched no row, which appends nothing:
+appends a row whether it returned or raised — except where nothing happened: a
+**conditional** write whose statement matched no row, and a **key miss**, both
+below:
 
 - the call returned — one row, ``outcome='ok'``, appended in a unit of work of
   its own, immediately after the write it names. A **conditional** write is the
@@ -37,10 +40,11 @@ appends a row whether it returned or raised — with one exception, the
   legal from, an id that names no row), nothing was written and nothing is
   recorded — ``recorded(…, conditional=True)`` reads that answer instead of
   assuming the call acted;
-- the call raised — one row, ``outcome='failed'``, appended the same way. A
-  refusal is the row an audit record exists for, and it *cannot* be recorded in
-  the transaction it belonged to: that transaction is rolled back with the
-  failure, so the row is written after it, in one of its own.
+- the call raised — one row, ``outcome='failed'``, appended the same way —
+  **except** a :class:`KeyError`, the key miss the next paragraph excludes, which
+  appends nothing. A refusal is the row an audit record exists for, and it
+  *cannot* be recorded in the transaction it belonged to: that transaction is
+  rolled back with the failure, so the row is written after it, in one of its own.
 
 **Which refusals are rows, and which are not.** A ``failed`` row is appended
 where the refusal is the *service's own policy answer*: this draft version is
@@ -180,7 +184,10 @@ def _named_actor(
 def recorded(
     action: str, target: Target, *, conditional: bool = False
 ) -> Callable[[Callable[..., Any]], Any]:
-    """Decorate a mutating service method so every call of it appends a row.
+    """Decorate a mutating service method so a call of it appends a row.
+
+    Two calls append nothing, because nothing happened: a **conditional** write
+    whose statement matched no row, and a key miss (see the module doc).
 
     ``action`` is the verb the record states (``"project.create"``), ``target``
     the rule that names what the call touched (see :data:`Target`). The method

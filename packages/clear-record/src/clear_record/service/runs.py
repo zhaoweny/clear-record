@@ -1763,8 +1763,8 @@ class RunManager:
         assert meeting.workspace_path is not None
         # This run's own copy of its outputs: the pipeline writes its documents
         # into ``<workspace>/runs/<run id>/``, so a run that dies half-way cannot
-        # touch the workspace's published copy or an earlier run's — nothing is
-        # rewritten in place (ADR-0033). What a run only *reads* stays the
+        # touch the workspace's published copy or an earlier run's — a run's
+        # documents are run-scoped (ADR-0033). What a run only *reads* stays the
         # meeting workspace's — its tapes, the ``glossary.txt`` a hand-edit lands
         # in and the ``.clear-record-ignore`` declaration — while three things a
         # node run writes at the workspace root all the same: the normalized

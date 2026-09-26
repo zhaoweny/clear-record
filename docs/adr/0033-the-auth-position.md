@@ -67,8 +67,9 @@ verbatim answers and the direction they answer are the
   transport supplies — `console`, `api` (later `api:<token label>`), `mcp`,
   `cli` — or `queue`, the word for the moves the node's own queue makes on its own
   behalf; never a string an argument chooses. There is no word for the tray: it
-  drives the node over HTTP like any other client, so what it touches is the
-  **API's** actor. A run's `origin` is the precedent and the vocabulary.
+  makes no mutating call — its one request is a `GET /health` read, and the console
+  it opens does the writing as the **console's** actor — so it never supplies one.
+  A run's `origin` is the precedent and the vocabulary.
 - [DECISION: owner, 2026-09-26] **The authorization rule.** An operation requires
   fresh human authorization **iff it destroys data not reconstructible from a
   durable copy**. Everything else — archive, cache invalidation, glossary edits,
@@ -223,7 +224,7 @@ verbatim answers and the direction they answer are the
   a run **reads** stays the workspace's — its tapes, the `glossary.txt` a hand-edit
   lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
   idempotent and the `manifest.json` declarations an operator hand-edits at the
-  root still reach the next run. Three things a **node** run writes **in place** at
+  root still reach the next run. Three things a **node** run writes at
   the workspace root all the same: the normalized `audio/` (the ingest stage writes
   it there, not under `runs/<run id>/`), the `glossary.txt` its glossary resolution
   publishes when the registry has confirmed terms (the ADR-0031 tuning loop), and

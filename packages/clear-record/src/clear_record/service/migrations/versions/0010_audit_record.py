@@ -3,9 +3,11 @@
 Revision ID: 0010
 Revises: 0009
 
-Who called the service, what they touched, and how it ended: one **append-only**
-row per mutating service call — ``(at, actor, action, target, outcome)`` — as
-ADR-0033 decides. ``actor`` is the word a transport supplied about itself
+Who called the service, what they touched, and how it ended: one row appended per
+mutating service call — ``(at, actor, action, target, outcome)`` — in an
+**append-only** record, as ADR-0033 decides; a conditional write that matched no
+row, and a key miss, append nothing, because nothing happened. ``actor`` is the
+word a transport supplied about itself
 (``console``, ``api``, ``mcp``, ``cli``, or ``queue`` for the node's own queue),
 never a string a caller chose; ``target`` is the service's own address for
 what was touched (``meeting:Kickoff``, ``tape:12``, ``project:demo``), deliberately

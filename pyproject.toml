@@ -68,6 +68,7 @@ dev = [
     # The verify gate exercises the MCP server, so its optional SDK is a dev
     # dependency too — end users get it via the `agents` extra instead.
     "mcp>=2",
+    "pytest-jobserver>=1.1.0",
 ]
 
 # The desktop-app build toolchain (PyInstaller), kept out of `dev` so the

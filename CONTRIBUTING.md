@@ -27,6 +27,11 @@ just verify
 `just verify` is the gate: `uv sync --all-packages --locked`, then `ruff check`,
 `ruff format --check`, then the pytest suite. Run it before every commit.
 
+Tests run in parallel, and the recipes hand pytest a machine-local posix
+jobserver (`scripts/jobserver.py init`) so several checkouts checking at once
+share one pool of test slots instead of each claiming every core. Delete the
+pipe that command prints to reseed it.
+
 Useful recipes:
 
 ```sh

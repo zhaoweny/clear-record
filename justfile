@@ -27,12 +27,16 @@
 default:
     @just --list
 
-# Full verify gate: sync --locked, lint, format-check, tests.
+# Full verify gate: sync --locked, lint, format-check, tests. The test recipes
+# hand pytest a machine-local posix jobserver (`scripts/jobserver.py init`) so
+# concurrent checkouts share one pool of test slots instead of each claiming
+# every core; a jobserver that cannot be seeded prints nothing, leaving the run
+# unthrottled rather than failing it.
 verify:
     uv sync --all-packages --locked
     uv run --all-packages ruff check .
     uv run --all-packages ruff format --check .
-    uv run --all-packages pytest
+    PYTEST_JOBSERVER="$(uv run --no-project scripts/jobserver.py init)" uv run --all-packages pytest
     @echo "verify: OK"
 
 # Lint only.
@@ -49,7 +53,7 @@ format:
 
 # Run the test suite.
 test:
-    uv run --all-packages pytest
+    PYTEST_JOBSERVER="$(uv run --no-project scripts/jobserver.py init)" uv run --all-packages pytest
 
 # Terminal wizard for the human-only agent provisioning: point at an MCP harness
 # and register clear-record's MCP server in its client config. Pointer to a

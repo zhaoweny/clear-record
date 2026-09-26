@@ -94,7 +94,11 @@
 </div>
 {% endif %}
 
-{% if drafts %}
+{% if drafts_error %}
+{# A meeting with no workspace has no draft directory to read: the panel says the
+   service's own sentence rather than leaving the page a 500 (views.meeting_context). #}
+<div class="run-error" role="alert">{{ drafts_error }}</div>
+{% elif drafts %}
   {% for draft in drafts %}
   <div class="meeting draft">
     <div class="row meeting-head">

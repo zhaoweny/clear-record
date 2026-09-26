@@ -24,10 +24,14 @@ exactly these through:
 
 Everything else needs a credential: pages and fragments — the console, which a
 token can never open — redirect to the setup route, and the machine surface
-(``/api/v1/…``) accepts **either** a live session cookie or a machine token
+(``/api/v1/…``) accepts **either** a live session cookie *presented to it* (the
+app sets the cookie with :data:`CONSOLE_PATH`, so a browser's session rides the
+console and never the machine API; a client that sends the value itself — the
+node's own machine is the one — is accepted) or a machine token
 (:func:`bearer_token`, ``Authorization: Bearer …``), answering ``401`` with
-:data:`AUTH_REQUIRED` in ``detail`` when it has neither, so a script is told what
-a browser is shown. A token is consulted **only** for a :func:`machine_request`:
+:data:`AUTH_REQUIRED` in ``detail`` when it has neither, so a script that is
+refused is told in words what a browser meets as the setup redirect. A token is
+consulted **only** for a :func:`machine_request`:
 it authorizes the machine surface and nothing on the console's side of the app,
 which is the whole of its reach.
 :func:`answers_anonymously` is the single rule both the middleware and the
@@ -110,16 +114,21 @@ BEARER_SCHEME = "Bearer"
 #: purpose: it answers a script (the JSON API's ``detail``), not a person reading
 #: a translated console — the same shape the request guard's and the naming
 #: rules' sentences have. Both ways in are named — a session cookie, which opens
-#: the console and the machine surface alike, and a bearer token, which opens the
+#: the console and, for a client that presents the value **itself**, the machine
+#: surface too (the app sets the cookie with :data:`CONSOLE_PATH`, so a browser's
+#: session never rides ``/api/v1``: only a client that reads the value deliberately,
+#: the node's own machine being the one), and a bearer token, which opens the
 #: machine surface only — because a client that is refused needs to know what
 #: would have been accepted, and the whole anonymous surface is named for the
 #: same reason.
 AUTH_REQUIRED = (
-    f"request refused: this node needs a signed-in console session or a machine "
-    f"token, and this request carried neither. Present a {BEARER_SCHEME} token "
-    f"(mint one in the console under {CONSOLE_PATH}/settings/status), or open "
-    f"{SETUP_PATH} in a browser and sign in; only {SETUP_PATH}, {HEALTH_PATH} "
-    f"and the compiled assets under {STATIC_PREFIX} answer without a credential."
+    f"request refused: this node needs a machine token, or a console session "
+    f"cookie that the client presents itself — a browser's cookie is scoped to "
+    f"{CONSOLE_PATH} and never rides {MACHINE_PREFIX}. Present a {BEARER_SCHEME} "
+    f"token (mint one in the console under {CONSOLE_PATH}/settings/status), or "
+    f"sign in at {SETUP_PATH} in a browser for the console itself; only "
+    f"{SETUP_PATH}, {HEALTH_PATH} and the compiled assets under {STATIC_PREFIX} "
+    f"answer without a credential."
 )
 
 

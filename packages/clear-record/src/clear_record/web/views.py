@@ -60,6 +60,7 @@ from clear_record.service import (
     MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingAgentError,
     PipelineRun,
     Registry,
     RunManager,
@@ -1030,6 +1031,11 @@ def meeting_context(
 
     ``agent`` is the app's injected draft seam; constructing it from the meeting
     is wiring, and a view may not do it.
+
+    The drafts panel is the one panel that reads the meeting's **workspace**, and
+    a meeting need not have one (the machine API creates meetings without it), so
+    that refusal is rendered in the panel's place: a read of such a meeting is
+    still a page, and the sentence says what would give it drafts.
     """
     _speaks(locale)
     try:
@@ -1052,6 +1058,21 @@ def meeting_context(
         transcript = None
         transcript_error = tr("No transcript yet. Run the pipeline first.")
     minutes_artifact = agent.minutes_artifact()
+    # The draft panel is the one panel that reads the meeting's **workspace**, and
+    # a meeting need not have one: the machine API creates meetings without it
+    # (`POST /api/v1/projects/<p>/meetings`), and the console's own create route
+    # is the only reason the state is rare. A read must not raise for it, so the
+    # panel renders the service's own refusal — the sentence names the condition
+    # and what would fix it — instead of the page (and its fragment) answering a
+    # 500 over a meeting the console's own tab links to.
+    try:
+        drafts = [describe_draft(draft).model_dump() for draft in agent.drafts()]
+        legacy_drafts = len(agent.legacy_drafts())
+        drafts_error = None
+    except MeetingAgentError as exc:
+        drafts = []
+        legacy_drafts = 0
+        drafts_error = error_message(locale, exc)
     return {
         "project": registry.require_project(meeting.project_slug),
         "meeting": meeting,
@@ -1072,8 +1093,9 @@ def meeting_context(
             }
             for artifact in registry.list_artifacts(meeting.id)
         ],
-        "drafts": [describe_draft(draft).model_dump() for draft in agent.drafts()],
-        "legacy_drafts": len(agent.legacy_drafts()),
+        "drafts": drafts,
+        "legacy_drafts": legacy_drafts,
+        "drafts_error": drafts_error,
         "minutes_artifact": minutes_artifact,
         "minutes_text": artifact_text(minutes_artifact)
         if minutes_artifact is not None

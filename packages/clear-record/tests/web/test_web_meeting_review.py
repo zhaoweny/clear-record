@@ -355,6 +355,33 @@ def test_an_unknown_draft_is_a_404(tmp_path: Path) -> None:
     )
 
 
+def test_a_meeting_with_no_workspace_renders_its_review_rather_than_500(
+    tmp_path: Path,
+) -> None:
+    """A read must not raise: the machine API can create a meeting with no workspace.
+
+    ``POST /api/v1/projects/<p>/meetings`` takes no ``workspace_path``, and the
+    store has always allowed the state (``tests/web/test_web_api`` reaches it for
+    a run refusal). The console's pages, though, are *reads*, and the draft panel
+    is the one panel that reads the workspace — so it is the one that has to say
+    the meeting has none, rather than failing the page and the fragment with a
+    ``MeetingAgentError`` no page route catches.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    registry.create_project("Ops", actor="console")
+    registry.create_meeting("ops", "Kickoff", actor="console")  # no workspace
+    client = signed_in(TestClient(create_app(registry, RunManager(registry))))
+
+    page = client.get("/web/projects/ops/meetings/kickoff")
+    fragment = client.get("/web/ui/projects/ops/meetings/kickoff")
+
+    assert page.status_code == 200
+    assert fragment.status_code == 200
+    # The panel says the condition in the service's own words, not a blank one.
+    assert "no workspace" in page.text
+    assert "no workspace" in fragment.text
+
+
 def test_the_transcript_pane_names_the_run_that_produced_it(tmp_path: Path) -> None:
     """The pane is a reader too, so it says which run's transcript this is.
 

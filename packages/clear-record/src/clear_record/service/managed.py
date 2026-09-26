@@ -687,6 +687,17 @@ def delete_tapes(
     still accounted for (ADR-0033). The containment guard's refusal (a tape
     resolving outside the managed root) is not one of them: it names the path it
     refuses and leaves no row.
+
+    **Each record goes before its file.** A tape's row is dropped — which takes
+    its path out of the meeting's tape set in the same transaction — and only
+    then is the file unlinked, so no state the registry holds can come to name a
+    file this batch has already removed: the tape set is what a run's inputs are
+    read from, and a row naming a missing file is a run that cannot start. A
+    crash between the two steps leaves bytes that no record names, and the
+    verified archive every delete stands on is their durable copy — which is why
+    that precondition, not the order, is what makes the bytes recoverable. The
+    other order (unlink, then the row) left the row and the tape set pointing at
+    a file that was gone, and nothing but a retry reconciled it.
     """
     audit.require_actor(actor)
     tapes: list[Tape] = []
@@ -729,12 +740,12 @@ def delete_tapes(
         raise
     deletions: list[TapeDeletion] = []
     for tape in tapes:
-        Path(tape.path).unlink(missing_ok=True)
-        deletions.append(
-            TapeDeletion(
-                tape=registry.forget_tape(tape.id, actor=actor), archive=archive
-            )
-        )
+        # The row (and the tape set with it) goes first: the registry may never
+        # name a file this batch has already removed. `row.path` is what the
+        # record named, which is what is unlinked.
+        row = registry.forget_tape(tape.id, actor=actor)
+        Path(row.path).unlink(missing_ok=True)
+        deletions.append(TapeDeletion(tape=row, archive=archive))
     return deletions
 
 

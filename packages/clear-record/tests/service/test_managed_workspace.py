@@ -13,9 +13,11 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from clear_record.pipeline.workspace import (
     RUN_MARKER,
@@ -987,15 +989,97 @@ def test_deleting_all_tapes_verifies_the_durable_copy_once(
     assert all(not Path(tape.path).exists() for tape in tapes)
 
 
+def test_a_delete_whose_row_write_fails_leaves_no_lie_behind(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The row goes before the file: a failure at the row leaves both halves whole.
+
+    The reproduction: ``forget_tape`` raised *after* the unlink (the busy timeout
+    exhausted), so the tape row and the meeting's tape set named a file that was
+    gone — and the tape set is what a run's inputs are read from, so the next
+    submission would be handed a path that does not exist, while nothing but a
+    retry reconciled it. The record now moves first, so the same failure finds the
+    file untouched and the row and the tape set still naming it: the two agree,
+    and a retry is an ordinary delete.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+
+    def the_rows_write_fails(tape_id, *, actor):
+        raise OperationalError(
+            "DELETE FROM tape",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(registry, "forget_tape", the_rows_write_fails)
+    with pytest.raises(OperationalError):
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
+
+    # Nothing was unlinked, and every name for the file still answers it.
+    assert Path(tape.path).read_bytes() == b"one"
+    assert registry.list_tapes(meeting.id) == [tape]
+    assert registry.latest_recording_set(meeting.id).paths == (tape.path,)
+
+
+def test_a_batch_that_fails_at_its_second_row_leaves_both_tapes_whole(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The same order, mid-batch: each tape's row and file agree at every point.
+
+    The batch is a sequence, so a failure part-way through may not be pictured as
+    a whole-batch rollback — what it must not leave is a row naming a file the
+    batch already removed. The first tape is done on both sides, the second is
+    untouched on both sides, and the exception is the second row's.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"two"), filename="b.wav", actor="console"
+    )
+    archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+
+    real = registry.forget_tape
+    forgotten: list[int] = []
+
+    def the_second_rows_write_fails(tape_id, *, actor):
+        forgotten.append(tape_id)
+        if len(forgotten) == 2:
+            raise OperationalError(
+                "DELETE FROM tape",
+                {},
+                sqlite3.OperationalError("database is locked"),
+            )
+        return real(tape_id, actor=actor)
+
+    monkeypatch.setattr(registry, "forget_tape", the_second_rows_write_fails)
+    with pytest.raises(OperationalError):
+        managed.delete_tapes(
+            registry, meeting, [first.id, second.id], actor="console"
+        )
+
+    assert forgotten == [first.id, second.id]
+    assert not Path(first.path).exists()
+    assert Path(second.path).read_bytes() == b"two"
+    assert registry.list_tapes(meeting.id) == [second]
+    assert registry.latest_recording_set(meeting.id).paths == (second.path,)
+
+
 def test_a_refused_delete_leaves_the_files_and_the_rows_alone(
     registry, tmp_path, monkeypatch
 ) -> None:
     """Every precondition precedes the first unlink — the actor's gate included.
 
-    ``forget_tape`` is what carries the actor gate, and it runs per tape, after
-    that tape's file is unlinked: a word the record cannot attribute a row to
-    must refuse *before* anything is touched, or a programming error in a surface
-    would destroy the data and leave the row that names it.
+    ``forget_tape`` is what carries the actor gate, and it runs per tape, ahead
+    of that tape's own unlink (the order ``delete_tapes`` states): a word the
+    record cannot attribute a row to must refuse *before* anything is touched, or
+    a programming error in a surface would destroy the data and leave the row
+    that names it.
     """
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     tape = managed.upload_tape(

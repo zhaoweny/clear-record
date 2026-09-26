@@ -103,6 +103,35 @@ def test_a_run_scope_resolves_back_to_its_workspace(tmp_path: Path) -> None:
     assert Workspace.at(home.root).run_id is None
 
 
+def test_a_marker_rewrite_is_published_atomically(tmp_path: Path, monkeypatch) -> None:
+    """A crash mid-write leaves the marker a reader opens whole.
+
+    ``begin_scope`` runs again for a run that begins in a scope that already
+    exists (a re-claim), and every stage of the run opens the scope by reading
+    its marker. Written in place, a writer killed mid-body would leave a torn
+    marker and ``Workspace.at`` would silently open the scope as *its own*
+    workspace — the run's shared state (the published manifest, ``audio/``, the
+    chunk cache key) read from the wrong directory. The marker is published by
+    rename instead, so the torn body never reaches the path a reader opens.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    scope = home.begin_scope(1)
+
+    def dying_write_json(path, payload) -> None:
+        # A writer killed mid-write: the body it was writing is partial.
+        Path(path).write_text('{"workspace": "/torn', encoding="utf-8")
+        raise OSError("killed mid-write")
+
+    monkeypatch.setattr("clear_record.pipeline.workspace.write_json", dying_write_json)
+    with pytest.raises(OSError):
+        scope.begin_scope(1)
+
+    assert load_json(scope.outputs / RUN_MARKER)["run_id"] == 1
+    reopened = Workspace.at(scope.outputs)
+    assert reopened.run_id == 1
+    assert reopened.root == home.root
+
+
 def test_only_a_marked_run_scope_resolves_back(tmp_path: Path) -> None:
     """The **mark**, not the name, is what makes a scope.
 

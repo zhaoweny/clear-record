@@ -34,6 +34,26 @@ def _console(registry: Registry) -> TestClient:
     return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
 
 
+def _documents(
+    target: Workspace, *, memory: dict | None, confidence: float | None
+) -> None:
+    """One source's manifest, one segment and record, in *target*."""
+    source = Source(id="a", path=str(target.root / "a.wav"), label="mic")
+    target.write_manifest([source])
+    segments = [
+        Segment(
+            start=0.0, end=4.0, text="hello there", source="a", confidence=confidence
+        )
+    ]
+    target.write_segments(
+        {"a": segments},
+        {"sources": {"a": {"duration": 10.0}}, **(memory or {})},
+    )
+    target.write_record(
+        RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
+    )
+
+
 def _seeded(
     tmp_path,
     *,
@@ -50,20 +70,7 @@ def _seeded(
     directory = tmp_path / "ws"
     directory.mkdir()
     workspace = Workspace.at(directory)
-    source = Source(id="a", path=str(directory / "a.wav"), label="mic")
-    workspace.write_manifest([source])
-    segments = [
-        Segment(
-            start=0.0, end=4.0, text="hello there", source="a", confidence=confidence
-        )
-    ]
-    workspace.write_segments(
-        {"a": segments},
-        {"sources": {"a": {"duration": 10.0}}, **(memory or {})},
-    )
-    workspace.write_record(
-        RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
-    )
+    _documents(workspace, memory=memory, confidence=confidence)
     meeting = registry.create_meeting(
         "ops",
         "Kickoff",
@@ -81,6 +88,9 @@ def _seeded(
         },
         actor="console",
     )
+    # The run's own copy (ADR-0033): the accuracy axis reads it, not the
+    # workspace's published copy.
+    _documents(workspace.begin_scope(run.id), memory=memory, confidence=confidence)
     if cost is not None:
         registry.update_run(
             run.id,

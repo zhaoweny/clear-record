@@ -57,32 +57,54 @@ def run_axes(
     directory: str | Path | None = None,
     reference: str | Path | None = None,
 ) -> dict:
-    """The four axes of one run, from its record and its workspace.
+    """The four axes of one run, from its record and the run's own copy.
 
     ``run`` is the persisted row -- its ``progress['cost']`` carries the speed
     primitives (RUN-01) and its ``options`` the fit facts. ``directory`` is the
-    workspace accuracy and memory are read from, and ``reference`` an optional
+    workspace the run belongs to: the accuracy and memory axes are read from
+    **that run's own copy** under it (``<workspace>/runs/<run id>/``, ADR-0033),
+    because the workspace root holds only the newest *published* copy — a run
+    that failed, stopped or was interrupted published nothing and must report its
+    own reason rather than a previous run's numbers. ``reference`` is an optional
     reference transcript for WER.
 
-    A caller that has only a workspace passes ``directory`` and gets the two
-    axes a workspace can prove, with reasons for the other two. This function
-    never raises for a missing or old record: an axis without primitives is
-    ``None`` with a reason.
+    A caller that has only a workspace passes ``directory`` with no run and gets
+    the two axes a workspace can prove, with reasons for the other two. This
+    function never raises for a missing or old record: an axis without
+    primitives is ``None`` with a reason.
     """
     cost = cost_of(run) if run is not None else {}
+    subject = _axes_directory(run, directory)
     return {
-        "accuracy": _accuracy_axis(directory, reference),
+        "accuracy": _accuracy_axis(subject, reference),
         "speed": _speed_axis(cost, has_run=run is not None),
-        "memory": _memory_axis(directory, cost if run is not None else None),
+        "memory": _memory_axis(subject, cost if run is not None else None),
         "fit": _fit_axis(run, cost),
     }
+
+
+def _axes_directory(
+    run: PipelineRun | None, directory: str | Path | None
+) -> str | Path | None:
+    """The directory a run's axes are read from: its own copy, when there is one.
+
+    A run writes its documents into its own scope (``<workspace>/runs/<run
+    id>/``) and only a **finished** run publishes them at the workspace root
+    (ADR-0033). Reading the root for a run that published nothing would show the
+    previous finished run's record as this run's; with no run the workspace
+    itself is the subject.
+    """
+    if run is None or directory is None:
+        return directory
+    return Workspace.at(directory).run_scope(run.id).outputs
 
 
 def _accuracy_axis(directory: str | Path | None, reference: str | Path | None) -> dict:
     """WER against a reference, else coverage and mean confidence.
 
     The numbers come from the pipeline's one calibration implementation; an
-    unreadable workspace or record is a reason, not a traceback.
+    unreadable copy — the run's own, or the workspace's when there is no run — is
+    a reason, not a traceback.
     """
     axis: dict = {
         "basis": None,
@@ -148,8 +170,9 @@ def _memory_axis(directory: str | Path | None, cost: dict | None) -> dict:
     record, empty or not) both the value and the reason come from the record,
     because ``segments.json`` belongs to whichever run wrote it last: a failed
     run must not show a previous run's peak, and a later all-reused re-run
-    must not erase an earlier run's measurement. Only a caller with no run at
-    all (``cost is None``) reads the workspace meta. A zero is never a
+    must not erase an earlier run's measurement — so ``directory`` is the run's
+    own copy here, and it is only read by a caller with no run at all
+    (``cost is None``), which gets the workspace meta. A zero is never a
     measurement on either path.
     """
     axis: dict = {"peak_rss_bytes": None, "reason": None}

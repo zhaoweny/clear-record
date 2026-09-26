@@ -12,6 +12,11 @@ artifacts. It is intentionally not a database::
         transcribe.log      Durable append-only log of every stage's lines.
         audio/              Normalized 16 kHz mono copies of the sources.
         export/             Markdown/SRT/VTT/JSON artifacts from `export`.
+        runs/<run id>/      One run's own copy of the documents above — its
+                            manifest, segments, record and export/ (ADR-0033).
+                            A node run writes here and a finished run publishes
+                            that copy at the root; the directory is marked by
+                            .clear-record-run.json. Not an input.
         .clear-record-ignore  Inputs discovery must not take (one glob per
                             line, relative to the workspace).
 
@@ -80,6 +85,15 @@ RUNS_DIR = "runs"
 #: operator's, and is classified like any other file). Hidden, like
 #: :data:`IGNORE_FILE`, so it is not itself an input or a file the walk narrates.
 RUN_MARKER = ".clear-record-run.json"
+
+#: The app-owned directory for a run's own glossary snapshot, a **sibling** of
+#: the chunk cache (:data:`CHUNKS_DIRNAME`) under the platform cache root. It
+#: must not live *inside* the chunk-cache namespace: a source's cache is a
+#: directory there named by the source's id, so a source whose id slugs to
+#: ``glossary.txt`` (any audio file named ``glossary.txt.<ext>``) would be the
+#: very path this file needs — a directory where a file must be. Keyed per
+#: workspace like the chunk cache (:attr:`Workspace.run_glossary_path`).
+RUN_GLOSSARY_DIRNAME = "run-glossary"
 GLOSSARY = "glossary.txt"
 TRANSCRIBE_LOG = "transcribe.log"
 GROUND_TRUTH = "ground_truth.json"
@@ -547,11 +561,14 @@ class Workspace:
     (:func:`_run_scope`, :data:`RUN_MARKER`) is that run's own copy area: the
     run's documents are written there, as the run's retained copy, and
     :attr:`root` stays the workspace the run belongs to. What that changes is
-    only *where the documents go* (:attr:`outputs`); the inputs and the shared
-    state — normalized audio, the glossary, the ignore declaration, the
-    transcription log, the chunk cache — are the workspace's, so a re-run resumes
-    the same cache and a resumed run reads the same glossary as before
-    (ADR-0033). An unmarked directory is never a scope, however it is named.
+    *where the documents go* (:attr:`outputs`) **and the run id they name
+    themselves with** — the manifest, the segments' ``meta`` and the record's
+    ``metadata`` (:meth:`write_manifest`, :meth:`write_segments`,
+    :meth:`write_record`); the inputs and the shared state — normalized audio,
+    the glossary, the ignore declaration, the transcription log, the chunk cache
+    — are the workspace's, so a re-run resumes the same cache and a resumed run
+    reads the same glossary as before (ADR-0033). An unmarked directory is never
+    a scope, however it is named.
     """
 
     root: Path
@@ -579,13 +596,17 @@ class Workspace:
         The marker (:data:`RUN_MARKER`) is what makes the directory a scope:
         it names the workspace and the run, so opening the directory again — by
         a stage, by a reader, by the run path after a restart or a re-claim —
-        resolves back to this workspace instead of guessing from the path.
-        Reopening an existing scope rewrites the same marker, so a resumed run
-        continues in its own copy.
+        resolves back to this workspace instead of guessing from the path. It is
+        published atomically (``.tmp`` + rename), like every other writer here: a
+        reader that opens the scope mid-write must see a complete marker or none,
+        never a torn body that would silently open the scope as its own
+        workspace. The marker is rewritten for a run that begins again in a scope
+        that already exists, which is idempotent; a **resume** is a *new* run and
+        begins its own scope.
         """
         scope = self.run_scope(run_id)
         scope.outputs.mkdir(parents=True, exist_ok=True)
-        write_json(
+        _publish_json(
             scope.outputs / RUN_MARKER,
             {"workspace": str(scope.root), "run_id": run_id},
         )
@@ -597,8 +618,11 @@ class Workspace:
         """Where this workspace's documents are written and read.
 
         The workspace itself (:attr:`root`) for a plain workspace; the run's own
-        directory for a run's scope. It is the one difference between the two, and
-        it is derived here so no caller composes a run path by hand.
+        directory for a run's scope. It is the one difference between the two
+        *paths*, and it is derived here so no caller composes a run path by hand.
+        A scope's documents also name their run — the manifest, the segments'
+        ``meta`` and the record's ``metadata`` — which a plain workspace's never
+        do.
         """
         if self.run_id is None:
             return self.root
@@ -652,8 +676,17 @@ class Workspace:
         confirmed term never rewrites it, and publishes the bias it does have —
         the file's own terms minus the registry's unconfirmed ones (ADR-0033) —
         here instead, beside the app's cache rather than in the workspace.
+
+        It lives under :data:`RUN_GLOSSARY_DIRNAME`, **outside** the chunk-cache
+        namespace (:attr:`chunks_dir`), and is keyed per workspace by the same
+        :func:`_cache_key`: a source's cache is a *directory* under ``chunks/``
+        named by the source's id, so a source whose id slugs to ``glossary.txt``
+        (any audio file named ``glossary.txt.<ext>``) would otherwise be the very
+        path this file needs — a directory where a file must be.
         """
-        return self.chunks_dir / GLOSSARY
+        return (
+            resolve_cache_dir() / RUN_GLOSSARY_DIRNAME / f"{_cache_key(self.root)}.txt"
+        )
 
     @property
     def ground_truth_path(self) -> Path:
@@ -977,6 +1010,7 @@ __all__ = [
     "DeclarationUnreadable",
     "IGNORE_FILE",
     "PUBLISHED_DOCUMENTS",
+    "RUN_GLOSSARY_DIRNAME",
     "RUNS_DIR",
     "RUN_MARKER",
     "Workspace",

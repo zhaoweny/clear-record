@@ -2,10 +2,11 @@
 
 A meeting's transcript lives as files in its workspace: ``record.json`` (the
 reconciled, attributed record) and ``segments.json`` (the raw per-source ASR
-segments). The run's artifacts point at those files, but an agent driving the
-glossary ↔ transcript tuning loop needs the **text** it is meant to reason
-about, not a path. This module owns that read (and its slice) so the MCP adapter
-stays argument marshalling.
+segments). The run's artifacts point into the run's **own copy** of those files
+(``<workspace>/runs/<run id>/``, ADR-0033), not at the workspace root this module
+reads, but an agent driving the glossary ↔ transcript tuning loop needs the
+**text** it is meant to reason about, not a path. This module owns that read (and
+its slice) so the MCP adapter stays argument marshalling.
 
 The reconciled record wins when it has segments; otherwise the raw segments are
 read as they are written, each source's times in its own clock — the page lists
@@ -75,8 +76,10 @@ class TranscriptSlice:
     name it (``Workspace.write_record``/``write_segments``, ADR-0033), so a
     reader — or an agent that tuned the glossary and is reading the result — can
     say which run's transcript this is, and fetch that run's own copy rather
-    than the workspace's published one. A transcript written before runs were
-    scoped, or by a plain ``clear-record run``, names none: ``None``.
+    than the workspace's published one. The unscoped writers name none: the
+    stage commands and ``calibrate`` write at the workspace root, and a
+    transcript written before runs were scoped has no name to give — such a page
+    carries ``None``.
     """
 
     meeting_id: int
@@ -93,11 +96,13 @@ class TranscriptSlice:
 def _run_id(meta: dict) -> int | None:
     """The run that wrote a document, from the meta it stamps itself with.
 
-    ``int`` only, and never a bool: a hand-edited body can hold anything, and a
-    value that is not a run id is no run id.
+    An ``int``, never a bool, and never below 1: run ids start at 1
+    (:func:`~clear_record.pipeline.workspace._run_scope` reads a marker's run id
+    by the same rule), and a hand-edited body can hold anything — a value that is
+    not a run id is no run id.
     """
     value = (meta or {}).get("run_id")
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
         return value
     return None
 

@@ -21,18 +21,23 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+import numpy as np
 import pytest
+import soundfile as sf
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from clear_record.pipeline import stages
 from clear_record.pipeline.workspace import Workspace, discover_audio
 from clear_record.core import (
     JobEvent,
     Progress,
     RecordDocument,
     Segment,
+    TranscriptionResult,
     load_json,
     resolve_options,
 )
+from clear_record.providers import BackendBase, BackendInfo
 from clear_record.service import (
     QUEUE,
     MalformedRunOptions,
@@ -359,6 +364,95 @@ def test_an_explicit_glossary_wins_over_the_project_snapshot(tmp_path) -> None:
     )
     # No project snapshot was written — the explicit file won.
     assert not Workspace.at(meeting.workspace_path).glossary_path.exists()
+
+
+class _FakeBackend(BackendBase):
+    """An in-process backend: it runs no worker process at all."""
+
+    info = BackendInfo(
+        id="fake",
+        vendor="test",
+        frameworks=(),
+        description="fake",
+        default_model="fake",
+        parallelizable=True,
+    )
+
+    def available(self) -> bool:
+        return True
+
+    def transcribe(self, audio_path, **kwargs):
+        data, file_sr = sf.read(audio_path)
+        duration = len(data) / file_sr
+        return TranscriptionResult(
+            source="fake",
+            segments=(
+                Segment(
+                    start=0.0,
+                    end=round(duration, 3),
+                    text="hello there",
+                    source="fake",
+                    confidence=0.5,
+                ),
+            ),
+            language="en",
+            backend="fake",
+            model="fake",
+            audio_duration=duration,
+        )
+
+
+def test_a_source_named_like_the_run_glossary_runs_to_completion(
+    tmp_path, monkeypatch
+) -> None:
+    """A source id of ``glossary.txt`` must not collide with the run's glossary.
+
+    The run's filtered glossary is app-owned, and so is the per-source chunk
+    cache; a tape named ``glossary.txt.wav`` takes the source id
+    ``glossary.txt`` (``_source_id`` slugs the stem), so the two used to be the
+    same path — a directory where a file must be. Publishing the glossary failed
+    with ``IsADirectoryError``, or the source's cache could not be created
+    (``FileExistsError``), and the whole run died. It must run to completion,
+    with the run's glossary published outside the chunk-cache namespace.
+    """
+    monkeypatch.setenv("CR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(stages, "get_backend", lambda _id: _FakeBackend())
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor="console")
+    # An unconfirmed term keeps the registry from claiming the user's file: the
+    # run's bias is that file's terms minus the unconfirmed one, published to the
+    # app-owned file this test is about.
+    registry.add_term("ops", "Draft", actor="console")
+    tape = tmp_path / "glossary.txt.wav"
+    sr = 8000
+    tone = np.arange(sr, dtype=np.float64) / sr
+    sf.write(str(tape), (0.4 * np.sin(2 * np.pi * 220.0 * tone)).astype(np.float32), sr)
+    meeting = _meeting(registry, tmp_path, [tape])
+    home = Workspace.at(meeting.workspace_path)
+    home.glossary_path.write_text("Draft\nFalcon\n", encoding="utf-8")
+
+    manager = RunManager(registry)
+    try:
+        run = manager.start(
+            meeting,
+            PipelineOptions(backend="fake", jobs=1),
+            origin="console",
+            actor="console",
+        )
+        state = manager.wait(run.id, timeout=120)
+    finally:
+        manager.shutdown(timeout=5)
+
+    assert state.status == "done", state.error
+    # The tape's source id is the glossary file's own name ...
+    assert [source.id for source in home.run_scope(run.id).load_manifest()[0]] == [
+        "glossary.txt"
+    ]
+    # ... and each app-owned path is its own: the run's glossary outside the
+    # chunk-cache namespace, the source's cache a directory under it.
+    assert home.run_glossary_path.is_file()
+    assert not home.run_glossary_path.is_relative_to(home.chunks_dir)
+    assert home.chunk_cache("glossary.txt").directory.is_dir()
 
 
 def test_a_hand_written_glossary_survives_when_there_are_no_confirmed_terms(

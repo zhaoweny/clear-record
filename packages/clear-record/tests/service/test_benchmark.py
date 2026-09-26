@@ -68,28 +68,39 @@ AUTO_META = {
 }
 
 
-def _workspace(tmp_path, *, memory: dict | None = None) -> Workspace:
-    """A tiny workspace with a manifest, a transcript and a record.
+def _documents(target: Workspace, *, memory: dict | None = None) -> None:
+    """One source's manifest, two segments and record, in *target*.
 
     Ten seconds of source, two segments spanning 0.0-9.0 at confidence 0.9 and
-    0.7: coverage 0.9 over two words each, mean confidence 0.8.
+    0.7: coverage 0.9 over two words each, mean confidence 0.8. Written through
+    *target* so the same body can be left at the workspace root (the published
+    copy) or in a run's own scope (ADR-0033).
     """
-    directory = tmp_path / "ws"
-    directory.mkdir()
-    workspace = Workspace.at(directory)
-    source = Source(id="a", path=str(directory / "a.wav"), label="mic")
-    workspace.write_manifest([source])
+    source = Source(id="a", path=str(target.root / "a.wav"), label="mic")
+    target.write_manifest([source])
     segments = [
         Segment(start=0.0, end=4.0, text="hello there", source="a", confidence=0.9),
         Segment(start=5.0, end=9.0, text="general kenobi", source="a", confidence=0.7),
     ]
-    workspace.write_segments(
+    target.write_segments(
         {"a": segments},
         {"sources": {"a": {"duration": 10.0}}, **(memory or {})},
     )
-    workspace.write_record(
+    target.write_record(
         RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
     )
+
+
+def _workspace(tmp_path, *, memory: dict | None = None) -> Workspace:
+    """A tiny workspace with a manifest, a transcript and a record.
+
+    The documents are left at the workspace root: the published copy a caller
+    with no run is measured from.
+    """
+    directory = tmp_path / "ws"
+    directory.mkdir()
+    workspace = Workspace.at(directory)
+    _documents(workspace, memory=memory)
     return workspace
 
 
@@ -98,8 +109,10 @@ def _seed(
 ):
     """A project, a meeting over :func:`_workspace`, and one run row.
 
-    With ``cost`` the run is ``done`` and carries the RUN-01 record; without it
-    the run stays ``queued`` with no cost record (the old-run case).
+    The run's **own copy** carries the same documents as the workspace root, as a
+    run's scope does (ADR-0033): that is where its accuracy axis is read. With
+    ``cost`` the run is ``done`` and carries the RUN-01 record; without it the run
+    stays ``queued`` with no cost record (the old-run case).
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
     registry = registry or Registry.open(db_path=tmp_path / "registry.sqlite3")
@@ -122,6 +135,7 @@ def _seed(
         options=meta or {},
         actor="console",
     )
+    _documents(workspace.begin_scope(run.id), memory=memory)
     if cost is not None:
         registry.update_run(
             run.id,
@@ -292,12 +306,58 @@ def test_a_run_that_failed_does_not_borrow_a_stale_workspace_peak(tmp_path) -> N
     assert axes["memory"]["peak_rss_bytes"] != 512 * 1024 * 1024
 
 
+def test_a_run_that_published_nothing_reports_its_own_unknown_accuracy(
+    tmp_path,
+) -> None:
+    """The accuracy axis is the RUN's, like the memory axis beside it.
+
+    Run 1 finished and its copy is published at the workspace root; run 2 failed
+    and published nothing, so its own scope holds no record. Reading the root for
+    run 2 would show run 1's coverage and word count as run 2's — the axis must
+    report that it has nothing of this run's to score.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    workspace = _workspace(tmp_path)
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace.root),
+        actor="console",
+    )
+    first = registry.create_run(
+        meeting.id, backend="apple", model="small", actor="console"
+    )
+    registry.update_run(
+        first.id, status="done", progress={"cost": dict(COST)}, actor="console"
+    )
+    failed = registry.create_run(
+        meeting.id, backend="apple", model="small", actor="console"
+    )
+    registry.update_run(
+        failed.id, status="failed", progress={"cost": dict(COST)}, actor="console"
+    )
+
+    axes = run_axes(registry.get_run(failed.id), directory=str(workspace.root))
+
+    assert axes["accuracy"]["basis"] is None
+    assert axes["accuracy"]["coverage"] is None
+    assert axes["accuracy"]["words"] is None
+    assert axes["accuracy"]["reason"] == benchmark.NO_RECORD
+    # The finished run's published copy is untouched, and stays the read a
+    # caller with no run gets.
+    assert run_axes(None, directory=str(workspace.root))["accuracy"]["coverage"] == 0.9
+
+
 def test_a_later_run_does_not_erase_an_earlier_runs_memory(tmp_path) -> None:
     """F1: two runs over one workspace each report their own measurement.
 
     A scoped re-run that reused every chunk writes peak_rss_bytes=None + a
-    reason over the first run's meta; the first run's axis must keep its own
-    peak from its own cost record.
+    reason into its **own** copy; the first run's axis must keep its own peak
+    from its own cost record.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     registry.create_project(
@@ -324,15 +384,16 @@ def test_a_later_run_does_not_erase_an_earlier_runs_memory(tmp_path) -> None:
         actor="console",
     )
     reason = "no decoder worker ran: every chunk was reused from the cache"
-    # The re-run overwrites segments.json with its own (unknown) measurement.
-    first_workspace.write_segments(
-        {"a": []}, {"sources": {}, "peak_rss_bytes": None, "peak_rss_reason": reason}
-    )
     second = registry.create_run(
         meeting.id,
         backend="apple",
         model="small",
         actor="console",
+    )
+    # The re-run's own copy holds its own (unknown) measurement; the first run's
+    # scope is not touched -- a run's documents are its own (ADR-0033).
+    first_workspace.run_scope(second.id).write_segments(
+        {"a": []}, {"sources": {}, "peak_rss_bytes": None, "peak_rss_reason": reason}
     )
     registry.update_run(
         second.id,

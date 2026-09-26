@@ -286,16 +286,20 @@ def collect_artifacts(workspace: Path) -> list[tuple[str, Path]]:
     """The pipeline's outputs as ``(kind, path)`` pairs.
 
     Kinds line up with what the console shows: the reconciled ``record``, the
-    ``transcript`` it came from, and each ``export`` file.
+    ``transcript`` it came from, and each ``export`` file. The names are the
+    workspace's own (:class:`~clear_record.pipeline.workspace.Workspace`), so the
+    layout stays in one place: an opened run scope reads its own copy, and an
+    unmarked directory the workspace itself.
     """
+    opened = Workspace.at(workspace)
     found: list[tuple[str, Path]] = []
-    record = workspace / "record.json"
+    record = opened.record_path
     if record.is_file():
         found.append(("record", record))
-    segments = workspace / "segments.json"
+    segments = opened.segments_path
     if segments.is_file():
         found.append(("transcript", segments))
-    export_dir = workspace / "export"
+    export_dir = opened.export_dir
     if export_dir.is_dir():
         found.extend(
             ("export", path) for path in sorted(export_dir.iterdir()) if path.is_file()
@@ -593,6 +597,14 @@ def workspace_run_meeting(registry: Registry, directory: str, *, actor: str) -> 
     (:data:`CANNOT_READ_DECLARATION`) rather than let through as the read's own
     exception, which the edge would answer with a 500: the walk is where the file
     is read, so this is where the operator's sentence belongs.
+
+    ``actor`` is the **transport** that asked, one of
+    :data:`~clear_record.service.lifecycle.ACTORS` — never a word the request
+    carries. It is required because this function writes: the meeting it resolves
+    (:meth:`~clear_record.service.store.Registry.meeting_for_workspace`) and the
+    tape set it sets (:meth:`~clear_record.service.store.Registry.set_recording_set`)
+    are each recorded against it in the audit record (ADR-0033), so a refused
+    walk and a run that starts are attributable to the surface that called.
 
     The caller then enqueues this meeting through :meth:`RunManager.start` like
     any other run: one queue, one claim, one registry row. A *path sent by a

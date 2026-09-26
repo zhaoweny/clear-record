@@ -268,11 +268,9 @@ class ConsoleAuth:
         word for it (see the module doc). The set that *is* attributed is the
         credential's own.
 
-        The expired rows a registry accumulates are pruned here, on the way in —
-        signing in is the one moment a **human** session row is written, so it is
-        where the table is kept from growing without bound — and best-effort, so
-        a locked registry costs the sweep rather than the sign-in
-        (:meth:`_prune`).
+        The row it opens, and the expired rows that opening sweeps, are
+        :meth:`_open_session`'s — the same path the node's own local session is
+        minted through, so neither is a sign-in's alone.
         """
         encoded = self.registry.credential()
         if encoded is None or not verify_password(password, encoded):

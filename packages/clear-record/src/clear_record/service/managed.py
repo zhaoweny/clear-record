@@ -603,11 +603,13 @@ def delete_tapes(
     filesystem untouched.
 
     ``actor`` is the transport's word for the surface that asked for the
-    deletion: each tape's own row is dropped against it, and every refusal this
-    call owns — a user-chosen workspace, or no verified archive — leaves one
-    failed ``tape.forget`` row for the meeting (the batch's subject: one refusal
-    covers every id asked for), so a tape that is gone is still accounted for
-    (ADR-0033).
+    deletion. Each tape's own row is dropped against it, and the two refusals
+    below — a user-chosen workspace, or no verified archive for the meeting —
+    each leave one failed ``tape.forget`` row for the meeting (the batch's
+    subject: one refusal covers every id asked for), so a tape that is gone is
+    still accounted for (ADR-0033). The containment guard's refusal (a tape
+    resolving outside the managed root) is not one of them: it names the path it
+    refuses and leaves no row.
     """
     audit.require_actor(actor)
     tapes: list[Tape] = []

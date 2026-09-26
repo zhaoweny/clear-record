@@ -2351,8 +2351,6 @@ msgid ""
 "managed root in {path}; a project's archive root is edited on the "
 "project."
 msgstr "保留仅限手动：clear-record 绝不会自行删除录音。删除录音需要会议拥有已验证的归档作为持久副本，而位于用户选择的工作区中的录音一律拒绝删除。在 {path} 中设置托管根目录；项目的归档根目录在项目页中编辑。"
-"保留仅限手动：clear-record 绝不会自行删除录音，且在会议拥有已验证的归档作为持久副本之前，删除录音会被拒绝。在 {path} "
-"中设置托管根目录；项目的归档根目录在项目上编辑。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_webhooks.html:2
 msgid "Loading webhook status…"

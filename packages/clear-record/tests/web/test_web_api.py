@@ -1448,7 +1448,10 @@ def test_ui_verify_reports_an_unreadable_manifest_as_unverifiable(
 
     status = client.get(f"/ui/archives/{archive['id']}/verify")
     assert status.status_code == 200
-    assert "unverifiable" in status.text
+    # Its own chip, carrying the service's reason — never the failure chip,
+    # which would name a file as the thing that went wrong.
+    assert '<span class="badge">unverifiable</span>' in status.text
+    assert '<span class="badge">failed</span>' not in status.text
     assert "archive.json" in status.text
     assert "missing" not in status.text
 

@@ -65,8 +65,10 @@ verbatim answers and the direction they answer are the
 - [DECISION: owner, 2026-09-26] **One subject, many actors.** There is one human;
   no usernames, no accounts table. Every mutation records the **actor** the
   transport supplies — `console`, `api` (later `api:<token label>`), `mcp`,
-  `cli`, `tray` — never a string an argument chooses. A run's `origin` is the
-  precedent and the vocabulary.
+  `cli` — or `queue`, the word for the moves the node's own queue makes on its own
+  behalf; never a string an argument chooses. There is no word for the tray: it
+  drives the node over HTTP like any other client, so what it touches is the
+  **API's** actor. A run's `origin` is the precedent and the vocabulary.
 - [DECISION: owner, 2026-09-26] **The authorization rule.** An operation requires
   fresh human authorization **iff it destroys data not reconstructible from a
   durable copy**. Everything else — archive, cache invalidation, glossary edits,
@@ -184,9 +186,10 @@ verbatim answers and the direction they answer are the
 ## Consequences / review hook
 
 - **The draft author changes meaning.** The MCP tools' `author` parameters die:
-  a draft's recorded author becomes the transport's actor — `mcp` for the stdio
-  adapter, `console` for the console. The tool count is unchanged, so the ADR-0017
-  drift guard keeps holding.
+  a draft version's recorded author becomes the actor its transport supplies —
+  `mcp`, which writes every version — while an accept/reject **decision** is
+  recorded against the transport that makes it (`console`, `api`, `mcp`). The
+  tool count is unchanged, so the ADR-0017 drift guard keeps holding.
 - **The destructive surface changes shape.** Tape deletion gains the
   verified-archive precondition; glossary deletion becomes a status change. The
   tests for both move to the new contract.
@@ -215,15 +218,18 @@ verbatim answers and the direction they answer are the
   sanitize section's *"the run-scoped snapshots the rewrite rule retains"* now
   names a layout that exists.
 - [FACT] A run's **documents** are run-scoped, and so is what it publishes; what
-  it **reads** stays the workspace's — its tapes, the normalized `audio/`, the
-  app-owned chunk cache, `glossary.txt` and the `.clear-record-ignore`
-  declaration — so `ingest` stays idempotent, a resume continues the same cache,
-  and the `manifest.json` declarations an operator hand-edits at the root still
-  reach the next run. Two things a **node** run writes in place at the workspace
-  root all the same: the normalized `audio/` (the ingest stage writes it there,
-  not under `runs/<run id>/`) and the durable `transcribe.log` a running pipeline
-  appends to. The stage commands and `calibrate` are the writers that leave
-  **everything** in place, at the root and naming no run.
+  a run **reads** stays the workspace's — its tapes, the `glossary.txt` a hand-edit
+  lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
+  idempotent and the `manifest.json` declarations an operator hand-edits at the
+  root still reach the next run. Three things a **node** run writes **in place** at
+  the workspace root all the same: the normalized `audio/` (the ingest stage writes
+  it there, not under `runs/<run id>/`), the `glossary.txt` its glossary resolution
+  publishes when the registry has confirmed terms (the ADR-0031 tuning loop), and
+  the durable `transcribe.log` a running pipeline appends to. The app-owned chunk
+  cache is neither: it lives in the app's own cache directory, keyed per workspace,
+  and a run only advances it (a resume continues the same cache). The stage
+  commands and `calibrate` are the writers that leave **everything** in place, at
+  the root and naming no run.
 - [FACT] Two decisions above now hold in the build, recorded in
   [ADR-0024](0024-managed-workspace-tape-upload.md)'s Update: a managed tape's
   delete requires a **verified archive** of its meeting — refused with nothing

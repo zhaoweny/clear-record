@@ -192,6 +192,8 @@ Date: 2026-09-23
 
 - [DECISION] [ADR-0033](0033-the-auth-position.md) supersedes the **declared**
   part of this ADR's author provenance: a draft version's author becomes the actor
-  its transport supplies — `mcp` for the stdio adapter, `console` for the console
-  — rather than a string a caller chooses. The chain shape, the accept/reject
+  its transport supplies — `mcp`, the stdio adapter that writes every version —
+  rather than a string a caller chooses; an accept/reject **decision** is recorded
+  against the transport that makes it (`console` for the console, `api` for a
+  machine client, `mcp` for the adapter). The chain shape, the accept/reject
   decisions, and everything else here stand.

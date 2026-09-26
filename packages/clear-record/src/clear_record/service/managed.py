@@ -299,8 +299,20 @@ def upload_tape(
     filename and extension). The body is
     then copied in blocks to a sibling ``.part`` file, ``fsync``-ed and
     atomically renamed; the tape is recorded — checksum and size — only after
-    the rename. Any failure (a truncated body included) removes the partial file
-    and leaves no tape behind.
+    the rename. A failure **while the bytes are being written** (a truncated
+    body included) removes the partial file and leaves no tape behind.
+
+    **A failure after the record is written does not delete what the record
+    names.** The row and the file are the two halves of one upload, and the row
+    is written last, so once it is there the bytes are its subject: an exception
+    out of :meth:`~clear_record.service.store.Registry.register_tape` — which
+    appends the audit row ADR-0033 owes in a unit of work of its own, after the
+    tape's own transaction has committed — must not unlink the file that row
+    names, or ``list_tapes`` would hand back a tape whose path is gone. A failure
+    of the row's *own* write leaves nothing naming the bytes, and the file goes
+    back with the exception: the record is read (never guessed) to decide which,
+    and a record that cannot be read at all keeps the bytes, since keeping them
+    is the half a human can undo.
 
     ``upload_id``, when given, names that scratch file, so it is the transfer's
     identity for a future resume layer. This slice still starts every upload at
@@ -366,13 +378,6 @@ def upload_tape(
         os.replace(part, target)
         replaced = True
         _fsync_dir(tapes)
-        return registry.register_tape(
-            meeting.id,
-            actor=actor,
-            path=str(target),
-            sha256=digest.hexdigest(),
-            bytes=written,
-        )
     except OSError as exc:
         if created:
             part.unlink(missing_ok=True)
@@ -394,6 +399,40 @@ def upload_tape(
         if replaced:
             target.unlink(missing_ok=True)
         raise
+    # The bytes are in place; from here the *record* is what the two must agree
+    # about. `register_tape` writes the tape row and its audit row, and it can
+    # fail after the tape's transaction has committed (the audit append is a
+    # unit of work of its own), so nothing here may unlink `target` on the way
+    # out: a row naming a file that is gone is the lie this order exists to
+    # prevent. Whether the row landed is *read*, not assumed.
+    try:
+        return registry.register_tape(
+            meeting.id,
+            actor=actor,
+            path=str(target),
+            sha256=digest.hexdigest(),
+            bytes=written,
+        )
+    except BaseException:
+        if not _a_row_names(registry, meeting.id, target):
+            target.unlink(missing_ok=True)
+        raise
+
+
+def _a_row_names(registry: Registry, meeting_id: int, target: Path) -> bool:
+    """Whether the registry holds a tape row naming ``target`` — the uploaded bytes.
+
+    Read after a failed ``register_tape``, so the two halves of an upload agree:
+    the file goes back only where no row names it, and the row is the only thing
+    that can say which. A record that cannot be read answers **``True``** — the
+    bytes stay, because deleting them is the half no code can undo and keeping
+    them is the half a human can; an unreadable registry is not a registry saying
+    the tape is absent.
+    """
+    try:
+        return any(tape.path == str(target) for tape in registry.list_tapes(meeting_id))
+    except Exception:  # pragma: no cover - a registry that cannot be read at all
+        return True
 
 
 def workspace_usage(meeting: Meeting) -> int:

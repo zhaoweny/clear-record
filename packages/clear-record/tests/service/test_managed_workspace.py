@@ -282,6 +282,12 @@ def test_a_partial_upload_leaves_no_tape(registry, tmp_path, monkeypatch) -> Non
 def test_a_failed_registry_write_removes_the_file(
     registry, tmp_path, monkeypatch
 ) -> None:
+    """A tape the registry never recorded leaves nothing behind: no row, no bytes.
+
+    The *whole* call failed, so no row exists to name the file and the upload's
+    two halves go back together. The failure the next test drives is the other
+    one — after the row's own commit — and the two must not read the same.
+    """
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
 
     def boom(*args, **kwargs):
@@ -294,6 +300,42 @@ def test_a_failed_registry_write_removes_the_file(
         )
 
     assert list((Path(meeting.workspace_path) / "tapes").iterdir()) == []
+
+
+def test_a_failure_after_the_rows_commit_keeps_the_bytes_the_row_names(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The row and the file agree: a failure *after* the commit may not unlink the tape.
+
+    ``register_tape`` commits the tape row and then appends the audit row
+    ADR-0033 owes, in a unit of work of its own — so it can raise with the record
+    already written, which is the reproduction (a locked registry, a full disk,
+    on the audit insert). Unlinking the target there deleted the bytes the
+    committed row names: ``list_tapes`` still returned the tape, its path was
+    gone, ``meeting_storage`` still counted its bytes, and the meeting's tape set
+    still fed the pipeline a path that did not exist. The row is the record of
+    the bytes, so it is written last and is not compensated by deleting its
+    subject.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    real = registry.record_audit
+
+    def the_append_fails_after_the_row(actor, action, target, outcome="ok"):
+        # The tape's own transaction has committed by the time the decorator
+        # appends; this is that append failing, whatever the reason.
+        if action == "tape.register":
+            raise RuntimeError("the record of the upload could not be written")
+        return real(actor, action, target, outcome=outcome)
+
+    monkeypatch.setattr(registry, "record_audit", the_append_fails_after_the_row)
+    with pytest.raises(RuntimeError):
+        managed.upload_tape(
+            registry, meeting, io.BytesIO(b"RIFF"), filename="a.wav", actor="console"
+        )
+
+    (tape,) = registry.list_tapes(meeting.id)
+    assert Path(tape.path).read_bytes() == b"RIFF"
+    assert registry.latest_recording_set(meeting.id).paths == (tape.path,)
 
 
 # --- the upload id --------------------------------------------------------- #

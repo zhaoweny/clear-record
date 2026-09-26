@@ -209,10 +209,37 @@ def test_glossary_lifecycle(tmp_path) -> None:
     assert reg.update_term(term.id, status="confirmed").status == "confirmed"
     assert reg.update_term(term.id, definition="team lead").definition == "team lead"
 
-    reg.delete_term(term.id)
-    assert reg.list_terms("ops") == []
+    retired = reg.retire_term(term.id)
+    assert retired.status == "retired"
+    # A retire is a status change, not a row delete: the history survives.
+    assert retired.added_by == "human" and retired.created_at
+    assert reg.list_terms("ops") == [retired]
+    assert reg.list_terms("ops", status="confirmed") == []
+
+    assert reg.update_term(term.id, status="confirmed").status == "confirmed"
     with pytest.raises(KeyError):
-        reg.delete_term(term.id)
+        reg.retire_term(9999)
+
+
+def test_retire_records_the_status_a_restore_returns_the_term_to(tmp_path) -> None:
+    """A retire is reversible to where the term was, not to "confirmed"."""
+    reg = _registry(tmp_path)
+    reg.create_project("Ops")
+    draft = reg.add_term("ops", "AgentTerm", added_by="agent")  # candidate
+    owner = reg.add_term("ops", "Falcon", status="confirmed")
+    noted = reg.add_term("ops", "Mars", status="confirmed", notes="call it Mars")
+
+    for term in (draft, owner, noted):
+        assert reg.retire_term(term.id).status == "retired"
+    # The marker a retire records stays inside the registry: it is never the
+    # term's published notes.
+    assert reg.get_term(noted.id).notes == "call it Mars"
+
+    assert reg.restore_term(draft.id).status == "candidate"  # un-reviewed, still
+    assert reg.restore_term(owner.id).status == "confirmed"
+    restored = reg.restore_term(noted.id)
+    assert (restored.status, restored.notes) == ("confirmed", "call it Mars")
+    assert reg.list_terms("ops", status="retired") == []
 
 
 def test_duplicate_term_in_one_project_is_rejected(tmp_path) -> None:

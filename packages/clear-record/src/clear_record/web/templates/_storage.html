@@ -5,8 +5,8 @@
    and the tapes.
 
    Retention is **manual only** (owner, 2026-09-15): nothing here suggests the
-   node will clean up on its own, and every delete names the archive as the
-   durable copy. #}
+   node will clean up on its own, and every delete names the verified archive as
+   the durable copy it leans on. #}
 <div class="storage">
   <div class="row storage-head">
     {% if storage.managed %}
@@ -44,7 +44,7 @@
   {% if storage.managed %}
   <p class="muted storage-root">{{ tr("Managed root") }}:
     <code>{{ storage.managed_root }}</code></p>
-  <p class="muted storage-note">{{ tr("clear-record never deletes tapes on its own; deleting here is manual, and the archive is the durable copy.") }}</p>
+  <p class="muted storage-note">{{ tr("clear-record never deletes tapes on its own. Deleting here is manual: it is refused until the meeting has a verified archive as the durable copy.") }}</p>
   {% endif %}
 
   {% if storage.tapes %}
@@ -72,7 +72,7 @@
                   hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes/{{ tape.id }}"
                   hx-target="#storage-{{ storage.meeting_id }}"
                   hx-swap="innerHTML"
-                  hx-confirm="{{ tr('Delete this tape? The archive is the durable copy.') }}"
+                  hx-confirm="{{ tr("Delete this tape? It is unlinked, and its meeting's verified archive keeps the durable copy.") }}"
                   title="{{ tr('Delete tape') }}"
                   aria-label="{{ tr('Delete tape') }}">&#10005;</button>
           {% endif %}
@@ -100,6 +100,6 @@
           hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes"
           hx-target="#storage-{{ storage.meeting_id }}"
           hx-swap="innerHTML"
-          hx-confirm="{{ tr("Delete all of this meeting's tapes? The archive is the durable copy.") }}">{{ tr("Delete all tapes") }}</button>
+          hx-confirm="{{ tr("Delete all of this meeting's tapes? Their files are unlinked, and the meeting's verified archive keeps the durable copy.") }}">{{ tr("Delete all tapes") }}</button>
   {% endif %}
 </div>

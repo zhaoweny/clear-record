@@ -164,6 +164,116 @@ def test_an_edited_glossary_changes_the_next_runs_recorded_hash(tmp_path) -> Non
     )
 
 
+def test_a_retired_term_no_longer_reaches_the_decoder(tmp_path) -> None:
+    """Retiring a confirmed term drops it from the decoder's prompt.
+
+    The first run writes the registry's snapshot to the workspace
+    ``glossary.txt``; after the retire that **stale** file must not resurrect the
+    term through the no-confirmed-terms fallback, so the decoder's prompt carries
+    nothing (ADR-0033).
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    term = registry.add_term("ops", "Falcon", status="confirmed")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+
+    seen: dict = {}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    first = manager.start(meeting, origin="console")
+    manager.wait(first.id, timeout=10)
+    assert seen["text"] == "Falcon\n"
+
+    retired = registry.retire_term(term.id)
+    second = manager.start(meeting, origin="console")
+    manager.wait(second.id, timeout=10)
+
+    assert retired.status == "retired"
+    assert seen["text"] == ""  # the decoder's prompt carries no term
+    empty = project_snapshot(registry, "ops")
+    assert empty.empty
+    assert second.options["glossary_sha256"] == empty.sha256
+
+
+def test_a_hand_written_glossary_survives_a_project_whose_terms_are_all_retired(
+    tmp_path,
+) -> None:
+    """No confirmed term means the registry writes nothing — least of all empty.
+
+    The workspace ``glossary.txt`` is the user's document; a run whose project has
+    only retired terms must leave it (and the terms in it) exactly as it found
+    them, and keep using it as the run's glossary (ADR-0033).
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    registry.retire_term(registry.add_term("ops", "Falcon", status="confirmed").id)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    workspace = Workspace.at(meeting.workspace_path)
+    workspace.glossary_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.glossary_path.write_text("HandwrittenByTheUser\n", encoding="utf-8")
+
+    seen: dict = {}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen["options"] = options
+        seen["text"] = Path(options.glossary or workspace.glossary_path).read_text(
+            encoding="utf-8"
+        )
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    run = manager.start(meeting, origin="console")
+    manager.wait(run.id, timeout=10)
+
+    assert (
+        workspace.glossary_path.read_text(encoding="utf-8") == "HandwrittenByTheUser\n"
+    )
+    assert seen["options"].glossary is None  # the workspace file stands
+    assert seen["text"] == "HandwrittenByTheUser\n"
+    assert run.options["glossary"] == str(workspace.glossary_path)
+
+
+def test_a_demoted_term_no_longer_reaches_the_decoder(tmp_path) -> None:
+    """A confirmed term demoted to candidate stops biasing the next run.
+
+    The demotion leaves the earlier run's registry-written file in place (the
+    registry never rewrites a workspace file when it confirms nothing), but the
+    bias is that file's terms minus the registry's unconfirmed ones, so the term
+    is gone from the decoder's prompt.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    term = registry.add_term("ops", "Falcon", status="confirmed")
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    workspace = Workspace.at(meeting.workspace_path)
+
+    seen: dict = {}
+
+    def fake_pipeline(directory, options, on_event) -> None:
+        seen["text"] = Path(options.glossary).read_text(encoding="utf-8")
+
+    manager = RunManager(registry, pipeline=fake_pipeline)
+    first = manager.start(meeting, origin="console")
+    manager.wait(first.id, timeout=10)
+    assert seen["text"] == "Falcon\n"
+
+    registry.update_term(term.id, status="candidate")  # the console's status control
+    second = manager.start(meeting, origin="console")
+    manager.wait(second.id, timeout=10)
+
+    assert seen["text"] == ""  # not confirmed, so not the decoder's business
+    assert workspace.glossary_path.read_text(encoding="utf-8") == "Falcon\n"
+    assert second.options["glossary"] != str(workspace.glossary_path)
+
+
 def test_an_explicit_glossary_wins_over_the_project_snapshot(tmp_path) -> None:
     registry = _registry(tmp_path)
     registry.create_project("Ops")

@@ -95,4 +95,4 @@
 {% else %}
 <div class="empty">{{ tr("No projects yet.") }}</div>
 {% endif %}
-<p class="muted settings-note">{{ tr("Retention is manual only: clear-record never deletes tapes on its own, and the archive is the durable copy. Set the managed root in {path}; a project's archive root is edited on the project.", path=config_path) }}</p>
+<p class="muted settings-note">{{ tr("Retention is manual only: clear-record never deletes tapes on its own, and deleting one is refused until the meeting has a verified archive as the durable copy. Set the managed root in {path}; a project's archive root is edited on the project.", path=config_path) }}</p>

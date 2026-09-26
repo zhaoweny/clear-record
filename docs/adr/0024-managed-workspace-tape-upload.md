@@ -177,3 +177,25 @@ original text is kept for the record.
 - Revisit hook unchanged: this is the shape, not the layer. Chunked/resumable
   upload is still the next decision, taken when a real tape over a bad link
   earns it.
+
+## Update (2026-09-26) — the managed-tape delete requires a verified archive
+
+The Decision bullet above ("Storage visibility … **The archive is the durable
+copy**, and the delete response says so") is **superseded** by ADR-0033's
+shrink-the-irreversible-set rule: the archive stops being a note beside the
+delete and becomes its precondition. The original text is kept for the record.
+
+- [DECISION] **`DELETE /api/meetings/{id}/tapes/{tape_id}` refuses unless the
+  meeting has a verified archive.** The registry's archives are re-checked
+  newest first against their manifests (`verify_archive`); the first that
+  verifies is the durable copy the delete leans on, and the response's note names
+  it. With no
+  verified archive the route answers 400 with a message naming the archive action
+  — archive the meeting first — and nothing is unlinked. A user-chosen
+  workspace's tape is still refused as before (it is the user's document).
+- [DESIGN] **The console's delete controls read the same rule.** The per-tape and
+  delete-all controls still confirm manually, but their wording names the
+  verified archive as the precondition, and a refusal renders the service's own
+  message.
+- [DESIGN] **Deleting a glossary term is now a retire** — see ADR-0033; the row
+  survives with `added_by`/`created_at` and can be restored.

@@ -82,6 +82,20 @@ def build_snapshot(terms: Iterable[GlossaryTerm]) -> GlossarySnapshot:
     return _snapshot(canonical_terms(t.term for t in terms if t.status == CONFIRMED))
 
 
+def filter_terms(terms: Iterable[str], blocked: Iterable[str]) -> GlossarySnapshot:
+    """``terms`` minus ``blocked``, as a snapshot.
+
+    The workspace ``glossary.txt`` is the user's file and is never rewritten when
+    the registry confirms nothing, but a term the registry has retired or left
+    unconfirmed must not bias the decoder from it either (ADR-0033): the run
+    hands the pipeline this filtered set instead.
+    """
+    drop = {term.strip().casefold() for term in blocked}
+    return _snapshot(
+        tuple(term for term in canonical_terms(terms) if term.casefold() not in drop)
+    )
+
+
 def snapshot_from_text(text: str) -> GlossarySnapshot:
     """The snapshot a glossary body represents.
 
@@ -114,6 +128,21 @@ def write_snapshot(workspace: Workspace, snapshot: GlossarySnapshot) -> Path:
     return path
 
 
+def write_run_snapshot(workspace: Workspace, snapshot: GlossarySnapshot) -> Path:
+    """Publish ``snapshot`` at the workspace's app-owned *run* glossary.
+
+    Written atomically like :func:`write_snapshot`, but at
+    :attr:`Workspace.run_glossary_path`, so the run's bias never lands in the
+    user's ``glossary.txt``.
+    """
+    path = workspace.run_glossary_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(snapshot.text, encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
 def write_project_snapshot(
     registry: Registry, project_slug: str, workspace: Workspace
 ) -> tuple[Path, GlossarySnapshot]:
@@ -127,6 +156,7 @@ def write_project_snapshot(
 
 
 __all__ = [
+    "filter_terms",
     "CONFIRMED",
     "GlossarySnapshot",
     "build_snapshot",
@@ -134,5 +164,6 @@ __all__ = [
     "project_snapshot",
     "snapshot_from_text",
     "write_project_snapshot",
+    "write_run_snapshot",
     "write_snapshot",
 ]

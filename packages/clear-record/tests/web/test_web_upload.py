@@ -249,14 +249,29 @@ def test_storage_unknown_meeting_is_404(client) -> None:
     assert client.get("/api/meetings/999/storage").status_code == 404
 
 
-def test_delete_removes_the_tape_and_names_the_archive(client) -> None:
-    meeting = _managed_meeting(client)
+def test_delete_needs_a_verified_archive_and_names_it(client, tmp_path) -> None:
+    client.post(
+        "/api/projects",
+        json={"name": "Ops", "default_archive_root": str(tmp_path / "archive")},
+    )
+    meeting = client.post(
+        "/api/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
+    ).json()
     tape = _upload(client, meeting["id"], "a.wav", b"x").json()
 
+    refused = client.delete(f"/api/meetings/{meeting['id']}/tapes/{tape['id']}")
+
+    # No durable copy: refused with the archive action named, nothing unlinked.
+    assert refused.status_code == 400
+    assert "archive the meeting first" in refused.json()["detail"]
+    assert Path(tape["path"]).exists()
+
+    archive = client.post(f"/api/meetings/{meeting['id']}/archives", json={}).json()
     res = client.delete(f"/api/meetings/{meeting['id']}/tapes/{tape['id']}")
 
     assert res.status_code == 200
-    assert "archive is the durable copy" in res.json()["note"]
+    assert "durable copy" in res.json()["note"]
+    assert archive["root_path"] in res.json()["note"]
     assert not Path(tape["path"]).exists()
     assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
 

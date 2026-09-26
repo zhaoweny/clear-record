@@ -20,7 +20,8 @@ import pytest
 from clear_record.pipeline.workspace import RUN_MARKER, Workspace, discover_audio
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths
-from clear_record.service import Registry
+from clear_record.service import Registry, archive_meeting
+from clear_record.service.archive import MANIFEST_FILENAME
 from clear_record.service import managed
 
 
@@ -593,15 +594,18 @@ def test_the_guard_and_the_storage_report_share_root_free_bytes(
 def test_deleting_a_tape_removes_its_file_and_the_tape_set(
     registry, tmp_path, monkeypatch
 ) -> None:
+    """With a verified archive the delete stands; the archive is reported."""
     meeting = _managed_meeting(registry, monkeypatch, tmp_path)
     first = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
     second = managed.upload_tape(
         registry, meeting, io.BytesIO(b"two"), filename="b.wav"
     )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive")
 
     deleted = managed.delete_tape(registry, meeting, first.id)
 
-    assert deleted == first
+    assert deleted.tape == first
+    assert deleted.archive == archive
     assert not Path(first.path).exists()
     assert Path(second.path).exists()
     assert registry.list_tapes(meeting.id) == [second]
@@ -609,6 +613,84 @@ def test_deleting_a_tape_removes_its_file_and_the_tape_set(
 
     managed.delete_tape(registry, meeting, second.id)
     assert registry.latest_recording_set(meeting.id) is None
+
+
+def test_deleting_a_tape_without_a_verified_archive_is_refused(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """No durable copy, no delete: the refusal names the archive action."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
+
+    with pytest.raises(managed.ArchiveRequired) as refusal:
+        managed.delete_tape(registry, meeting, tape.id)
+
+    assert "archive the meeting first" in str(refusal.value)
+    assert Path(tape.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_deleting_a_tape_whose_archive_does_not_verify_is_refused(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """A tampered archive is not a durable copy, so it does not license a delete."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
+    archive = archive_meeting(registry, meeting, tmp_path / "archive")
+    copy = Path(archive.root_path) / "tapes" / "a.wav"
+    copy.write_bytes(bytes(copy.stat().st_size))
+
+    with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
+        managed.delete_tape(registry, meeting, tape.id)
+
+    assert Path(tape.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_deleting_a_tape_is_refused_when_the_archive_manifest_is_corrupt(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """A corrupt manifest is not a durable copy: it refuses, it does not raise."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(registry, meeting, io.BytesIO(b"one"), filename="a.wav")
+    archive = archive_meeting(registry, meeting, tmp_path / "archive")
+    (Path(archive.root_path) / MANIFEST_FILENAME).write_text(
+        "{not json", encoding="utf-8"
+    )
+
+    with pytest.raises(managed.ArchiveRequired, match="no verified archive"):
+        managed.delete_tape(registry, meeting, tape.id)
+
+    assert Path(tape.path).exists()
+    assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_deleting_all_tapes_verifies_the_durable_copy_once(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """One archive is one durable copy of the meeting: verify it once per batch."""
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tapes = [
+        managed.upload_tape(registry, meeting, io.BytesIO(b"x"), filename=name)
+        for name in ("a.wav", "b.wav", "c.wav")
+    ]
+    archive_meeting(registry, meeting, tmp_path / "archive")
+
+    verifications: list[str] = []
+    real = managed.verify_archive
+
+    def counting(path):
+        verifications.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(managed, "verify_archive", counting)
+
+    deletions = managed.delete_tapes(registry, meeting, [tape.id for tape in tapes])
+
+    assert len(verifications) == 1
+    assert [deletion.tape.id for deletion in deletions] == [t.id for t in tapes]
+    assert registry.list_tapes(meeting.id) == []
+    assert all(not Path(tape.path).exists() for tape in tapes)
 
 
 def test_deleting_a_tape_outside_the_managed_root_is_refused(

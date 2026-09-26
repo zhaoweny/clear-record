@@ -38,8 +38,14 @@ def client(tmp_path) -> TestClient:
     )
 
 
-def _project(client: TestClient, name: str = "Ops") -> None:
-    client.post("/api/projects", json={"name": name})
+def _project(
+    client: TestClient, name: str = "Ops", *, archive_root: Path | None = None
+) -> None:
+    """A project, optionally with the archive root a delete's durable copy needs."""
+    body: dict = {"name": name}
+    if archive_root is not None:
+        body["default_archive_root"] = str(archive_root)
+    client.post("/api/projects", json=body)
 
 
 def _managed_meeting(client: TestClient, title: str = "Kickoff") -> dict:
@@ -293,8 +299,10 @@ def test_the_user_chosen_workspace_guard_is_surfaced(client, tmp_path) -> None:
 
 
 # --- deleting --------------------------------------------------------------- #
-def test_each_tape_has_a_confirmed_delete_that_names_the_archive(client) -> None:
-    _project(client)
+def test_each_tape_has_a_confirmed_delete_that_names_the_archive(
+    client, tmp_path
+) -> None:
+    _project(client, archive_root=tmp_path / "archive")
     meeting = _managed_meeting(client)
     _upload(client, meeting["id"], "a.wav", b"x")
     stored = client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"][0]
@@ -303,8 +311,15 @@ def test_each_tape_has_a_confirmed_delete_that_names_the_archive(client) -> None
     assert (
         f'hx-delete="/ui/meetings/{meeting["id"]}/tapes/{stored["id"]}"' in panel.text
     )
-    assert "archive is the durable copy" in panel.text
+    assert "verified archive as the durable copy" in panel.text
 
+    # No archive yet: the console shows the refusal, and the tape stays.
+    refused = client.delete(f"/ui/meetings/{meeting['id']}/tapes/{stored['id']}")
+    assert refused.status_code == 200
+    assert "archive the meeting first" in refused.text
+    assert Path(stored["path"]).exists()
+
+    client.post(f"/api/meetings/{meeting['id']}/archives", json={})
     removed = client.delete(f"/ui/meetings/{meeting['id']}/tapes/{stored['id']}")
 
     assert removed.status_code == 200
@@ -313,8 +328,8 @@ def test_each_tape_has_a_confirmed_delete_that_names_the_archive(client) -> None
     assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
-def test_a_meeting_can_delete_all_its_tapes_at_once(client) -> None:
-    _project(client)
+def test_a_meeting_can_delete_all_its_tapes_at_once(client, tmp_path) -> None:
+    _project(client, archive_root=tmp_path / "archive")
     meeting = _managed_meeting(client)
     for name in ("a.wav", "b.wav"):
         _upload(client, meeting["id"], name, b"x")
@@ -322,8 +337,9 @@ def test_a_meeting_can_delete_all_its_tapes_at_once(client) -> None:
     panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
     assert f'hx-delete="/ui/meetings/{meeting["id"]}/tapes"' in panel.text
     assert "Delete all of this meeting" in panel.text
-    assert "archive is the durable copy" in panel.text
+    assert "verified archive as the durable copy" in panel.text
 
+    client.post(f"/api/meetings/{meeting['id']}/archives", json={})
     removed = client.delete(f"/ui/meetings/{meeting['id']}/tapes")
 
     assert removed.status_code == 200
@@ -339,8 +355,8 @@ def test_retention_is_manual_only(client) -> None:
     panel = client.get(f"/ui/meetings/{meeting['id']}/storage")
 
     assert "never deletes tapes on its own" in panel.text
-    assert "deleting here is manual" in panel.text
-    assert "archive is the durable copy" in panel.text
+    assert "Deleting here is manual" in panel.text
+    assert "verified archive as the durable copy" in panel.text
 
 
 # --- the new strings are translated ----------------------------------------- #

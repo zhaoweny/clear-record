@@ -645,6 +645,17 @@ class Workspace:
         return resolve_cache_dir() / CHUNKS_DIRNAME / _cache_key(self.root)
 
     @property
+    def run_glossary_path(self) -> Path:
+        """An app-owned glossary file a run may hand the decoder.
+
+        ``glossary.txt`` is the user's document (ADR-0007): a run that has no
+        confirmed term never rewrites it, and publishes the bias it does have —
+        the file's own terms minus the registry's unconfirmed ones (ADR-0033) —
+        here instead, beside the app's cache rather than in the workspace.
+        """
+        return self.chunks_dir / GLOSSARY
+
+    @property
     def ground_truth_path(self) -> Path:
         return self.root / GROUND_TRUTH
 

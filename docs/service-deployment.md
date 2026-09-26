@@ -470,9 +470,21 @@ and the uploaded tapes (path, sha256, size);
 `DELETE /api/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
 a user-chosen workspace cannot be deleted here — it is your document.
 
-> **The archive is the durable copy.** Deleting workspace tapes frees the node;
-> archive the meeting first (`POST /api/meetings/{id}/archives`) if you need to
-> keep it. An archive is a copy, never a move (ADR-0006).
+> **Deleting requires a verified archive.** The route re-checks the meeting's
+> archives against their manifests (`verify_archive`) and refuses with 400 when
+> none verifies — *archive the meeting first* — unlinking nothing; the refusal
+> names the archive action and the console's controls state the precondition.
+> With a verified archive the delete proceeds, and the response's note names the
+> archive that is the durable copy. An archive is a copy, never a move
+> (ADR-0006); archive the
+> meeting (`POST /api/meetings/{id}/archives`) before deleting its tapes.
+
+Deleting a **glossary term** is likewise not a row delete: the console's and the
+API's `DELETE` retire the term instead — the row survives with `added_by` and
+`created_at`, stops biasing the decoder, and can be restored — `POST
+/api/glossary/{id}/restore`, or the console's Restore button — to the status it
+held before the retire (a retired candidate returns as a candidate, never as
+owner-accepted truth).
 
 ### Security: uploads raise the stakes on the proxy
 

@@ -267,22 +267,35 @@ def verify_archive(archive_dir: str | Path) -> ArchiveVerification:
     manifest_path = archive_dir / MANIFEST_FILENAME
     if not manifest_path.is_file():
         raise FileNotFoundError(f"no archive manifest at {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     missing: list[str] = []
     mismatched: list[str] = []
     checked = 0
-    for entry in manifest.get("files", []):
-        relative = entry["path"]
-        target = archive_dir / relative
-        checked += 1
-        if not target.is_file():
-            missing.append(relative)
-        elif (
-            target.stat().st_size != entry["bytes"]
-            or _sha256(target) != entry["sha256"]
-        ):
-            mismatched.append(relative)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for entry in manifest["files"]:
+            relative = entry["path"]
+            target = archive_dir / relative
+            checked += 1
+            if not target.is_file():
+                missing.append(relative)
+            elif (
+                target.stat().st_size != entry["bytes"]
+                or _sha256(target) != entry["sha256"]
+            ):
+                mismatched.append(relative)
+    except (OSError, ValueError, KeyError, TypeError):
+        # A manifest that cannot be read or parsed, or a file that cannot be
+        # hashed, is not a verification: nothing in this archive can be trusted,
+        # so it reports not-ok rather than raising into a caller (a delete must
+        # refuse, not 500).
+        return ArchiveVerification(
+            ok=False,
+            missing=[MANIFEST_FILENAME],
+            mismatched=[],
+            checked=0,
+            archive=str(archive_dir),
+        )
 
     return ArchiveVerification(
         ok=not missing and not mismatched,

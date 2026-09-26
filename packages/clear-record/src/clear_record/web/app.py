@@ -567,7 +567,7 @@ class ShutdownOut(Shape):
 
 
 class TapeDeletedOut(Shape):
-    """`DELETE /api/meetings/{id}/tapes/{tape_id}`: the row that went, and the caveat."""
+    """`DELETE /api/meetings/{id}/tapes/{tape_id}`: the row that went, and the copy it leaned on."""
 
     deleted: TapeOut
     note: str
@@ -1696,8 +1696,26 @@ def create_app(
 
     @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
     def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
+        """Retire a term, re-rendering the tab.
+
+        The transport verb is still DELETE, but the row survives: a retire is a
+        status change, so the term keeps its ``added_by``/``created_at`` and the
+        console can restore it (ADR-0033).
+        """
         term = lookup.term(registry, term_id)
-        registry.delete_term(term_id)
+        registry.retire_term(term_id)
+        return detail(request, term.project_slug, tab="glossary")
+
+    @app.post("/ui/glossary/{term_id}/restore", response_class=HTMLResponse)
+    def ui_restore_term(request: Request, term_id: int) -> HTMLResponse:
+        """Restore a retired term to the status it held, re-rendering the tab.
+
+        "Restore" is not "confirm": the service returns the term to the status
+        the retire took it from, so a retired candidate comes back a candidate
+        (ADR-0033).
+        """
+        term = lookup.term(registry, term_id)
+        registry.restore_term(term_id)
         return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
@@ -1806,13 +1824,17 @@ def create_app(
     def ui_delete_meeting_tapes(request: Request, meeting_id: int) -> HTMLResponse:
         """Delete every uploaded tape of the meeting (the per-meeting control).
 
-        Still manual and still confirmed: the archive is the durable copy, and
-        nothing here deletes on the node's own initiative (owner, 2026-09-15).
+        Still manual and still confirmed: each delete needs the meeting's
+        **verified archive** as its durable copy, and nothing here deletes on the
+        node's own initiative (owner, 2026-09-15).
         """
         meeting = lookup.meeting(registry, meeting_id)
         try:
-            for tape in registry.list_tapes(meeting_id):
-                managed.delete_tape(registry, meeting, tape.id)
+            # One verification for the batch: the durable copy is the meeting's,
+            # not the tape's (the same rule `delete_tapes` states).
+            managed.delete_tapes(
+                registry, meeting, [tape.id for tape in registry.list_tapes(meeting_id)]
+            )
         except managed.UploadRejected as exc:
             return render_storage(
                 request,
@@ -2295,10 +2317,26 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TermOut.model_validate(term)
 
-    @app.delete("/api/glossary/{term_id}", status_code=204)
-    def delete_term(term_id: int) -> None:
+    @app.delete("/api/glossary/{term_id}")
+    def delete_term(term_id: int) -> TermOut:
+        """Retire a term: the row survives, the decoder drops it (ADR-0033).
+
+        The verb is DELETE for the clients that already call it, but it no longer
+        destroys anything: the response is the retired term, and restoring it is
+        a PATCH of another status.
+        """
         lookup.term(registry, term_id)
-        registry.delete_term(term_id)
+        return TermOut.model_validate(registry.retire_term(term_id))
+
+    @app.post("/api/glossary/{term_id}/restore")
+    def restore_term(term_id: int) -> TermOut:
+        """Restore a retired term to the status the retire took it from.
+
+        The counterpart of the retire above; ``PATCH status=…`` states a status
+        outright, while this puts the term back where it was (ADR-0033).
+        """
+        lookup.term(registry, term_id)
+        return TermOut.model_validate(registry.restore_term(term_id))
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
     @app.post("/api/projects/{slug}/meetings", status_code=201)
@@ -2460,20 +2498,23 @@ def create_app(
     def delete_tape(meeting_id: int, tape_id: int) -> TapeDeletedOut:
         """Delete one managed tape's file and record.
 
-        The archive is the durable copy; the response says so, and a tape in a
-        user-chosen workspace is refused (it is not app-owned data).
+        The delete requires a **verified archive** of the meeting — the durable
+        copy — so it is refused (400) when none verifies, with the archive action
+        named; a tape in a user-chosen workspace is refused too (it is not
+        app-owned data). On success the note names the archive that made the
+        delete reconstructible (ADR-0033).
         """
         meeting = lookup.meeting(registry, meeting_id)
         lookup.tape(registry, meeting, tape_id)
         try:
-            tape = managed.delete_tape(registry, meeting, tape_id)
+            deletion = managed.delete_tape(registry, meeting, tape_id)
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeDeletedOut(
-            deleted=TapeOut.model_validate(tape),
+            deleted=TapeOut.model_validate(deletion.tape),
             note=(
-                "the archive is the durable copy; archive this meeting before "
-                "deleting its tapes if you need to keep it"
+                "the verified archive is the durable copy: "
+                f"{deletion.archive.root_path}"
             ),
         )
 

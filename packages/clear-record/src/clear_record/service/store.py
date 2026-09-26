@@ -107,7 +107,9 @@ from clear_record.service.lifecycle import (
     STOP_QUEUED,
 )
 from clear_record.service.models import (
+    CANDIDATE,
     MEETING_STATUSES,
+    RETIRED,
     TERM_AUTHORS,
     TERM_STATUSES,
     Archive,
@@ -490,6 +492,27 @@ def _meeting_query() -> Select[tuple[entities.Meeting, str]]:
     )
 
 
+#: A retire records the status it took the term from, inside ``notes`` — the one
+#: field the row has for it, and one no surface is shown (``_term`` strips the
+#: marker), so a restore can put a term back where it was without a schema
+#: change: a retired candidate comes back a candidate, never owner-accepted.
+_RETIRED_FROM = re.compile(r"^\[retired from: (candidate|confirmed)\]\n?", re.MULTILINE)
+
+
+def _split_retire_marker(notes: str | None) -> tuple[str | None, str | None]:
+    """``(the status the term was retired from, the notes without the marker)``."""
+    match = _RETIRED_FROM.search(notes or "")
+    prior = match.group(1) if match else None
+    return prior, _RETIRED_FROM.sub("", notes or "").strip() or None
+
+
+def _with_retire_marker(notes: str | None, status: str) -> str:
+    """``notes`` with the status the term is being retired from recorded in it."""
+    _prior, clean = _split_retire_marker(notes)
+    marker = f"[retired from: {status}]"
+    return f"{marker}\n{clean}" if clean else marker
+
+
 def _term_query() -> Select[tuple[entities.GlossaryTerm, str]]:
     """A glossary term row joined to its project's slug."""
     return select(entities.GlossaryTerm, entities.Project.slug).join(
@@ -852,12 +875,35 @@ class Registry:
                 raise ValueError("a term with that spelling already exists") from exc
             return self._term(row, project_slug)
 
-    def delete_term(self, term_id: int) -> None:
+    def retire_term(self, term_id: int) -> GlossaryTerm:
+        """Retire a term: it leaves the decoder's glossary, the row survives.
+
+        Deleting the row would lose who added it and when, so a retire is a
+        status change (ADR-0033). The status it came from is recorded on the row
+        (inside ``notes``, which no surface is shown) so :meth:`restore_term` can
+        put it back: a retired candidate returns as a candidate, never as
+        owner-accepted truth.
+        """
         with self._session() as session:
-            term = session.get(entities.GlossaryTerm, term_id)
-            if term is None:
-                raise KeyError(term_id)
-            session.delete(term)
+            row, project_slug = self._term_entity(session, term_id)
+            if row.status != RETIRED:
+                row.notes = _with_retire_marker(row.notes, row.status)
+            row.status = RETIRED
+            return self._term(row, project_slug)
+
+    def restore_term(self, term_id: int) -> GlossaryTerm:
+        """Return a retired term to the status it held before the retire.
+
+        A term whose recorded status is gone (a later edit overwrote ``notes``)
+        comes back a ``candidate`` — the un-reviewed state, never
+        owner-accepted.
+        """
+        with self._session() as session:
+            row, project_slug = self._term_entity(session, term_id)
+            prior, clean = _split_retire_marker(row.notes)
+            row.status = prior or CANDIDATE
+            row.notes = clean
+            return self._term(row, project_slug)
 
     def get_term(self, term_id: int) -> GlossaryTerm | None:
         with self._session() as session:
@@ -1868,7 +1914,7 @@ class Registry:
             definition=row.definition,
             status=row.status,
             added_by=row.added_by,
-            notes=row.notes,
+            notes=_split_retire_marker(row.notes)[1],
             created_at=row.created_at,
         )
 

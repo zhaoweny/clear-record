@@ -201,10 +201,22 @@ def test_ui_detail_and_glossary_roundtrip(client) -> None:
     )
     assert promoted.status_code == 200
     assert "confirmed" in promoted.text
+    # The console's delete control retires rather than removes.
+    assert f'hx-delete="/ui/glossary/{term_id}"' in promoted.text
 
-    removed = client.delete(f"/ui/glossary/{term_id}")
-    assert removed.status_code == 200
-    assert "No glossary terms yet." in removed.text
+    retired = client.delete(f"/ui/glossary/{term_id}")
+    assert retired.status_code == 200
+    # The row survives as retired — present, not absent — so the console can
+    # bring it back; a retire is a status change (ADR-0033).
+    assert "Falcon" in retired.text and "retired" in retired.text
+    assert "No glossary terms yet." not in retired.text
+    assert "Restore" in retired.text
+
+    # Restore puts the term back where the retire took it from — it was
+    # confirmed, so it returns confirmed — rather than confirming it outright.
+    restored = client.post(f"/ui/glossary/{term_id}/restore")
+    assert restored.status_code == 200
+    assert "confirmed" in restored.text
 
 
 def test_ui_unknown_project_is_404(client) -> None:
@@ -244,8 +256,33 @@ def test_project_and_glossary_flow(client) -> None:
 
     assert client.get("/api/projects").json()[0]["term_count"] == 1
 
-    assert client.delete(f"/api/glossary/{term_id}").status_code == 204
-    assert client.get("/api/projects/weekly-ops/glossary").json() == []
+    retired = client.delete(f"/api/glossary/{term_id}")
+    assert retired.status_code == 200
+    assert retired.json()["status"] == "retired"
+    # The row survives with who added it and when, so the project's term count
+    # does not drop and the machine API can restore it with a PATCH.
+    survivors = client.get("/api/projects/weekly-ops/glossary").json()
+    assert [t["term"] for t in survivors] == ["Falcon"]
+    assert survivors[0]["added_by"] == "human" and survivors[0]["created_at"]
+    assert client.get("/api/projects").json()[0]["term_count"] == 1
+    restored = client.post(f"/api/glossary/{term_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "confirmed"
+
+
+def test_a_retired_candidate_restores_as_a_candidate(client) -> None:
+    """Restore is not a promotion: an un-reviewed draft comes back un-reviewed."""
+    client.post("/api/projects", json={"name": "Ops"})
+    draft = client.post(
+        "/api/projects/ops/glossary", json={"term": "AgentTerm", "added_by": "agent"}
+    ).json()
+    assert draft["status"] == "candidate"
+
+    assert client.delete(f"/api/glossary/{draft['id']}").json()["status"] == "retired"
+    restored = client.post(f"/api/glossary/{draft['id']}/restore")
+
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "candidate"
 
 
 def test_glossary_status_filter(client) -> None:
@@ -302,6 +339,7 @@ def test_unknown_term_is_404(client) -> None:
         == 404
     )
     assert client.delete("/api/glossary/999").status_code == 404
+    assert client.post("/api/glossary/999/restore").status_code == 404
 
 
 def test_shutdown_is_refused_without_a_managed_server(client) -> None:

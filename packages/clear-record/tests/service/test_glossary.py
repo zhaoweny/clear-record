@@ -110,6 +110,29 @@ def test_project_snapshot_and_writer_produce_the_pipeline_file(tmp_path: Path) -
     assert edited.sha256 != snapshot.sha256
 
 
+def test_retiring_a_term_empties_the_projects_snapshot(tmp_path: Path) -> None:
+    """A retired term is gone from the snapshot the decoder reads.
+
+    Retiring is not a row delete, so the registry still answers for the term —
+    but the snapshot (and the ``glossary.txt`` a run writes) carries no term.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops")
+    term = registry.add_term("ops", "Falcon", status="confirmed")
+    workspace = Workspace.at(tmp_path / "ws")
+    path, _ = write_project_snapshot(registry, "ops", workspace)
+    assert path.read_text(encoding="utf-8") == "Falcon\n"
+
+    retired = registry.retire_term(term.id)
+    path, snapshot = write_project_snapshot(registry, "ops", workspace)
+
+    assert retired.status == "retired"
+    assert snapshot.empty
+    assert path.read_text(encoding="utf-8") == ""
+    assert workspace.glossary_terms() == []
+    assert registry.list_terms("ops") == [retired]
+
+
 def test_write_snapshot_is_atomic_and_overwrites(tmp_path: Path) -> None:
     workspace = Workspace.at(tmp_path / "ws")
     workspace.glossary_path.parent.mkdir(parents=True)

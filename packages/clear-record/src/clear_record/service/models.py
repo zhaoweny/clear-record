@@ -21,6 +21,15 @@ import dataclasses
 #: ``confirmed`` is owner-accepted truth; ``retired`` is kept for history.
 TERM_STATUSES = ("candidate", "confirmed", "retired")
 
+#: The un-reviewed status a term starts in, and the one a restore falls back to
+#: when a term's own history is gone.
+CANDIDATE = "candidate"
+
+#: The status a term takes when it leaves the decoder's glossary. A retire is a
+#: status change, never a row delete: the term keeps its ``added_by``/``created_at``
+#: and can be restored (ADR-0033).
+RETIRED = "retired"
+
 #: Who a term came from. A human edit and an agent draft are never conflated.
 TERM_AUTHORS = ("human", "agent")
 
@@ -216,11 +225,13 @@ class Archive:
 __all__ = [
     "Archive",
     "Artifact",
+    "CANDIDATE",
     "GlossaryTerm",
     "Meeting",
     "MEETING_STATUSES",
     "PipelineRun",
     "Project",
+    "RETIRED",
     "RecordingSet",
     "TERM_AUTHORS",
     "TERM_STATUSES",

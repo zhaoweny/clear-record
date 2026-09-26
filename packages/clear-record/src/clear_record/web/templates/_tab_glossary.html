@@ -41,10 +41,25 @@
               {% endfor %}
             </select>
           </form>
-          <button class="btn btn-icon btn-sm btn-danger-ghost" title="{{ tr("delete") }}"
-                  aria-label="{{ tr("Delete term") }}"
+          {% if term.status == "retired" %}
+          {# A retired row stays on the table, so it can be brought back: a
+             retire is a status change, never a row delete (ADR-0033). Restore
+             returns the term to the status the retire took it from. #}
+          <form hx-post="/ui/glossary/{{ term.id }}/restore" hx-target="#detail"
+                hx-swap="innerHTML">
+            <button class="btn btn-sm" type="submit"
+                    title="{{ tr('Restore term') }}"
+                    aria-label="{{ tr('Restore term') }}"
+                    hx-confirm="{{ tr('Restore this term? It returns to the status it had before it was retired.') }}">{{ tr("Restore") }}</button>
+          </form>
+          {% else %}
+          <button class="btn btn-sm btn-danger-ghost" type="button"
+                  title="{{ tr("Retire term") }}"
+                  aria-label="{{ tr("Retire term") }}"
                   hx-delete="/ui/glossary/{{ term.id }}"
-                  hx-target="#detail" hx-swap="innerHTML">&#10005;</button>
+                  hx-confirm="{{ tr('Retire this term? It stops biasing the decoder; the row is kept, and Restore returns it to the status it has now.') }}"
+                  hx-target="#detail" hx-swap="innerHTML">{{ tr("Retire") }}</button>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

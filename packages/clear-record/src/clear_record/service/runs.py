@@ -66,8 +66,11 @@ from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
 from clear_record.service.diagnostics import machine_description
 from clear_record.service.glossary import (
+    CONFIRMED,
+    filter_terms,
     project_snapshot,
     snapshot_from_text,
+    write_run_snapshot,
     write_snapshot,
 )
 from clear_record.service.lifecycle import (
@@ -1306,11 +1309,15 @@ class RunManager:
            terms**: it is written to the meeting's workspace ``glossary.txt``, so
            a glossary edit reaches the next run with no extra wiring (the
            ADR-0031 tuning loop).
-        3. When the project has **no confirmed terms**, the registry has nothing
-           to say and the user's ``glossary.txt`` — a documented, user-editable
-           artifact (``clear-record glossary`` / the README) — **stands**: it is
-           left untouched and used as the run's glossary. With no such file the
-           run simply has no glossary.
+        3. When the project has **no confirmed terms**, the workspace
+           ``glossary.txt`` — a documented, user-editable artifact
+           (``clear-record glossary`` / the README) — **stands**: the registry
+           writes no snapshot at all, so a hand-written file is never clobbered
+           (least of all with an empty one). But a term the registry has since
+           **retired or demoted** must not reach the decoder through a stale
+           file an earlier run wrote from the registry, so the bias is that
+           file's terms minus the registry's unconfirmed ones, published to an
+           app-owned file the user's document never sees.
 
         Candidates and retired terms never reach the decoder. The returned meta
         records the glossary path and its sha256, so a re-run is explainable.
@@ -1321,17 +1328,34 @@ class RunManager:
         assert meeting.workspace_path is not None  # guaranteed by start()
         workspace = Workspace.at(meeting.workspace_path)
         snapshot = project_snapshot(self._registry, meeting.project_slug)
-        if snapshot.empty:
-            # The registry is authoritative only when it has confirmed terms;
-            # otherwise the user's file stands and is never clobbered.
-            if workspace.glossary_path.exists():
-                return options, self._glossary_meta(workspace.glossary_path)
-            return options, {}
+        if not snapshot.empty:
+            path = write_snapshot(workspace, snapshot)
+            return (
+                dataclasses.replace(options, glossary=str(path)),
+                {"glossary": str(path), "glossary_sha256": snapshot.sha256},
+            )
 
-        path = write_snapshot(workspace, snapshot)
+        # Nothing confirmed: the registry never rewrites the user's file. The
+        # bias is what the file holds minus every term the registry has retired
+        # or left unconfirmed; when that is the file's own content the file is
+        # simply used as it stands.
+        if not workspace.glossary_path.exists():
+            return options, {}
+        blocked = [
+            term.term
+            for term in self._registry.list_terms(meeting.project_slug)
+            if term.status != CONFIRMED
+        ]
+        if not blocked:
+            return options, self._glossary_meta(workspace.glossary_path)
+        text = workspace.glossary_path.read_text(encoding="utf-8")
+        filtered = filter_terms(text.splitlines(), blocked)
+        if filtered.terms == snapshot_from_text(text).terms:
+            return options, self._glossary_meta(workspace.glossary_path)
+        path = write_run_snapshot(workspace, filtered)
         return (
             dataclasses.replace(options, glossary=str(path)),
-            {"glossary": str(path), "glossary_sha256": snapshot.sha256},
+            {"glossary": str(path), "glossary_sha256": filtered.sha256},
         )
 
     def _refuse(self, meeting: Meeting, reason: str) -> None:

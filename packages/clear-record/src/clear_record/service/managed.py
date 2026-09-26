@@ -45,6 +45,7 @@ is asked for; the upload id is the seam that layer will use.
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import hashlib
 import os
@@ -66,7 +67,8 @@ from clear_record.core.i18n import deferred
 from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
 from clear_record.service import tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
-from clear_record.service.models import Meeting, Tape
+from clear_record.service.archive import verify_archive
+from clear_record.service.models import Archive, Meeting, Tape
 from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 
@@ -165,6 +167,14 @@ class InvalidUploadId(UploadRejected):
 
 class ResumeNotSupported(UploadRejected):
     """The id names an interrupted/in-flight upload, and resume is not built."""
+
+
+class ArchiveRequired(UploadRejected):
+    """A managed tape cannot be deleted: the meeting has no verified archive.
+
+    The delete would destroy data with no durable copy, so it is refused with a
+    message naming the archive action instead (ADR-0033).
+    """
 
 
 def managed_root(explicit: str | os.PathLike | None = None) -> Path:
@@ -522,22 +532,60 @@ def machine_storage(
     }
 
 
-def delete_tape(
+@dataclasses.dataclass(frozen=True)
+class TapeDeletion:
+    """A deleted tape and the verified archive that made the delete safe."""
+
+    tape: Tape
+    archive: Archive
+
+
+def durable_archive(registry: Registry, meeting: Meeting) -> Archive:
+    """The meeting's **verified** archive: the durable copy a delete leans on.
+
+    The newest archive (the registry lists them newest first) that verifies is
+    the one named; an archive whose manifest is gone, or whose files no longer
+    match their recorded sizes/digests, does not count. Raises
+    :class:`ArchiveRequired` when none verifies — the message names the archive
+    action, since archiving is what makes the delete reconstructible.
+    """
+    for archive in registry.list_archives(meeting.id):
+        try:
+            verification = verify_archive(archive.root_path)
+        except FileNotFoundError:
+            continue
+        if verification.ok:
+            return archive
+    raise ArchiveRequired(
+        deferred(
+            "this meeting has no verified archive; archive the meeting first, "
+            "then delete its tapes"
+        )
+    )
+
+
+def delete_tapes(
     registry: Registry,
     meeting: Meeting,
-    tape_id: int,
+    tape_ids: list[int],
     root: str | os.PathLike | None = None,
-) -> Tape:
-    """Delete one **managed** tape's file and record.
+) -> list[TapeDeletion]:
+    """Delete **managed** tapes' files and records, when that is reversible.
 
-    Only a tape inside the meeting's managed workspace may be deleted: a
-    user-chosen path is the user's document, not app-owned data (ADR-0007). The
-    archive is the durable copy, so deleting workspace tapes is safe by design
-    (ADR-0024).
+    Only tapes inside the meeting's managed workspace may be deleted: a
+    user-chosen path is the user's document, not app-owned data (ADR-0007). And
+    every delete stands on a durable copy: the meeting must have a **verified**
+    archive, or the whole batch is refused with a message naming the archive
+    action and nothing is unlinked (ADR-0033). The durable copy is one archive
+    for the meeting, so it is verified **once**, and every requested tape is
+    checked before any file is unlinked — a bad id refuses the batch whole.
     """
-    tape = registry.get_tape(tape_id)
-    if tape is None or tape.meeting_id != meeting.id:
-        raise KeyError(tape_id)
+    tapes: list[Tape] = []
+    for tape_id in tape_ids:
+        tape = registry.get_tape(tape_id)
+        if tape is None or tape.meeting_id != meeting.id:
+            raise KeyError(tape_id)
+        tapes.append(tape)
     resolved_root = managed_root(root)
     if not is_managed(meeting, resolved_root):
         raise UploadRejected(
@@ -546,10 +594,26 @@ def delete_tape(
                 "be deleted here"
             )
         )
-    path = Path(tape.path)
-    _require_within(path, resolved_root)
-    path.unlink(missing_ok=True)
-    return registry.forget_tape(tape_id)
+    for tape in tapes:
+        _require_within(Path(tape.path), resolved_root)
+    archive = durable_archive(registry, meeting)
+    deletions: list[TapeDeletion] = []
+    for tape in tapes:
+        Path(tape.path).unlink(missing_ok=True)
+        deletions.append(
+            TapeDeletion(tape=registry.forget_tape(tape.id), archive=archive)
+        )
+    return deletions
+
+
+def delete_tape(
+    registry: Registry,
+    meeting: Meeting,
+    tape_id: int,
+    root: str | os.PathLike | None = None,
+) -> TapeDeletion:
+    """Delete one managed tape; see :func:`delete_tapes` for the rule."""
+    return delete_tapes(registry, meeting, [tape_id], root)[0]
 
 
 def sanitize_filename(filename: str | None) -> str:
@@ -1027,6 +1091,7 @@ def _resume_not_supported(upload_id: str) -> ResumeNotSupported:
 
 
 __all__ = [
+    "ArchiveRequired",
     "DEFAULT_MAX_UPLOAD_BYTES",
     "DISK_HEADROOM_BYTES",
     "DisallowedExtension",
@@ -1037,10 +1102,13 @@ __all__ = [
     "ResumeNotSupported",
     "STORAGE_BUCKETS",
     "StorageTape",
+    "TapeDeletion",
     "UnsafeFilename",
     "UploadRejected",
     "UploadTooLarge",
     "delete_tape",
+    "delete_tapes",
+    "durable_archive",
     "ensure_managed_workspace",
     "is_managed",
     "machine_storage",

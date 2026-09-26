@@ -117,6 +117,7 @@ def keep(
 ) -> int:
     """Hold ``path`` open, seed it, and top the pool back up — the keeper itself."""
     fd = os.open(path, os.O_RDWR)  # holds the pipe object alive
+    os.set_blocking(fd, False)  # a probe must never park behind another reader
     written = os.write(fd, TOKEN * tokens)
     if written != tokens:
         raise OSError(f"short seed write: {written} of {tokens} bytes")
@@ -126,17 +127,24 @@ def keep(
     while True:
         readable, _, _ = select.select([fd], [], [], probe_seconds)
         if readable:
-            token = os.read(fd, 1)
-            if token:
-                os.write(fd, token)  # straight back: the probe changes nothing
+            try:
+                token = os.read(fd, 1)
+            except BlockingIOError:
+                # Another reader took the byte between select and read: the pool
+                # held one, and blocking here is how the keeper would hang.
                 empty = 0
-            time.sleep(probe_seconds)  # a full pool must not make this a spin
+            else:
+                if token:
+                    os.write(fd, token)  # straight back: the probe changes nothing
+                    empty = 0
+            time.sleep(probe_seconds)  # pace: a full pool must not spin
             continue
         empty += 1
         if empty >= empty_probes:
-            written = os.write(fd, TOKEN * tokens)  # leak recovery, not the seed
-            if written != tokens:
-                raise OSError(f"short reseed write: {written} of {tokens} bytes")
+            try:
+                os.write(fd, TOKEN * tokens)  # leak recovery, not the seed
+            except BlockingIOError:
+                pass  # the pool refilled itself; not a leak
             empty = 0
 
 

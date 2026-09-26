@@ -220,8 +220,14 @@ copy of *the thing being destroyed*).
   membership are not evidence: a tape re-recorded under an archived name is not
   covered, and neither is one whose bytes came after the archive was made. A batch
   no verified archive covers is refused whole — nothing unlinked, one failed
-  `tape.forget` row for the meeting as before — and the message names the tapes no
-  verified copy holds, since those are what the next archive has to include.
+  `tape.forget` row for the meeting as before — and the message names the tapes
+  **no single archive covers**: every name missing from at least one of the
+  archives that verified, since that is what the next archive has to include. It
+  is deliberately a union and not the newest archive's gaps alone (corrected
+  2026-09-27 at this round's review): an older verifying archive can hold a name
+  the newest one lacks, so the newest answer by itself would report a tape as
+  held nowhere while a verified copy of its bytes exists, and would under-name
+  the next archive's work.
 - [FACT] The same-tape-after-re-archive case is the licence working as intended:
   archiving again makes a copy that holds the tape, and the delete then stands on
   *that* archive (the newest one covering the batch), not on the earlier one.

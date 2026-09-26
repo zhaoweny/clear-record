@@ -216,7 +216,10 @@ def _no_row(result: Any) -> bool:
     The run-lifecycle statements answer with the row they moved (or ``None``),
     or with whether they moved one (the boolean writes), so ``None`` and
     ``False`` are the statements' own "no row moved" — a lost race, a state the
-    move is not legal from, or an id that names no row at all. Read rather than
+    move is not legal from, or an id that names no row at all. A conditional
+    write that answers with a **count** (``retain_artifact_paths``) must answer
+    ``None`` for "moved none" for the same reason, because this reads by identity
+    and ``0`` is not ``False``. Read rather than
     assumed: what the call answered is what the record may say about it.
     """
     return result is None or result is False

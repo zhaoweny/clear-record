@@ -16,7 +16,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  clear-record\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaoweny/clear-record/issues\n"
-"POT-Creation-Date: 2026-09-27 03:07+0800\n"
+"POT-Creation-Date: 2026-09-27 03:27+0800\n"
 "PO-Revision-Date: 2026-09-15 06:45+0800\n"
 "Last-Translator: clear-record implementing agent (awaiting native review)"
 "\n"
@@ -835,97 +835,99 @@ msgstr "分块缓存"
 msgid "Model weights"
 msgstr "模型权重"
 
-#: packages/clear-record/src/clear_record/service/managed.py:329
+#: packages/clear-record/src/clear_record/service/managed.py:330
 #, python-brace-format
 msgid "{name!r} is not an audio tape; allowed extensions: {extensions}"
 msgstr "{name!r} 不是音频录音；允许的扩展名：{extensions}"
 
-#: packages/clear-record/src/clear_record/service/managed.py:391
+#: packages/clear-record/src/clear_record/service/managed.py:392
 msgid ""
 "the disk filled while writing the upload; free space or point "
 "CR_WORKSPACE_ROOT at a larger disk"
 msgstr "写入上传时磁盘已满；请释放空间，或将 CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:647
+#: packages/clear-record/src/clear_record/service/managed.py:656
 #, python-brace-format
 msgid ""
-"this meeting's verified archive holds no copy of {names}; archive the "
-"meeting again, then delete these tapes"
-msgstr "此会议的已验证归档不包含 {names} 的副本；请重新归档该会议，然后再删除这些录音。"
+"no verified archive holds a copy of every tape being deleted; missing "
+"from at least one of them: {names} — archive the meeting again, then "
+"delete these tapes"
+msgstr ""
+"没有任何一个已验证的归档包含全部待删除录音的副本；至少缺少其中之一：{names} —— 请重新归档该会议，然后再删除这些录音。"
 
-#: packages/clear-record/src/clear_record/service/managed.py:654
+#: packages/clear-record/src/clear_record/service/managed.py:664
 msgid ""
 "this meeting has no verified archive; archive the meeting first, then "
 "delete its tapes"
 msgstr "此会议尚无已验证的归档；请先归档此会议，然后再删除其录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:721
+#: packages/clear-record/src/clear_record/service/managed.py:746
 msgid ""
 "this meeting uses a user-chosen workspace; only a managed tape can be "
 "deleted here"
 msgstr "此会议使用用户选择的工作区；此处只能删除托管录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:779
+#: packages/clear-record/src/clear_record/service/managed.py:804
 msgid ""
 "the upload has no filename; attach the tape as a file part named 'file' "
 "with a name ending in an audio extension"
 msgstr "上传没有文件名；请将录音作为名为 'file' 的文件部分附加，文件名以音频扩展名结尾"
 
-#: packages/clear-record/src/clear_record/service/managed.py:786
+#: packages/clear-record/src/clear_record/service/managed.py:811
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a path-traversal component"
 msgstr "拒绝文件名 {name!r}：其中包含路径遍历组件"
 
-#: packages/clear-record/src/clear_record/service/managed.py:798
+#: packages/clear-record/src/clear_record/service/managed.py:823
 #, python-brace-format
 msgid ""
 "refusing the filename {name!r}: a tape name must be a bare filename, with"
 " no directory or path separator"
 msgstr "拒绝文件名 {name!r}：录音名必须是纯文件名，不含目录或路径分隔符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:805
+#: packages/clear-record/src/clear_record/service/managed.py:830
 #, python-brace-format
 msgid "refusing the filename {name!r}: it contains a control character"
 msgstr "拒绝文件名 {name!r}：其中包含控制字符"
 
-#: packages/clear-record/src/clear_record/service/managed.py:810
+#: packages/clear-record/src/clear_record/service/managed.py:835
 #, python-brace-format
 msgid "refusing the filename {name!r}: it is longer than 255 bytes"
 msgstr "拒绝文件名 {name!r}：长度超过 255 字节"
 
-#: packages/clear-record/src/clear_record/service/managed.py:830
+#: packages/clear-record/src/clear_record/service/managed.py:855
 #, python-brace-format
 msgid ""
 "the upload id {id!r} is not valid: use 1-{max_length} characters from "
 "A-Z, a-z, 0-9, dot, underscore or hyphen, starting with a letter or digit"
 msgstr "上传 ID {id!r} 无效：请使用 1-{max_length} 个字符（A-Z、a-z、0-9、点、下划线或连字符），并以字母或数字开头"
 
-#: packages/clear-record/src/clear_record/service/managed.py:875
+#: packages/clear-record/src/clear_record/service/managed.py:900
 msgid ""
 "this meeting uses a user-chosen workspace, which has no managed place to "
 "upload to; create a managed meeting, or set the tapes by path instead"
 msgstr "此会议使用用户选择的工作区，没有可上传到的托管位置；请创建托管会议，或改为按路径设置录音"
 
-#: packages/clear-record/src/clear_record/service/managed.py:895
+#: packages/clear-record/src/clear_record/service/managed.py:920
 #, python-brace-format
 msgid ""
 "refusing to use {path}: it resolves outside the managed root {root} (a "
 "symlink?)"
 msgstr "拒绝使用 {path}：它解析到托管根目录 {root} 之外（是符号链接吗？）"
 
-#: packages/clear-record/src/clear_record/service/managed.py:916
+#: packages/clear-record/src/clear_record/service/managed.py:941
 #, python-brace-format
 msgid "refusing to use {path}: it is a symlink"
 msgstr "拒绝使用 {path}：它是符号链接"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1221
+#: packages/clear-record/src/clear_record/service/managed.py:1246
 #, python-brace-format
 msgid ""
 "the upload is {size}, over the {limit} limit; raise CR_MAX_UPLOAD_BYTES "
 "to allow it"
 msgstr "上传为 {size}，超过 {limit} 的限制；请提高 CR_MAX_UPLOAD_BYTES 以允许它"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1232
+#: packages/clear-record/src/clear_record/service/managed.py:1257
 #, python-brace-format
 msgid ""
 "not enough free space on the managed workspace disk {root}: {free} free, "
@@ -935,7 +937,7 @@ msgstr ""
 "托管工作区磁盘 {root} 上的可用空间不足：剩余 {free}，本次上传约需 {needed}；请释放空间，或将 "
 "CR_WORKSPACE_ROOT 指向更大的磁盘"
 
-#: packages/clear-record/src/clear_record/service/managed.py:1245
+#: packages/clear-record/src/clear_record/service/managed.py:1270
 #, python-brace-format
 msgid ""
 "an upload with id {id!r} is already in progress or was left interrupted, "
@@ -1051,7 +1053,7 @@ msgid ""
 "its write lock; nothing was changed — retry"
 msgstr "另一个入口正在迁移 {db_path} 处的注册表，并且仍持有写锁；未做任何更改——请重试"
 
-#: packages/clear-record/src/clear_record/service/store.py:1164
+#: packages/clear-record/src/clear_record/service/store.py:1166
 #, python-brace-format
 msgid "a machine token named {label!r} already exists"
 msgstr "已存在名为 {label!r} 的机器令牌。"
@@ -2353,11 +2355,11 @@ msgid ""
 "This browser holds a session on this node. Signing out ends it here; "
 "signing out everywhere ends every session this node has issued — this "
 "browser included — and takes effect on the very next request, with no "
-"restart. The node's own machine — the command line, the tray — is the one"
-" client it opens a session for again (within a minute, since nobody is "
-"there to sign in)."
+"restart. The node's own machine — the command line — is the one client it"
+" opens a session for again (within a minute, since nobody is there to "
+"sign in)."
 msgstr ""
-"此浏览器在本节点持有一个会话。退出登录会在此结束该会话；“在所有位置退出登录”会结束本节点签发的所有会话（包括此浏览器），并在下一次请求时立即生效，无需重启。节点自己的机器——命令行与托盘——是唯一会被再次开启会话的客户端（一分钟之内，因为那里没有人可以登录）。"
+"此浏览器在本节点持有一个会话。退出登录会在此结束该会话；“在所有位置退出登录”会结束本节点签发的所有会话（包括此浏览器），并在下一次请求时立即生效，无需重启。节点自己的机器——命令行——是唯一会被再次开启会话的客户端（一分钟之内，因为那里没有人可以登录）。"
 
 #: packages/clear-record/src/clear_record/web/templates/_settings_status.html:45
 msgid "Sign out everywhere"

@@ -834,9 +834,11 @@ class Registry:
 
         **A row the registry will not take is stated, not raised.** The append is
         a write like any other, so the registry can refuse it: another surface
-        holds the write lock past the connection's busy timeout (the shape
-        :func:`_write_ahead_log` and :meth:`touch_machine_token` already
-        tolerate), or the file cannot be written at all. Raising would make the
+        holds the write lock past the connection's busy timeout (the lock
+        :func:`_write_ahead_log` tolerates, and the shape
+        :meth:`touch_machine_token`'s **caller** tolerates — a token's use must
+        never fail the request it authenticated), or the file cannot be written at
+        all. Raising would make the
         *record* the caller's answer — a refused call would report a database
         error instead of its own refusal, and a call that returned would report a
         failure it did not have — so the refusal is tolerated here: the row is
@@ -2419,7 +2421,7 @@ class Registry:
     )
     def retain_artifact_paths(
         self, meeting_id: int, moves: Mapping[str, str], *, actor: str
-    ) -> int:
+    ) -> int | None:
         """Point the meeting's artifact rows at the copies that retain their bytes.
 
         The other half of a publication's preservation
@@ -2436,13 +2438,18 @@ class Registry:
         ``sha256``, ``bytes``, ``produced_by`` and ``review_state`` are exactly as
         they were and only ``path`` follows the file, which is what "nothing
         deletes an artifact row" (ADR-0033) means here. The move appends one
-        ``artifact.retain`` row naming the meeting; a mapping that matches no row
-        moves nothing and appends nothing (``conditional``), which is the honest
-        record of a publication that preserved documents no row named. Returns the
-        number of rows moved.
+        ``artifact.retain`` row naming the meeting — and **nothing was moved**
+        answers ``None``, the no-row shape the record reads
+        (:func:`clear_record.service.audit._no_row`): an empty mapping, or one
+        whose paths no artifact row names, is the honest record of a publication
+        that preserved documents no row named, and appends nothing. The answer is
+        that shape rather than the count ``0`` because the count is not the
+        conditional's answer: identity against ``None``/``False`` is what the
+        decorator tests, so a ``0`` would be filed as a row for a write that never
+        happened. Returns the number of rows moved, or ``None`` when it moved none.
         """
         if not moves:
-            return 0
+            return None
         with self._session() as session:
             rows = session.scalars(
                 select(entities.Artifact).where(
@@ -2454,7 +2461,9 @@ class Registry:
             for row in rows:
                 row.path = moves[row.path]
                 moved += 1
-            return moved
+            # Moved-none is the statement's own no-row answer, not a falsy count:
+            # the decorator reads `None`/`False` by identity.
+            return moved or None
 
     def latest_artifact(self, meeting_id: int, kind: str) -> Artifact | None:
         """The meeting's newest artifact of ``kind``, or ``None``.

@@ -678,6 +678,36 @@ def test_a_draft_version_records_the_actor_its_transport_supplied(tmp_path) -> N
     ] == [(CLI, "draft.write", f"draft:{draft.draft_id}", "ok")]
 
 
+def test_a_retention_that_moved_nothing_is_not_a_row(tmp_path) -> None:
+    """The publication that preserved nothing has no ``artifact.retain`` row.
+
+    ``retain_artifact_paths`` is the conditional write a publication makes when
+    it replaces a root document some run scope does not hold: it answers with the
+    number of rows it moved, and that number is the statement's own "no row
+    moved" when it is zero — an empty mapping, or a mapping whose paths no
+    artifact row names. The answer has to be the shape the record reads
+    (``None``/``False``), not a count the caller has to interpret: a ``0`` read as
+    a moved row appends an ``ok`` row for a publication that preserved nothing,
+    which says the service did something it did not.
+    """
+    registry = _registry(tmp_path)
+    meeting = _meeting(registry, tmp_path)
+    before = len(registry.list_audit_events())
+
+    assert registry.retain_artifact_paths(meeting.id, {}, actor=QUEUE) is None
+    assert (
+        registry.retain_artifact_paths(
+            meeting.id,
+            {str(tmp_path / "nothing-names-this.json"): str(tmp_path / "copy.json")},
+            actor=QUEUE,
+        )
+        is None
+    )
+
+    assert len(registry.list_audit_events()) == before
+    assert _rows(registry, "artifact.retain") == []
+
+
 def test_a_conditional_write_that_moved_nothing_records_nothing(tmp_path) -> None:
     """A run-lifecycle statement that matched no row is not recorded as done.
 

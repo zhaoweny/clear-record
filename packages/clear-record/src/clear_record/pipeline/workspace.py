@@ -992,11 +992,14 @@ def _retained_dir(home: Workspace) -> Path:
     Stamped like an archive's directory, with the same collision rule (the next
     free name): a second publication that finds *other* unscoped documents must
     not merge them into the first copy's directory, because the first copy is
-    what an artifact row may already be reading. It carries no
-    :data:`RUN_MARKER`: nothing resolves it back to a run — what reaches it is the
-    artifact row repointed at it — and the walk under ``runs/`` reads only what it
-    knows (its :data:`WORKSPACE_FILES` by name, ``export/`` by
-    :data:`SKIP_DIRS`), so an unmarked directory of documents holds no input.
+    what an artifact row may already be reading. It is written **with** the same
+    :data:`RUN_MARKER` a run scope carries, naming no run — which is what the copy
+    is: the app's own retained output, so the walk under ``runs/`` reads nothing
+    of it as an input (its ``record.json`` is not offered to a later run as an
+    output to reconcile, and its ``export/`` is not a directory the walk opens).
+    Nothing resolves the directory back to a *run* — what reaches it is the
+    artifact row repointed at it — and the marker is the walk's own answer to
+    "whose directory is this", the same answer a scope gives.
     """
     parent = home.root / RUNS_DIR
     stem = f"{RETENTION_PREFIX}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"

@@ -29,7 +29,7 @@ from clear_record.pipeline.workspace import (
 from clear_record.service.agent_review import AGENT_DIRNAME
 from clear_record.core import paths
 from clear_record.service import Registry, archive_meeting
-from clear_record.service.archive import MANIFEST_FILENAME
+from clear_record.service.archive import MANIFEST_FILENAME, unarchived_tapes
 from clear_record.service import managed
 
 
@@ -809,11 +809,70 @@ def test_a_tape_re_recorded_since_the_archive_is_not_covered(
     # The same path under the same name, holding what the archive never saw.
     Path(tape.path).write_bytes(b"two")
 
-    with pytest.raises(managed.ArchiveRequired, match="no copy of a.wav"):
+    with pytest.raises(
+        managed.ArchiveRequired, match="missing from at least one of them: a.wav"
+    ):
         managed.delete_tape(registry, meeting, tape.id, actor="console")
 
     assert Path(tape.path).read_bytes() == b"two"
     assert registry.list_tapes(meeting.id) == [tape]
+
+
+def test_the_refusal_names_what_no_single_archive_covers(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """Two archives that each hold part of the batch are not the licence, and the message says so.
+
+    The rule is one archive holding **every** tape being deleted. Here neither
+    verifies-and-covers the batch alone: the newest archive (A) holds ``a.wav``'s
+    current bytes and not ``b.wav``'s, while the older one (B) holds ``b.wav``'s
+    current bytes and not ``a.wav``'s — each was made before one of the two files
+    was last written. So the refusal has to name **both** tapes: naming only the
+    newest verification's gap would say a tape is held nowhere while a verified
+    copy of it exists (B holds ``b.wav``), and would under-name what the next
+    archive has to include. Keeping only the newest answer is what the refusal
+    used to do.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    first = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"a-old"), filename="a.wav", actor="console"
+    )
+    second = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"b-old"), filename="b.wav", actor="console"
+    )
+    older = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    # Both files are written again (a re-record of the same paths): the newest
+    # archive holds neither of the bytes the older one holds, and vice versa.
+    Path(first.path).write_bytes(b"a-new")
+    Path(second.path).write_bytes(b"b-new")
+    newest = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+    # b.wav is written back to the bytes the older archive holds: the current
+    # bytes are B's, and A's copy of b.wav is not the file in hand.
+    Path(second.path).write_bytes(b"b-old")
+    assert newest.id > older.id  # the walk really goes newest first
+
+    with pytest.raises(managed.ArchiveRequired) as refusal:
+        managed.delete_tapes(registry, meeting, [first.id, second.id], actor="console")
+
+    message = str(refusal.value)
+    assert "missing from at least one of them: b.wav, a.wav" in message
+    # Every name the refusal names is held by a verified archive *and* missing
+    # from another: that is the rule it states (one copy covers all), and the held
+    # half is what the union protects — a tape no verified copy holds anywhere is
+    # a different, worse answer the message must not blur into this one.
+    archives = registry.list_archives(meeting.id)
+    for tape in (first, second):
+        holdings = [
+            archive
+            for archive in archives
+            if not unarchived_tapes(archive.root_path, [tape.path])
+        ]
+        assert holdings, f"{tape.path} is named but no verified archive holds it"
+        assert len(holdings) < len(archives), tape.path
+
+    assert Path(first.path).read_bytes() == b"a-new"
+    assert Path(second.path).read_bytes() == b"b-old"
+    assert registry.list_tapes(meeting.id) == [first, second]
 
 
 def test_archiving_again_licenses_the_tape_the_new_copy_holds(
@@ -1023,6 +1082,52 @@ def test_a_delete_whose_row_write_fails_leaves_no_lie_behind(
     assert Path(tape.path).read_bytes() == b"one"
     assert registry.list_tapes(meeting.id) == [tape]
     assert registry.latest_recording_set(meeting.id).paths == (tape.path,)
+
+
+def test_a_delete_whose_unlink_fails_leaves_bytes_no_record_names(
+    registry, tmp_path, monkeypatch
+) -> None:
+    """The order's inverse, driven: a row dropped and a file that could not go.
+
+    ``delete_tapes`` drops each tape's row (and the tape set with it) *before* it
+    unlinks the file, so that nothing the registry holds ever names a file the
+    batch has already removed. The failure this drives is the other direction: the
+    unlink raises — an I/O error, a permission changed under the process, a path
+    replaced by a directory — while the row is already committed. What the caller
+    is left with is bytes the registry no longer names: ``list_tapes`` and the
+    meeting's tape set are its answers and neither holds the path, so a retry
+    cannot rediscover the file and nothing reconciles it. The durable copy is the
+    verified archive the delete stood on, still holding those exact bytes —
+    ``delete_tapes``'s docstring states this as the ordering's tradeoff and the
+    owner's decision rather than reconciling it.
+    """
+    meeting = _managed_meeting(registry, monkeypatch, tmp_path)
+    tape = managed.upload_tape(
+        registry, meeting, io.BytesIO(b"one"), filename="a.wav", actor="console"
+    )
+    archive = archive_meeting(registry, meeting, tmp_path / "archive", actor="console")
+
+    real_unlink = Path.unlink
+
+    def the_unlink_fails(self, *args, **kwargs):
+        if self == Path(tape.path):
+            raise OSError(errno.EACCES, "the file cannot be removed")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", the_unlink_fails)
+
+    with pytest.raises(OSError):
+        managed.delete_tape(registry, meeting, tape.id, actor="console")
+
+    # The bytes survive, and no state the registry holds names them.
+    assert Path(tape.path).read_bytes() == b"one"
+    assert registry.list_tapes(meeting.id) == []
+    assert registry.latest_recording_set(meeting.id) is None
+    # The durable copy is the archive the delete stood on, and it verifies.
+    assert unarchived_tapes(archive.root_path, [tape.path]) == []
+    assert managed.verify_archive(
+        archive.root_path, manifest_sha256=archive.manifest_sha256
+    ).ok
 
 
 def test_a_batch_that_fails_at_its_second_row_leaves_both_tapes_whole(

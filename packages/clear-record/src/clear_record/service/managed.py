@@ -176,8 +176,9 @@ class ArchiveRequired(UploadRejected):
 
     The delete would destroy data with no durable copy, so it is refused with a
     message naming the archive action instead (ADR-0033) — either because no
-    archive of the meeting verifies, or because the verified ones hold no copy of
-    the tapes the batch asked for.
+    archive of the meeting verifies, or because **no single verified archive holds
+    every tape the batch asked for** (one archive may hold one of them and another
+    the rest; the copy that licenses the batch has to hold all of it).
     """
 
 
@@ -617,8 +618,12 @@ def durable_archive(
 
     Raises :class:`ArchiveRequired` when no archive verifies *and* covers the
     batch — the message names the archive action, since archiving is what makes
-    the delete reconstructible, and the tapes no verified copy holds, since that
-    is what the next archive has to include.
+    the delete reconstructible, and the tapes that are missing from **some**
+    verifying archive, since the rule is one archive holding *all* of them and
+    that is what the next archive has to include. It deliberately does not claim
+    any of them is held nowhere: an older verifying archive can hold a name the
+    newest one lacks, which is exactly why the newest answer alone is not the
+    message.
     """
     uncovered: list[str] = []
     for archive in registry.list_archives(meeting.id):
@@ -636,16 +641,21 @@ def durable_archive(
             continue
         missing = unarchived_tapes(archive.root_path, [tape.path for tape in tapes])
         if missing:
-            # Keep the **newest** verification's answer: it is the archive the
-            # caller meant to lean on, so its gaps are the actionable ones.
-            uncovered = uncovered or missing
+            # The rule is "one archive covers **every** tape", so the answer is
+            # the union across the ones that verified: a name the newest archive
+            # lacks may be held by an older one, and naming only the newest's gaps
+            # would say a tape is held nowhere when a verified copy of it exists.
+            for name in missing:
+                if name not in uncovered:
+                    uncovered.append(name)
             continue
         return archive
     if uncovered:
         raise ArchiveRequired(
             deferred(
-                "this meeting's verified archive holds no copy of {names}; "
-                "archive the meeting again, then delete these tapes"
+                "no verified archive holds a copy of every tape being deleted; "
+                "missing from at least one of them: {names} — archive the meeting "
+                "again, then delete these tapes"
             ),
             names=", ".join(uncovered),
         )
@@ -698,6 +708,21 @@ def delete_tapes(
     that precondition, not the order, is what makes the bytes recoverable. The
     other order (unlink, then the row) left the row and the tape set pointing at
     a file that was gone, and nothing but a retry reconciled it.
+
+    **What the order's inverse leaves, and why it stays stated.** The commit
+    first means an unlink that *fails* — an I/O error, a permission changed under
+    the process, a path replaced by a directory — leaves the bytes on disk with
+    **no record naming them**: the tape set and the meeting's tape rows are the
+    registry's answers, neither holds the path any more, and a retry therefore
+    cannot rediscover the file. Nothing reconciles the orphan; the verified
+    archive the delete already stood on holds the same bytes, which is what makes
+    it recoverable rather than lost, and a caller that wants the bytes back takes
+    them from there. Closing it would need a state this schema does not have (a
+    tombstone naming an unlinked path, and a sweep that clears it once the file is
+    confirmed gone) — a design change, not a fix in place, so it is **left to the
+    owner as a decision** and stated here rather than papered over.
+    (`test_a_delete_whose_unlink_fails_leaves_bytes_no_record_names` drives the
+    state it leaves.)
     """
     audit.require_actor(actor)
     tapes: list[Tape] = []

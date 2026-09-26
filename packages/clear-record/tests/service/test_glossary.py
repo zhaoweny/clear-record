@@ -64,14 +64,21 @@ def test_an_edited_glossary_changes_the_hash() -> None:
 
 
 def test_candidates_and_retired_terms_are_excluded(tmp_path: Path) -> None:
-    """The filter is the service's, driven through the registry's own moves.
+    """The registry's answer and the filter's own, each pinned where it acts.
 
-    The decoder's snapshot carries the terms an operator confirmed and nothing
-    else: an agent's suggestion nobody reviewed must not bias it, and a retired
-    term must leave it. Which is why the move is driven rather than the status set
-    by hand — a ``retire_term`` that stopped marking the row, or a filter that
-    stopped reading the status, would put the retired term back into the text the
-    decoder is primed with, and this is where that is noticed.
+    Driven through the registry's moves — a term an operator confirmed, an agent's
+    suggestion nobody reviewed, one retired after it was confirmed — so a
+    ``retire_term`` that stopped marking the row, or a snapshot built from it that
+    kept the term, puts a retired term back into the text the decoder is primed
+    with, and this fails.
+
+    What the registry half *cannot* see is the second layer: the snapshot is
+    filtered twice (``project_snapshot`` asks ``list_terms`` for confirmed rows,
+    and ``build_snapshot`` re-checks the status), and through the registry the
+    outer filter masks the inner one. So the inner filter is asserted where it can
+    be observed on its own — ``build_snapshot`` called directly — and the two
+    halves together are the whole of the promise; removing either layer alone is
+    visible in exactly one of them.
     """
     registry = _registry(tmp_path)
     registry.create_project("Ops", actor="console")
@@ -84,6 +91,17 @@ def test_candidates_and_retired_terms_are_excluded(tmp_path: Path) -> None:
 
     assert snapshot.terms == ("Confirmed",)
     assert snapshot.text == "Confirmed\n"
+
+    # The inner layer, on its own: the filter the registry's own query masks.
+    filtered = build_snapshot(
+        [
+            _term("Confirmed"),
+            _term("Draft", status="candidate"),
+            _term("Old", status="retired"),
+        ]
+    )
+    assert filtered.terms == ("Confirmed",)
+    assert filtered.text == "Confirmed\n"
 
 
 def test_canonical_terms_strips_dedupes_and_sorts_case_insensitively() -> None:

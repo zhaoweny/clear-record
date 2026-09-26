@@ -253,7 +253,12 @@ curl -H "Authorization: Bearer $CR_TOKEN" http://127.0.0.1:8765/api/v1/projects
 | No expiry | a token is not a session: it has no idle or absolute clock and lives until it is revoked. |
 | One label, one token | a second mint under a label already in use is refused rather than silently producing a second credential. |
 
-**Sign out everywhere** ends browser sessions only — a token is a different
+**Sign out everywhere** ends every browser session **and the node's own published
+one**: it deletes every `console_session` row, so the very next request from any
+of them is refused, with no restart. The one session that comes back is the one
+the node opens for its own machine (the command line): a running node checks its
+own session and re-opens it within a minute, because nobody is at that end to
+sign in. A token is a different
 credential and is revoked one row at a time, from the list above.
 
 **What a token can never do.** It authenticates the **machine API**
@@ -717,11 +722,11 @@ a user-chosen workspace cannot be deleted here — it is your document.
 
 > **Deleting requires a verified archive that holds the tape.** The route
 > re-checks the meeting's archives against their manifests (`verify_archive`)
-> and refuses with 400 when none verifies, or when a verified one holds no copy
-> of the tape's current bytes — *archive the meeting again* — unlinking nothing;
-> the refusal
-> names the archive action and the tapes no copy holds, and the console's
-> controls state the precondition.
+> and refuses with 400 when none verifies, or when **no single verified archive
+> holds every tape being deleted** — *archive the meeting again* — unlinking
+> nothing; the refusal
+> names the archive action and the tapes missing from at least one verified
+> archive, and the console's controls state the precondition.
 > With such an archive the delete proceeds, and the response's note names the
 > archive that is the durable copy. An archive is a copy, never a move
 > (ADR-0006); archive the

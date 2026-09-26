@@ -1,5 +1,5 @@
 {# The glossary table, its filters and the add-term form: unchanged from the
-   single-scroll page, ids and `#detail` targets kept so the `/ui/glossary/*`
+   single-scroll page, ids and `#detail` targets kept so the `/web/ui/glossary/*`
    fragments keep working. #}
 <div x-data="{ filter: 'all' }">
   <h3>{{ tr("Glossary") }}</h3>
@@ -32,7 +32,7 @@
           <div class="muted term-by">{{ term.added_by }}</div>
         </td>
         <td>
-          <form hx-post="/ui/glossary/{{ term.id }}/status" hx-target="#detail"
+          <form hx-post="/web/ui/glossary/{{ term.id }}/status" hx-target="#detail"
                 hx-swap="innerHTML">
             <select class="select-sm" name="status" aria-label="{{ tr("Term status") }}"
                     onchange="this.form.requestSubmit()">
@@ -45,7 +45,7 @@
           {# A retired row stays on the table, so it can be brought back: a
              retire is a status change, never a row delete (ADR-0033). Restore
              returns the term to the status the retire took it from. #}
-          <form hx-post="/ui/glossary/{{ term.id }}/restore" hx-target="#detail"
+          <form hx-post="/web/ui/glossary/{{ term.id }}/restore" hx-target="#detail"
                 hx-swap="innerHTML">
             <button class="btn btn-sm" type="submit"
                     title="{{ tr('Restore term') }}"
@@ -56,7 +56,7 @@
           <button class="btn btn-sm btn-danger-ghost" type="button"
                   title="{{ tr("Retire term") }}"
                   aria-label="{{ tr("Retire term") }}"
-                  hx-delete="/ui/glossary/{{ term.id }}"
+                  hx-delete="/web/ui/glossary/{{ term.id }}"
                   hx-confirm="{{ tr('Retire this term? It stops biasing the decoder; the row is kept, and Restore returns it to the status it had before the retire.') }}"
                   hx-target="#detail" hx-swap="innerHTML">{{ tr("Retire") }}</button>
           {% endif %}
@@ -72,7 +72,7 @@
 
 <h3>{{ tr("Add a term") }}</h3>
 <form class="stack"
-      hx-post="/ui/projects/{{ project.slug }}/glossary"
+      hx-post="/web/ui/projects/{{ project.slug }}/glossary"
       hx-target="#detail"
       hx-swap="innerHTML">
   <div class="row">

@@ -32,8 +32,8 @@
 <h3>{{ tr("Setup") }}</h3>
 <p class="muted">{{ tr("Walk the first-run path again, or open the wizard directly. Re-running forgets the marker only; your harness and MCP client config are kept.") }}</p>
 <div class="row">
-  <a class="btn btn-ghost" href="/setup">{{ tr("Open the setup wizard") }}</a>
-  <form method="post" action="/setup/restart">
+  <a class="btn btn-ghost" href="/web/setup">{{ tr("Open the setup wizard") }}</a>
+  <form method="post" action="/web/setup/restart">
     <button type="submit" class="btn btn-ghost">{{ tr("Walk setup again") }}</button>
   </form>
 </div>
@@ -41,7 +41,7 @@
 <h3>{{ tr("Sessions") }}</h3>
 <p class="muted">{{ tr("This browser holds a session on this node. Signing out ends it here; signing out everywhere ends every session this node has issued — this browser included — and takes effect on the very next request, with no restart.") }}</p>
 <div class="row">
-  <form method="post" action="/ui/sessions/revoke-all">
+  <form method="post" action="/web/ui/sessions/revoke-all">
     <button type="submit" class="btn btn-danger-ghost">{{ tr("Sign out everywhere") }}</button>
   </form>
 </div>
@@ -50,7 +50,7 @@
 {% include "_backend_list.html" %}
 
 <h3>{{ tr("Diagnostics") }}</h3>
-<p><a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
+<p><a class="btn btn-ghost" href="/web/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
 
 <h3>{{ tr("Hello-world check") }}</h3>
 {# The permanent diagnostic: the SAME check the agent flow's Try it

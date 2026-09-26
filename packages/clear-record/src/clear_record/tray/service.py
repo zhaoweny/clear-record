@@ -38,7 +38,11 @@ import threading
 
 from clear_record.core import node
 from clear_record.service import Registry
-from clear_record.web.app import NodeServer, create_app
+
+# The console's home is re-exported by the app module the tray already builds the
+# node with: the tray names no credential module on purpose — it holds no
+# credential, and `tests/tray/test_no_credential_path.py` is the guard for that.
+from clear_record.web.app import CONSOLE_HOME, NodeServer, create_app
 
 
 class ServiceState(enum.StrEnum):
@@ -102,6 +106,18 @@ class ServiceController:
     @property
     def url(self) -> str:
         return self.address.url
+
+    @property
+    def console_url(self) -> str:
+        """The console's home on that node — what a browser is opened at.
+
+        The node's :attr:`url` is the origin it answers on; the console lives
+        under the console prefix (``/web/``), so the address alone would open a
+        path the node does not serve. Built from the same
+        :data:`~clear_record.web.auth.CONSOLE_HOME` the console's own links use,
+        so the tray and the console cannot disagree about where it is.
+        """
+        return self.address.url_for(CONSOLE_HOME)
 
     @property
     def running(self) -> bool:

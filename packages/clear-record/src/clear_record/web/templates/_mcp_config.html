@@ -14,7 +14,7 @@
   {% endif %}
 
   <h3>{{ tr("MCP client config") }}</h3>
-  <form class="stack" hx-post="/ui/agent-setup/mcp/config" hx-target="{{ target }}"
+  <form class="stack" hx-post="/web/ui/agent-setup/mcp/config" hx-target="{{ target }}"
         hx-swap="innerHTML">
     {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
     {# The only pre-filled value is a path a previous run recorded -- never a

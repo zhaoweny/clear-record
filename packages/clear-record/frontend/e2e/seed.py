@@ -18,6 +18,12 @@ Two things this seed guarantees that the rows alone cannot:
   cannot pick it up, and unclaimable while the node's one run executes — which
   is what the queue's one-at-a-time rule means.
 
+The console has a credential (ADR-0033), so the seed also **signs the suite in**:
+it sets the credential through the service seam the app's own first-run route
+calls, mints one session through the same sign-in path the form uses, and writes
+that session as Playwright's storage state — the file `playwright.config.ts`
+hands every spec, so a spec opens the console rather than the credential step.
+
 `e2e/teardown.ts` ends the run owner after the last test; the seed records its
 pid beside the data directory for it.
 
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -37,14 +44,31 @@ import time
 from pathlib import Path
 
 from clear_record.core import PipelineOptions, RecordDocument, Segment, write_json
+from clear_record.core.node import SESSION_COOKIE
 from clear_record.service import Meeting, setup
+from clear_record.service.auth import ConsoleAuth
 from clear_record.service.diagnostics import machine_description
+from clear_record.service.lifecycle import CONSOLE
 from clear_record.service.managed import workspace_path_for
 from clear_record.service.store import Registry
+from clear_record.web.auth import CONSOLE_PATH
 
 #: The actor every write in this seeder records (ADR-0033): the e2e tooling runs
 #: it as a script, so the service records it as the command line.
 E2E_ACTOR = "cli"
+
+#: The console credential this seeder sets and every spec then carries: the
+#: console gates every route but the setup page, the liveness route and the
+#: compiled assets (ADR-0033), so the suite needs a session of its own. Not a
+#: secret — it is set here, by the same service call the app's first-run route
+#: makes, and it exists so the suite drives the console rather than its sign-in
+#: form.
+E2E_PASSWORD = "e2e-console-password"
+
+#: The session file ``playwright.config.ts`` hands every spec as its
+#: ``storageState`` (``e2e/paths.ts`` resolves the same path). Written beside the
+#: data directory, like the run owner's pid file.
+SESSION_FILENAME = "console-session.json"
 
 #: ``(start, end, speaker, source, text)`` — a plausible review conversation, long
 #: enough that the reading column is exercised at a realistic measure.
@@ -532,10 +556,47 @@ def main() -> int:
         actor=E2E_ACTOR,
     )
 
-    # A returning user (ticket 04): record the current version so `/` lands on
-    # Projects and no update notice shows. The update spec writes a stale marker
-    # deliberately, then dismisses it back to current.
+    # A returning user (ticket 04): record the current version so `/web/` lands
+    # on Projects and no update notice shows. The update spec writes a stale
+    # marker deliberately, then dismisses it back to current.
     setup.record_seen_version()
+
+    # A signed-in operator (ADR-0033). The console answers pages and API alike
+    # only to a live session, so the credential is set through the **service
+    # seam** — the same call the first-run route makes — and one session is
+    # minted through the same sign-in path the form uses. The token is written as
+    # Playwright's storage state (the file `playwright.config.ts` gives every
+    # spec), so a spec opens the console rather than the credential step.
+    console = ConsoleAuth(registry)
+    console.set_password(E2E_PASSWORD, actor=CONSOLE)
+    token = console.sign_in(E2E_PASSWORD)
+    assert token is not None, "the seeded credential did not sign in"
+    (data.parent / SESSION_FILENAME).write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {
+                        "name": SESSION_COOKIE,
+                        "value": token,
+                        # The console is dialled on loopback over http, and the
+                        # cookie is scoped to the console's prefix — the
+                        # attributes the app sets it with, from the same
+                        # declaration.
+                        "domain": "127.0.0.1",
+                        "path": CONSOLE_PATH,
+                        "expires": -1,
+                        "httpOnly": True,
+                        "secure": False,
+                        "sameSite": "Lax",
+                    }
+                ],
+                "origins": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     print(f"seeded {data}")
     return 0

@@ -425,7 +425,7 @@ class MeetingStorage(Shape):
     """A meeting's workspace size, its uploaded tapes and the root's free space.
 
     Declared where it is computed (ADR-0030), because both surfaces read it: the
-    console's panel and `/api/meetings/{id}/storage`.
+    console's panel and `/api/v1/meetings/{id}/storage`.
     """
 
     workspace_path: str | None

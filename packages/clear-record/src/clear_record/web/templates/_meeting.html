@@ -1,7 +1,7 @@
 {# One meeting's review surface: its transcript, the artifacts and their
    provenance, the drafts a harness wrote (with their version chains) and the
    meeting's accepted minutes. It is both a page
-   (`/projects/<slug>/meetings/<meeting>`, rendered into `#detail` by
+   (`/web/projects/<slug>/meetings/<meeting>`, rendered into `#detail` by
    `meeting.html`) and a fragment: every control here targets `#detail` and
    re-renders this fragment in place.
 
@@ -11,7 +11,7 @@
    refuse to swap. #}
 <div class="row meeting-head">
   <a class="btn btn-sm btn-ghost"
-     href="/projects/{{ project.slug }}/meetings"
+     href="/web/projects/{{ project.slug }}/meetings"
      title="{{ tr("Back to the project") }}">&larr; {{ project.name }}</a>
   <h2>{{ meeting.title }}</h2>
   <span class="badge status-neutral">{{ meeting.status }}</span>
@@ -36,12 +36,12 @@
   <div class="row">
     {% if transcript.prev is not none %}
     <button type="button"
-            hx-get="/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.prev }}"
+            hx-get="/web/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.prev }}"
             hx-target="#detail" hx-swap="innerHTML">{{ tr("Previous") }}</button>
     {% endif %}
     {% if transcript.next is not none %}
     <button type="button"
-            hx-get="/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.next }}"
+            hx-get="/web/ui/projects/{{ project.slug }}/meetings/{{ meeting.slug }}?offset={{ transcript.next }}"
             hx-target="#detail" hx-swap="innerHTML">{{ tr("Next") }}</button>
     {% endif %}
   </div>
@@ -179,12 +179,12 @@
     <div class="row">
       {# The decision names the version the reviewer read, so a harness appending
          a version in the meantime is a refusal, not a decision on unseen text. #}
-      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/accept"
+      <form hx-post="/web/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/accept"
             hx-target="#detail" hx-swap="innerHTML">
         <input type="hidden" name="version" value="{{ draft.version }}">
         <button class="primary" type="submit">{{ tr("Accept") }}</button>
       </form>
-      <form hx-post="/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/reject"
+      <form hx-post="/web/ui/meetings/{{ meeting.id }}/agent/drafts/{{ draft.draft_id }}/reject"
             hx-target="#detail" hx-swap="innerHTML">
         <input type="hidden" name="version" value="{{ draft.version }}">
         <button type="submit">{{ tr("Reject") }}</button>

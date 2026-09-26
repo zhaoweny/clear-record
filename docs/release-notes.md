@@ -27,7 +27,7 @@ The bullets below are what the release offers. Those tagged **carried from
 `0.2.0`** are capabilities a published `0.2.0` install already has; the rest are
 new or extended in this release.
 
-- **A run queue with live status.** The console's **Activity** page (`/activity`)
+- **A run queue with live status.** The console's **Activity** page (`/web/activity`)
   shows the runs in flight and the most recently finished runs across every
   project on the machine — including a run an MCP client started — and the header
   chip reads the same registry rows, so the header and the page cannot disagree
@@ -144,7 +144,7 @@ needs no endpoint, no key and no model to be configured. An `[agent]` table and
 `CR_AGENT_*` variables written for the `0.2.0` in-process path are **ignored, with
 a message** — never fatal, never migrated, and left exactly as they are, so an
 existing config file keeps working. The message appears where setup is reported
-(**Settings → Agent** and `/setup/agent`), which are now harness setup: where to
+(**Settings → Agent** and `/web/setup/agent`), which are now harness setup: where to
 point a harness, the MCP command line to register, and the hello-world acceptance
 check.
 

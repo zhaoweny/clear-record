@@ -40,13 +40,17 @@ from clear_record.service.lifecycle import CONSOLE
 from clear_record.web import app as web_app
 from clear_record.web.app import create_app
 from clear_record.web.auth import (
+    CONSOLE_HOME,
     CONSOLE_PATH,
+    HEALTH_PATH,
+    MACHINE_PREFIX,
     CREDENTIAL_PATH,
     REVOKE_ALL_PATH,
     SESSION_COOKIE,
     SETUP_PATH,
     SIGN_IN_PATH,
     SIGN_OUT_PATH,
+    STATIC_PREFIX,
     answers_anonymously,
 )
 from fastapi import FastAPI
@@ -120,12 +124,18 @@ def test_a_fresh_registry_answers_only_the_setup_page(console) -> None:
     assert setup_page.status_code == 200
     assert "Set the console password" in setup_page.text
 
-    for path in ("/", "/projects/ops", "/settings", "/activity", "/ui/projects"):
+    for path in (
+        "/web/",
+        "/web/projects/ops",
+        "/web/settings",
+        "/web/activity",
+        "/web/ui/projects",
+    ):
         response = console.client.get(path)
         assert response.status_code == 303, path
         assert response.headers["location"] == SETUP_PATH, path
 
-    api = console.client.get("/api/projects")
+    api = console.client.get("/api/v1/projects")
     assert api.status_code == 401
     assert "sign in" in api.json()["detail"]
 
@@ -148,9 +158,12 @@ def test_setting_the_credential_signs_in_and_lands_on_the_console(console) -> No
     response = _set_password(console.client)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/web/"
     assert console.registry.credential() is not None
-    assert console.client.get("/api/projects").status_code == 200
+    # The cookie the browser now holds is scoped to the console's prefix, so the
+    # console answers and the machine API still does not: the API's session is the
+    # token's business (see the cookie's own test below).
+    assert console.client.get(CONSOLE_HOME).status_code == 200
 
 
 def test_the_first_run_form_cannot_replace_an_existing_credential(console) -> None:
@@ -206,7 +219,7 @@ def test_a_wrong_password_re_renders_the_sign_in_page(console) -> None:
     assert response.status_code == 401
     assert "does not match" in response.text
     assert "set-cookie" not in response.headers
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/api/v1/projects").status_code == 401
 
 
 def test_signing_in_again_works_and_starts_a_new_session(console) -> None:
@@ -218,7 +231,7 @@ def test_signing_in_again_works_and_starts_a_new_session(console) -> None:
     second = console.client.cookies.get(SESSION_COOKIE)
 
     assert second and second != first
-    assert console.client.get("/ui/projects").status_code == 200
+    assert console.client.get("/web/ui/projects").status_code == 200
 
 
 # --- the cookie -------------------------------------------------------------- #
@@ -232,6 +245,24 @@ def test_the_session_cookie_is_httponly_lax_and_scoped_to_the_console(console) -
     assert attributes["path"] == CONSOLE_PATH
     assert "secure" not in attributes
     assert int(attributes["max-age"]) > 0
+
+
+def test_a_machine_request_carries_no_session_cookie(console) -> None:
+    """The API's answers are the token's business, not a browser tab's session.
+
+    ``Path`` is the console's prefix, so the cookie the console issued does not
+    ride on ``/api/v1/*`` at all: a signed-in browser that asks the machine API
+    with nothing else is refused exactly as an anonymous script is, and the
+    console's own controls are console routes for the same reason.
+    """
+    _set_password(console.client)
+
+    response = console.client.get(f"{MACHINE_PREFIX}projects")
+
+    assert response.status_code == 401
+    assert console.client.get(f"{CONSOLE_PATH}/ui/projects").status_code == 200, (
+        "the same client is signed in on the console"
+    )
 
 
 def test_the_cookie_is_secure_when_the_request_arrived_over_https(tmp_path) -> None:
@@ -248,7 +279,7 @@ def test_the_cookie_is_secure_when_the_request_arrived_over_https(tmp_path) -> N
     attributes = _cookie_attributes(_set_password(client))
 
     assert attributes["secure"] == ""
-    assert client.get("/api/projects").status_code == 200
+    assert client.get(CONSOLE_HOME).status_code == 200
 
 
 # --- the clocks -------------------------------------------------------------- #
@@ -270,14 +301,14 @@ def _short_idle(console, *, milliseconds: int) -> None:
 def test_an_idle_past_the_timeout_redirects_to_sign_in_never_a_500(console) -> None:
     _short_idle(console, milliseconds=250)
     _set_password(console.client)
-    assert console.client.get("/ui/projects").status_code == 200
+    assert console.client.get("/web/ui/projects").status_code == 200
 
     time.sleep(0.4)
-    page = console.client.get("/ui/projects")
+    page = console.client.get("/web/ui/projects")
 
     assert page.status_code == 303
     assert page.headers["location"] == SETUP_PATH
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/api/v1/projects").status_code == 401
 
 
 def test_a_stale_cookie_is_cleared_on_the_way_to_the_sign_in_page(console) -> None:
@@ -285,7 +316,7 @@ def test_a_stale_cookie_is_cleared_on_the_way_to_the_sign_in_page(console) -> No
     _set_password(console.client)
 
     time.sleep(0.35)
-    response = console.client.get("/ui/projects")
+    response = console.client.get("/web/ui/projects")
 
     assert response.status_code == 303
     assert _cookie_attributes(response)["max-age"] == "0"
@@ -305,7 +336,7 @@ def test_reading_the_anonymous_page_does_not_extend_a_session(console) -> None:
     assert console.client.get(SETUP_PATH).status_code == 200
     time.sleep(0.15)
 
-    assert console.client.get("/ui/projects").status_code == 303
+    assert console.client.get("/web/ui/projects").status_code == 303
 
 
 def test_a_session_past_its_absolute_lifetime_is_refused(console) -> None:
@@ -322,8 +353,8 @@ def test_a_session_past_its_absolute_lifetime_is_refused(console) -> None:
     started = console.app.state.auth.clock()
     console.app.state.auth.clock = lambda: started + timedelta(seconds=31)
 
-    assert console.client.get("/ui/projects").status_code == 303
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/web/ui/projects").status_code == 303
+    assert console.client.get("/api/v1/projects").status_code == 401
 
 
 # --- sign-out and revoke-all ------------------------------------------------- #
@@ -331,14 +362,14 @@ def test_a_session_past_its_absolute_lifetime_is_refused(console) -> None:
 
 def test_signing_out_refuses_the_next_request(console) -> None:
     _set_password(console.client)
-    assert console.client.get("/ui/projects").status_code == 200
+    assert console.client.get("/web/ui/projects").status_code == 200
 
     response = console.client.post(SIGN_OUT_PATH, follow_redirects=False)
 
     assert response.status_code == 303
     assert _cookie_attributes(response)["max-age"] == "0"
-    assert console.client.get("/ui/projects").status_code == 303
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/web/ui/projects").status_code == 303
+    assert console.client.get("/api/v1/projects").status_code == 401
 
 
 def test_revoking_every_session_refuses_every_browser_on_the_next_request(
@@ -348,14 +379,14 @@ def test_revoking_every_session_refuses_every_browser_on_the_next_request(
     app = create_app(registry, trusted_hosts=("testserver",))
     first = signed_in(TestClient(app, follow_redirects=False))
     second = signed_in(TestClient(app, follow_redirects=False))
-    assert first.get("/api/projects").status_code == 200
-    assert second.get("/api/projects").status_code == 200
+    assert first.get("/api/v1/projects").status_code == 200
+    assert second.get("/api/v1/projects").status_code == 200
 
     response = first.post(REVOKE_ALL_PATH, follow_redirects=False)
 
     assert response.status_code == 303
-    assert first.get("/api/projects").status_code == 401
-    assert second.get("/api/projects").status_code == 401
+    assert first.get("/api/v1/projects").status_code == 401
+    assert second.get("/api/v1/projects").status_code == 401
 
 
 def test_a_revoked_session_stays_revoked_with_no_restart(console) -> None:
@@ -363,16 +394,16 @@ def test_a_revoked_session_stays_revoked_with_no_restart(console) -> None:
     _set_password(console.client)
     token = console.client.cookies.get(SESSION_COOKIE)
     app = console.app
-    assert console.client.get("/ui/projects").status_code == 200
+    assert console.client.get("/web/ui/projects").status_code == 200
 
     ConsoleAuth(app.state.registry).revoke_all()
 
-    assert console.client.get("/ui/projects").status_code == 303
+    assert console.client.get("/web/ui/projects").status_code == 303
     # The cookie the browser held is cleared on the way to the sign-in page, and
     # the row behind it — not the process — is what decided: a fresh request with
     # the same cookie value is refused for the same reason.
     assert console.client.cookies.get(SESSION_COOKIE) is None
-    stale = console.client.get("/ui/projects", follow_redirects=False)
+    stale = console.client.get("/web/ui/projects", follow_redirects=False)
     assert stale.status_code == 303
     assert token is not None
 
@@ -396,6 +427,118 @@ def test_health_answers_with_no_session_and_no_token(console) -> None:
 def test_health_is_anonymous_on_a_fresh_registry(console) -> None:
     """A probe must tell a healthy node from a setup page with no credential at all."""
     assert console.client.get("/health").status_code == 200
+
+
+# --- the re-root: the old paths are gone, the new ones answer ---------------- #
+
+#: ``(method, path)`` for the paths the console and the machine API **named**,
+#: sampled: one of each shape the route table had (a page, a fragment, a setup
+#: form, a JSON route, the schema), spelled out as literals on purpose — this is
+#: the one place that must not follow a constant, because a constant that moved
+#: with the routes would move the evidence with it. Not every old path is here
+#: (the base app also served FastAPI's `/redoc` and `/docs/oauth2-redirect` at the
+#: root); the prefix guard below is what pins those. ``/health`` is not here — it
+#: stays at the root, and the tray and the command line both name it there.
+OLD_PATHS = (
+    ("GET", "/"),
+    ("GET", "/projects/ops"),
+    ("GET", "/projects/ops/meetings/kickoff"),
+    ("GET", "/activity"),
+    ("GET", "/settings"),
+    ("GET", "/settings/status"),
+    ("GET", "/setup"),
+    ("POST", "/setup/sign-in"),
+    ("POST", "/setup/sign-out"),
+    ("GET", "/ui/projects"),
+    ("POST", "/ui/projects"),
+    ("GET", "/ui/diagnostics"),
+    ("GET", "/api/projects"),
+    ("POST", "/api/runs"),
+    ("GET", "/api/openapi.json"),
+    ("GET", "/api/health"),
+)
+
+
+def test_no_route_answers_on_an_old_path(console) -> None:
+    """The re-root is a break, not a move with a shim: every old path is 404.
+
+    Signed in deliberately: an anonymous request to a *gated* path is a 303 (or a
+    ``401`` on the machine surface), which would hide a route still answering
+    under the gate. With a live session each of these reaches the router, and the
+    only honest answer for a path this app no longer serves is 404.
+    """
+    signed_in(console.client)
+
+    answered = [
+        (method, path, response.status_code)
+        for method, path in OLD_PATHS
+        if (
+            response := console.client.request(method, path, follow_redirects=False)
+        ).status_code
+        != 404
+    ]
+
+    assert answered == [], f"old paths still answered: {answered}"
+
+
+#: The four declared prefixes, **as boundaries**: a route lives exactly at one of
+#: them or under it with a ``/`` between. A bare ``startswith`` would admit a
+#: sibling — ``/healthz``, ``/static-x`` — which is a surface nobody declared,
+#: and catching exactly that is this guard's whole job.
+DECLARED_PREFIXES = (
+    CONSOLE_PATH,
+    MACHINE_PREFIX.rstrip("/"),
+    HEALTH_PATH,
+    STATIC_PREFIX,
+)
+
+
+def _under_a_declared_prefix(path: str) -> bool:
+    return any(
+        path == prefix or path.startswith(f"{prefix}/") for prefix in DECLARED_PREFIXES
+    )
+
+
+def test_every_route_lives_under_a_declared_prefix(console) -> None:
+    """Every route's path is one of the four declared prefixes, or under one.
+
+    The counterpart to the 404s above, read off the app's own table: a route that
+    spelled an old prefix out would fail there, and a route under a prefix this
+    test does not know is a surface nobody declared. ``/health`` is the root's own
+    — inside neither the console nor the machine API — and ``/static`` is the
+    compiled assets' mount.
+    """
+    offenders = [
+        route.path
+        for route in console.app.routes
+        if not _under_a_declared_prefix(str(route.path))
+    ]
+
+    assert offenders == [], f"routes outside every declared prefix: {offenders}"
+
+
+def test_a_sibling_of_a_declared_prefix_is_not_under_it() -> None:
+    """The guard's boundary is the whole of its job, so the boundary is pinned.
+
+    Without it a route added as ``/healthz`` or ``/static-x`` would pass the table
+    guard above while answering on a path nobody declared — the mutation this test
+    exists to catch, asserted on the predicate the guard reads.
+    """
+    for declared in DECLARED_PREFIXES:
+        assert _under_a_declared_prefix(declared)
+        assert _under_a_declared_prefix(f"{declared}/anything")
+    for sibling in ("/healthz", "/static-x", "/webby", "/api/v1x", "/api", "/webx/x"):
+        assert not _under_a_declared_prefix(sibling), sibling
+
+
+def test_the_new_paths_answer(console) -> None:
+    """The other half: the console, the machine API and the probe all answer."""
+    signed_in(console.client)
+
+    assert console.client.get(CONSOLE_HOME).status_code == 200
+    assert console.client.get(f"{CONSOLE_PATH}/projects/ops").status_code == 404
+    assert console.client.get(f"{MACHINE_PREFIX}projects").status_code == 200
+    assert console.client.get(HEALTH_PATH).status_code == 200
 
 
 # --- the anonymous surface --------------------------------------------------- #
@@ -439,7 +582,7 @@ def test_no_route_outside_the_anonymous_surface_answers_without_a_session(
             continue
         response = console.client.request(method, path, follow_redirects=False)
         location = response.headers.get("location")
-        if path.startswith("/api/"):
+        if path.startswith(MACHINE_PREFIX):
             refused = response.status_code == 401
         else:
             refused = response.status_code == 303 and location == SETUP_PATH
@@ -468,14 +611,14 @@ def test_an_htmx_fragment_request_is_navigated_to_sign_in(console) -> None:
     asked. The header rides a plain 200, which is the response htmx reads.
     """
     response = console.client.get(
-        "/ui/projects", headers={"HX-Request": "true"}, follow_redirects=False
+        "/web/ui/projects", headers={"HX-Request": "true"}, follow_redirects=False
     )
 
     assert response.status_code == 200
     assert response.headers["HX-Redirect"] == SETUP_PATH
     assert "location" not in response.headers
     # A browser that is not htmx still gets the redirect.
-    assert console.client.get("/ui/projects").status_code == 303
+    assert console.client.get("/web/ui/projects").status_code == 303
 
 
 # --- what is written, and where ---------------------------------------------- #
@@ -537,7 +680,7 @@ def test_the_diagnostics_bundle_carries_no_credential(tmp_path, monkeypatch) -> 
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     (log_dir / LOG_FILENAME).write_text(
-        '{"level":"info","logger":"console","message":"POST /setup/sign-in '
+        '{"level":"info","logger":"console","message":"POST /web/setup/sign-in '
         f'password={PASSWORD} HTTP/1.1"}}\n',
         encoding="utf-8",
     )
@@ -570,19 +713,22 @@ def test_the_suite_password_is_the_one_the_shared_helper_uses(
     """The helper's own credential is not this module's: a sanity anchor."""
     assert CONSOLE_PASSWORD != PASSWORD
     signed_in(console.client, CONSOLE_PASSWORD)
-    assert console.client.get("/api/projects").status_code == 200
+    assert console.client.get("/api/v1/projects").status_code == 200
 
 
 def test_the_console_path_is_one_declaration() -> None:
-    """The cookie's scope is the console prefix, declared once for the re-root.
+    """The console's prefix is declared once, and everything derives from it.
 
-    ``Path=`` on the session cookie is what keeps it off everything else that
-    shares the origin, and the route re-root moves the console under ``/web`` —
-    when it does, this constant (and the routes that read it) move with it, and
-    this test is where a half-moved console fails.
+    The pages, the ``/ui`` fragments, the setup route, its two forms and
+    revoke-all are all built on :data:`CONSOLE_PATH`, so the console cannot be
+    half-moved: a route that still spells a path out is a path this test's
+    siblings catch (``test_no_route_answers_on_an_old_path``), and a constant
+    that drifts takes every derived path with it.
     """
-    assert CONSOLE_PATH.startswith("/")
-    assert not CONSOLE_PATH.endswith("api")
+    assert CONSOLE_PATH == "/web"
+    assert not CONSOLE_PATH.endswith("/")
+    assert CONSOLE_HOME == f"{CONSOLE_PATH}/"
+    assert SETUP_PATH == f"{CONSOLE_PATH}/setup"
     assert Path(CREDENTIAL_PATH).parent == Path(SETUP_PATH) == Path(SIGN_IN_PATH).parent
     assert Path(SIGN_OUT_PATH).parent == Path(SETUP_PATH)
 
@@ -605,10 +751,10 @@ def test_the_published_local_session_is_a_session_like_any_other(
     assert node_module.local_session() == token
 
     console.client.cookies.set(SESSION_COOKIE, token)
-    assert console.client.get("/api/projects").status_code == 200
+    assert console.client.get("/api/v1/projects").status_code == 200
 
     console.app.state.auth.revoke_all()
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/api/v1/projects").status_code == 401
     node_module.forget_local_session()
 
 
@@ -621,7 +767,7 @@ def test_a_stale_or_unknown_local_session_is_refused_like_any_other_cookie(
 
     console.client.cookies.set(SESSION_COOKIE, "a-token-this-registry-never-issued")
 
-    assert console.client.get("/api/projects").status_code == 401
+    assert console.client.get("/api/v1/projects").status_code == 401
     assert console.client.get(SETUP_PATH).status_code == 200
     node_module.forget_local_session()
 

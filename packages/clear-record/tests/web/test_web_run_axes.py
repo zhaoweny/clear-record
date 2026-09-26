@@ -112,7 +112,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
         cost={**COST, "peak_rss_bytes": 512 * 1024 * 1024},
     )
 
-    fragment = client.get(f"/ui/runs/{run.id}")
+    fragment = client.get(f"/web/ui/runs/{run.id}")
 
     assert fragment.status_code == 200
     text = fragment.text
@@ -124,7 +124,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
     assert "unknown" not in text
 
     # The project meetings tab renders the same fragment for the latest run.
-    tab = client.get("/projects/ops/meetings")
+    tab = client.get("/web/projects/ops/meetings")
     assert tab.status_code == 200
     assert "512.0 MiB" in tab.text
 
@@ -132,7 +132,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
 def test_an_unmeasured_run_says_unknown_with_the_records_reason(tmp_path) -> None:
     registry, client, run = _seeded(tmp_path)  # queued: no cost, no memory
 
-    live = client.get(f"/ui/runs/{run.id}").text
+    live = client.get(f"/web/ui/runs/{run.id}").text
     assert "run-axes" not in live  # a live run stays a progress fragment
 
     registry.update_run(
@@ -140,7 +140,7 @@ def test_an_unmeasured_run_says_unknown_with_the_records_reason(tmp_path) -> Non
         status="done",
         actor="console",
     )
-    finished = client.get(f"/ui/runs/{run.id}").text
+    finished = client.get(f"/web/ui/runs/{run.id}").text
     assert "run-axes" in finished
     assert "unknown" in finished
     assert "the run recorded no cost, so this axis is unknown" in finished
@@ -151,7 +151,7 @@ def test_a_null_accuracy_figure_renders_a_dash_not_none(tmp_path) -> None:
     """F2: a missing confidence is a dash, and figures round like the CLI's."""
     _registry, client, run = _seeded(tmp_path, cost=dict(COST), confidence=None)
 
-    text = client.get(f"/ui/runs/{run.id}").text
+    text = client.get(f"/web/ui/runs/{run.id}").text
 
     assert "None" not in text
     assert "mean confidence -" in text

@@ -22,6 +22,7 @@ import pytest
 from clear_record.core import node
 from clear_record.tray.app import status_text
 from clear_record.tray.service import ServiceController, ServiceState
+from clear_record.web.auth import CONSOLE_HOME
 
 
 def _free_port() -> int:
@@ -279,7 +280,9 @@ def test_the_status_follows_the_node_it_joined_not_a_thread_of_its_own(
     controller = ServiceController(port=_free_port(), data_dir=str(tmp_path / "tray"))
     controller.start()
     try:
-        assert status_text(controller) == f"Running at {answering_node.address.url}"
+        assert status_text(controller) == (
+            f"Running at {answering_node.address.url_for(CONSOLE_HOME)}"
+        )
         answering_node.stop()
         assert not controller.healthy()
         assert controller.state() is ServiceState.UNREACHABLE
@@ -377,11 +380,11 @@ def test_the_trays_own_node_publishes_the_local_session(tmp_path, monkeypatch) -
         assert node.local_session(), "the tray's node published no local session"
 
         address = node.ask()  # the recorded node, probed anonymously
-        answer = node.request(address, "POST", "/api/runs", {})
+        answer = node.request(address, "POST", "/api/v1/runs", {})
 
         # Past the gate: the shape of the body is what refuses this, not a session.
         assert answer.status == 422, answer.detail()
-        assert _anonymous_status(address, "/api/projects") == 401
+        assert _anonymous_status(address, "/api/v1/projects") == 401
     finally:
         controller.stop(timeout=15)
 

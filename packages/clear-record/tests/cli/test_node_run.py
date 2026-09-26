@@ -292,7 +292,7 @@ def test_the_node_owns_a_command_line_run_while_it_runs_and_after(
     try:
         assert _wait_for(lambda: gated_node.entered), "the node never started the run"
         run = gated_node.registry.list_runs(_meeting_id(gated_node, workspace))[0]
-        live = gated_node.console.get("/activity").text
+        live = gated_node.console.get("/web/activity").text
         while_running = {
             "status": run.status,
             "origin": run.origin,
@@ -311,7 +311,7 @@ def test_the_node_owns_a_command_line_run_while_it_runs_and_after(
         "console origin": True,
     }
     after = gated_node.registry.list_runs(_meeting_id(gated_node, workspace))[0]
-    history = gated_node.console.get("/activity").text
+    history = gated_node.console.get("/web/activity").text
     assert after.status == "done"
     assert '<div class="run status-done">' in history
     assert "cli" in history

@@ -32,6 +32,7 @@ from clear_record.pipeline import stages
 from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager, managed, setup
 from clear_record.service.diagnostics import BundleFacts, build_bundle
+from clear_record.core.node import SESSION_COOKIE
 from clear_record.service.lifecycle import CONSOLE
 from clear_record.web.app import create_app
 from fastapi.testclient import TestClient
@@ -63,15 +64,26 @@ _LOGGED_IN_PASSWORD = "console-password-for-the-suite"
 
 
 def _logged_in(client: TestClient) -> TestClient:
-    """Give ``client`` a console session, the way a browser gets one.
+    """Give ``client`` a console session, and the machine surface one too.
 
     The credential is set through the service seam the app's own first-run route
     uses, and the session then comes from the **real sign-in form** — the same two
     steps ``tests/web/_console.py``'s shared helper makes, which is not importable
-    from this directory (it is a module of ``tests/web/``).
+    from this directory (it is a module of ``tests/web/``). That helper then does
+    what this one does next, and for the same reason: this module drives both
+    surfaces through one client, while the app keeps them apart — the console's
+    cookie is scoped to the console's own prefix and never rides the machine API,
+    so the session is re-presented the way a client *holding* a token presents it
+    (a jar cookie at the origin's path; the node's own machine sends the same
+    value as a header).
     """
     client.app.state.auth.set_password(_LOGGED_IN_PASSWORD, actor=CONSOLE)
-    client.post("/setup/sign-in", data={"password": _LOGGED_IN_PASSWORD})
+    client.post("/web/setup/sign-in", data={"password": _LOGGED_IN_PASSWORD})
+    token = client.cookies.get(SESSION_COOKIE)
+    for cookie in list(client.cookies.jar):
+        if cookie.name == SESSION_COOKIE:
+            client.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)
+    client.cookies.set(SESSION_COOKIE, token)
     return client
 
 
@@ -85,11 +97,11 @@ def test_tr_is_consulted_in_a_template(pseudo, tmp_path) -> None:
             )
         )
     )
-    assert "«No projects yet.»" in client.get("/ui/projects").text
-    # A returning user: the first-run redirect to /setup is not what this test
+    assert "«No projects yet.»" in client.get("/web/ui/projects").text
+    # A returning user: the first-run redirect to /web/setup is not what this test
     # is about, and the marker keeps `/` on the workspace page (ticket 04).
     setup.record_seen_version()
-    home = client.get("/")
+    home = client.get("/web/")
     assert "«project console»" in home.text
     assert "«Add project»" in home.text
 
@@ -115,9 +127,9 @@ def _managed_app(tmp_path, monkeypatch):
             )
         )
     )
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     meeting = client.post(
-        "/api/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
+        "/api/v1/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
     ).json()
     return client, meeting
 
@@ -133,7 +145,7 @@ def test_a_guard_reason_is_translated_not_just_its_label(pseudo, tmp_path, monke
     monkeypatch.setattr(managed, "max_upload_bytes", lambda: 4)
 
     panel = client.post(
-        f"/ui/meetings/{meeting['id']}/tapes/upload",
+        f"/web/ui/meetings/{meeting['id']}/tapes/upload",
         files={"file": ("a.wav", b"0123456789", "audio/wav")},
     )
 
@@ -150,7 +162,7 @@ def test_the_json_api_refusal_stays_english(pseudo, tmp_path, monkeypatch):
     monkeypatch.setattr(managed, "max_upload_bytes", lambda: 4)
 
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         files={"file": ("a.wav", b"0123456789", "audio/wav")},
     )
 
@@ -234,7 +246,7 @@ def test_the_refused_row_page_translates_the_frame_not_the_detail(
     """
     client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
 
-    page = client.get("/")
+    page = client.get("/web/")
 
     assert page.status_code == 409, page.text
     rendered = re.search(r'<p class="muted">(.*?)</p>', page.text, re.S)
@@ -256,7 +268,7 @@ def test_the_refused_row_stays_english_on_the_machine_surfaces(
     """
     client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
 
-    res = client.get(f"/api/runs/{run_id}")
+    res = client.get(f"/api/v1/runs/{run_id}")
 
     assert res.status_code == 409, res.text
     detail = res.json()["detail"]
@@ -382,8 +394,8 @@ def test_json_api_stays_untranslated(pseudo, tmp_path) -> None:
     )
     assert client.get("/health").json()["status"] == "ok"
 
-    assert client.post("/api/projects", json={"name": "Ops"}).status_code == 201
-    term = client.post("/api/projects/ops/glossary", json={"term": "Falcon"}).json()
+    assert client.post("/api/v1/projects", json={"name": "Ops"}).status_code == 201
+    term = client.post("/api/v1/projects/ops/glossary", json={"term": "Falcon"}).json()
     assert term["status"] == "candidate"
     assert "«" not in json.dumps(term)
 

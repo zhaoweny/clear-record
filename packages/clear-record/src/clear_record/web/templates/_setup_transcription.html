@@ -29,7 +29,7 @@
   <p class="muted">{{ tr("No model checkpoints are on disk yet.") }}</p>
   {% endif %}
   {% if transcription.state == 'model' %}
-  <form class="setup-download" hx-post="/ui/setup/download-model" hx-target="#setup-transcription" hx-swap="outerHTML" hx-disabled-elt="find button">
+  <form class="setup-download" hx-post="/web/ui/setup/download-model" hx-target="#setup-transcription" hx-swap="outerHTML" hx-disabled-elt="find button">
     <label class="field">
       <span>{{ tr("Checkpoint to download") }}</span>
       <select name="model">

@@ -14,15 +14,15 @@ function watch(page: Page): string[] {
 }
 
 test("the nav reaches the status page", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/web/");
   await page.locator(".app-nav a", { hasText: "Activity" }).click();
-  await expect(page).toHaveURL(/\/activity$/);
+  await expect(page).toHaveURL(/\/web\/activity$/);
   await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
 });
 
 test("the seeded running and queued runs render, across projects", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/activity");
+  await page.goto("/web/activity");
 
   // In flight: the run the seed's owner holds, with the stage and progress its
   // own event stream last reported.
@@ -38,7 +38,7 @@ test("the seeded running and queued runs render, across projects", async ({ page
   // Its meeting is a real link into the project it belongs to.
   await expect(running.locator("a", { hasText: "Interview 04" })).toHaveAttribute(
     "href",
-    "/projects/field-interviews/meetings/interview-04",
+    "/web/projects/field-interviews/meetings/interview-04",
   );
 
   // Queued behind it, in a different project: the queue runs one thing at a
@@ -49,7 +49,7 @@ test("the seeded running and queued runs render, across projects", async ({ page
   await expect(queued).toContainText("mcp"); // an agent's surface started it
   await expect(queued.locator("a", { hasText: "Design review" })).toHaveAttribute(
     "href",
-    "/projects/q3-sync/meetings/design-review",
+    "/web/projects/q3-sync/meetings/design-review",
   );
 
   // History: the seeded finished runs, with the figures their records carry.
@@ -63,12 +63,12 @@ test("the header chip reflects the live state and links to the page", async ({ p
 
   // On the landing page the chip is fed by the same registry, not by a literal:
   // one run is in flight, so it says so.
-  await page.goto("/");
+  await page.goto("/web/");
   await expect(chip).toHaveText("running 1");
-  await expect(chip).toHaveAttribute("href", "/activity");
+  await expect(chip).toHaveAttribute("href", "/web/activity");
   await expect(chip).toHaveClass(/status-running/);
 
   // And the same answer on the status page itself.
-  await page.goto("/activity");
+  await page.goto("/web/activity");
   await expect(chip).toHaveText("running 1");
 });

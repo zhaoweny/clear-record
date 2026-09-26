@@ -15,12 +15,12 @@ from clear_record.core import i18n
 from clear_record.tray.app import status_text
 from clear_record.tray.service import ServiceState
 
-URL = "http://127.0.0.1:8765/"
+URL = "http://127.0.0.1:8765/web/"
 
 
 def _controller(state: ServiceState) -> SimpleNamespace:
     """The two attributes the status line reads, as the real controller has them."""
-    return SimpleNamespace(state=lambda: state, url=URL)
+    return SimpleNamespace(state=lambda: state, console_url=URL)
 
 
 class _Pseudo(gettext.NullTranslations):

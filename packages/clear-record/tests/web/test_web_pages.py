@@ -37,17 +37,17 @@ def _seeded(tmp_path):
 def test_the_projects_page_carries_the_top_level_nav(tmp_path) -> None:
     client = _client(tmp_path)
 
-    home = client.get("/")
+    home = client.get("/web/")
 
     assert home.status_code == 200
     # Real links, plus hx-boost so a click is an in-place swap when JS is there.
-    assert 'href="/"' in home.text
-    assert 'href="/settings"' in home.text
+    assert 'href="/web/"' in home.text
+    assert 'href="/web/settings"' in home.text
     assert 'hx-boost="true"' in home.text
     assert 'id="projects"' in home.text
     # The suite's autouse marker makes this a returning user, so Setup is not
     # in the nav; `test_web_setup.py` covers the incomplete states.
-    assert 'href="/setup"' not in home.text
+    assert 'href="/web/setup"' not in home.text
 
 
 @pytest.mark.own_setup_marker
@@ -59,25 +59,25 @@ def test_the_setup_link_follows_the_marker_not_the_agent_setup(tmp_path) -> None
     client = _client(tmp_path)
 
     # No marker yet: Setup shows even though a harness is recorded.
-    assert 'href="/setup"' in client.get("/").text
+    assert 'href="/web/setup"' in client.get("/web/").text
 
     setup.record_seen_version()
 
-    home = client.get("/")
-    assert 'href="/settings"' in home.text
-    assert 'href="/setup"' not in home.text
+    home = client.get("/web/")
+    assert 'href="/web/settings"' in home.text
+    assert 'href="/web/setup"' not in home.text
 
 
 def test_settings_renders_a_section_and_unknown_sections_404(tmp_path) -> None:
     client = _client(tmp_path)
 
-    assert client.get("/settings").status_code == 200
-    agent = client.get("/settings/agent")
+    assert client.get("/web/settings").status_code == 200
+    agent = client.get("/web/settings/agent")
     assert agent.status_code == 200
     assert 'id="agent-setup"' in agent.text
-    assert client.get("/settings/webhooks").status_code == 200
+    assert client.get("/web/settings/webhooks").status_code == 200
 
-    missing = client.get("/settings/does-not-exist")
+    missing = client.get("/web/settings/does-not-exist")
     assert missing.status_code == 404
     assert "text/html" in missing.headers["content-type"]
 
@@ -85,21 +85,21 @@ def test_settings_renders_a_section_and_unknown_sections_404(tmp_path) -> None:
 def test_setup_and_the_agent_step_render(tmp_path) -> None:
     client = _client(tmp_path)
 
-    assert client.get("/setup").status_code == 200
-    agent = client.get("/setup/agent")
+    assert client.get("/web/setup").status_code == 200
+    agent = client.get("/web/setup/agent")
     assert agent.status_code == 200
     assert 'id="agent-setup"' in agent.text
 
 
 def test_a_project_has_its_own_page_and_url(tmp_path) -> None:
     client = _client(tmp_path)
-    client.post("/api/projects", json={"name": "Weekly Ops"})
+    client.post("/api/v1/projects", json={"name": "Weekly Ops"})
 
-    page = client.get("/projects/weekly-ops")
+    page = client.get("/web/projects/weekly-ops")
 
     assert page.status_code == 200
     # The page renders the detail *and* keeps the in-page `#detail` swap target
-    # the `/ui/*` project fragments render into.
+    # the `/web/ui/*` project fragments render into.
     assert 'id="detail"' in page.text
     assert "Weekly Ops" in page.text
     assert 'aria-current="page"' in page.text
@@ -108,7 +108,7 @@ def test_a_project_has_its_own_page_and_url(tmp_path) -> None:
 def test_an_unknown_project_404s_as_a_page(tmp_path) -> None:
     client = _client(tmp_path)
 
-    missing = client.get("/projects/nope")
+    missing = client.get("/web/projects/nope")
 
     assert missing.status_code == 404
     assert "text/html" in missing.headers["content-type"]
@@ -116,11 +116,11 @@ def test_an_unknown_project_404s_as_a_page(tmp_path) -> None:
 
 
 def test_the_page_shell_wraps_the_project_fragment(tmp_path) -> None:
-    """The page owns the project; `/ui/projects/<slug>` still serves its body."""
+    """The page owns the project; `/web/ui/projects/<slug>` still serves its body."""
     client = _client(tmp_path)
-    client.post("/api/projects", json={"name": "Weekly Ops"})
+    client.post("/api/v1/projects", json={"name": "Weekly Ops"})
 
-    fragment = client.get("/ui/projects/weekly-ops")
+    fragment = client.get("/web/ui/projects/weekly-ops")
 
     assert fragment.status_code == 200
     assert "Weekly Ops" in fragment.text
@@ -131,9 +131,9 @@ def test_the_page_shell_wraps_the_project_fragment(tmp_path) -> None:
 def test_project_rows_label_their_counts(tmp_path) -> None:
     """The counts are legible at a glance, not bare numbers behind a title."""
     client = _client(tmp_path)
-    client.post("/api/projects", json={"name": "Weekly Ops"})
+    client.post("/api/v1/projects", json={"name": "Weekly Ops"})
 
-    home = client.get("/")
+    home = client.get("/web/")
 
     assert "0 meetings" in home.text
     assert "0 terms" in home.text
@@ -143,23 +143,23 @@ def test_project_rows_label_their_counts(tmp_path) -> None:
 def test_every_project_sub_tab_is_its_own_url(tmp_path) -> None:
     """Each tab is a real page with the active tab marked, not colour alone."""
     _registry, client = _seeded(tmp_path)
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
 
     for path, active in (
-        ("/projects/ops", "overview"),
-        ("/projects/ops/meetings", "meetings"),
-        ("/projects/ops/glossary", "glossary"),
-        ("/projects/ops/media", "media"),
+        ("/web/projects/ops", "overview"),
+        ("/web/projects/ops/meetings", "meetings"),
+        ("/web/projects/ops/glossary", "glossary"),
+        ("/web/projects/ops/media", "media"),
     ):
         page = client.get(path)
         assert page.status_code == 200
         assert 'id="detail"' in page.text
         assert 'aria-label="Project sections"' in page.text
         for tab, href in (
-            ("overview", "/projects/ops"),
-            ("meetings", "/projects/ops/meetings"),
-            ("glossary", "/projects/ops/glossary"),
-            ("media", "/projects/ops/media"),
+            ("overview", "/web/projects/ops"),
+            ("meetings", "/web/projects/ops/meetings"),
+            ("glossary", "/web/projects/ops/glossary"),
+            ("media", "/web/projects/ops/media"),
         ):
             marker = ' aria-current="page"' if tab == active else ""
             assert f'href="{href}"{marker}' in page.text
@@ -167,10 +167,10 @@ def test_every_project_sub_tab_is_its_own_url(tmp_path) -> None:
 
 def test_a_project_sub_tab_is_deep_linkable_and_refresh_safe(tmp_path) -> None:
     _registry, client = _seeded(tmp_path)
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
 
-    first = client.get("/projects/ops/media")
-    second = client.get("/projects/ops/media")
+    first = client.get("/web/projects/ops/media")
+    second = client.get("/web/projects/ops/media")
 
     assert first.status_code == second.status_code == 200
     assert first.text == second.text
@@ -191,14 +191,14 @@ def test_the_meeting_review_is_a_page_under_the_project(tmp_path) -> None:
         actor="console",
     )
 
-    page = client.get("/projects/ops/meetings/kickoff")
+    page = client.get("/web/projects/ops/meetings/kickoff")
 
     assert page.status_code == 200
     assert "Kickoff" in page.text
     # The project tabs stay, with Meetings marked.
-    assert 'href="/projects/ops/meetings" aria-current="page"' in page.text
+    assert 'href="/web/projects/ops/meetings" aria-current="page"' in page.text
 
-    missing = client.get("/projects/ops/meetings/does-not-exist")
+    missing = client.get("/web/projects/ops/meetings/does-not-exist")
     assert missing.status_code == 404
     assert "Not found" in missing.text
 
@@ -234,7 +234,7 @@ def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
         actor="console",
     )
 
-    media = client.get("/ui/projects/ops/media")
+    media = client.get("/web/ui/projects/ops/media")
 
     assert media.status_code == 200
     assert "a.wav" in media.text
@@ -242,7 +242,7 @@ def test_the_media_tab_inventories_tapes_and_transcripts(tmp_path) -> None:
     assert ("a" * 12) in media.text  # the short sha256
     assert "record" in media.text  # the transcript's source
     assert "1 segment" in media.text  # the singular form for one segment (trn)
-    assert 'href="/projects/ops/meetings/kickoff"' in media.text
+    assert 'href="/web/projects/ops/meetings/kickoff"' in media.text
 
 
 def test_the_landing_shows_the_newest_meetings_across_projects(tmp_path) -> None:
@@ -267,15 +267,15 @@ def test_the_landing_shows_the_newest_meetings_across_projects(tmp_path) -> None
         actor="console",
     )
 
-    home = client.get("/")
+    home = client.get("/web/")
 
     assert "recent-activity" in home.text
-    assert 'href="/projects/ops/meetings/kickoff"' in home.text
-    assert 'href="/projects/field-interviews/meetings/interview"' in home.text
+    assert 'href="/web/projects/ops/meetings/kickoff"' in home.text
+    assert 'href="/web/projects/field-interviews/meetings/interview"' in home.text
 
 
 def test_the_landing_has_no_activity_line_without_meetings(tmp_path) -> None:
     _registry, client = _seeded(tmp_path)
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
 
-    assert "recent-activity" not in client.get("/").text
+    assert "recent-activity" not in client.get("/web/").text

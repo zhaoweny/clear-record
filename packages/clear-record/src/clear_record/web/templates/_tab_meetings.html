@@ -5,7 +5,7 @@
 
 <h3>{{ tr("Add a meeting") }}</h3>
 <form class="stack"
-      hx-post="/ui/projects/{{ project.slug }}/meetings"
+      hx-post="/web/ui/projects/{{ project.slug }}/meetings"
       hx-target="#detail"
       hx-swap="innerHTML">
   <div class="row">
@@ -29,16 +29,16 @@
       {% endif %}
       <span class="muted meeting-path">{{ row.meeting.workspace_path or tr("no workspace") }}</span>
       {# A real link to the review's own page: deep-linkable and refresh-safe. #}
-      <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
+      <a class="btn btn-sm btn-ghost" href="/web/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
     </div>
     {# The managed workspace's storage: resolved path, sizes, tapes, upload and
        delete controls. Fetched per meeting so the project render stays cheap. #}
     <div id="storage-{{ row.meeting.id }}"
-         hx-get="/ui/meetings/{{ row.meeting.id }}/storage"
+         hx-get="/web/ui/meetings/{{ row.meeting.id }}/storage"
          hx-trigger="load"
          hx-swap="innerHTML"></div>
     <form class="stack"
-          hx-post="/ui/meetings/{{ row.meeting.id }}/tapes"
+          hx-post="/web/ui/meetings/{{ row.meeting.id }}/tapes"
           hx-target="#detail"
           hx-swap="innerHTML">
       <textarea name="paths" rows="3"
@@ -46,7 +46,7 @@
       <button type="submit">{{ tr("Save tapes") }}</button>
     </form>
     <form class="row run-form"
-          hx-post="/ui/meetings/{{ row.meeting.id }}/runs"
+          hx-post="/web/ui/meetings/{{ row.meeting.id }}/runs"
           hx-target="#run-{{ row.meeting.id }}"
           hx-swap="outerHTML">
       <select name="backend">
@@ -69,7 +69,7 @@
       {% endfor %}
       <select name="profile"
               title="{{ tr("transcription profile") }}"
-              hx-get="/ui/profile-options"
+              hx-get="/web/ui/profile-options"
               hx-trigger="change"
               hx-include="this"
               hx-target="#profile-options-{{ row.meeting.id }}"
@@ -94,7 +94,7 @@
       <div id="run-{{ row.meeting.id }}" class="run run-idle"><span class="muted">{{ tr("No run yet.") }}</span></div>
     {% endif %}
     <form class="row"
-          hx-post="/ui/meetings/{{ row.meeting.id }}/archives"
+          hx-post="/web/ui/meetings/{{ row.meeting.id }}/archives"
           hx-target="#detail"
           hx-swap="innerHTML">
       <input name="root" placeholder="{{ tr("Archive root (optional)") }}">

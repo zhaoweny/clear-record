@@ -129,7 +129,7 @@ def test_a_local_client_names_a_directory_and_the_node_runs_it(local, tmp_path) 
     workspace = _workspace(tmp_path)
 
     answered = local.client.post(
-        "/api/runs", json={"directory": str(workspace), "model": "small"}
+        "/api/v1/runs", json={"directory": str(workspace), "model": "small"}
     )
 
     assert answered.status_code == 202, answered.text
@@ -165,7 +165,7 @@ def test_a_local_client_names_a_glossary_and_the_node_decodes_with_it(
     meeting = _meeting_with_a_workspace(local, workspace)
 
     answered = local.client.post(
-        f"/api/meetings/{meeting.id}/runs", json={"glossary": str(glossary)}
+        f"/api/v1/meetings/{meeting.id}/runs", json={"glossary": str(glossary)}
     )
 
     assert answered.status_code == 202, answered.text
@@ -192,7 +192,7 @@ def test_a_blank_directory_is_refused_not_run(local) -> None:
     )
 
     for blank in ("", "   "):
-        refused = local.client.post("/api/runs", json={"directory": blank})
+        refused = local.client.post("/api/v1/runs", json={"directory": blank})
         assert refused.status_code == 400, refused.text
         assert refused.json()["detail"] == web_app.BLANK_DIRECTORY
 
@@ -206,7 +206,7 @@ def test_a_non_local_client_naming_a_directory_is_refused_with_one_sentence(
     """The headline case: a path on the wrong machine is refused, not guessed at."""
     workspace = _workspace(tmp_path)
 
-    refused = remote.client.post("/api/runs", json={"directory": str(workspace)})
+    refused = remote.client.post("/api/v1/runs", json={"directory": str(workspace)})
 
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"] == web_app.PATH_IS_LOCAL
@@ -223,32 +223,32 @@ def test_every_route_that_takes_a_path_refuses_a_non_local_client(
     meeting = _meeting_with_a_workspace(remote, workspace)
 
     refusals = {
-        "a run's directory": ("post", "/api/runs", {"directory": str(workspace)}),
+        "a run's directory": ("post", "/api/v1/runs", {"directory": str(workspace)}),
         "a meeting's workspace": (
             "post",
-            "/api/projects/ops/meetings",
+            "/api/v1/projects/ops/meetings",
             {"title": "Elsewhere", "workspace_path": str(tmp_path / "elsewhere")},
         ),
         "a tape set": (
             "put",
-            f"/api/meetings/{meeting.id}/tapes",
+            f"/api/v1/meetings/{meeting.id}/tapes",
             {"paths": [str(workspace / "a.wav")]},
         ),
         "an archive root": (
             "post",
-            f"/api/meetings/{meeting.id}/archives",
+            f"/api/v1/meetings/{meeting.id}/archives",
             {"root": str(tmp_path / "archive")},
         ),
         # A project's own root is where its archives are written later, so it is
         # the same path as a call's ``root``, reached by a different route.
         "a project's archive root": (
             "post",
-            "/api/projects",
+            "/api/v1/projects",
             {"name": "Elsewhere", "default_archive_root": str(tmp_path / "archive")},
         ),
         "a project's archive root, updated": (
             "patch",
-            "/api/projects/ops",
+            "/api/v1/projects/ops",
             {"default_archive_root": str(tmp_path / "archive")},
         ),
         # A run's glossary is the *file this node decodes with*, so it is the same
@@ -257,7 +257,7 @@ def test_every_route_that_takes_a_path_refuses_a_non_local_client(
         # one is otherwise path-free.
         "a run's glossary": (
             "post",
-            "/api/runs",
+            "/api/v1/runs",
             {
                 "directory": str(workspace),
                 "glossary": str(workspace / "glossary.txt"),
@@ -265,7 +265,7 @@ def test_every_route_that_takes_a_path_refuses_a_non_local_client(
         ),
         "a meeting run's glossary": (
             "post",
-            f"/api/meetings/{meeting.id}/runs",
+            f"/api/v1/meetings/{meeting.id}/runs",
             {"glossary": str(workspace / "glossary.txt")},
         ),
     }
@@ -279,7 +279,7 @@ def test_an_absent_meeting_is_the_same_404_for_both_clients(local, remote) -> No
     """A guard answers about the request, never in place of the absent subject.
 
     The route looks its subject up before it reads where the client is — as every
-    sibling route does (``PUT /api/meetings/{id}/tapes``, the archive and meeting
+    sibling route does (``PUT /api/v1/meetings/{id}/tapes``, the archive and meeting
     routes) — so an id this node does not have is the one not-found answer for
     both clients, and a client that cannot see the difference learns nothing new.
     The guard itself is unchanged: the same client is still refused a path on an
@@ -287,12 +287,12 @@ def test_an_absent_meeting_is_the_same_404_for_both_clients(local, remote) -> No
     """
     for client in (local.client, remote.client):
         refused = client.post(
-            "/api/meetings/9999/runs", json={"glossary": "/tmp/glossary.txt"}
+            "/api/v1/meetings/9999/runs", json={"glossary": "/tmp/glossary.txt"}
         )
         assert refused.status_code == 404, refused.text
         # The sibling route answers the same absent id the same way.
         sibling = client.put(
-            "/api/meetings/9999/tapes", json={"paths": ["/tmp/tape.wav"]}
+            "/api/v1/meetings/9999/tapes", json={"paths": ["/tmp/tape.wav"]}
         )
         assert sibling.status_code == 404, sibling.text
 
@@ -301,12 +301,12 @@ def test_a_request_that_names_no_path_is_answered_for_any_client(
     remote, tmp_path
 ) -> None:
     """Only a *path* is local: a request that names none is untouched."""
-    created = remote.client.post("/api/projects", json={"name": "Ops"})
+    created = remote.client.post("/api/v1/projects", json={"name": "Ops"})
     assert created.status_code == 201, created.text
     # A managed meeting names no directory — the node provisions one — and is how
     # a remote client gets a workspace at all.
     managed = remote.client.post(
-        "/api/projects/ops/meetings", json={"title": "Managed", "managed": True}
+        "/api/v1/projects/ops/meetings", json={"title": "Managed", "managed": True}
     )
     assert managed.status_code == 201, managed.text
 
@@ -314,7 +314,7 @@ def test_a_request_that_names_no_path_is_answered_for_any_client(
     # from — the registry refuses it for having no tapes, which is not this
     # rule's 403.
     emptied = remote.client.put(
-        f"/api/meetings/{managed.json()['id']}/tapes", json={"paths": []}
+        f"/api/v1/meetings/{managed.json()['id']}/tapes", json={"paths": []}
     )
     assert emptied.status_code != 403, emptied.text
 
@@ -322,13 +322,13 @@ def test_a_request_that_names_no_path_is_answered_for_any_client(
     # of its own, so the call is refused for having no root, not for where the
     # client is.
     unrooted = remote.client.post(
-        f"/api/meetings/{managed.json()['id']}/archives", json={}
+        f"/api/v1/meetings/{managed.json()['id']}/archives", json={}
     )
     assert unrooted.status_code != 403, unrooted.text
 
     # A project with no archive root of its own, created and updated: nothing
     # named, nothing refused.
-    projectless_root = remote.client.patch("/api/projects/ops", json={"notes": "n"})
+    projectless_root = remote.client.patch("/api/v1/projects/ops", json={"notes": "n"})
     assert projectless_root.status_code != 403, projectless_root.text
 
 
@@ -340,7 +340,7 @@ def test_the_nodes_own_address_counts_as_local(monkeypatch, tmp_path) -> None:
     (``core.node``), so a client on the node's machine sends
     ``Host: 192.168.1.5:8765`` — not a loopback name, and still the very node the
     directory is on. What the app knows in process (``_served_by``, the address
-    ``GET /api/node`` vouches for and the record carries) is what counts. A name
+    ``GET /api/v1/node`` vouches for and the record carries) is what counts. A name
     that is *not* the node's is still refused: that is the fence.
     """
     here = node.NodeAddress(host="192.168.1.5", port=8765)
@@ -350,7 +350,7 @@ def test_the_nodes_own_address_counts_as_local(monkeypatch, tmp_path) -> None:
     )
     workspace = _workspace(tmp_path)
 
-    answered = at_home.client.post("/api/runs", json={"directory": str(workspace)})
+    answered = at_home.client.post("/api/v1/runs", json={"directory": str(workspace)})
 
     assert answered.status_code == 202, answered.text
     run_id = answered.json()["run"]["id"]
@@ -363,7 +363,7 @@ def test_the_nodes_own_address_counts_as_local(monkeypatch, tmp_path) -> None:
     elsewhere = _console(
         tmp_path, origin=PUBLISHED_ORIGIN, trust=(PUBLISHED_NAME,), name="elsewhere"
     )
-    refused = elsewhere.client.post("/api/runs", json={"directory": str(workspace)})
+    refused = elsewhere.client.post("/api/v1/runs", json={"directory": str(workspace)})
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"] == web_app.PATH_IS_LOCAL
 
@@ -392,7 +392,7 @@ def test_the_peer_address_is_not_part_of_the_test(monkeypatch, tmp_path) -> None
     workspace = _workspace(tmp_path)
 
     answered = elsewhere_on_the_wire.client.post(
-        "/api/runs", json={"directory": str(workspace)}
+        "/api/v1/runs", json={"directory": str(workspace)}
     )
 
     assert answered.status_code == 202, answered.text
@@ -416,7 +416,7 @@ def test_a_non_local_client_runs_a_registry_meeting_the_way_it_always_did(
     workspace = _workspace(tmp_path)
     meeting = _meeting_with_a_workspace(remote, workspace)
 
-    answered = remote.client.post(f"/api/meetings/{meeting.id}/runs", json={})
+    answered = remote.client.post(f"/api/v1/meetings/{meeting.id}/runs", json={})
 
     assert answered.status_code == 202, answered.text
     run = answered.json()["run"]
@@ -444,8 +444,8 @@ def test_a_model_named_as_a_path_is_refused_on_both_run_edges(local, tmp_path) -
     edges = {
         # A directory the node has never seen: the refusal comes before it is
         # resolved, so a refused request registers no meeting for it either.
-        "/api/runs": {"directory": str(tmp_path / "fresh")},
-        f"/api/meetings/{meeting.id}/runs": {},
+        "/api/v1/runs": {"directory": str(tmp_path / "fresh")},
+        f"/api/v1/meetings/{meeting.id}/runs": {},
     }
     for path, body in edges.items():
         for model in (str(tmp_path / "ggml-mine.bin"), "~/models/ggml-mine.bin"):
@@ -459,15 +459,15 @@ def test_a_model_named_as_a_path_is_refused_on_both_run_edges(local, tmp_path) -
 
 # --- the rules are where a client author meets them ------------------------ #
 def test_the_published_schema_states_both_rules(local) -> None:
-    """``/api/docs`` is the machine surface a client author reads, so it says so."""
-    schema = local.client.get("/api/openapi.json").json()
+    """``/api/v1/docs`` is the machine surface a client author reads, so it says so."""
+    schema = local.client.get("/api/v1/openapi.json").json()
     shapes = schema["components"]["schemas"]
     assert "never a path" in shapes["RunCreate"]["description"]
     assert "local client's noun" in shapes["WorkspaceRunCreate"]["description"]
     assert "own address" in shapes["ProjectCreate"]["description"]
 
     routes = schema["paths"]
-    directory_route = routes["/api/runs"]["post"]["description"]
-    meeting_route = routes["/api/meetings/{meeting_id}/runs"]["post"]["description"]
+    directory_route = routes["/api/v1/runs"]["post"]["description"]
+    meeting_route = routes["/api/v1/meetings/{meeting_id}/runs"]["post"]["description"]
     assert "its own address" in directory_route
     assert "the way the registry addresses it" in meeting_route

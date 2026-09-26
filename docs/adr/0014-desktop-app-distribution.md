@@ -46,9 +46,14 @@ Date: 2026-09-14
 - [DECISION] **No model weights and no keys are bundled** (BYOK): the app drives
   the machine's `whisper-cli` + ggml plugin and downloads a ggml model on first
   use, exactly as the CLI does (ADR-0005).
-- [DECISION] The console gains `POST /api/shutdown` and a **Quit** button,
+- [DECISION] The console gains a **Quit** button and the server a shutdown verb,
   because a windowed app has no terminal to interrupt; closing the browser tab
-  does not stop the local server.
+  does not stop the local server. The button is a **console** route
+  (`POST /web/ui/shutdown`, authorised by the console's session), and the machine
+  API keeps its own lever (`POST /api/v1/shutdown`) for scripts and a supervisor
+  — the console's cookie is scoped to the console's prefix and never rides the
+  API. The tray's Quit is its own act: it stops the node **this tray started**,
+  in process, and leaves a node it only joined running.
 
 ## Rationale
 

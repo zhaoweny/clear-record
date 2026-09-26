@@ -5,7 +5,7 @@ Date: 2026-09-15
 
 Superseded **in part** by [ADR-0033](0033-the-auth-position.md) (2026-09-26): the
 in-app auth position is decided, and **its build has landed** (the auth gate of
-2026-09-26: one credential in the registry, human sessions, `/setup` and
+2026-09-26: one credential in the registry, human sessions, `/web/setup` and
 `/health` the anonymous surface). This ADR's "ships no authentication" clause is
 superseded by that decision and by that code; the ingress posture (the
 operator's reverse proxy is the only ingress) stands, and its "the bind stays
@@ -26,7 +26,7 @@ trust source refuses to start.
 - [FACT] `docs/research/2026-09-15-clear-record-as-a-service.md` framed three
   options — (a) localhost + tunnel/VPN, (b) LAN bind + in-app auth, (c) LAN bind +
   reverse-proxy auth — with a cost order of **a < c < b**.
-- [FACT] The console is **browser-accessible**, and its `/ui/*` endpoints accept
+- [FACT] The console is **browser-accessible**, and its `/web/ui/*` endpoints accept
   **form-encoded POSTs**. A hostile page open in the same browser can therefore be
   induced to POST to `127.0.0.1` (CSRF), and DNS rebinding can make a remote name
   resolve to localhost. So "localhost-only" bounds **who can connect**, not **who

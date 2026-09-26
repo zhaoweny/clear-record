@@ -13,7 +13,7 @@ Date: 2026-09-15
 ## Context
 
 - [FACT] The console has been **one page plus fragments**: `index.html` renders a
-  sidebar and a `#detail` panel, and every `/ui/*` response swaps into
+  sidebar and a `#detail` panel, and every `/web/ui/*` response swaps into
   `#detail`. Project selection, a meeting review, the glossary, webhooks and
   agent setup all live on that one page (ADR-0016, ADR-0023).
 - [VOICE: owner, 2026-09-15] The owner steered a page-level structure, verbatim:
@@ -35,13 +35,16 @@ Date: 2026-09-15
   gains top-level routes, and the **URL is the source of truth** for which page
   and which project is shown. Navigation uses `hx-boost` so a click is fast,
   while a plain link still works without JavaScript. No SPA, no client router.
-- [DECISION] The sitemap: `/` and `/projects/<slug>` (Projects);
-  `/projects/<slug>/meetings`, `/projects/<slug>/glossary` and
-  `/projects/<slug>/media` (the project's Meetings / Glossary / Media sub-tabs);
-  `/projects/<slug>/meetings/<meeting>` (meeting review); `/settings` and
-  `/settings/<section>` (Settings); `/setup` (first run / after update);
-  `/setup/agent` (the agent wizard). `/ui/*` remains the in-page fragment
-  surface; `/api/*` is untouched.
+- [DECISION] The sitemap, under the console's own prefix: `/web/` and
+  `/web/projects/<slug>` (Projects);
+  `/web/projects/<slug>/meetings`, `/web/projects/<slug>/glossary` and
+  `/web/projects/<slug>/media` (the project's Meetings / Glossary / Media sub-tabs);
+  `/web/projects/<slug>/meetings/<meeting>` (meeting review); `/web/settings` and
+  `/web/settings/<section>` (Settings); `/web/setup` (first run / after update);
+  `/web/setup/agent` (the agent wizard). `/web/ui/*` remains the in-page fragment
+  surface; `/api/v1/*` is the machine API. (The prefix is ADR-0032's; until
+  2026-09-26 these routes were served at the root, under `/ui` and under
+  `/api`.)
 - [DECISION] **The sidebar becomes project navigation**, not a junk drawer:
   webhooks and agent setup move to Settings, and the project page gains
   sub-tabs — Overview, Meetings, Glossary, Media (every meeting's tapes and
@@ -50,7 +53,7 @@ Date: 2026-09-15
   the console already performs (the MCP client config); models, webhooks and
   storage are displayed with the config path to edit, so the first pass adds no
   new config-write surface.
-- [DECISION] **Setup is non-blocking.** A fresh install lands on `/setup`; after
+- [DECISION] **Setup is non-blocking.** A fresh install lands on `/web/setup`; after
   an update a dismissible notice points at it; a returning user is never
   redirected away from their work. "After an update" is detected by a **setup
   version marker** recorded in the setup state.
@@ -159,7 +162,7 @@ honestly assert:
   and recreated each run, so nothing is persisted. This narrows the earlier
   "the generated tape records its provenance" clause to what the code does.
 - [DECISION] The **same** check is the permanent diagnostic at Settings → Status;
-  `/setup/agent` and `/settings/agent` render the one three-stage flow
+  `/web/setup/agent` and `/web/settings/agent` render the one three-stage flow
   (Harness → MCP config → Try it).
 
 ## Update — 2026-09-16: one job per setup step, and the hello-check truth split
@@ -185,7 +188,7 @@ A follow-up refinement to the ticket-04/05 console work (owner-approved).
   no checkpoint on this system; a missing checkpoint is downloaded by the first
   transcription run (ggml models come from Hugging Face on first use) or can be
   placed in the directory. It never points at the Agent step or claims Models
-  settings can fetch. The `/setup` route passes
+  settings can fetch. The `/web/setup` route passes
   `transcription=transcription_status()`; it no longer passes
   `models_dir`/`models_present`.
 - [DECISION] The last step is renamed **Try it** (id `setup-try`) and still
@@ -208,7 +211,7 @@ never downloads, and Models settings is read-only, so a fresh user fell out of t
 guided path.
 
 - [DECISION] The **Transcription** step offers an explicit, user-triggered
-  **Download the default model** action (`POST /ui/setup/download-model`) when
+  **Download the default model** action (`POST /web/ui/setup/download-model`) when
   `state == "model"`. It reuses the same pinned, checksum-verified downloader a
   normal first use performs (`pipeline.stages.prepare_model` -> the provider's
   `prepare`), then re-renders the step, so readiness becomes **ready** in place:
@@ -226,14 +229,14 @@ previously read-only surface.
 
 - [DECISION] **Settings -> Models** gains a **model picker**: the ggml sizes
   (`tiny` .. `large-v3`), which are already on disk, and a user-triggered
-  **Download** per size (`POST /ui/settings/models/download`). It reuses the
+  **Download** per size (`POST /web/ui/settings/models/download`). It reuses the
   same pinned, checksum-verified downloader the wizard and a first run use.
   The console keeps no persisted transcription default, and `--auto` already
   prefers the largest checkpoint on disk that fits the machine, so downloading
   a size *is* switching. The wizard's Transcription step offers the same choice
   in its download action.
 - [DECISION] **Settings -> Status** gains a **walk-setup-again** knob
-  (`POST /setup/restart`): it forgets the setup marker and returns to `/setup`,
+  (`POST /web/setup/restart`): it forgets the setup marker and returns to `/web/setup`,
   and writes no other key, so a returning user's harness and MCP client config
   survive it. A plain link to the wizard sits beside it.
 - [FACT] `MODEL_LADDER` is now public (`pipeline.auto`, re-exported by
@@ -245,7 +248,7 @@ previously read-only surface.
 Owner-asked (US-08: *"a pipeline status page, like the status page for
 plex.tv"*); spec `04-activity-and-status.md` RUN-03.
 
-- [DECISION] **`/activity` joins the sitemap as a top-level page**, with an
+- [DECISION] **`/web/activity` joins the sitemap as a top-level page**, with an
   entry in the header nav. It is one node's answer to "what is clear-record
   doing right now": the running and queued runs of the shared queue (RUN-02)
   across every project — each with its stage and progress, the speed and
@@ -259,7 +262,7 @@ plex.tv"*); spec `04-activity-and-status.md` RUN-03.
   `page()` seam every full page already uses: `idle`, `running N` (or
   `queued N` when the node has not picked the work up yet), or
   `needs attention` when the newest finished run failed or was interrupted — a
-  deliberate `stopped` is not attention. It links to `/activity`, is
+  deliberate `stopped` is not attention. It links to `/web/activity`, is
   translated, and `{% block status %}` still lets a page override it.
 - [FACT] `Registry.latest_run_event(run_id)` is the one additive registry read:
   a live run's stage and progress live in its persisted event stream (one event

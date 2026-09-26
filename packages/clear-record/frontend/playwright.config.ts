@@ -11,7 +11,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { resolve } from "node:path";
 
-import { baseURL, dataDir, port, repoRoot } from "./e2e/paths";
+import { baseURL, dataDir, port, repoRoot, sessionStatePath } from "./e2e/paths";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -29,12 +29,20 @@ export default defineConfig({
     baseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    // The console has a credential (ADR-0033), so every spec starts from the
+    // session `seed.py` minted and wrote beside the data directory: the console
+    // answers a page or an API call only to a live session. A spec that needs
+    // the gate's own states drives them in the unit suite, not here.
+    storageState: sessionStatePath,
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: `uv run --all-packages clear-record web --no-browser --host 127.0.0.1 --port ${port}`,
     cwd: repoRoot,
-    url: baseURL,
+    // Readiness is the liveness route, not the origin: nothing answers at the
+    // root any more (the console is under `/web/`), and `/health` is the one
+    // anonymous 200 that needs no session.
+    url: `${baseURL}/health`,
     reuseExistingServer: false,
     timeout: 120_000,
     // Fully isolate the run: without these the server adopts the operator's

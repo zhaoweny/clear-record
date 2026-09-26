@@ -710,7 +710,7 @@ class RunManager:
     MCP server **and the command line** — meets at one queue and exactly one of
     them executes a run. The command line is a client of the node rather than a
     second executor (ADR-0032): ``clear-record run`` asks the node for a run
-    (``POST /api/runs``, the node's ``start_workspace_run``) and follows the row
+    (``POST /api/v1/runs``, the node's ``start_workspace_run``) and follows the row
     the node owns, so the ``cli`` origin is recorded for a run that really is the
     node's.
     The in-process pieces are a fast path, not the guarantee: :attr:`_pending`

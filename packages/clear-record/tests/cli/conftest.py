@@ -103,7 +103,7 @@ def node_in_this_process(tmp_path, monkeypatch):
         # the app's first-run route uses, then the real sign-in form.
         console = TestClient(app)
         app.state.auth.set_password(_CONSOLE_PASSWORD, actor="console")
-        console.post("/setup/sign-in", data={"password": _CONSOLE_PASSWORD})
+        console.post("/web/setup/sign-in", data={"password": _CONSOLE_PASSWORD})
         try:
             yield SimpleNamespace(
                 address=address,

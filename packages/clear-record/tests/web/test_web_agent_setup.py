@@ -29,7 +29,7 @@ def _client(tmp_path) -> TestClient:
 
 
 def _panel(client: TestClient) -> str:
-    response = client.get("/ui/agent-setup")
+    response = client.get("/web/ui/agent-setup")
     assert response.status_code == 200, response.text
     return response.text
 
@@ -51,18 +51,18 @@ def test_the_console_shows_plainly_that_no_harness_is_configured(tmp_path) -> No
 
     assert "no harness configured" in panel
     # ...and the two rungs that fix it, and no endpoint form or key field.
-    assert "/ui/agent-setup/mcp/harness" in panel
-    assert "/ui/agent-setup/mcp/config" in panel
+    assert "/web/ui/agent-setup/mcp/harness" in panel
+    assert "/web/ui/agent-setup/mcp/config" in panel
     assert "api_key_env" not in panel
-    assert "/ui/agent-setup/use" not in panel
+    assert "/web/ui/agent-setup/use" not in panel
     # The state is on the page that loads the panel (htmx may not have run).
-    assert 'id="agent-setup"' in client.get("/settings/agent").text
+    assert 'id="agent-setup"' in client.get("/web/settings/agent").text
 
 
 def test_the_json_api_starts_not_configured_and_holds_no_credential_field(
     tmp_path,
 ) -> None:
-    view = _client(tmp_path).get("/api/agent/setup").json()
+    view = _client(tmp_path).get("/api/v1/agent/setup").json()
 
     assert view["state"] == "not_configured"
     assert view["ready"] is False
@@ -80,7 +80,7 @@ def test_the_panel_is_ready_once_both_paths_are_recorded(tmp_path) -> None:
     client = _client(tmp_path)
 
     assert "agent ready" in _panel(client)
-    assert client.get("/api/agent/setup").json()["state"] == "ready"
+    assert client.get("/api/v1/agent/setup").json()["state"] == "ready"
 
 
 def test_a_recorded_path_that_is_gone_is_a_problem_state(tmp_path) -> None:
@@ -138,8 +138,8 @@ def test_the_panel_asks_for_the_mcp_locations_instead_of_guessing_them(
 
     panel = _panel(client)
 
-    assert "/ui/agent-setup/mcp/harness" in panel
-    assert "/ui/agent-setup/mcp/config" in panel
+    assert "/web/ui/agent-setup/mcp/harness" in panel
+    assert "/web/ui/agent-setup/mcp/config" in panel
     assert 'name="config" value=""' in panel
     # The "download one" rung is honest about being a human action.
     assert "pi-agent is not bundled" in panel
@@ -165,12 +165,12 @@ def test_pointing_at_a_harness_records_the_users_path(tmp_path) -> None:
     harness = _executable(tmp_path / "pi-agent")
 
     response = client.post(
-        "/ui/agent-setup/mcp/harness", data={"harness": str(harness)}
+        "/web/ui/agent-setup/mcp/harness", data={"harness": str(harness)}
     )
 
     assert response.status_code == 200
     assert "Pointed at the agent harness" in response.text
-    assert client.get("/api/agent/setup").json()["harness"] == str(harness)
+    assert client.get("/api/v1/agent/setup").json()["harness"] == str(harness)
     # A harness is a setup fact, not agent plumbing: no config file is written.
     assert not paths.config_path().is_file()
 
@@ -181,20 +181,24 @@ def test_pointing_at_something_unrunnable_records_nothing(tmp_path) -> None:
     plain.write_text("#!/bin/sh\n", encoding="utf-8")
     plain.chmod(0o644)
 
-    response = client.post("/ui/agent-setup/mcp/harness", data={"harness": str(plain)})
+    response = client.post(
+        "/web/ui/agent-setup/mcp/harness", data={"harness": str(plain)}
+    )
 
     # 200, not 400: base.html sets htmx noSwap for every 4xx, so a 400 panel
     # would never be swapped in and the user would see nothing.
     assert response.status_code == 200
     assert "is not executable" in response.text
-    assert client.get("/api/agent/setup").json()["harness"] is None
+    assert client.get("/api/v1/agent/setup").json()["harness"] is None
 
 
 def test_the_mcp_config_is_written_only_where_the_user_chose(tmp_path) -> None:
     client = _client(tmp_path)
     chosen = tmp_path / "client" / "mcp.json"
 
-    response = client.post("/ui/agent-setup/mcp/config", data={"config": str(chosen)})
+    response = client.post(
+        "/web/ui/agent-setup/mcp/config", data={"config": str(chosen)}
+    )
 
     assert response.status_code == 200
     assert "Registered the clear-record MCP server" in response.text
@@ -203,7 +207,7 @@ def test_the_mcp_config_is_written_only_where_the_user_chose(tmp_path) -> None:
         "command": "clear-record",
         "args": ["mcp"],
     }
-    assert client.get("/api/agent/setup").json()["mcp_config"] == str(chosen)
+    assert client.get("/api/v1/agent/setup").json()["mcp_config"] == str(chosen)
     # Nothing beside the chosen file was created: no location was guessed.
     assert [path.name for path in chosen.parent.iterdir()] == ["mcp.json"]
 
@@ -212,6 +216,6 @@ def test_the_mcp_config_route_requires_a_path(tmp_path) -> None:
     """No path, no write — the console cannot silently fall back to a default."""
     client = _client(tmp_path)
 
-    response = client.post("/ui/agent-setup/mcp/config", data={})
+    response = client.post("/web/ui/agent-setup/mcp/config", data={})
 
     assert response.status_code == 422

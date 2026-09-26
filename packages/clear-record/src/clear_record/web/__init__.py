@@ -413,6 +413,7 @@ def _tailscale_setup(
     variable is set or needed — the name is passed straight to ``create_app``.
     """
     from clear_record.web import guard, tailscale
+    from clear_record.web.auth import CONSOLE_HOME
 
     try:
         name = tailscale.normalize_name(override) or tailscale.resolve_dns_name()
@@ -460,7 +461,7 @@ def _tailscale_setup(
                     "    The tailnet decides who can reach this console; the "
                     "console still asks for its own password.\n"
                     "    Serve runs in the foreground and stops with this console.",
-                    url=tailscale.console_url(name, serve_port),
+                    url=tailscale.console_url(name, serve_port, CONSOLE_HOME),
                 )
             )
     return sorted(guard.trusted_extra_hosts() | {name}), session

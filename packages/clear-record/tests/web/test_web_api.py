@@ -1,7 +1,7 @@
 """HTTP behaviour of the bundled console, through the service seam.
 
-Two surfaces: the JSON API (``/api/*``) for machines and the server-rendered
-htmx/Alpine fragments (``/ui/*``) for the browser. A temp registry and FastAPI's
+Two surfaces: the JSON API (``/api/v1/*``) for machines and the server-rendered
+htmx/Alpine fragments (``/web/ui/*``) for the browser. A temp registry and FastAPI's
 test client — no network, no browser.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from _console import signed_in
+from _console import CONSOLE_PASSWORD, signed_in
 from clear_record.core import (
     DECODER_KNOBS,
     PROFILE_CUSTOM,
@@ -24,6 +24,7 @@ from clear_record.core import (
 )
 from clear_record.service import AutoProbe, Registry, RunManager
 from clear_record.web.app import RunCreate, WorkspaceRunCreate, create_app
+from clear_record.web.auth import CONSOLE_PATH, SESSION_COOKIE
 from fastapi.testclient import TestClient
 
 #: The knobs a person sets in the console's run form: the declaration's rows that
@@ -129,9 +130,9 @@ def console(tmp_path) -> SimpleNamespace:
 
 def _make_meeting(console, tmp_path, title: str = "Kickoff") -> dict:
     client = console.client
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     res = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": title, "workspace_path": str(tmp_path)},
     )
     assert res.status_code == 201
@@ -139,14 +140,14 @@ def _make_meeting(console, tmp_path, title: str = "Kickoff") -> dict:
 
 
 def _make_project(client, name: str = "Weekly Ops") -> dict:
-    res = client.post("/api/projects", json={"name": name})
+    res = client.post("/api/v1/projects", json={"name": name})
     assert res.status_code == 201
     return res.json()
 
 
 # --- HTML surface (htmx + Alpine, server-rendered) ------------------------ #
 def test_index_is_served_with_the_compiled_bundle(client) -> None:
-    res = client.get("/")
+    res = client.get("/web/")
     assert res.status_code == 200
     assert "/static/app.js" in res.text
     assert "/static/app.css" in res.text
@@ -173,38 +174,38 @@ def test_the_bundle_carries_htmx_and_alpine_offline(client) -> None:
 
 
 def test_ui_project_list_and_create(client) -> None:
-    assert "No projects yet." in client.get("/ui/projects").text
+    assert "No projects yet." in client.get("/web/ui/projects").text
 
-    created = client.post("/ui/projects", data={"name": "Weekly Ops"})
+    created = client.post("/web/ui/projects", data={"name": "Weekly Ops"})
     assert created.status_code == 200
     assert "Weekly Ops" in created.text
-    assert "Weekly Ops" in client.get("/ui/projects").text
+    assert "Weekly Ops" in client.get("/web/ui/projects").text
 
 
 def test_ui_detail_and_glossary_roundtrip(client) -> None:
     _make_project(client)
 
-    detail = client.get("/ui/projects/weekly-ops/glossary")
+    detail = client.get("/web/ui/projects/weekly-ops/glossary")
     assert detail.status_code == 200
     assert "No glossary terms yet." in detail.text
 
     added = client.post(
-        "/ui/projects/weekly-ops/glossary",
+        "/web/ui/projects/weekly-ops/glossary",
         data={"term": "Falcon", "definition": "the project"},
     )
     assert added.status_code == 200
     assert "Falcon" in added.text
 
-    term_id = client.get("/api/projects/weekly-ops/glossary").json()[0]["id"]
+    term_id = client.get("/api/v1/projects/weekly-ops/glossary").json()[0]["id"]
     promoted = client.post(
-        f"/ui/glossary/{term_id}/status", data={"status": "confirmed"}
+        f"/web/ui/glossary/{term_id}/status", data={"status": "confirmed"}
     )
     assert promoted.status_code == 200
     assert "confirmed" in promoted.text
     # The console's delete control retires rather than removes.
-    assert f'hx-delete="/ui/glossary/{term_id}"' in promoted.text
+    assert f'hx-delete="/web/ui/glossary/{term_id}"' in promoted.text
 
-    retired = client.delete(f"/ui/glossary/{term_id}")
+    retired = client.delete(f"/web/ui/glossary/{term_id}")
     assert retired.status_code == 200
     # The row survives as retired — present, not absent — so the console can
     # bring it back; a retire is a status change (ADR-0033).
@@ -214,13 +215,13 @@ def test_ui_detail_and_glossary_roundtrip(client) -> None:
 
     # Restore puts the term back where the retire took it from — it was
     # confirmed, so it returns confirmed — rather than confirming it outright.
-    restored = client.post(f"/ui/glossary/{term_id}/restore")
+    restored = client.post(f"/web/ui/glossary/{term_id}/restore")
     assert restored.status_code == 200
     assert "confirmed" in restored.text
 
 
 def test_ui_unknown_project_is_404(client) -> None:
-    assert client.get("/ui/projects/nope").status_code == 404
+    assert client.get("/web/ui/projects/nope").status_code == 404
 
 
 # --- JSON API ------------------------------------------------------------- #
@@ -241,55 +242,57 @@ def test_health_reports_the_status_and_nothing_else(client) -> None:
 
 
 def test_project_and_glossary_flow(client) -> None:
-    created = client.post("/api/projects", json={"name": "Weekly Ops"})
+    created = client.post("/api/v1/projects", json={"name": "Weekly Ops"})
     assert created.status_code == 201
     assert created.json()["slug"] == "weekly-ops"
 
-    listed = client.get("/api/projects").json()
+    listed = client.get("/api/v1/projects").json()
     assert [p["slug"] for p in listed] == ["weekly-ops"]
     assert listed[0]["term_count"] == 0
 
     added = client.post(
-        "/api/projects/weekly-ops/glossary",
+        "/api/v1/projects/weekly-ops/glossary",
         json={"term": "Falcon", "definition": "the project"},
     )
     assert added.status_code == 201
     term_id = added.json()["id"]
     assert added.json()["status"] == "candidate"
 
-    terms = client.get("/api/projects/weekly-ops/glossary").json()
+    terms = client.get("/api/v1/projects/weekly-ops/glossary").json()
     assert [t["term"] for t in terms] == ["Falcon"]
 
-    patched = client.patch(f"/api/glossary/{term_id}", json={"status": "confirmed"})
+    patched = client.patch(f"/api/v1/glossary/{term_id}", json={"status": "confirmed"})
     assert patched.status_code == 200
     assert patched.json()["status"] == "confirmed"
 
-    assert client.get("/api/projects").json()[0]["term_count"] == 1
+    assert client.get("/api/v1/projects").json()[0]["term_count"] == 1
 
-    retired = client.delete(f"/api/glossary/{term_id}")
+    retired = client.delete(f"/api/v1/glossary/{term_id}")
     assert retired.status_code == 200
     assert retired.json()["status"] == "retired"
     # The row survives with who added it and when, so the project's term count
     # does not drop and the machine API can restore it with a PATCH.
-    survivors = client.get("/api/projects/weekly-ops/glossary").json()
+    survivors = client.get("/api/v1/projects/weekly-ops/glossary").json()
     assert [t["term"] for t in survivors] == ["Falcon"]
     assert survivors[0]["added_by"] == "human" and survivors[0]["created_at"]
-    assert client.get("/api/projects").json()[0]["term_count"] == 1
-    restored = client.post(f"/api/glossary/{term_id}/restore")
+    assert client.get("/api/v1/projects").json()[0]["term_count"] == 1
+    restored = client.post(f"/api/v1/glossary/{term_id}/restore")
     assert restored.status_code == 200
     assert restored.json()["status"] == "confirmed"
 
 
 def test_a_retired_candidate_restores_as_a_candidate(client) -> None:
     """Restore is not a promotion: an un-reviewed draft comes back un-reviewed."""
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     draft = client.post(
-        "/api/projects/ops/glossary", json={"term": "AgentTerm", "added_by": "agent"}
+        "/api/v1/projects/ops/glossary", json={"term": "AgentTerm", "added_by": "agent"}
     ).json()
     assert draft["status"] == "candidate"
 
-    assert client.delete(f"/api/glossary/{draft['id']}").json()["status"] == "retired"
-    restored = client.post(f"/api/glossary/{draft['id']}/restore")
+    assert (
+        client.delete(f"/api/v1/glossary/{draft['id']}").json()["status"] == "retired"
+    )
+    restored = client.post(f"/api/v1/glossary/{draft['id']}/restore")
 
     assert restored.status_code == 200
     assert restored.json()["status"] == "candidate"
@@ -299,16 +302,18 @@ def test_restoring_a_term_that_is_not_retired_is_refused(client) -> None:
     """Restore returns the status a retire took the term from, so a term that is
     not retired has nothing to return to: the API answers 400 with the service's
     own message, never a 500 and never a silent status invention."""
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     term = client.post(
-        "/api/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
+        "/api/v1/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
     ).json()
 
-    refused = client.post(f"/api/glossary/{term['id']}/restore")
+    refused = client.post(f"/api/v1/glossary/{term['id']}/restore")
 
     assert refused.status_code == 400
     assert "not retired" in refused.json()["detail"]
-    assert client.get("/api/projects/ops/glossary").json()[0]["status"] == "confirmed"
+    assert (
+        client.get("/api/v1/projects/ops/glossary").json()[0]["status"] == "confirmed"
+    )
 
 
 def test_the_console_renders_a_refused_restore(client) -> None:
@@ -317,87 +322,139 @@ def test_the_console_renders_a_refused_restore(client) -> None:
     htmx does not swap a 4xx, so a refusal the user can act on re-renders the
     tab with the service's message — and the term keeps the status it held.
     """
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     term = client.post(
-        "/api/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
+        "/api/v1/projects/ops/glossary", json={"term": "Falcon", "status": "confirmed"}
     ).json()
 
-    refused = client.post(f"/ui/glossary/{term['id']}/restore")
+    refused = client.post(f"/web/ui/glossary/{term['id']}/restore")
 
     assert refused.status_code == 200
     assert "not retired" in refused.text
-    assert client.get("/api/projects/ops/glossary").json()[0]["status"] == "confirmed"
+    assert (
+        client.get("/api/v1/projects/ops/glossary").json()[0]["status"] == "confirmed"
+    )
 
 
 def test_glossary_status_filter(client) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
-    client.post("/api/projects/ops/glossary", json={"term": "A", "status": "confirmed"})
-    client.post("/api/projects/ops/glossary", json={"term": "B"})
-    confirmed = client.get("/api/projects/ops/glossary?status=confirmed").json()
+    client.post("/api/v1/projects", json={"name": "Ops"})
+    client.post(
+        "/api/v1/projects/ops/glossary", json={"term": "A", "status": "confirmed"}
+    )
+    client.post("/api/v1/projects/ops/glossary", json={"term": "B"})
+    confirmed = client.get("/api/v1/projects/ops/glossary?status=confirmed").json()
     assert [t["term"] for t in confirmed] == ["A"]
 
 
 def test_glossary_status_filter_rejects_an_unknown_status(client) -> None:
     """A bad client filter is a 400, not an uncaught ValueError turned 500."""
-    client.post("/api/projects", json={"name": "Ops"})
-    res = client.get("/api/projects/ops/glossary?status=bogus")
+    client.post("/api/v1/projects", json={"name": "Ops"})
+    res = client.get("/api/v1/projects/ops/glossary?status=bogus")
     assert res.status_code == 400
     assert "bogus" in res.json()["detail"]
 
 
 def test_unknown_project_is_404(client) -> None:
-    assert client.get("/api/projects/nope").status_code == 404
-    assert client.get("/api/projects/nope/glossary").status_code == 404
+    assert client.get("/api/v1/projects/nope").status_code == 404
+    assert client.get("/api/v1/projects/nope/glossary").status_code == 404
     assert (
-        client.post("/api/projects/nope/glossary", json={"term": "A"}).status_code
+        client.post("/api/v1/projects/nope/glossary", json={"term": "A"}).status_code
         == 404
     )
 
 
 def test_duplicate_slug_is_409(client) -> None:
-    client.post("/api/projects", json={"name": "Ops", "slug": "ops"})
+    client.post("/api/v1/projects", json={"name": "Ops", "slug": "ops"})
     assert (
-        client.post("/api/projects", json={"name": "Other", "slug": "ops"}).status_code
+        client.post(
+            "/api/v1/projects", json={"name": "Other", "slug": "ops"}
+        ).status_code
         == 409
     )
 
 
 def test_duplicate_term_is_409(client) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
-    client.post("/api/projects/ops/glossary", json={"term": "A"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects/ops/glossary", json={"term": "A"})
     assert (
-        client.post("/api/projects/ops/glossary", json={"term": "A"}).status_code == 409
+        client.post("/api/v1/projects/ops/glossary", json={"term": "A"}).status_code
+        == 409
     )
 
 
 def test_invalid_status_is_400(client) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
-    term_id = client.post("/api/projects/ops/glossary", json={"term": "A"}).json()["id"]
-    res = client.patch(f"/api/glossary/{term_id}", json={"status": "bogus"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
+    term_id = client.post("/api/v1/projects/ops/glossary", json={"term": "A"}).json()[
+        "id"
+    ]
+    res = client.patch(f"/api/v1/glossary/{term_id}", json={"status": "bogus"})
     assert res.status_code == 400
 
 
 def test_unknown_term_is_404(client) -> None:
     assert (
-        client.patch("/api/glossary/999", json={"status": "confirmed"}).status_code
+        client.patch("/api/v1/glossary/999", json={"status": "confirmed"}).status_code
         == 404
     )
-    assert client.delete("/api/glossary/999").status_code == 404
-    assert client.post("/api/glossary/999/restore").status_code == 404
+    assert client.delete("/api/v1/glossary/999").status_code == 404
+    assert client.post("/api/v1/glossary/999/restore").status_code == 404
 
 
 def test_shutdown_is_refused_without_a_managed_server(client) -> None:
-    """The Quit button only works under the real server (not a test client)."""
-    assert client.post("/api/shutdown").status_code == 409
+    """Both levers only work under the real server (not a test client)."""
+    assert client.post("/api/v1/shutdown").status_code == 409
+    assert client.post(f"{CONSOLE_PATH}/ui/shutdown").status_code == 409
+
+
+def test_the_console_quit_control_stops_the_managed_server(client) -> None:
+    """The header's Quit button, as a console route: the console acts as itself.
+
+    A console control is answered under the console's prefix and authorised by
+    the console's session (the cookie's ``Path`` is that prefix), so Quit does not
+    call into the machine API — whose session is a token's business. It answers
+    ``204``, which htmx swaps nowhere.
+    """
+    server = SimpleNamespace(should_exit=False)
+    client.app.state.server = server
+
+    response = client.post(f"{CONSOLE_PATH}/ui/shutdown")
+
+    assert response.status_code == 204
+    assert server.should_exit is True
+
+
+def test_the_machine_shutdown_lever_still_stops_the_managed_server(tmp_path) -> None:
+    """The tray's and a script's lever is unchanged — and it is not the cookie's.
+
+    A machine client presents the session it holds as a **header** (the node's
+    own machine publishes one, and the tray dials the documented address), which
+    is why the console's cookie scoping does not touch it: ``Path`` decides what a
+    *browser* sends, and a header is sent by the client itself. ``202`` and the
+    JSON shape are what this lever always answered.
+    """
+    app = create_app(Registry.open(db_path=tmp_path / "registry.sqlite3"))
+    client = signed_in(TestClient(app, base_url=LOCAL_ORIGIN))
+    token = app.state.auth.sign_in(CONSOLE_PASSWORD)
+    assert token is not None
+    server = SimpleNamespace(should_exit=False)
+    app.state.server = server
+
+    response = client.post(
+        "/api/v1/shutdown", headers={"cookie": f"{SESSION_COOKIE}={token}"}
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {"status": "stopping"}
+    assert server.should_exit is True
 
 
 # --- JSON API: meetings, tapes and runs ----------------------------------- #
 def test_meeting_api_create_list_and_get(console, tmp_path) -> None:
     client = console.client
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
 
     created = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Kickoff", "workspace_path": str(tmp_path)},
     )
     assert created.status_code == 201
@@ -406,16 +463,16 @@ def test_meeting_api_create_list_and_get(console, tmp_path) -> None:
     assert meeting["slug"] == "kickoff"
     assert meeting["status"] == "new"
 
-    listed = client.get("/api/projects/ops/meetings").json()
+    listed = client.get("/api/v1/projects/ops/meetings").json()
     assert [m["id"] for m in listed] == [meeting["id"]]
     assert listed[0]["project_slug"] == "ops"
 
-    fetched = client.get(f"/api/meetings/{meeting['id']}")
+    fetched = client.get(f"/api/v1/meetings/{meeting['id']}")
     assert fetched.status_code == 200
     assert fetched.json()["title"] == "Kickoff"
 
-    assert client.get("/api/projects/nope/meetings").status_code == 404
-    assert client.get("/api/meetings/999").status_code == 404
+    assert client.get("/api/v1/projects/nope/meetings").status_code == 404
+    assert client.get("/api/v1/meetings/999").status_code == 404
 
 
 def test_tapes_api_roundtrip(console, tmp_path) -> None:
@@ -423,19 +480,19 @@ def test_tapes_api_roundtrip(console, tmp_path) -> None:
     meeting = _make_meeting(console, tmp_path)
 
     res = client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav"), str(tmp_path / "b.wav")]},
     )
     assert res.status_code == 201
     assert res.json()["paths"] == [str(tmp_path / "a.wav"), str(tmp_path / "b.wav")]
 
     assert (
-        client.put("/api/meetings/999/tapes", json={"paths": ["x.wav"]}).status_code
+        client.put("/api/v1/meetings/999/tapes", json={"paths": ["x.wav"]}).status_code
         == 404
     )
     assert (
         client.put(
-            f"/api/meetings/{meeting['id']}/tapes", json={"paths": []}
+            f"/api/v1/meetings/{meeting['id']}/tapes", json={"paths": []}
         ).status_code
         == 400
     )
@@ -445,10 +502,10 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     client = console.client
     meeting = _make_meeting(console, tmp_path)
     tape = str(tmp_path / "a.wav")
-    client.put(f"/api/meetings/{meeting['id']}/tapes", json={"paths": [tape]})
+    client.put(f"/api/v1/meetings/{meeting['id']}/tapes", json={"paths": [tape]})
 
     started = client.post(
-        f"/api/meetings/{meeting['id']}/runs", json={"backend": "apple"}
+        f"/api/v1/meetings/{meeting['id']}/runs", json={"backend": "apple"}
     )
     assert started.status_code == 202
     run_id = started.json()["run"]["id"]
@@ -460,13 +517,13 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
     state = console.manager.wait(run_id, timeout=10)
     assert state.status == "done"
 
-    fetched = client.get(f"/api/runs/{run_id}")
+    fetched = client.get(f"/api/v1/runs/{run_id}")
     assert fetched.status_code == 200
     assert fetched.json()["run"]["status"] == "done"
     assert fetched.json()["state"]["status"] == "done"
     assert fetched.json()["state"]["stage"] == "transcribe"
 
-    events = client.get(f"/api/runs/{run_id}/events?after=0").json()
+    events = client.get(f"/api/v1/runs/{run_id}/events?after=0").json()
     assert events["next"] == 5
     # The stream carries both halves of a stage's report: the counters a bar
     # reads, and the words the stage reported — the line's text in ``message``,
@@ -480,7 +537,7 @@ def test_run_api_lifecycle(console, tmp_path) -> None:
         "",
     ]
 
-    tail = client.get(f"/api/runs/{run_id}/events?after={events['next']}").json()
+    tail = client.get(f"/api/v1/runs/{run_id}/events?after={events['next']}").json()
     assert tail == {"events": [], "next": 5}
 
 
@@ -488,13 +545,13 @@ def test_a_second_run_is_409(console, tmp_path) -> None:
     client = console.client
     meeting = _make_meeting(console, tmp_path)
     client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
-    first = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    first = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
     assert first.status_code == 202
 
-    conflict = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    conflict = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
     assert conflict.status_code == 409
 
     console.gate.set()
@@ -506,7 +563,8 @@ def test_a_run_without_tapes_or_workspace_is_400(console, tmp_path) -> None:
     # A workspace but no tape set.
     meeting = _make_meeting(console, tmp_path)
     assert (
-        client.post(f"/api/meetings/{meeting['id']}/runs", json={}).status_code == 400
+        client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={}).status_code
+        == 400
     )
 
     # A tape set but no workspace (created through the store, not the API).
@@ -524,7 +582,7 @@ def test_a_run_without_tapes_or_workspace_is_400(console, tmp_path) -> None:
         [str(tmp_path / "x.wav")],
         actor="console",
     )
-    res = client.post(f"/api/meetings/{no_workspace.id}/runs", json={})
+    res = client.post(f"/api/v1/meetings/{no_workspace.id}/runs", json={})
     assert res.status_code == 400
 
 
@@ -546,10 +604,10 @@ def test_a_refusal_that_raced_the_pre_check_is_409(
     client = console.client
     meeting = _make_meeting(console, tmp_path)
     client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
-    first = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    first = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
     assert first.status_code == 202
 
     live = console.manager.active_state
@@ -564,7 +622,7 @@ def test_a_refusal_that_raced_the_pre_check_is_409(
 
     monkeypatch.setattr(console.manager, "active_state", raced)
     monkeypatch.setattr(console.manager, "start", refuse)
-    conflict = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    conflict = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
 
     assert conflict.status_code == 409
     assert conflict.json()["detail"] == "a run is already in flight for this meeting"
@@ -575,8 +633,8 @@ def test_a_refusal_that_raced_the_pre_check_is_409(
 
 def test_unknown_run_endpoints_are_404(console) -> None:
     client = console.client
-    assert client.get("/api/runs/999").status_code == 404
-    assert client.get("/api/runs/999/events").status_code == 404
+    assert client.get("/api/v1/runs/999").status_code == 404
+    assert client.get("/api/v1/runs/999/events").status_code == 404
 
 
 # --- the knobs a client may set (one field per declaration row) ------------ #
@@ -625,7 +683,7 @@ def test_every_knob_a_client_sets_survives_into_the_run_record(
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     sent = {
@@ -642,7 +700,7 @@ def test_every_knob_a_client_sets_survives_into_the_run_record(
         "rerun_sources": ["a"],
         "rerun_range": "0:00-0:05",
     }
-    started = console.client.post(f"/api/meetings/{meeting['id']}/runs", json=sent)
+    started = console.client.post(f"/api/v1/meetings/{meeting['id']}/runs", json=sent)
     assert started.status_code == 202, started.text
 
     console.gate.set()
@@ -674,12 +732,12 @@ def test_an_unknown_knob_is_refused_rather_than_ignored(console, tmp_path) -> No
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
     misspelled = console.client.post(
-        f"/api/meetings/{meeting['id']}/runs", json={"chunk_second": 30}
+        f"/api/v1/meetings/{meeting['id']}/runs", json={"chunk_second": 30}
     )
     assert misspelled.status_code == 422, misspelled.text
     assert "chunk_second" in misspelled.text
@@ -688,7 +746,7 @@ def test_an_unknown_knob_is_refused_rather_than_ignored(console, tmp_path) -> No
     # `--diarize` is a flag the command line has and the run request does not: a
     # client sending it is told, not handed a run without it.
     undeclared = console.client.post(
-        "/api/runs", json={"directory": str(tmp_path), "diarize": True}
+        "/api/v1/runs", json={"directory": str(tmp_path), "diarize": True}
     )
     assert undeclared.status_code == 422, undeclared.text
     assert "diarize" in undeclared.text
@@ -698,10 +756,10 @@ def test_an_unknown_knob_is_refused_rather_than_ignored(console, tmp_path) -> No
 # --- HTML surface: meetings and the live run fragment --------------------- #
 def test_ui_create_meeting_and_save_tapes(console, tmp_path) -> None:
     client = console.client
-    client.post("/ui/projects", data={"name": "Ops"})
+    client.post("/web/ui/projects", data={"name": "Ops"})
 
     created = client.post(
-        "/ui/projects/ops/meetings",
+        "/web/ui/projects/ops/meetings",
         data={"title": "Kickoff", "workspace_path": str(tmp_path)},
     )
     assert created.status_code == 200
@@ -709,10 +767,10 @@ def test_ui_create_meeting_and_save_tapes(console, tmp_path) -> None:
     assert "No run yet." in created.text
 
     meeting_id = console.registry.list_meetings("ops")[0].id
-    assert f'hx-post="/ui/meetings/{meeting_id}/runs"' in created.text
+    assert f'hx-post="/web/ui/meetings/{meeting_id}/runs"' in created.text
 
     saved = client.post(
-        f"/ui/meetings/{meeting_id}/tapes",
+        f"/web/ui/meetings/{meeting_id}/tapes",
         data={"paths": f"{tmp_path}/a.wav\n{tmp_path}/b.wav"},
     )
     assert saved.status_code == 200
@@ -729,7 +787,7 @@ def test_an_empty_tape_set_re_renders_at_200(console, tmp_path) -> None:
     meeting = _make_meeting(console, tmp_path)
 
     refused = console.client.post(
-        f"/ui/meetings/{meeting['id']}/tapes", data={"paths": ""}
+        f"/web/ui/meetings/{meeting['id']}/tapes", data={"paths": ""}
     )
 
     assert refused.status_code == 200
@@ -743,7 +801,7 @@ def test_a_blank_project_name_re_renders_at_200(client) -> None:
     this route is a whitespace-only name (the form's required flag lets it
     through). Either way the refusal must come back at 200 (base.html's noSwap).
     """
-    refused = client.post("/ui/projects", data={"name": "   "})
+    refused = client.post("/web/ui/projects", data={"name": "   "})
 
     assert refused.status_code == 200
     assert 'class="run-error project-error"' in refused.text
@@ -758,21 +816,27 @@ def test_the_other_ui_refusals_re_render_at_200(client) -> None:
     # service's message (htmx does not swap a 4xx; base.html sets noSwap).
     _make_project(client)
 
-    blank_term = client.post("/ui/projects/weekly-ops/glossary", data={"term": "   "})
+    blank_term = client.post(
+        "/web/ui/projects/weekly-ops/glossary", data={"term": "   "}
+    )
     assert blank_term.status_code == 200
     assert 'class="run-error"' in blank_term.text
     assert "term must not be blank" in blank_term.text
 
-    added = client.post("/ui/projects/weekly-ops/glossary", data={"term": "Falcon"})
+    added = client.post("/web/ui/projects/weekly-ops/glossary", data={"term": "Falcon"})
     assert added.status_code == 200
-    term_id = client.get("/api/projects/weekly-ops/glossary").json()[0]["id"]
+    term_id = client.get("/api/v1/projects/weekly-ops/glossary").json()[0]["id"]
 
-    bad_status = client.post(f"/ui/glossary/{term_id}/status", data={"status": "nope"})
+    bad_status = client.post(
+        f"/web/ui/glossary/{term_id}/status", data={"status": "nope"}
+    )
     assert bad_status.status_code == 200
     assert 'class="run-error"' in bad_status.text
     assert "status must be one of" in bad_status.text
 
-    blank_title = client.post("/ui/projects/weekly-ops/meetings", data={"title": "   "})
+    blank_title = client.post(
+        "/web/ui/projects/weekly-ops/meetings", data={"title": "   "}
+    )
     assert blank_title.status_code == 200
     assert 'class="run-error"' in blank_title.text
     assert "meeting title must not be blank" in blank_title.text
@@ -783,11 +847,11 @@ def test_the_add_project_form_clears_only_on_a_real_success(client) -> None:
 
     # The swap does not replace it, so it is cleared on a success signal rather
     # than on any 2xx: the refusal re-render carries no HX-Trigger.
-    created = client.post("/ui/projects", data={"name": "Weekly Ops"})
+    created = client.post("/web/ui/projects", data={"name": "Weekly Ops"})
     assert created.status_code == 200
     assert created.headers.get("HX-Trigger") == "project-created"
 
-    refused = client.post("/ui/projects", data={"name": "   "})
+    refused = client.post("/web/ui/projects", data={"name": "   "})
     assert refused.status_code == 200
     assert refused.headers.get("HX-Trigger") is None
     assert "must not be blank" in refused.text
@@ -806,7 +870,7 @@ def test_run_form_offers_only_this_machines_backends(
     )
     _make_meeting(console, tmp_path)
 
-    detail = console.client.get("/ui/projects/ops/meetings")
+    detail = console.client.get("/web/ui/projects/ops/meetings")
 
     assert detail.status_code == 200
     assert '<option value="apple-speech"' in detail.text
@@ -819,12 +883,12 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     client = console.client
     meeting = _make_meeting(console, tmp_path)
     client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
     started = client.post(
-        f"/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
+        f"/web/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
     )
     assert started.status_code == 200
     run_id = console.registry.list_runs(meeting["id"])[0].id
@@ -832,23 +896,23 @@ def test_ui_run_fragment_polls_while_running(console, tmp_path) -> None:
     assert console.registry.get_run(run_id).origin == "console"
     assert "<progress" in started.text
     assert 'hx-trigger="every 1s"' in started.text
-    assert f'hx-get="/ui/runs/{run_id}"' in started.text
+    assert f'hx-get="/web/ui/runs/{run_id}"' in started.text
 
     # The Meetings tab renders the same live fragment while the run is active.
-    detail = client.get("/ui/projects/ops/meetings")
-    assert f'hx-get="/ui/runs/{run_id}"' in detail.text
+    detail = client.get("/web/ui/projects/ops/meetings")
+    assert f'hx-get="/web/ui/runs/{run_id}"' in detail.text
 
     console.gate.set()
     state = console.manager.wait(run_id, timeout=10)
     assert state.status == "done"
 
-    done = client.get(f"/ui/runs/{run_id}")
+    done = client.get(f"/web/ui/runs/{run_id}")
     assert done.status_code == 200
     assert "done" in done.text
     assert "<progress" in done.text
     assert 'hx-trigger="every 1s"' not in done.text
 
-    assert client.get("/ui/runs/999").status_code == 404
+    assert client.get("/web/ui/runs/999").status_code == 404
 
 
 def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
@@ -862,14 +926,14 @@ def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
     client = console.client
     meeting = _make_meeting(console, tmp_path)
     client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     started = client.post(
-        f"/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
+        f"/web/ui/meetings/{meeting['id']}/runs", data={"backend": "apple"}
     )
     run_id = console.registry.list_runs(meeting["id"])[0].id
-    assert f'hx-post="/ui/runs/{run_id}/cancel"' in started.text
+    assert f'hx-post="/web/ui/runs/{run_id}/cancel"' in started.text
 
     # Wait for the run's own lifecycle before cancelling: a cancel that arrives
     # while the run is still queued is RUN-04's *other* arm (a decisive stop), not
@@ -879,7 +943,7 @@ def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
 
     # The run is parked in its pipeline (the fixture's gate): the cancel is
     # recorded, and the fragment says so rather than pretending it stopped.
-    requested = client.post(f"/ui/runs/{run_id}/cancel")
+    requested = client.post(f"/web/ui/runs/{run_id}/cancel")
     assert requested.status_code == 200
     assert console.registry.get_run(run_id).status == "running"
     assert console.registry.get_run(run_id).cancel_requested_at is not None
@@ -888,21 +952,21 @@ def test_the_run_fragment_offers_cancel_and_resume(console, tmp_path) -> None:
     # Let the pipeline report: the next report stops it, terminally.
     console.gate.set()
     assert console.manager.wait(run_id, timeout=10).status == "stopped"
-    stopped = client.get(f"/ui/runs/{run_id}")
-    assert f'hx-post="/ui/runs/{run_id}/resume"' in stopped.text
+    stopped = client.get(f"/web/ui/runs/{run_id}")
+    assert f'hx-post="/web/ui/runs/{run_id}/resume"' in stopped.text
     assert "keyed by this workspace" in stopped.text  # the cache rule, stated
     assert console.registry.meeting_by_id(meeting["id"]).status == "ready"
 
     # Resuming starts a new run, linked to the one it continues.
-    resumed = client.post(f"/ui/runs/{run_id}/resume")
+    resumed = client.post(f"/web/ui/runs/{run_id}/resume")
     assert resumed.status_code == 200
     new_id = console.registry.list_runs(meeting["id"])[0].id
     assert new_id != run_id
     assert console.registry.get_run(new_id).resumes_run_id == run_id
     assert f"resumed from run {run_id}" in resumed.text
 
-    assert client.post("/ui/runs/999/cancel").status_code == 404
-    assert client.post("/ui/runs/999/resume").status_code == 404
+    assert client.post("/web/ui/runs/999/cancel").status_code == 404
+    assert client.post("/web/ui/runs/999/resume").status_code == 404
 
 
 def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:
@@ -926,7 +990,7 @@ def test_a_run_without_a_cost_record_renders_unknown(console, tmp_path) -> None:
         actor="console",
     )
 
-    fragment = console.client.get(f"/ui/runs/{run.id}")
+    fragment = console.client.get(f"/web/ui/runs/{run.id}")
     assert fragment.status_code == 200
     assert f'id="run-{meeting["id"]}"' in fragment.text
     assert "ETA" not in fragment.text
@@ -940,12 +1004,12 @@ def test_profile_picker_lists_the_shared_profiles(console, tmp_path) -> None:
     to the shared table shows up in the console with no web change.
     """
     _make_meeting(console, tmp_path)
-    detail = console.client.get("/ui/projects/ops/meetings")
+    detail = console.client.get("/web/ui/projects/ops/meetings")
     assert detail.status_code == 200
     for profile in PROFILES:
         assert f'<option value="{profile}"' in detail.text
     assert f'<option value="{PROFILE_CUSTOM}" selected>' in detail.text
-    assert 'hx-get="/ui/profile-options"' in detail.text
+    assert 'hx-get="/web/ui/profile-options"' in detail.text
     assert "re-transcri" in detail.text
 
 
@@ -965,28 +1029,28 @@ def test_profile_preview_resolves_the_knobs(client, monkeypatch) -> None:
     ):
         monkeypatch.delenv(variable, raising=False)
 
-    accurate = client.get("/ui/profile-options", params={"profile": "accurate"})
+    accurate = client.get("/web/ui/profile-options", params={"profile": "accurate"})
     assert accurate.status_code == 200
     assert "beam_size" in accurate.text
     assert "beam_size=8" in accurate.text
 
-    fast = client.get("/ui/profile-options", params={"profile": "fast"})
+    fast = client.get("/web/ui/profile-options", params={"profile": "fast"})
     assert fast.status_code == 200
     assert "best_of=1" in fast.text
 
-    custom = client.get("/ui/profile-options", params={"profile": PROFILE_CUSTOM})
+    custom = client.get("/web/ui/profile-options", params={"profile": PROFILE_CUSTOM})
     assert custom.status_code == 200
     assert "no preset" in custom.text
     assert "beam_size" not in custom.text
 
     assert (
-        client.get("/ui/profile-options", params={"profile": "turbo"}).status_code
+        client.get("/web/ui/profile-options", params={"profile": "turbo"}).status_code
         == 400
     )
 
 
 def _start_ui_run(console, meeting_id: int, **data):
-    res = console.client.post(f"/ui/meetings/{meeting_id}/runs", data=data)
+    res = console.client.post(f"/web/ui/meetings/{meeting_id}/runs", data=data)
     assert res.status_code == 200, res.text
     console.gate.set()
     run_id = console.registry.list_runs(meeting_id)[0].id
@@ -998,7 +1062,7 @@ def test_ui_run_carries_the_chosen_profile(console, tmp_path) -> None:
     """The resolved profile reaches the run's options (not just the form)."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
@@ -1012,7 +1076,7 @@ def test_ui_run_custom_sets_no_profile_knobs(console, tmp_path) -> None:
     """`custom` is the escape hatch: every knob stays the user's."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
@@ -1038,7 +1102,7 @@ def test_the_console_run_form_exposes_the_user_facing_knobs_and_no_more(
     invisible.
     """
     _make_meeting(console, tmp_path)
-    form = console.client.get("/ui/projects/ops/meetings").text
+    form = console.client.get("/web/ui/projects/ops/meetings").text
 
     for knob in CONSOLE_KNOBS:
         assert f'name="{knob.name}"' in form, knob.name
@@ -1059,7 +1123,7 @@ def test_a_console_run_sets_each_knob_the_form_offers(console, tmp_path, knob) -
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
@@ -1081,7 +1145,7 @@ def test_the_console_reads_no_knob_its_form_does_not_offer(console, tmp_path) ->
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
@@ -1108,12 +1172,12 @@ def test_a_console_knob_that_is_not_a_number_re_renders(console, tmp_path) -> No
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
     answered = console.client.post(
-        f"/ui/meetings/{meeting['id']}/runs",
+        f"/web/ui/meetings/{meeting['id']}/runs",
         data={"backend": "apple", "chunk_seconds": "half"},
     )
 
@@ -1139,7 +1203,7 @@ def test_a_slow_run_resolution_does_not_stall_the_node(
     """
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     pause = 0.75
@@ -1157,7 +1221,7 @@ def test_a_slow_run_resolution_does_not_stall_the_node(
         submitted = threading.Thread(
             target=lambda: answered.append(
                 console.client.post(
-                    f"/ui/meetings/{meeting['id']}/runs",
+                    f"/web/ui/meetings/{meeting['id']}/runs",
                     data={"backend": "apple", "auto": "1"},
                 )
             )
@@ -1182,12 +1246,12 @@ def test_run_api_accepts_a_profile(console, tmp_path) -> None:
     """The JSON surface offers the same choice as the form."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
 
     started = console.client.post(
-        f"/api/meetings/{meeting['id']}/runs",
+        f"/api/v1/meetings/{meeting['id']}/runs",
         json={"backend": "apple", "profile": "fast"},
     )
     assert started.status_code == 202
@@ -1202,7 +1266,7 @@ def test_run_form_offers_the_opt_in_auto_and_backend_auto(console, tmp_path) -> 
     """`--auto` is a choice in the form, never the silent default; and the
     backend's own `auto` sentinel is offered beside the concrete ids."""
     _make_meeting(console, tmp_path)
-    detail = console.client.get("/ui/projects/ops/meetings").text
+    detail = console.client.get("/web/ui/projects/ops/meetings").text
 
     assert 'name="auto"' in detail
     assert 'name="auto" value="1" checked' not in detail  # opt-in, not default
@@ -1215,7 +1279,7 @@ def test_ui_run_auto_records_and_shows_the_resolver_explanation(
     """Checking `auto` resolves the run and surfaces the resolver's own explanation."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     monkeypatch.setattr(
@@ -1231,7 +1295,7 @@ def test_ui_run_auto_records_and_shows_the_resolver_explanation(
     assert run.options["decoder_knobs"] == {"beam_size": 8}
     assert "--auto: chose" in run.options["auto"]["explanation"]
     # Visible in the run fragment (and again on a reload, from the registry).
-    assert "--auto: chose" in console.client.get(f"/ui/runs/{run.id}").text
+    assert "--auto: chose" in console.client.get(f"/web/ui/runs/{run.id}").text
 
 
 def test_ui_run_backend_auto_is_orthogonal_to_the_profile(
@@ -1240,7 +1304,7 @@ def test_ui_run_backend_auto_is_orthogonal_to_the_profile(
     """`--backend auto` picks the backend; the chosen profile is untouched."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     monkeypatch.setattr(
@@ -1262,7 +1326,7 @@ def test_run_api_accepts_auto(console, tmp_path, monkeypatch) -> None:
     """The JSON surface offers the same opt-in as the form."""
     meeting = _make_meeting(console, tmp_path)
     console.client.put(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         json={"paths": [str(tmp_path / "a.wav")]},
     )
     monkeypatch.setattr(
@@ -1270,7 +1334,7 @@ def test_run_api_accepts_auto(console, tmp_path, monkeypatch) -> None:
     )
 
     started = console.client.post(
-        f"/api/meetings/{meeting['id']}/runs",
+        f"/api/v1/meetings/{meeting['id']}/runs",
         json={"backend": "apple", "auto": True},
     )
     assert started.status_code == 202
@@ -1289,21 +1353,21 @@ def _seed_archivable(client, tmp_path, *, default_root: bool = True):
     project = {"name": "Ops"}
     if default_root:
         project["default_archive_root"] = str(root)
-    client.post("/api/projects", json=project)
+    client.post("/api/v1/projects", json=project)
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake-audio")
     meeting = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Kickoff", "workspace_path": str(tmp_path)},
     ).json()
-    client.put(f"/api/meetings/{meeting['id']}/tapes", json={"paths": [str(tape)]})
+    client.put(f"/api/v1/meetings/{meeting['id']}/tapes", json={"paths": [str(tape)]})
     return root, tape, meeting
 
 
 def test_archive_api_lifecycle(client, tmp_path) -> None:
     root, _tape, meeting = _seed_archivable(client, tmp_path)
 
-    created = client.post(f"/api/meetings/{meeting['id']}/archives", json={})
+    created = client.post(f"/api/v1/meetings/{meeting['id']}/archives", json={})
     assert created.status_code == 201
     archive = created.json()
     assert archive["meeting_id"] == meeting["id"]
@@ -1312,12 +1376,12 @@ def test_archive_api_lifecycle(client, tmp_path) -> None:
     assert Path(archive["manifest_path"]).is_file()
     assert archive["manifest_sha256"]
 
-    project_archives = client.get("/api/projects/ops/archives").json()
+    project_archives = client.get("/api/v1/projects/ops/archives").json()
     assert [a["id"] for a in project_archives] == [archive["id"]]
-    meeting_archives = client.get(f"/api/meetings/{meeting['id']}/archives").json()
+    meeting_archives = client.get(f"/api/v1/meetings/{meeting['id']}/archives").json()
     assert [a["id"] for a in meeting_archives] == [archive["id"]]
 
-    verified = client.post(f"/api/archives/{archive['id']}/verify")
+    verified = client.post(f"/api/v1/archives/{archive['id']}/verify")
     assert verified.status_code == 200
     assert verified.json()["ok"] is True
     assert verified.json()["checked"] == 1
@@ -1326,22 +1390,22 @@ def test_archive_api_lifecycle(client, tmp_path) -> None:
     # A same-length tamper of a copied tape is caught by the digest alone.
     copy = Path(archive["root_path"]) / "tapes" / "a.wav"
     copy.write_bytes(bytes(copy.stat().st_size))
-    tampered = client.post(f"/api/archives/{archive['id']}/verify").json()
+    tampered = client.post(f"/api/v1/archives/{archive['id']}/verify").json()
     assert tampered["ok"] is False
     assert tampered["mismatched"] == ["tapes/a.wav"]
 
 
 def test_archive_api_accepts_an_explicit_root(client, tmp_path) -> None:
     _seed_archivable(client, tmp_path, default_root=False)
-    meeting_id = client.get("/api/projects/ops/meetings").json()[0]["id"]
+    meeting_id = client.get("/api/v1/projects/ops/meetings").json()[0]["id"]
     override = tmp_path / "somewhere-else"
 
-    refused = client.post(f"/api/meetings/{meeting_id}/archives", json={})
+    refused = client.post(f"/api/v1/meetings/{meeting_id}/archives", json={})
     assert refused.status_code == 400
     assert "no archive root" in refused.json()["detail"]
 
     created = client.post(
-        f"/api/meetings/{meeting_id}/archives", json={"root": str(override)}
+        f"/api/v1/meetings/{meeting_id}/archives", json={"root": str(override)}
     )
     assert created.status_code == 201
     assert Path(created.json()["root_path"]).parent == override.resolve() / "ops"
@@ -1349,92 +1413,94 @@ def test_archive_api_accepts_an_explicit_root(client, tmp_path) -> None:
 
 def test_archive_api_unknown_ids_are_404(client, tmp_path) -> None:
     _seed_archivable(client, tmp_path)
-    assert client.post("/api/meetings/999/archives", json={}).status_code == 404
-    assert client.get("/api/meetings/999/archives").status_code == 404
-    assert client.get("/api/projects/nope/archives").status_code == 404
-    assert client.post("/api/archives/999/verify").status_code == 404
+    assert client.post("/api/v1/meetings/999/archives", json={}).status_code == 404
+    assert client.get("/api/v1/meetings/999/archives").status_code == 404
+    assert client.get("/api/v1/projects/nope/archives").status_code == 404
+    assert client.post("/api/v1/archives/999/verify").status_code == 404
 
 
 def test_archive_api_verify_without_a_manifest_is_404(client, tmp_path) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    archive = client.post(f"/api/meetings/{meeting['id']}/archives", json={}).json()
+    archive = client.post(f"/api/v1/meetings/{meeting['id']}/archives", json={}).json()
     (Path(archive["root_path"]) / "archive.json").unlink()
-    assert client.post(f"/api/archives/{archive['id']}/verify").status_code == 404
+    assert client.post(f"/api/v1/archives/{archive['id']}/verify").status_code == 404
 
 
 # --- HTML surface: archiving and verification ----------------------------- #
 def test_ui_archive_a_meeting_and_list_it(client, tmp_path) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    assert f'hx-post="/ui/meetings/{meeting["id"]}/archives"' in (
-        client.get("/ui/projects/ops/meetings").text
+    assert f'hx-post="/web/ui/meetings/{meeting["id"]}/archives"' in (
+        client.get("/web/ui/projects/ops/meetings").text
     )
 
-    archived = client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archived = client.post(
+        f"/web/ui/meetings/{meeting['id']}/archives", data={"root": ""}
+    )
     assert archived.status_code == 200
     assert "Kickoff" in archived.text
     assert "Archives" in archived.text
-    archive = client.get("/api/projects/ops/archives").json()[0]
+    archive = client.get("/api/v1/projects/ops/archives").json()[0]
     assert archive["root_path"] in archived.text
     # The status is fetched lazily by the row, never hashed during the render.
-    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in archived.text
+    assert f'hx-get="/web/ui/archives/{archive["id"]}/verify"' in archived.text
     assert 'hx-trigger="load"' in archived.text
     assert '<span class="badge">ok</span>' not in archived.text
 
     # The status endpoint produces the verification fragment on demand.
-    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    status = client.get(f"/web/ui/archives/{archive['id']}/verify")
     assert status.status_code == 200
     assert '<span class="badge">ok</span>' in status.text
     assert "file verified" in status.text
 
     # The Meetings tab renders the same archive (with the lazy wiring).
-    detail = client.get("/ui/projects/ops/meetings")
+    detail = client.get("/web/ui/projects/ops/meetings")
     assert archive["root_path"] in detail.text
-    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text
+    assert f'hx-get="/web/ui/archives/{archive["id"]}/verify"' in detail.text
 
 
 def test_project_detail_does_not_hash_archives(client, tmp_path, monkeypatch) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
-    archive = client.get("/api/projects/ops/archives").json()[0]
+    client.post(f"/web/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/v1/projects/ops/archives").json()[0]
 
     def boom(_path):
         raise AssertionError("the detail render must not verify archives")
 
     monkeypatch.setattr("clear_record.web.app.verify_archive", boom)
-    detail = client.get("/ui/projects/ops/meetings")
+    detail = client.get("/web/ui/projects/ops/meetings")
     assert detail.status_code == 200
     assert archive["root_path"] in detail.text
-    assert f'hx-get="/ui/archives/{archive["id"]}/verify"' in detail.text
+    assert f'hx-get="/web/ui/archives/{archive["id"]}/verify"' in detail.text
 
 
 def test_ui_verify_reports_a_tampered_archive_inline(client, tmp_path) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
-    archive = client.get("/api/projects/ops/archives").json()[0]
+    client.post(f"/web/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/v1/projects/ops/archives").json()[0]
     copy = Path(archive["root_path"]) / "tapes" / "a.wav"
     copy.write_bytes(bytes(copy.stat().st_size))
 
-    verified = client.post(f"/ui/archives/{archive['id']}/verify")
+    verified = client.post(f"/web/ui/archives/{archive['id']}/verify")
     assert verified.status_code == 200
     assert '<span class="badge">failed</span>' in verified.text
     assert "1 mismatched" in verified.text
     assert "tapes/a.wav" in verified.text
 
     # The lazy GET resolves the same fragment the button would swap in.
-    lazy = client.get(f"/ui/archives/{archive['id']}/verify")
+    lazy = client.get(f"/web/ui/archives/{archive['id']}/verify")
     assert '<span class="badge">failed</span>' in lazy.text
 
-    assert client.post("/ui/archives/999/verify").status_code == 404
-    assert client.get("/ui/archives/999/verify").status_code == 404
+    assert client.post("/web/ui/archives/999/verify").status_code == 404
+    assert client.get("/web/ui/archives/999/verify").status_code == 404
 
 
 def test_ui_verify_reports_a_missing_manifest(client, tmp_path) -> None:
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
-    archive = client.get("/api/projects/ops/archives").json()[0]
+    client.post(f"/web/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/v1/projects/ops/archives").json()[0]
     (Path(archive["root_path"]) / "archive.json").unlink()
 
-    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    status = client.get(f"/web/ui/archives/{archive['id']}/verify")
     assert status.status_code == 200
     assert '<span class="badge">missing</span>' in status.text
     assert "no manifest" in status.text
@@ -1450,13 +1516,13 @@ def test_ui_verify_reports_an_unreadable_manifest_as_unverifiable(
     there.
     """
     _root, _tape, meeting = _seed_archivable(client, tmp_path)
-    client.post(f"/ui/meetings/{meeting['id']}/archives", data={"root": ""})
-    archive = client.get("/api/projects/ops/archives").json()[0]
+    client.post(f"/web/ui/meetings/{meeting['id']}/archives", data={"root": ""})
+    archive = client.get("/api/v1/projects/ops/archives").json()[0]
     (Path(archive["root_path"]) / "archive.json").write_text(
         "{not json", encoding="utf-8"
     )
 
-    status = client.get(f"/ui/archives/{archive['id']}/verify")
+    status = client.get(f"/web/ui/archives/{archive['id']}/verify")
     assert status.status_code == 200
     # Its own chip, carrying the service's reason — never the failure chip,
     # which would name a file as the thing that went wrong.
@@ -1465,7 +1531,7 @@ def test_ui_verify_reports_an_unreadable_manifest_as_unverifiable(
     assert "archive.json" in status.text
     assert "missing" not in status.text
 
-    api = client.post(f"/api/archives/{archive['id']}/verify").json()
+    api = client.post(f"/api/v1/archives/{archive['id']}/verify").json()
     assert api["ok"] is False
     assert api["missing"] == []
     assert api["unverifiable"]
@@ -1473,9 +1539,9 @@ def test_ui_verify_reports_an_unreadable_manifest_as_unverifiable(
 
 def test_ui_archive_without_a_root_explains_itself(client, tmp_path) -> None:
     _seed_archivable(client, tmp_path, default_root=False)
-    meeting_id = client.get("/api/projects/ops/meetings").json()[0]["id"]
+    meeting_id = client.get("/api/v1/projects/ops/meetings").json()[0]["id"]
 
-    refused = client.post(f"/ui/meetings/{meeting_id}/archives", data={"root": ""})
+    refused = client.post(f"/web/ui/meetings/{meeting_id}/archives", data={"root": ""})
     assert refused.status_code == 200
     assert "no archive root" in refused.text
     assert "No archives yet." in refused.text
@@ -1510,20 +1576,20 @@ def test_a_meeting_run_is_never_refused_by_the_workspaces_declaration(
     taken = [str(tapes / "a.wav"), str(tapes / "b.wav")]
     assert (
         client.put(
-            f"/api/meetings/{meeting['id']}/tapes", json={"paths": taken}
+            f"/api/v1/meetings/{meeting['id']}/tapes", json={"paths": taken}
         ).status_code
         == 201
     )
     declaration = workspace / ".clear-record-ignore"
     declaration.write_text("tapes/*.wav\n", encoding="utf-8")
 
-    started = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    started = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
     assert started.status_code == 202
     run_id = started.json()["run"]["id"]
     console.gate.set()
     assert console.manager.wait(run_id, timeout=10).status == "done"
     assert list(console.seen[-1].audio_files) == taken, "the registry's tapes ran"
-    events = client.get(f"/api/runs/{run_id}/events?after=0").json()
+    events = client.get(f"/api/v1/runs/{run_id}/events?after=0").json()
     assert [
         event["message"]
         for event in events["events"]
@@ -1533,7 +1599,7 @@ def test_a_meeting_run_is_never_refused_by_the_workspaces_declaration(
     # A declaration that cannot be read is nobody's business on this edge either:
     # the submission is answered and the run finishes exactly as it did above.
     declaration.chmod(0o000)
-    second = client.post(f"/api/meetings/{meeting['id']}/runs", json={})
+    second = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={})
     assert second.status_code == 202
     second_id = second.json()["run"]["id"]
     console.gate.set()
@@ -1568,7 +1634,7 @@ def test_an_auto_run_reads_the_declaration_and_says_when_it_cannot(
     meeting = _make_meeting(console, workspace)
     assert (
         client.put(
-            f"/api/meetings/{meeting['id']}/tapes",
+            f"/api/v1/meetings/{meeting['id']}/tapes",
             json={"paths": [str(workspace / "a.wav")]},
         ).status_code
         == 201
@@ -1578,7 +1644,7 @@ def test_an_auto_run_reads_the_declaration_and_says_when_it_cannot(
     if shape == "permission":
         declaration.chmod(0o000)
 
-    refused = client.post(f"/api/meetings/{meeting['id']}/runs", json={"auto": True})
+    refused = client.post(f"/api/v1/meetings/{meeting['id']}/runs", json={"auto": True})
 
     assert refused.status_code == 400
     assert refused.json()["detail"] == CANNOT_READ_DECLARATION

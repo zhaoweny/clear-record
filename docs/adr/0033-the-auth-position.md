@@ -281,7 +281,22 @@ verbatim answers and the direction they answer are the
   half — the console's own code reads no `X-Forwarded-*` header, and what is left
   is narrowing the header to **declared** peers (`CR_TRUSTED_PROXIES` is the peer
   declaration that change will honour, and nothing consults it yet; uvicorn's own
-  default already believes `X-Forwarded-Proto` from any loopback peer), machine
-  tokens for scripts, and the `/web` + `/api/v1` re-root. The credential's *act* — a
+  default already believes `X-Forwarded-Proto` from any loopback peer), and machine
+  tokens for scripts. The credential's *act* — a
   fresh password at a destructive operation — still has no member of its class to
   gate.
+- [FACT] **The re-root landed**: the console answers under `/web/` (pages at
+  `/web/…`, fragments at `/web/ui/…`, the credential step at `/web/setup`), the
+  machine API under `/api/v1/`, and the compiled assets stay at `/static`;
+  `GET /health` stays at the **root**, because it is the tray's and the command
+  line's probe — the tray probes it to tell a healthy node from a sign-in page,
+  and `clear-record node` proves a recorded address through the same call — and
+  it names nothing else. **No old path answers.** What that answer *is* depends on
+  the gate, which runs first: anonymously, `/`, `/ui/*` and `/setup` are answered
+  as any gated page is (a `303` to the setup route) and `/api/*` with `401`; with
+  a live session each reaches the router and is a `404`, because no route and no
+  redirect shim survived the move (pre-1.0 breaking change). The
+  gate's decisions are unchanged — the session cookie's `Path` is the console
+  prefix, so a move of the console moves the cookie with it — and the anonymous
+  surface is still the list `web/auth.py`'s `answers_anonymously` returns,
+  re-pointed at the new paths, never widened.

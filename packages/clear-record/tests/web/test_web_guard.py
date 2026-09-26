@@ -33,14 +33,14 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def _projects(client: TestClient) -> list[dict]:
-    return client.get("/api/projects").json()
+    return client.get("/api/v1/projects").json()
 
 
 # --- CSRF: Origin / Referer on state-changing requests -------------------- #
 def test_cross_origin_form_post_is_rejected(client: TestClient) -> None:
-    """The headline case: a hostile page's form POST to /ui/projects."""
+    """The headline case: a hostile page's form POST to /web/ui/projects."""
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Evil"},
         headers={"Origin": "http://evil.example"},
     )
@@ -54,7 +54,7 @@ def test_cross_origin_form_post_is_rejected(client: TestClient) -> None:
 def test_cross_origin_json_post_is_rejected(client: TestClient) -> None:
     """The machine surface is guarded too, not just the htmx forms."""
     res = client.post(
-        "/api/projects",
+        "/api/v1/projects",
         json={"name": "Evil"},
         headers={"Origin": "http://evil.example"},
     )
@@ -64,7 +64,7 @@ def test_cross_origin_json_post_is_rejected(client: TestClient) -> None:
 
 def test_referer_is_used_when_origin_is_absent(client: TestClient) -> None:
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Evil"},
         headers={"Referer": "http://evil.example/page"},
     )
@@ -74,7 +74,7 @@ def test_referer_is_used_when_origin_is_absent(client: TestClient) -> None:
 
 def test_opaque_null_origin_is_rejected(client: TestClient) -> None:
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Evil"},
         headers={"Origin": "null"},
     )
@@ -84,7 +84,7 @@ def test_opaque_null_origin_is_rejected(client: TestClient) -> None:
 
 def test_same_origin_post_with_an_origin_header_is_allowed(client: TestClient) -> None:
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Weekly Ops"},
         headers={"Origin": LOOPBACK_ORIGIN},
     )
@@ -95,19 +95,20 @@ def test_same_origin_post_with_an_origin_header_is_allowed(client: TestClient) -
 # --- DNS rebinding: Host on every request --------------------------------- #
 def test_mismatched_host_is_rejected(client: TestClient) -> None:
     res = client.post(
-        "/ui/projects", data={"name": "Evil"}, headers={"host": "evil.example"}
+        "/web/ui/projects", data={"name": "Evil"}, headers={"host": "evil.example"}
     )
     assert res.status_code == 403
     assert "Host" in res.json()["detail"]
     # Host is method-blind: a rebound GET is a disclosure, so it is rejected too.
     assert (
-        client.get("/ui/projects", headers={"host": "evil.example"}).status_code == 403
+        client.get("/web/ui/projects", headers={"host": "evil.example"}).status_code
+        == 403
     )
     assert _projects(client) == []
 
 
 def test_absent_host_is_rejected(client: TestClient) -> None:
-    res = client.post("/ui/projects", data={"name": "Evil"}, headers={"host": ""})
+    res = client.post("/web/ui/projects", data={"name": "Evil"}, headers={"host": ""})
     assert res.status_code == 403
     assert "missing" in res.json()["detail"]
     assert _projects(client) == []
@@ -115,17 +116,17 @@ def test_absent_host_is_rejected(client: TestClient) -> None:
 
 # --- Ordinary same-origin use is unaffected ------------------------------- #
 def test_same_origin_gets_and_posts_still_work(client: TestClient) -> None:
-    assert client.get("/ui/projects").status_code == 200
-    # The liveness route is anonymous and is *not* under /api: the guard still
+    assert client.get("/web/ui/projects").status_code == 200
+    # The liveness route is anonymous and is *not* under /api/v1: the guard still
     # applies to it (Host), and nothing else does.
     assert client.get("/health").json()["status"] == "ok"
 
     # htmx form POST with no Origin (a non-browser default) and with the browser's
     # own Origin both pass.
-    assert client.post("/ui/projects", data={"name": "Ops"}).status_code == 200
+    assert client.post("/web/ui/projects", data={"name": "Ops"}).status_code == 200
     assert (
         client.post(
-            "/ui/projects",
+            "/web/ui/projects",
             data={"name": "Weekly"},
             headers={"Origin": LOOPBACK_ORIGIN},
         ).status_code
@@ -136,7 +137,7 @@ def test_same_origin_gets_and_posts_still_work(client: TestClient) -> None:
 
 def test_non_browser_client_without_origin_is_allowed(client: TestClient) -> None:
     """curl / a script sends neither Origin nor Referer; it is not the threat."""
-    res = client.post("/api/projects", json={"name": "Scripted"})
+    res = client.post("/api/v1/projects", json={"name": "Scripted"})
     assert res.status_code == 201
     assert res.json()["slug"] == "scripted"
 
@@ -151,7 +152,7 @@ def test_trusted_hosts_env_allows_a_proxys_public_hostname(
     client = signed_in(TestClient(app, base_url=LOOPBACK_ORIGIN))
 
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Proxied"},
         headers={
             "host": "console.example.com",
@@ -164,7 +165,7 @@ def test_trusted_hosts_env_allows_a_proxys_public_hostname(
     # not switch the guard off.
     assert (
         client.post(
-            "/ui/projects",
+            "/web/ui/projects",
             data={"name": "Evil"},
             headers={"Origin": "https://evil.example"},
         ).status_code

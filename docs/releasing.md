@@ -319,7 +319,7 @@ uv venv /tmp/cr-prev-env
 VIRTUAL_ENV=/tmp/cr-prev-env uv pip install 'clear-record[web]<the released version>'
 CR_DATA_DIR=/tmp/cr-prev-data CR_STATE_DIR=/tmp/cr-prev-state \
   /tmp/cr-prev-env/bin/clear-record serve --port 8790 &
-curl -s -X POST localhost:8790/api/projects -H 'content-type: application/json' \
+curl -s -X POST localhost:8790/api/v1/projects -H 'content-type: application/json' \
   --cookie "cr_session=$(cat /tmp/cr-prev-state/local-session)" \
   -d '{"name":"Registry smoke"}'   # then stop the server: the registry exists now
 
@@ -331,7 +331,7 @@ sqlite3 /tmp/cr-candidate-data/registry.sqlite3 \
   'select slug from project'           # must print: registry-smoke
 ```
 
-The console has a credential now (ADR-0033), so `/api/projects` answers `401` to a
+The console has a credential now (ADR-0033), so `/api/v1/projects` answers `401` to a
 bare `curl`. The write above therefore presents `cr_session` — the session the
 node published for **this machine**, in the `local-session` file of its state
 directory (`CR_STATE_DIR`, §1 of the deployment guide), which is exactly what the

@@ -8,7 +8,8 @@ uses (the guard docs in :mod:`clear_record.web.guard`). The loopback default is
 exercised directly, with an explicit ``trusted_hosts=()``, in
 ``test_web_guard.py``.
 
-A fresh install now redirects ``/`` to ``/setup``, so the ordinary
+A fresh install now redirects the console home (``/web/``) to ``/web/setup``, so
+the ordinary
 page tests record the version marker and play a returning user. Tests that
 exercise the first run or the update notice opt out with the
 ``own_setup_marker`` marker and arrange their own.
@@ -37,7 +38,7 @@ def _setup_marker_seen(request, _hermetic_english_environment) -> None:
 def _stub_transcription_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep setup-page renders off the real ASR backend probes.
 
-    ``/setup`` now states transcription readiness from
+    ``/web/setup`` now states transcription readiness from
     ``service.agent_flow.transcription_status()``. That call probes the machine
     (and can compile/run the Apple Speech helper), which is neither hermetic nor
     fast per test. The readiness-specific tests override this stub.

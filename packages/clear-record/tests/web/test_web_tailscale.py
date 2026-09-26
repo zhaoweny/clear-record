@@ -29,6 +29,7 @@ from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web import _guard_termination, tailscale
 from clear_record.web.app import create_app
+from clear_record.web.auth import CONSOLE_HOME
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
@@ -440,14 +441,20 @@ def test_stop_on_a_reused_mapping_touches_nothing(fake_tailscale) -> None:
 
 
 def test_console_url_omits_the_default_https_port() -> None:
-    assert tailscale.console_url("Host.Tailnet.ts.net.", 443) == (
-        "https://host.tailnet.ts.net/"
+    """The URL names the console's home, not the bare origin.
+
+    Serve proxies the node, and the node serves the console under its own prefix
+    with nothing at the root, so a URL without it is a 404 for the operator who
+    clicks it.
+    """
+    assert tailscale.console_url("Host.Tailnet.ts.net.", 443, CONSOLE_HOME) == (
+        "https://host.tailnet.ts.net/web/"
     )
 
 
 def test_console_url_spells_out_a_non_default_port() -> None:
-    assert tailscale.console_url(TAILNET_NAME, 8765) == (
-        "https://myhost.tailnet.ts.net:8765/"
+    assert tailscale.console_url(TAILNET_NAME, 8765, CONSOLE_HOME) == (
+        "https://myhost.tailnet.ts.net:8765/web/"
     )
 
 
@@ -464,7 +471,7 @@ def test_tailscale_flag_serves_trusts_and_prints_the_url(
 
     assert result.exit_code == 0, result.output
     assert captured_serve["trusted_hosts"] == [TAILNET_NAME]
-    assert f"https://{TAILNET_NAME}:{PORT}/" in result.output
+    assert f"https://{TAILNET_NAME}:{PORT}{CONSOLE_HOME}" in result.output
     # The tailnet is the perimeter, not the authentication: the console asks for
     # its own password (ADR-0033), and the message says both.
     assert "tailnet decides who can reach this console" in result.output
@@ -493,7 +500,7 @@ def test_tailscale_port_overrides_the_exposed_port(
         ["tailscale", "serve", "--https=443", f"http://127.0.0.1:{PORT}"]
     ]
     # 443 is implicit in an HTTPS URL.
-    assert f"https://{TAILNET_NAME}/" in result.output
+    assert f"https://{TAILNET_NAME}{CONSOLE_HOME}" in result.output
 
 
 def test_cleanup_runs_on_the_console_exit_path(
@@ -695,7 +702,7 @@ def test_no_env_var_is_needed_for_the_host_to_be_trusted(
     )
     client = signed_in(TestClient(app, base_url=f"https://{TAILNET_NAME}"))
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Tailnet"},
         headers={"host": TAILNET_NAME, "Origin": f"https://{TAILNET_NAME}"},
     )

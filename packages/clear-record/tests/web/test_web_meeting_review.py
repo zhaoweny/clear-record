@@ -82,7 +82,7 @@ class SimpleConsole:
         )
 
     def drafts(self) -> list[dict]:
-        res = self.client.get(f"/api/meetings/{self.meeting.id}/agent")
+        res = self.client.get(f"/api/v1/meetings/{self.meeting.id}/agent")
         assert res.status_code == 200
         return res.json()["drafts"]
 
@@ -131,7 +131,7 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
         actor="console",
     )
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert page.status_code == 200
     assert "the falcon is up" in page.text
@@ -144,9 +144,9 @@ def test_the_meeting_view_shows_the_transcript_and_artifacts(tmp_path: Path) -> 
 
 def test_the_project_view_links_to_the_meeting_review(tmp_path: Path) -> None:
     console = _console(tmp_path)
-    page = console.client.get("/ui/projects/ops/meetings")
+    page = console.client.get("/web/ui/projects/ops/meetings")
     assert "Review" in page.text
-    assert 'href="/projects/ops/meetings/kickoff"' in page.text
+    assert 'href="/web/projects/ops/meetings/kickoff"' in page.text
 
 
 def test_each_kind_lands_as_a_reviewable_draft_with_its_author(
@@ -157,7 +157,7 @@ def test_each_kind_lands_as_a_reviewable_draft_with_its_author(
     for kind in _ANSWERS:
         console.write(kind)
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
     for kind in _ANSWERS:
         assert kind in page.text
     # The version records the actor the console supplied — the transport's word,
@@ -177,7 +177,7 @@ def test_a_second_version_is_shown_on_the_chain(tmp_path: Path) -> None:
         draft_id=first.draft_id,
     )
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert "2 versions" in page.text
     # One chain, two writers: each version records the actor that wrote it.
@@ -190,7 +190,7 @@ def test_accepting_glossary_draft_adds_candidate_terms(tmp_path: Path) -> None:
     draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
         data={"version": draft.version},
     )
 
@@ -208,13 +208,13 @@ def test_accepting_minutes_shows_them_per_meeting_and_across_the_project(
     draft = console.write("minutes")
 
     meeting_page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept",
         data={"version": draft.version},
     )
     assert "We shipped it." in meeting_page.text
     assert "Minutes recorded for this meeting." in meeting_page.text
 
-    project_page = console.client.get("/ui/projects/ops")
+    project_page = console.client.get("/web/ui/projects/ops")
     assert "table-minutes" in project_page.text
     assert "Kickoff" in project_page.text
 
@@ -224,7 +224,7 @@ def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None
     draft = console.write("glossary_collection")
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/reject",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/reject",
         data={"version": draft.version},
     )
 
@@ -241,7 +241,7 @@ def test_the_panel_names_the_0_2_drafts_it_does_not_read(tmp_path: Path) -> None
     legacy.mkdir(parents=True)
     (legacy / "run.json").write_text("{}", encoding="utf-8")
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert "written before 0.3" in page.text
     assert "still on disk" in page.text
@@ -252,7 +252,7 @@ def test_the_panel_says_nothing_about_0_2_drafts_when_there_are_none(
 ) -> None:
     console = _console(tmp_path)
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert "written before 0.3" not in page.text
 
@@ -270,14 +270,14 @@ def test_the_console_posts_the_version_and_a_stale_one_is_refused(
     )
 
     stale = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
         data={"version": 1},
     )
     assert "not the newest" in stale.text
     assert console.drafts()[0]["review_state"] == "draft"
 
     accepted = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/{first.draft_id}/accept",
         data={"version": 2},
     )
     assert "Minutes recorded for this meeting." in accepted.text
@@ -289,7 +289,7 @@ def test_reviewing_an_unknown_draft_re_renders_with_the_service_message(
     console = _console(tmp_path)
 
     page = console.client.post(
-        f"/ui/meetings/{console.meeting.id}/agent/drafts/nope/accept",
+        f"/web/ui/meetings/{console.meeting.id}/agent/drafts/nope/accept",
         data={"version": 1},
     )
 
@@ -313,7 +313,7 @@ def test_the_transcript_pages(tmp_path: Path) -> None:
         ),
     )
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert "line 0" in page.text and "line 4" in page.text
 
@@ -322,7 +322,7 @@ def test_the_api_lists_and_accepts_a_draft(tmp_path: Path) -> None:
     console = _console(tmp_path)
     draft = console.write("transcript_check")
 
-    listed = console.client.get(f"/api/meetings/{console.meeting.id}/agent")
+    listed = console.client.get(f"/api/v1/meetings/{console.meeting.id}/agent")
     assert listed.status_code == 200
     assert listed.json()["kinds"] == [
         "glossary_collection",
@@ -332,7 +332,7 @@ def test_the_api_lists_and_accepts_a_draft(tmp_path: Path) -> None:
     assert listed.json()["drafts"][0]["draft_id"] == draft.draft_id
 
     accepted = console.client.post(
-        f"/api/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
+        f"/api/v1/meetings/{console.meeting.id}/agent/drafts/{draft.draft_id}/accept"
         f"?version={draft.version}"
     )
     assert accepted.status_code == 200
@@ -349,7 +349,7 @@ def test_an_unknown_draft_is_a_404(tmp_path: Path) -> None:
     console = _console(tmp_path)
     assert (
         console.client.post(
-            f"/api/meetings/{console.meeting.id}/agent/drafts/nope/accept?version=1"
+            f"/api/v1/meetings/{console.meeting.id}/agent/drafts/nope/accept?version=1"
         ).status_code
         == 404
     )
@@ -373,7 +373,7 @@ def test_the_transcript_pane_names_the_run_that_produced_it(tmp_path: Path) -> N
     )
     publish_run(scope)
 
-    page = console.client.get("/ui/projects/ops/meetings/kickoff")
+    page = console.client.get("/web/ui/projects/ops/meetings/kickoff")
 
     assert page.status_code == 200
     assert "run seven" in page.text

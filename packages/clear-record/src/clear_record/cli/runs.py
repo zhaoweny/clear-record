@@ -40,11 +40,11 @@ from clear_record.core.i18n import tr
 from clear_record.core.message import render_message
 
 #: Where a client starts a run over a workspace **directory** on the node.
-RUNS_PATH = "/api/runs"
+RUNS_PATH = "/api/v1/runs"
 #: One run's row and its live state (the shape the JSON API serves).
-RUN_PATH = "/api/runs/{run_id}"
+RUN_PATH = "/api/v1/runs/{run_id}"
 #: One page of a run's event stream, read from a cursor.
-EVENTS_PATH = "/api/runs/{run_id}/events?after={after}"
+EVENTS_PATH = "/api/v1/runs/{run_id}/events?after={after}"
 #: Seconds between two reads of a run that is still in flight. The console polls
 #: its own fragment at one second; a client watching a multi-hour run has no
 #: reason to ask more often than that.
@@ -140,7 +140,7 @@ def start(target: node.NodeAddress, directory: str, body: dict[str, Any]) -> Sta
     """Ask the node to run *directory*, and return the run it accepted.
 
     ``body`` is the run request in the **node's** own field names (what
-    ``/api/runs`` declares), and the directory is added to it here: the one field
+    ``/api/v1/runs`` declares), and the directory is added to it here: the one field
     that makes this a run over a workspace rather than over a registry id.
     :class:`Refused` carries the node's sentence for anything but a 2xx — a run
     already in flight for this workspace, a workspace this node cannot run (no

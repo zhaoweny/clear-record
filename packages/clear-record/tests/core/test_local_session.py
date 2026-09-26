@@ -137,8 +137,8 @@ def test_a_client_presents_the_token_only_to_the_recorded_node() -> None:
         node.record(recorded_address)
         node.publish_local_session(TOKEN)
 
-        node.request(recorded_address, "GET", "/")
-        node.request(stranger_address, "GET", "/")
+        node.request(recorded_address, "GET", "/web/")
+        node.request(stranger_address, "GET", "/web/")
 
         assert _Capturing.seen == [f"{node.SESSION_COOKIE}={TOKEN}", ""]
     finally:
@@ -153,7 +153,7 @@ def test_a_client_with_no_published_session_sends_no_cookie() -> None:
     try:
         node.record(address)
 
-        node.request(address, "GET", "/")
+        node.request(address, "GET", "/web/")
 
         assert _Capturing.seen == [""]
     finally:
@@ -178,7 +178,7 @@ def test_a_hand_edited_file_is_asked_anonymously_not_as_a_broken_cookie() -> Non
         )
         assert node.local_session() is None
 
-        node.request(address, "GET", "/")
+        node.request(address, "GET", "/web/")
 
         assert _Capturing.seen == [""]
     finally:
@@ -212,7 +212,7 @@ def test_the_liveness_read_carries_no_local_session() -> None:
 
         assert _Capturing.seen == ["", ""], "a liveness read carried the session"
 
-        node.request(address, "GET", "/api/projects")
+        node.request(address, "GET", "/api/v1/projects")
 
         assert _Capturing.seen[-1] == f"{node.SESSION_COOKIE}={TOKEN}"
     finally:

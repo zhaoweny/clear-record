@@ -107,9 +107,9 @@ def test_adr_0027_sitemap_lists_the_project_subroutes() -> None:
     adr = _text("docs/adr/0027-console-information-architecture.md")
     app = _text("packages/clear-record/src/clear_record/web/app.py")
     for route in (
-        "/projects/<slug>/meetings",
-        "/projects/<slug>/glossary",
-        "/projects/<slug>/media",
+        "/web/projects/<slug>/meetings",
+        "/web/projects/<slug>/glossary",
+        "/web/projects/<slug>/media",
     ):
         assert route in adr, f"{route} missing from ADR-0027's sitemap"
         assert route.replace("<slug>", "{slug}") in app

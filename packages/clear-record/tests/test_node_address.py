@@ -15,7 +15,7 @@ The relation these tests prove is not "some modules import :mod:`urllib`". It is
   held by a listener that does not speak HTTP included;
 - the port has a single declaration (:data:`clear_record.core.node.DEFAULT_PORT`).
 
-The console is asked through ``GET /api/node``; the MCP adapter through the note
+The console is asked through ``GET /api/v1/node``; the MCP adapter through the note
 it hands its instructions. Both surface entry points are exercised with nothing
 listening and with a node running, because "the same answer from every surface"
 is only meaningful if the same surfaces are asked both ways.
@@ -120,7 +120,7 @@ def _local_cookie() -> dict[str, str]:
 def _stop(address: node.NodeAddress) -> None:
     """Ask a node to stop the way a surface does — a request, never a signal."""
     request = urllib.request.Request(
-        address.url_for("/api/shutdown"), method="POST", headers=_local_cookie()
+        address.url_for("/api/v1/shutdown"), method="POST", headers=_local_cookie()
     )
     try:
         urllib.request.urlopen(request, timeout=5).read()
@@ -386,7 +386,7 @@ def test_a_record_that_answers_nowhere_is_a_refusal_not_a_search(
         node.ask()
     assert str(excinfo.value) == node.NO_NODE_MESSAGE
     assert _command_line_answer(capsys)[0] == 1  # the command line refuses too
-    status, body = _get(serve_node, "/api/node")
+    status, body = _get(serve_node, "/api/v1/node")
     assert (status, json.loads(body)["detail"]) == (503, node.NO_NODE_MESSAGE)
 
 
@@ -394,20 +394,26 @@ def test_a_record_that_answers_nowhere_is_a_refusal_not_a_search(
 
 
 def _console_answer(tmp_path) -> tuple[int, str]:
-    """``GET /api/node`` on an app that is not a listening node.
+    """``GET /api/v1/node`` on an app that is not a listening node.
 
-    The route is behind the console's credential (ADR-0033), so this asks it the
-    way a browser does: a credential set through the service seam the app itself
-    uses, and a session taken from the real sign-in form.
+    The route is behind the console's credential (ADR-0033), and it is a machine
+    route: the console's session cookie is scoped to the console's own prefix and
+    never rides ``/api/v1/*``, so this asks it the way a client that *holds* a
+    token does — the credential set through the service seam the app itself uses,
+    and the session presented as the ``Cookie`` header the node's own machine
+    sends.
     """
     app = create_app(
         Registry.open(data_dir=str(tmp_path / "console-data")),
         trusted_hosts=("testserver",),
     )
     app.state.auth.set_password(_CONSOLE_PASSWORD, actor="console")
+    token = app.state.auth.sign_in(_CONSOLE_PASSWORD)
+    assert token is not None
     with TestClient(app) as client:
-        client.post("/setup/sign-in", data={"password": _CONSOLE_PASSWORD})
-        response = client.get("/api/node")
+        response = client.get(
+            "/api/v1/node", headers={"cookie": f"{node.SESSION_COOKIE}={token}"}
+        )
         return response.status_code, response.json()["detail"]
 
 
@@ -512,7 +518,7 @@ def test_a_record_naming_a_listener_that_is_not_http_states_the_one_answer(
 
 
 def test_the_console_answers_concurrent_readers(serve_node) -> None:
-    """``GET /api/node`` spends one request per reader, so readers cannot crowd it out.
+    """``GET /api/v1/node`` spends one request per reader, so readers cannot crowd it out.
 
     The route proved the node answered by requesting the health route from itself,
     which took a second threadpool token per reader: a full pool turned into
@@ -524,7 +530,7 @@ def test_the_console_answers_concurrent_readers(serve_node) -> None:
     lock = threading.Lock()
 
     def read() -> None:
-        status, body = _get(serve_node, "/api/node")
+        status, body = _get(serve_node, "/api/v1/node")
         answer = (status, json.loads(body)["url"] if status == 200 else body)
         with lock:
             answers.append(answer)
@@ -548,7 +554,7 @@ def test_with_a_node_running_the_surfaces_name_the_same_address(
     completing a request — one address, three surfaces, no surface's own idea of
     a port.
     """
-    status, body = _get(serve_node, "/api/node")
+    status, body = _get(serve_node, "/api/v1/node")
     assert status == 200, body
     assert json.loads(body)["url"] == serve_node.url
     assert json.loads(body)["port"] == serve_node.port
@@ -562,7 +568,7 @@ def test_with_a_node_running_the_surfaces_name_the_same_address(
 def test_a_record_naming_the_served_socket_is_vouched_for_without_a_pid(
     serve_node,
 ) -> None:
-    """``GET /api/node`` compares the **address**, not the process that wrote it.
+    """``GET /api/v1/node`` compares the **address**, not the process that wrote it.
 
     ``NodeAddress.from_dict`` accepts a record with no ``pid`` by design — a
     truncated, hand-edited or foreign file is still an address — and the route's
@@ -578,7 +584,7 @@ def test_a_record_naming_the_served_socket_is_vouched_for_without_a_pid(
         encoding="utf-8",
     )
 
-    status, body = _get(serve_node, "/api/node")
+    status, body = _get(serve_node, "/api/v1/node")
 
     assert status == 200, body
     assert json.loads(body)["url"] == serve_node.url

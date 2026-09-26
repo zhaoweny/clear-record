@@ -91,8 +91,8 @@ def test_the_console_starts_against_a_registry_a_release_wrote(tmp_path) -> None
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, _released_row())
 
-    assert client.get("/").status_code == 200
-    answered = client.get(f"/api/runs/{run_id}")
+    assert client.get("/web/").status_code == 200
+    answered = client.get(f"/api/v1/runs/{run_id}")
     assert answered.status_code == 200, answered.text
     body = answered.json()
     assert body["run"]["id"] == run_id
@@ -108,7 +108,7 @@ def test_a_row_this_build_cannot_read_is_a_409_not_a_500(tmp_path) -> None:
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, '{"backend": "apple", "jobs": "many"}')
 
-    answered = client.get(f"/api/runs/{run_id}")
+    answered = client.get(f"/api/v1/runs/{run_id}")
 
     assert answered.status_code == 409, answered.text
     detail = answered.json()["detail"]
@@ -129,7 +129,7 @@ def test_a_page_route_that_refuses_says_so_in_the_console(tmp_path) -> None:
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, "not json at all")
 
-    page = client.get("/")
+    page = client.get("/web/")
 
     assert page.status_code == 409, page.text
     assert f"run {run_id}" in page.text

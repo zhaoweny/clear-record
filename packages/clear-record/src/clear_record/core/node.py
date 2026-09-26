@@ -25,7 +25,7 @@ the writer records *after* the bind, not the request.
 
 A record nothing answers is answered as an absent one is. :class:`NoNodeError`
 carries :data:`NO_NODE_MESSAGE`, so the command line, the console's
-``GET /api/node`` refusal and the MCP adapter's instructions state **one**
+``GET /api/v1/node`` refusal and the MCP adapter's instructions state **one**
 sentence — never a hang, and never a different error per surface. (The tray's
 status line is the node's own health, so it keeps its own two strings.)
 The English source *is* the message ID (marked with
@@ -65,9 +65,9 @@ DEFAULT_PORT = 8765
 #: The path the client asks, and the node answers, "are you there?" on. One
 #: path, so the two sides cannot disagree about what answering means.
 #:
-#: It is the console's **liveness route**, outside ``/api`` — and, once the
-#: console's ``/web`` re-root lands, outside that prefix too; at this revision the
-#: console serves at the root — and it is anonymous: a tray, a supervisor's probe
+#: It is the console's **liveness route** — outside ``/api/v1`` and outside the
+#: console's ``/web`` prefix, since both surfaces' routes live under one or the
+#: other — and it is anonymous: a tray, a supervisor's probe
 #: or a monitor has to tell a healthy node from a sign-in page without a session
 #: (ADR-0033). Its answer is exactly ``{"status": "ok"}`` — no registry path, no
 #: version, no session — which is what lets this client require an exact 200 and

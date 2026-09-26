@@ -16,19 +16,20 @@ exactly these through:
   anonymous too, because they are that page's own forms;
 - the **liveness route** (:data:`~clear_record.core.node.HEALTH_PATH`) — a probe
   must not need a credential, and its answer is exactly ``{"status": "ok"}``,
-  which is why it is not under ``/api`` and why the old ``/api/health`` — which
-  named the registry — is gone;
+  which is why it is not under the machine prefix and why the old ``/api/health``
+  — which named the registry — is gone;
 - the **compiled assets** under ``/static`` — the pages above are unreadable
   without them, they carry no project data, and they are the same bytes for
   everyone.
 
 Everything else needs a live session: pages and fragments redirect to the setup
-route, and the machine surface (``/api/…``) answers ``401`` with
+route, and the machine surface (``/api/v1/…``) answers ``401`` with
 :data:`AUTH_REQUIRED` in ``detail``, so a script is told what a browser is shown.
 :func:`answers_anonymously` is the single rule both the middleware and the
 route-table test read, so the list cannot grow by a route somebody forgot to add
 to a second copy of it. The console's own prefix is :data:`CONSOLE_PATH`, one
-constant: the cookie is scoped to it, and the route re-root moves it.
+constant: every console route is built on it, and the setup route, its forms
+and revoke-all are derived from it.
 """
 
 from __future__ import annotations
@@ -38,15 +39,25 @@ from fastapi import Request, Response
 from clear_record.core.node import HEALTH_PATH, SESSION_COOKIE
 from clear_record.web.guard import SAFE_METHODS
 
-#: The console's own URL prefix, and therefore the cookie's ``Path``: a session
-#: cookie rides on console requests and nowhere else. The console is rooted at
-#: the root today, so this is ``/``; the route re-root moves the console under
-#: ``/web`` and this constant moves with it, which is what keeps the cookie
-#: scoped to the console rather than to whatever else shares the origin.
-CONSOLE_PATH = "/"
+#: The console's own URL prefix: the pages, their ``/ui`` fragments and the setup
+#: route all live under it, and the machine API under :data:`MACHINE_PREFIX`. It
+#: deliberately carries **no** trailing slash, so it is a prefix of every console
+#: path (``/web/settings``, ``/web/ui/projects``) rather than a sibling of them.
+#:
+#: It is also the session cookie's ``Path``: a human session rides the console's
+#: own requests and **never** the machine API's, whose credential is a token of
+#: its own (ADR-0033) — so a console route that acts on the server (the header's
+#: Quit control is the one) is a console route, not a call into ``/api/v1``.
+CONSOLE_PATH = "/web"
+
+#: The console's home — the prefix *as a directory*, which is the URL a reader
+#: types, a link shows and a sign-in lands on. Built from :data:`CONSOLE_PATH` so
+#: the two cannot disagree; ``/web`` (no slash) is the same page by the router's
+#: own slash redirect.
+CONSOLE_HOME = f"{CONSOLE_PATH}/"
 
 #: The anonymous page: first run's credential step, then the sign-in form.
-SETUP_PATH = "/setup"
+SETUP_PATH = f"{CONSOLE_PATH}/setup"
 
 #: The setup page's own form targets, and the two ways a session begins or ends.
 CREDENTIAL_PATH = f"{SETUP_PATH}/credential"
@@ -54,12 +65,12 @@ SIGN_IN_PATH = f"{SETUP_PATH}/sign-in"
 SIGN_OUT_PATH = f"{SETUP_PATH}/sign-out"
 
 #: Ending every session — the borrowed-browser remedy, from Settings → Status.
-REVOKE_ALL_PATH = "/ui/sessions/revoke-all"
+REVOKE_ALL_PATH = f"{CONSOLE_PATH}/ui/sessions/revoke-all"
 
 #: The compiled assets' mount, and the machine surface's prefix. Both are facts of
 #: the route table; they are named here because the gate reads them.
 STATIC_PREFIX = "/static"
-MACHINE_PREFIX = "/api/"
+MACHINE_PREFIX = "/api/v1/"
 
 #: The GET paths answered without a session.
 ANONYMOUS_PATHS = (SETUP_PATH, HEALTH_PATH)
@@ -159,6 +170,7 @@ __all__ = [
     "ANONYMOUS_PATHS",
     "ANONYMOUS_POSTS",
     "AUTH_REQUIRED",
+    "CONSOLE_HOME",
     "CONSOLE_PATH",
     "CREDENTIAL_PATH",
     "HEALTH_PATH",

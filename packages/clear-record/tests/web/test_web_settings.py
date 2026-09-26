@@ -25,8 +25,8 @@ SECTIONS = tuple(slug for slug, _label, _template in SETTINGS_SECTIONS)
 
 #: The agent-setup write surfaces, and the routes only they post to.
 WRITE_ROUTES = (
-    "/ui/agent-setup/mcp/harness",
-    "/ui/agent-setup/mcp/config",
+    "/web/ui/agent-setup/mcp/harness",
+    "/web/ui/agent-setup/mcp/config",
 )
 
 
@@ -42,29 +42,29 @@ def _client(tmp_path) -> TestClient:
 
 
 def test_settings_lands_on_the_first_section(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings")
+    page = _client(tmp_path).get("/web/settings")
 
     assert page.status_code == 200
     assert SECTIONS[0] == "models"
     assert "<h2>Models</h2>" in page.text
     # The section nav is real links with the first marked; no dashboard.
-    assert 'href="/settings/models" aria-current="page"' in page.text
+    assert 'href="/web/settings/models" aria-current="page"' in page.text
     for slug in SECTIONS:
-        assert f'href="/settings/{slug}"' in page.text
+        assert f'href="/web/settings/{slug}"' in page.text
 
 
 def test_every_section_is_a_real_url_with_the_nav_marked(tmp_path) -> None:
     client = _client(tmp_path)
 
     for slug in SECTIONS:
-        page = client.get(f"/settings/{slug}")
+        page = client.get(f"/web/settings/{slug}")
         assert page.status_code == 200, slug
         assert 'id="detail"' in page.text
-        assert f'href="/settings/{slug}" aria-current="page"' in page.text
+        assert f'href="/web/settings/{slug}" aria-current="page"' in page.text
 
 
 def test_an_unknown_section_is_a_page_not_json(tmp_path) -> None:
-    missing = _client(tmp_path).get("/settings/does-not-exist")
+    missing = _client(tmp_path).get("/web/settings/does-not-exist")
 
     assert missing.status_code == 404
     assert "text/html" in missing.headers["content-type"]
@@ -83,14 +83,14 @@ def test_the_agent_setup_writes_stay_out_of_the_read_sections(tmp_path) -> None:
     client = _client(tmp_path)
 
     for slug in ("models", "backends", "storage", "status"):
-        page = client.get(f"/settings/{slug}")
+        page = client.get(f"/web/settings/{slug}")
         assert page.status_code == 200, slug
         for route in WRITE_ROUTES:
             assert route not in page.text, (slug, route)
 
 
 def test_the_models_section_shows_its_values_and_the_config_path(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/models")
+    page = _client(tmp_path).get("/web/settings/models")
 
     assert "Default model" in page.text
     assert "Default language" in page.text
@@ -106,7 +106,7 @@ def test_the_models_section_lists_the_checkpoints_on_disk(tmp_path) -> None:
     models.mkdir(parents=True, exist_ok=True)
     (models / "ggml-small.bin").write_bytes(b"x")
 
-    page = _client(tmp_path).get("/settings/models")
+    page = _client(tmp_path).get("/web/settings/models")
 
     assert "<code>small</code>" in page.text
     assert "ggml-small.bin" not in page.text
@@ -118,12 +118,12 @@ def test_the_models_section_offers_the_picker_and_a_download(
     """The one write on this page: a user-triggered, verified model download."""
     monkeypatch.setattr(web_app, "models_on_disk", lambda *a, **k: frozenset())
 
-    page = _client(tmp_path).get("/settings/models")
+    page = _client(tmp_path).get("/web/settings/models")
 
     assert "Available checkpoints" in page.text
     for name in ("tiny", "base", "small", "medium", "large-v3"):
         assert f"<code>{name}</code>" in page.text
-    assert 'hx-post="/ui/settings/models/download"' in page.text
+    assert 'hx-post="/web/ui/settings/models/download"' in page.text
 
 
 def test_the_models_section_describes_checkpoints_truthfully(
@@ -137,7 +137,7 @@ def test_the_models_section_describes_checkpoints_truthfully(
     """
     monkeypatch.setattr(web_app, "models_on_disk", lambda *a, **k: frozenset())
 
-    page = _client(tmp_path).get("/settings/models").text
+    page = _client(tmp_path).get("/web/settings/models").text
 
     assert "Available checkpoints" in page
     assert "Choose a model" not in page
@@ -170,7 +170,7 @@ def test_the_settings_download_runs_off_the_event_loop(tmp_path, monkeypatch) ->
     monkeypatch.setattr(web_app, "models_on_disk", on_disk)
 
     response = _client(tmp_path).post(
-        "/ui/settings/models/download", data={"model": "small"}
+        "/web/ui/settings/models/download", data={"model": "small"}
     )
 
     assert response.status_code == 200
@@ -185,7 +185,7 @@ def test_the_models_checkpoint_copy_is_translated_in_a_chinese_console(
 
     client = _client(tmp_path)
     client.cookies.set(LANG_COOKIE, "zh_CN")
-    page = client.get("/settings/models").text
+    page = client.get("/web/settings/models").text
 
     assert "可用检查点" in page
     assert "下载某个规格会把对应检查点放到磁盘上" in page
@@ -212,7 +212,7 @@ def test_the_retention_note_is_translated_in_a_chinese_console(tmp_path) -> None
     """
     client = _client(tmp_path)
     client.cookies.set(LANG_COOKIE, "zh_CN")
-    page = client.get("/settings/storage").text
+    page = client.get("/web/settings/storage").text
 
     notes = re.findall(r'<p class="muted settings-note">(.*?)</p>', page, re.S)
     (note,) = [item for item in notes if "保留仅限手动" in item]
@@ -234,7 +234,7 @@ def test_downloading_a_model_from_settings_calls_the_pinned_downloader(
     )
 
     response = _client(tmp_path).post(
-        "/ui/settings/models/download", data={"model": "medium"}
+        "/web/ui/settings/models/download", data={"model": "medium"}
     )
 
     assert response.status_code == 200
@@ -244,7 +244,7 @@ def test_downloading_a_model_from_settings_calls_the_pinned_downloader(
 
 
 def test_the_backends_section_lists_every_catalog_backend(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/backends")
+    page = _client(tmp_path).get("/web/settings/backends")
 
     # The four shipped families, in the service's catalog order.
     for backend_id in ("apple", "nvidia", "amd", "apple-speech"):
@@ -254,17 +254,17 @@ def test_the_backends_section_lists_every_catalog_backend(tmp_path) -> None:
 
 
 def test_the_webhooks_section_shows_the_panel_and_the_config_path(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/webhooks")
+    page = _client(tmp_path).get("/web/settings/webhooks")
 
     assert 'id="webhooks"' in page.text
-    assert 'hx-get="/ui/webhooks"' in page.text
+    assert 'hx-get="/web/ui/webhooks"' in page.text
     # The panel itself is the write-free status surface; the page names where
     # endpoints are edited.
     assert str(paths.config_path()) in page.text
 
 
 def test_the_storage_section_shows_the_managed_root_and_archive_roots(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/storage")
+    page = _client(tmp_path).get("/web/settings/storage")
 
     assert "Managed root" in page.text
     assert "Free space" in page.text
@@ -287,7 +287,7 @@ def test_the_storage_section_shows_the_machine_total_per_project(tmp_path) -> No
     meeting = managed.ensure_managed_workspace(registry, meeting, actor="console")
     client = signed_in(TestClient(create_app(registry, trusted_hosts=("testserver",))))
 
-    page = client.get("/settings/storage").text
+    page = client.get("/web/settings/storage").text
 
     # The machine total and every component, each marked source or derived.
     assert "Machine total" in page
@@ -329,7 +329,7 @@ def test_the_storage_section_renders_a_partial_total_as_a_lower_bound(
         }
 
     monkeypatch.setattr(managed_service, "machine_storage", partial)
-    page = _client(tmp_path).get("/settings/storage")
+    page = _client(tmp_path).get("/web/settings/storage")
 
     assert "&gt;= 20 B" in page.text
     assert "at least: some components could not be measured" in page.text
@@ -337,14 +337,14 @@ def test_the_storage_section_renders_a_partial_total_as_a_lower_bound(
 
 
 def test_the_status_section_carries_diagnostics_and_the_hello_check(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/status")
+    page = _client(tmp_path).get("/web/settings/status")
 
     assert "Version" in page.text
     assert "Queue" in page.text
     assert "Backend availability" in page.text
     assert str(paths.resolve_data_dir()) in page.text
     assert str(paths.resolve_logs_dir()) in page.text
-    assert 'href="/ui/diagnostics"' in page.text
+    assert 'href="/web/ui/diagnostics"' in page.text
     assert 'id="hello-check"' in page.text
 
 
@@ -398,7 +398,7 @@ def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> N
             if registry.get_run(run.id).status == "running":
                 break
             time.sleep(0.005)
-        page = client.get("/settings/status")
+        page = client.get("/web/settings/status")
         assert registry.get_run(run.id).origin == "mcp"
         assert page.status_code == 200
         assert "Kickoff" in page.text  # the queue panel lists the other writer's run
@@ -410,44 +410,44 @@ def test_a_run_another_writer_started_appears_in_the_status_queue(tmp_path) -> N
 def test_the_agent_flow_has_one_panel_and_two_entry_points(tmp_path) -> None:
     client = _client(tmp_path)
 
-    settings = client.get("/settings/agent").text
-    setup_page = client.get("/setup/agent").text
+    settings = client.get("/web/settings/agent").text
+    setup_page = client.get("/web/setup/agent").text
 
     for page in (settings, setup_page):
         assert 'id="agent-setup"' in page
-        assert 'hx-get="/ui/agent-setup"' in page
+        assert 'hx-get="/web/ui/agent-setup"' in page
 
 
 def test_the_section_nav_does_not_hide_agent_or_webhooks_in_the_header(
     tmp_path,
 ) -> None:
     """The header is structural (Projects/Settings/Setup), not a junk drawer."""
-    page = _client(tmp_path).get("/settings/agent")
+    page = _client(tmp_path).get("/web/settings/agent")
 
     header = page.text.split("<main>", 1)[0]
-    assert "/ui/agent-setup" not in header
-    assert "/ui/webhooks" not in header
+    assert "/web/ui/agent-setup" not in header
+    assert "/web/ui/webhooks" not in header
 
 
 def test_the_mcp_section_mounts_the_shared_mcp_partial(tmp_path) -> None:
-    page = _client(tmp_path).get("/settings/mcp")
+    page = _client(tmp_path).get("/web/settings/mcp")
 
     assert 'id="mcp-setup"' in page.text
-    assert 'hx-get="/ui/agent-setup?part=mcp"' in page.text
+    assert 'hx-get="/web/ui/agent-setup?part=mcp"' in page.text
 
 
 def test_the_mcp_fragment_is_the_mcp_rung_alone(tmp_path) -> None:
     client = _client(tmp_path)
 
-    mcp = client.get("/ui/agent-setup?part=mcp").text
-    agent = client.get("/ui/agent-setup").text
+    mcp = client.get("/web/ui/agent-setup?part=mcp").text
+    agent = client.get("/web/ui/agent-setup").text
 
-    assert "/ui/agent-setup/mcp/harness" in mcp
-    assert "/ui/agent-setup/mcp/config" in mcp
+    assert "/web/ui/agent-setup/mcp/harness" in mcp
+    assert "/web/ui/agent-setup/mcp/config" in mcp
     # The Try it stage belongs to the agent panel, not the MCP section.
     assert 'id="hello-check"' not in mcp
     assert 'id="hello-check"' in agent
-    assert "/ui/agent-setup/mcp/config" in agent
+    assert "/web/ui/agent-setup/mcp/config" in agent
 
 
 def test_the_mcp_write_re_renders_only_the_mcp_rung(tmp_path) -> None:
@@ -455,13 +455,13 @@ def test_the_mcp_write_re_renders_only_the_mcp_rung(tmp_path) -> None:
     chosen = tmp_path / "client" / "mcp.json"
 
     response = client.post(
-        "/ui/agent-setup/mcp/config",
+        "/web/ui/agent-setup/mcp/config",
         data={"config": str(chosen), "part": "mcp"},
     )
 
     assert response.status_code == 200
     assert "Registered the clear-record MCP server" in response.text
-    assert "/ui/agent-setup/mcp/config" in response.text
+    assert "/web/ui/agent-setup/mcp/config" in response.text
     assert 'id="agent-setup"' not in response.text
     document = json.loads(chosen.read_text(encoding="utf-8"))
     assert document["mcpServers"][MCP_SERVER_NAME] == {
@@ -491,7 +491,7 @@ def test_an_unavailable_backend_reason_is_translated_in_a_chinese_console(
 
     client = _client(tmp_path)
     client.cookies.set(LANG_COOKIE, "zh_CN")
-    page = client.get("/settings/backends")
+    page = client.get("/web/settings/backends")
 
     assert page.status_code == 200
     assert "需要 macOS 26+（当前为 Linux）" in page.text

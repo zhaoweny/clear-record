@@ -1,8 +1,8 @@
 """What the console and the JSON API record themselves as (ADR-0033).
 
 One FastAPI app serves both surfaces, and they are told apart by the actor each
-one supplies: every ``/ui/`` route calls the service as ``console``, every
-``/api/`` route as ``api``. The actor is not a request field, so the record says
+one supplies: every ``/web/ui/`` route calls the service as ``console``, every
+``/api/v1/`` route as ``api``. The actor is not a request field, so the record says
 which *surface* did a thing — including on the run edges, where a body word does
 choose the run's own ``origin`` and is recorded in that column, never as the
 actor (a client that sends ``{"origin": "console"}`` is still audited as ``api``).
@@ -69,7 +69,7 @@ def app(tmp_path) -> App:
 
 def test_the_console_records_itself_as_the_actor(app: App) -> None:
     """A console form submit is one ``console`` row, naming what it touched."""
-    res = app.client.post("/ui/projects", data={"name": "Ops"})
+    res = app.client.post("/web/ui/projects", data={"name": "Ops"})
 
     assert res.status_code == 200
     assert app.rows() == [
@@ -79,8 +79,8 @@ def test_the_console_records_itself_as_the_actor(app: App) -> None:
 
 
 def test_the_json_api_records_itself_as_the_actor(app: App) -> None:
-    """The same mutation through ``/api/`` is the API's row, not the console's."""
-    res = app.client.post("/api/projects", json={"name": "Ops"})
+    """The same mutation through ``/api/v1/`` is the API's row, not the console's."""
+    res = app.client.post("/api/v1/projects", json={"name": "Ops"})
 
     assert res.status_code == 201
     assert app.rows() == [
@@ -107,7 +107,7 @@ def test_a_client_declared_origin_is_not_the_audit_actor(app: App) -> None:
     before = len(app.registry.list_audit_events())
 
     res = app.client.post(
-        f"/api/meetings/{meeting.id}/runs", json={"origin": "console"}
+        f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "console"}
     )
 
     assert res.status_code == 202
@@ -139,7 +139,7 @@ def test_a_console_acceptance_records_console_as_the_reviewer(app: App) -> None:
     )
 
     res = app.client.post(
-        f"/ui/meetings/{meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        f"/web/ui/meetings/{meeting.id}/agent/drafts/{draft.draft_id}/accept",
         data={"version": draft.version},
     )
 

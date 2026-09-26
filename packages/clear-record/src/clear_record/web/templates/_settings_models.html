@@ -40,7 +40,7 @@
       {% if name in models_present %}
       <span class="badge status-ok">{{ tr("on disk") }}</span>
       {% else %}
-      <form hx-post="/ui/settings/models/download" hx-target="#models-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <form hx-post="/web/ui/settings/models/download" hx-target="#models-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
         <input type="hidden" name="model" value="{{ name }}" />
         <button class="btn btn-sm" type="submit">{{ tr("Download") }}</button>
       </form>

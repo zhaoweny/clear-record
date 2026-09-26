@@ -393,7 +393,7 @@ runnable, and the **project console** is built on top of it:
   importable with no web stack, which is what keeps the console optional
   (ADR-0013).
 - `clear_record.web` — the local console: FastAPI serving a server-rendered
-  **htmx + Alpine.js** UI on `/ui/*` and a JSON API on `/api/*`, bound to
+  **htmx + Alpine.js** UI on `/web/ui/*` and a JSON API on `/api/v1/*`, bound to
   localhost, behind one console credential (ADR-0033; extra: `web`)
   (ADR-0013, ADR-0016). Its CSS/JS are
   built from `packages/clear-record/frontend/` (Vite + Tailwind v4) and the
@@ -438,7 +438,7 @@ socket holds. An absent record, and a record nothing answers, are the
 | Who asks | How it asks where the node is | Where it stands |
 |---|---|---|
 | command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
-| console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
+| console | `GET /api/v1/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
 | tray | the record, proved by one request — the attach path the command line takes | a client of the node it found; it starts one only when none answers, and stops or restarts only that one |
 | MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017), with no path that starts a node |
 
@@ -467,19 +467,19 @@ machine-facing JSON routes take one only from a request that named the node
 section above records and every surface dials). A client that reached the node
 through a name an operator published for it is a client elsewhere, and is answered
 with **one sentence** naming the rule and, per case, the registry-addressed or
-node-decided shape that replaces it (`POST /api/meetings/{id}/runs`, an upload
+node-decided shape that replaces it (`POST /api/v1/meetings/{id}/runs`, an upload
 into a managed workspace, `managed: true`, or simply omitting the root or the
 glossary) rather than having a path of its own — or a same-named file on the
 node — acted on.
 Everything the registry owns is named by its id, and that is the route a remote
-client uses. The **console is not that edge**: its `/ui/*` forms are the node's
+client uses. The **console is not that edge**: its `/web/ui/*` forms are the node's
 own in-process face, so a visitor reaching the console through a proxy may still
 type a path there; the meeting's storage panel shows back the path the node resolved. A
 **model** is named neither way: it must already be on the node that runs the work,
 so a run request carries a name the node's models directory resolves
 (`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are
 stated where a client author meets them — the request shapes and route
-descriptions the OpenAPI schema publishes at `/api/docs`, the `run` command's
+descriptions the OpenAPI schema publishes at `/api/v1/docs`, the `run` command's
 help, and README — and enforced at the edge (ADR-0032's 2026-09-25 Update).
 
 The console's **service** owns projects, the glossary, meetings and tape sets,

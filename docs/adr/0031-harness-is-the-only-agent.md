@@ -165,7 +165,7 @@ Date: 2026-09-23
 
 ## Consequences / review hook
 
-- **The console asks for nothing.** Settings → Agent and `/setup/agent` are the
+- **The console asks for nothing.** Settings → Agent and `/web/setup/agent` are the
   harness and MCP-client-config rungs plus the hello-world acceptance check;
   `service.setup` keeps `find_harness`/`resolve_harness`/`write_mcp_config` and
   drops the endpoint probe, the verify call and the managed-block writer.

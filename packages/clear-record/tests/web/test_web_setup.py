@@ -43,19 +43,19 @@ def test_a_fresh_install_lands_on_setup(tmp_path) -> None:
     """No marker and no projects: the one time `/` redirects."""
     client = _client(tmp_path)
 
-    response = client.get("/")
+    response = client.get("/web/")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/setup"
+    assert response.headers["location"] == "/web/setup"
 
 
 @pytest.mark.own_setup_marker
 def test_a_first_run_with_a_project_stays_on_projects(tmp_path) -> None:
     """A project is already a reason to be in the workspace, marker or not."""
     client = _client(tmp_path)
-    assert client.post("/api/projects", json={"name": "Ops"}).status_code == 201
+    assert client.post("/api/v1/projects", json={"name": "Ops"}).status_code == 201
 
-    response = client.get("/")
+    response = client.get("/web/")
 
     assert response.status_code == 200
     assert "Ops" in response.text
@@ -66,9 +66,9 @@ def test_visiting_or_skipping_records_nothing(tmp_path) -> None:
     """Only DISMISS or COMPLETE writes the marker; a look-around must not."""
     client = _client(tmp_path)
 
-    assert client.get("/setup").status_code == 200
-    assert client.get("/setup?reason=update").status_code == 200
-    assert client.get("/").status_code == 303
+    assert client.get("/web/setup").status_code == 200
+    assert client.get("/web/setup?reason=update").status_code == 200
+    assert client.get("/web/").status_code == 303
 
     assert setup.read_setup_state() == {}
     assert setup.setup_incomplete() is True
@@ -81,11 +81,11 @@ def test_visiting_or_skipping_records_nothing(tmp_path) -> None:
 def test_the_setup_link_shows_until_the_marker_is_recorded(tmp_path) -> None:
     client = _client(tmp_path)
 
-    assert 'href="/setup"' in client.get("/setup").text
+    assert 'href="/web/setup"' in client.get("/web/setup").text
 
     setup.record_seen_version()
 
-    assert 'href="/setup"' not in client.get("/setup").text
+    assert 'href="/web/setup"' not in client.get("/web/setup").text
 
 
 @pytest.mark.own_setup_marker
@@ -95,31 +95,31 @@ def test_the_update_notice_links_to_setup_and_dismiss_records_the_marker(
     setup.update_setup_state(seen_version="0.0.0-old")
     client = _client(tmp_path)
 
-    home = client.get("/")
+    home = client.get("/web/")
 
     assert home.status_code == 200
     assert "setup-notice" in home.text
-    assert 'href="/setup?reason=update"' in home.text
-    assert 'href="/setup"' in home.text  # the nav link: still incomplete
+    assert 'href="/web/setup?reason=update"' in home.text
+    assert 'href="/web/setup"' in home.text  # the nav link: still incomplete
 
-    dismissed = client.post("/setup/dismiss")
+    dismissed = client.post("/web/setup/dismiss")
 
     assert dismissed.status_code == 303
-    assert dismissed.headers["location"] == "/"
+    assert dismissed.headers["location"] == "/web/"
     assert setup.seen_version() == setup.current_version()
     # The notice and the nav link are gone once the marker names this version.
-    assert "setup-notice" not in client.get("/").text
-    assert 'href="/setup"' not in client.get("/").text
+    assert "setup-notice" not in client.get("/web/").text
+    assert 'href="/web/setup"' not in client.get("/web/").text
 
 
 @pytest.mark.own_setup_marker
 def test_completing_the_wizard_records_the_marker(tmp_path) -> None:
     client = _client(tmp_path)
 
-    response = client.post("/setup/complete")
+    response = client.post("/web/setup/complete")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/web/"
     assert setup.seen_version() == setup.current_version()
     assert setup.setup_incomplete() is False
 
@@ -127,9 +127,9 @@ def test_completing_the_wizard_records_the_marker(tmp_path) -> None:
 @pytest.mark.own_setup_marker
 def test_a_first_run_shows_the_setup_link_but_no_update_notice(tmp_path) -> None:
     """No marker is first run, not update: the Setup link, never the notice."""
-    page = _client(tmp_path).get("/setup").text
+    page = _client(tmp_path).get("/web/setup").text
 
-    assert 'href="/setup"' in page
+    assert 'href="/web/setup"' in page
     assert "setup-notice" not in page
 
 
@@ -137,7 +137,7 @@ def test_a_first_run_shows_the_setup_link_but_no_update_notice(tmp_path) -> None
 
 
 def test_the_setup_page_renders_the_numbered_steps(tmp_path) -> None:
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
     assert page.count('class="setup-step"') == 4
     for step in ("setup-welcome", "setup-transcription", "setup-agent", "setup-try"):
@@ -148,13 +148,13 @@ def test_the_setup_page_renders_the_numbered_steps(tmp_path) -> None:
     assert page.count(">Skip<") >= 3
     # The agent step is the one shared panel, mounted by the same htmx URL.
     assert 'id="agent-setup"' in page
-    assert 'hx-get="/ui/agent-setup"' in page
+    assert 'hx-get="/web/ui/agent-setup"' in page
     # Try it points at the one acceptance test (the flow's Try it
     # stage) and the permanent copy in Settings -> Status.
     assert "Run it in the Agent step" in page
-    assert 'href="/settings/status"' in page
-    assert "/setup/complete" in page
-    assert "/setup/dismiss" in page
+    assert 'href="/web/settings/status"' in page
+    assert "/web/setup/complete" in page
+    assert "/web/setup/dismiss" in page
 
 
 # --- the Transcription step states readiness from the service ---------------- #
@@ -179,7 +179,7 @@ def test_the_transcription_step_says_a_model_free_backend_needs_no_checkpoint(
         lambda *args, **kwargs: _status(LEG_OK, backend="apple-speech"),
     )
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
     assert 'id="setup-transcription"' in page
     assert "Transcription is ready here: the apple-speech backend" in page
@@ -199,7 +199,7 @@ def test_the_transcription_step_shows_the_checkpoint_for_a_ggml_backend(
         lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
     )
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
     assert "Transcription is ready here: the apple backend" in page
     assert "Checkpoint on disk: /home/u/models/ggml-small.bin." in page
@@ -212,7 +212,7 @@ def test_the_transcription_step_names_a_missing_backend(tmp_path, monkeypatch) -
         lambda *args, **kwargs: _status(LEG_BACKEND, backend=None),
     )
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
     assert "No ASR backend is available on this machine yet" in page
     assert "/home/u/models" in page
@@ -227,13 +227,13 @@ def test_the_transcription_step_offers_to_download_a_missing_checkpoint(
         lambda *args, **kwargs: _status(LEG_MODEL, models_present=("ggml-small.bin",)),
     )
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
     assert "The apple backend needs a model checkpoint" in page
     assert "Download it here" in page
     # The remediation is explicit and user-triggered: a button that reuses the
     # pinned downloader, never a promise that some later run will fetch it.
-    assert 'hx-post="/ui/setup/download-model"' in page
+    assert 'hx-post="/web/ui/setup/download-model"' in page
     assert "Download the model" in page
     # The select names what is fetched, not a persisted model choice.
     assert "Checkpoint to download" in page
@@ -249,9 +249,9 @@ def test_a_ready_step_offers_no_download(tmp_path, monkeypatch) -> None:
         lambda *args, **kwargs: _status(LEG_OK, model="/home/u/models/ggml-small.bin"),
     )
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup").text
 
-    assert 'hx-post="/ui/setup/download-model"' not in page
+    assert 'hx-post="/web/ui/setup/download-model"' not in page
 
 
 def test_downloading_the_default_model_refreshes_the_step_to_ready(
@@ -272,7 +272,9 @@ def test_downloading_the_default_model_refreshes_the_step_to_ready(
 
     monkeypatch.setattr(web_app, "transcription_status", status)
 
-    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post(
+        "/web/ui/setup/download-model"
+    )
 
     assert response.status_code == 200
     assert calls == [1]
@@ -303,7 +305,9 @@ def test_downloading_the_model_offloads_the_synchronous_fetch(
     monkeypatch.setattr(web_app, "download_transcription_model", fake_download)
     monkeypatch.setattr(web_app, "transcription_status", fake_status)
 
-    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post(
+        "/web/ui/setup/download-model"
+    )
 
     assert response.status_code == 200
     assert seen["download"] is not seen["status"]
@@ -318,7 +322,9 @@ def test_a_failed_download_is_shown_in_the_step(tmp_path, monkeypatch) -> None:
         web_app, "transcription_status", lambda *args, **kwargs: _status(LEG_MODEL)
     )
 
-    response = signed_in(TestClient(_app(tmp_path))).post("/ui/setup/download-model")
+    response = signed_in(TestClient(_app(tmp_path))).post(
+        "/web/ui/setup/download-model"
+    )
 
     assert response.status_code == 200
     assert "The download did not finish: RuntimeError: no network" in response.text
@@ -335,7 +341,7 @@ def test_an_unknown_model_shows_the_translated_error(tmp_path, monkeypatch) -> N
     client = _client(tmp_path)
 
     response = client.post(
-        "/ui/setup/download-model",
+        "/web/ui/setup/download-model",
         data={"model": "gigantic"},
         headers={"Accept-Language": "zh-CN"},
     )
@@ -348,20 +354,20 @@ def test_an_unknown_model_shows_the_translated_error(tmp_path, monkeypatch) -> N
 def test_the_update_reason_shows_the_update_copy(tmp_path) -> None:
     setup.update_setup_state(seen_version="0.0.0-old")
 
-    page = signed_in(TestClient(_app(tmp_path))).get("/setup?reason=update").text
+    page = signed_in(TestClient(_app(tmp_path))).get("/web/setup?reason=update").text
 
     assert "setup-update" in page
     assert "was updated to" in page
 
 
 def test_the_setup_page_mounts_the_same_agent_panel_as_settings(tmp_path) -> None:
-    """One agent implementation, two entry points; /setup/agent is the same page."""
+    """One agent implementation, two entry points; /web/setup/agent is the same page."""
     client = signed_in(TestClient(_app(tmp_path)))
 
-    for path in ("/setup", "/setup/agent", "/settings/agent"):
+    for path in ("/web/setup", "/web/setup/agent", "/web/settings/agent"):
         page = client.get(path).text
         assert 'id="agent-setup"' in page, path
-        assert 'hx-get="/ui/agent-setup"' in page, path
+        assert 'hx-get="/web/ui/agent-setup"' in page, path
 
 
 @pytest.mark.own_setup_marker
@@ -370,12 +376,12 @@ def test_status_offers_walking_setup_again(tmp_path) -> None:
     setup.record_seen_version()
     client = _client(tmp_path)
 
-    page = client.get("/settings/status").text
-    assert "/setup/restart" in page
+    page = client.get("/web/settings/status").text
+    assert "/web/setup/restart" in page
     assert "Open the setup wizard" in page
 
-    response = client.post("/setup/restart")
+    response = client.post("/web/setup/restart")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/setup"
+    assert response.headers["location"] == "/web/setup"
     assert setup.seen_version() is None

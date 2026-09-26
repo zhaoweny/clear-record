@@ -132,7 +132,7 @@ def test_the_page_lists_the_live_queue_across_projects(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    page = client.get("/activity")
+    page = client.get("/web/activity")
 
     assert page.status_code == 200
     text = page.text
@@ -157,7 +157,7 @@ def test_a_running_run_shows_the_rate_so_far(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
     waiting = next(row for row in rows if _id_mark(queued.id) in row)
 
@@ -183,7 +183,7 @@ def test_a_run_past_transcribe_reports_no_rate_so_far(tmp_path) -> None:
         actor="console",
     )
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
 
     assert "x realtime" not in live
@@ -242,7 +242,7 @@ def test_the_newest_outcome_is_the_last_finish_not_the_last_row(tmp_path) -> Non
         actor="console",
     )
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     history = text.split("Recently finished")[1]
 
     # The failure is the newest *outcome*, so the chip points at it — and at the
@@ -306,7 +306,7 @@ def test_a_resumed_run_rates_only_the_chunks_it_decoded(tmp_path) -> None:
     client = _console(registry)
     run = _seeded_running(registry, index=8, reused=4, elapsed_s=4.4)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     row = next(
         part for part in text.split('class="run status-') if f"#{run.id}</span>" in part
     )
@@ -321,7 +321,7 @@ def test_a_fully_reused_run_reports_no_rate(tmp_path) -> None:
     client = _console(registry)
     run = _seeded_running(registry, index=6, reused=6, elapsed_s=0.02)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     row = next(
         part for part in text.split('class="run status-') if f"#{run.id}</span>" in part
     )
@@ -335,7 +335,7 @@ def test_a_finished_run_shows_its_recorded_speed_and_duration(tmp_path) -> None:
     client = _console(registry)
     _running, _queued, finished = _seeded(registry)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     # The speed is the record's own ratio, derived here, and the
     # duration is the wall clock the same record measured.
@@ -373,7 +373,7 @@ def test_a_failed_run_shows_its_outcome_and_why(tmp_path) -> None:
         actor="console",
     )
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert "failed" in text and "no ggml model on disk" in text
     assert "api" in text
@@ -418,7 +418,7 @@ def test_history_leads_with_the_newest_run(tmp_path) -> None:
         actor="console",
     )
 
-    history = client.get("/activity").text.split("Recently finished")[1]
+    history = client.get("/web/activity").text.split("Recently finished")[1]
 
     assert history.index("the tape was unreadable") < history.index(_id_mark(older.id))
 
@@ -427,7 +427,7 @@ def test_an_idle_node_says_so(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert "No runs in flight." in text
     assert "No finished runs yet." in text
@@ -447,7 +447,7 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
     )
 
     # Nothing has run yet: the chip is idle, and says so in its own class.
-    idle = client.get("/").text
+    idle = client.get("/web/").text
     assert ">idle</a>" in idle
     assert "status-neutral" in _chip(idle)
 
@@ -459,7 +459,7 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
         language="en",
         actor="console",
     )
-    queued = client.get("/").text
+    queued = client.get("/web/").text
     assert ">queued 1</a>" in queued
     assert "status-queued" in _chip(queued)
 
@@ -469,8 +469,8 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
         owner=OWNER,
         actor="console",
     )
-    running = client.get("/").text
-    assert 'href="/activity">running 1</a>' in running
+    running = client.get("/web/").text
+    assert 'href="/web/activity">running 1</a>' in running
     assert "status-running" in _chip(running)
 
     # The newest outcome decides once nothing is in flight: a failure needs
@@ -481,7 +481,7 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
         error="the tape was unreadable",
         actor="console",
     )
-    failed = client.get("/").text
+    failed = client.get("/web/").text
     assert ">needs attention</a>" in failed
     assert "status-failed" in _chip(failed)
 
@@ -490,7 +490,7 @@ def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> Non
         status="stopped",
         actor="console",
     )
-    stopped = client.get("/").text
+    stopped = client.get("/web/").text
     assert ">idle</a>" in stopped
 
 
@@ -554,7 +554,7 @@ def test_the_chip_reports_the_heaviest_in_flight_state(tmp_path) -> None:
         actor="console",
     )
 
-    chip = _chip(client.get("/").text)
+    chip = _chip(client.get("/web/").text)
 
     assert "status-running" in chip
     assert ">running 1</a>" in chip
@@ -567,7 +567,7 @@ def test_the_chip_and_the_page_are_translated(tmp_path) -> None:
     _seeded(registry)
     client.cookies.set("cr_lang", "zh_CN")
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert ">运行中 1 个</a>" in _chip(text)
     assert "活动" in text  # the nav entry and the page heading
@@ -583,7 +583,7 @@ def test_a_queued_row_names_no_machine(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
     waiting = next(row for row in rows if _id_mark(queued.id) in row)
 
@@ -615,7 +615,7 @@ def test_the_row_shows_the_newest_events_own_text(tmp_path) -> None:
         actor="console",
     )
 
-    page = client.get("/activity").text
+    page = client.get("/web/activity").text
     row = next(
         part for part in page.split('class="run status-') if f"#{run.id}</span>" in part
     )

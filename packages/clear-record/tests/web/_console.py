@@ -3,7 +3,7 @@
 The console has a credential (ADR-0033), so a page or an API call needs a
 **session**. Every test that drives the console does it through :func:`signed_in`,
 which sets the credential through the service seam the app itself uses and then
-signs in through the real ``POST /setup/sign-in`` form — nothing here reaches
+signs in through the real ``POST /web/setup/sign-in`` form — nothing here reaches
 around the gate, and the cookie under test is the cookie the app issues. The
 gate's own states (first run, a wrong password, an idle expiry, a revoked
 session) are driven with a bare client instead, in ``test_web_auth.py``.
@@ -37,6 +37,17 @@ def signed_in(client: TestClient, password: str = CONSOLE_PASSWORD) -> TestClien
     minted. The assertion is the registry's verdict on that cookie, not the
     sign-in's status code: a client that is not really signed in fails here,
     where the reason is legible, instead of in whichever assertion follows.
+
+    The session the form left in the jar is then re-presented the way a **machine
+    client** presents one, because the suite drives both surfaces through one
+    client while the app keeps them apart: the browser's cookie is scoped to the
+    console's prefix (a browser sends it to the console and never to the machine
+    API), while a client that *holds* a token sends it whatever the path — the
+    node's own machine does exactly that, and a jar cookie at the origin's path
+    is the same presentation without a per-request header (a default header would
+    shadow every other cookie the jar holds, the language picker's included). A
+    test that wants the browser's answer alone — whether the console's cookie
+    rides an API request — builds its own client, as ``test_web_auth.py`` does.
     """
     console = client.app.state.auth
     if not console.configured():
@@ -46,6 +57,13 @@ def signed_in(client: TestClient, password: str = CONSOLE_PASSWORD) -> TestClien
     assert console.session(token, touch=False) is SessionState.ACTIVE, (
         "the suite's client is not signed in: the sign-in form refused it"
     )
+    # The console-scoped cookie goes first, entry by entry: the jar stores it
+    # under the host the client dialled (``testserver.local`` for the default),
+    # and a second entry would send the token twice.
+    for cookie in list(client.cookies.jar):
+        if cookie.name == SESSION_COOKIE:
+            client.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)
+    client.cookies.set(SESSION_COOKIE, token)
     return client
 
 

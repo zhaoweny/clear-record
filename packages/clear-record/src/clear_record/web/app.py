@@ -15,9 +15,10 @@ Three pieces, in this order:
 
 Two surfaces over the same **thin** service adapter:
 
-- ``/api/*`` returns JSON — the machine surface the GUI, scripts and
+- ``/api/v1/*`` returns JSON — the machine surface the GUI, scripts and
   integrations share. Every route is a small translation of a service call.
-- ``/ui/*`` returns HTML fragments for the browser, driven by **htmx** (partial
+- ``/web/*`` returns the console for a browser: full pages under ``/web`` itself
+  and HTML fragments under ``/web/ui/*``, driven by **htmx** (partial
   updates) and **Alpine.js** (local UI state). Server-rendered: the assets are
   **built** from ``frontend/`` (Tailwind v4 + Vite) and the **compiled output is
   committed** under ``static/``, so the console works offline and a plain install
@@ -168,7 +169,10 @@ from clear_record.service.webhooks import WebhookEmitter, default_emitter
 from clear_record.web import auth as auth_edge
 from clear_record.web import guard, lookup, views
 from clear_record.web.auth import (
+    CONSOLE_HOME,
+    CONSOLE_PATH,
     CREDENTIAL_PATH,
+    MACHINE_PREFIX,
     REVOKE_ALL_PATH,
     SETUP_PATH,
     SIGN_IN_PATH,
@@ -391,10 +395,10 @@ class TapesUpdate(BaseModel):
     Each path is a file on this node's filesystem, so the route takes one only
     from a request that addressed the node by its own address; a client elsewhere
     sends the tape's bytes to the managed workspace instead
-    (``POST /api/meetings/{id}/tapes``). An empty list names no path and is
+    (``POST /api/v1/meetings/{id}/tapes``). An empty list names no path and is
     therefore not refused for where it came from — but it does **not** clear the
     set: the registry refuses a recording set with no tapes, so a meeting is
-    emptied one tape at a time (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+    emptied one tape at a time (``DELETE /api/v1/meetings/{id}/tapes/{tape_id}``).
     """
 
     paths: list[str]
@@ -404,7 +408,7 @@ class RunCreate(BaseModel):
     """A run request: the knobs, and how the client names what it runs.
 
     Every field here is a **knob**. What the run runs *over* is the route's own
-    subject, not a field: ``POST /api/meetings/{id}/runs`` names a meeting by its
+    subject, not a field: ``POST /api/v1/meetings/{id}/runs`` names a meeting by its
     registry id, and :class:`WorkspaceRunCreate` adds the one field a client that
     addressed the node itself uses instead.
 
@@ -505,7 +509,7 @@ class WorkspaceRunCreate(RunCreate):
     a client that reached the node through the name the operator published for it
     is elsewhere and is refused with one sentence, rather than having a path of
     its own — or a same-named file on the node — acted on. Such a client
-    addresses a run the way the registry does: ``POST /api/meetings/{id}/runs``.
+    addresses a run the way the registry does: ``POST /api/v1/meetings/{id}/runs``.
     """
 
     directory: str
@@ -564,7 +568,7 @@ class ArchiveCreate(BaseModel):
 
 
 class NodeOut(Shape):
-    """`/api/node`: where this node is, as every surface resolves it."""
+    """`/api/v1/node`: where this node is, as every surface resolves it."""
 
     status: str
     url: str
@@ -574,13 +578,13 @@ class NodeOut(Shape):
 
 
 class ShutdownOut(Shape):
-    """`/api/shutdown`: the managed server has been asked to stop."""
+    """`/api/v1/shutdown`: the managed server has been asked to stop."""
 
     status: str
 
 
 class TapeDeletedOut(Shape):
-    """`DELETE /api/meetings/{id}/tapes/{tape_id}`: the row that went, and the copy it leaned on."""
+    """`DELETE /api/v1/meetings/{id}/tapes/{tape_id}`: the row that went, and the copy it leaned on."""
 
     deleted: TapeOut
     note: str
@@ -620,7 +624,7 @@ def _content_length(request: Request) -> int | None:
 #
 # Two rules settle how a *client* names what it wants, and this edge is where a
 # machine client meets them: they are stated in the request shapes above (and so
-# in the OpenAPI schema ``/api/docs`` publishes), and enforced here.
+# in the OpenAPI schema ``/api/v1/docs`` publishes), and enforced here.
 #
 # - **A path is a local client's noun.** A directory — a run's workspace, a
 #   meeting's ``workspace_path``, a tape's files, an archive location a project or
@@ -649,8 +653,8 @@ PATH_IS_LOCAL = (
     "node takes one only from a client that addressed the node itself — its own "
     "address, not another name for it (a proxy's hostname, say) — so name what "
     "you want the way the registry addresses it instead: a run by its meeting's "
-    "id (POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
-    "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
+    "id (POST /api/v1/meetings/{id}/runs); a tape's bytes by upload into a managed "
+    "workspace (POST /api/v1/meetings/{id}/tapes); a workspace by leaving it to the "
     "node (`managed: true`); an archive location by omitting it, so the "
     "*project's* own root stands when it has one; a glossary by omitting it, so "
     "the node's own stands."
@@ -957,7 +961,7 @@ class NodeServer(uvicorn.Server):
         """The TCP address this server bound, or ``None`` (e.g. a unix socket).
 
         Two callers ask: :meth:`startup`, which records it, and
-        ``GET /api/node``, which answers with a record only when it is this.
+        ``GET /api/v1/node``, which answers with a record only when it is this.
         """
         for listener in getattr(self, "servers", ()):
             for sock in listener.sockets or ():
@@ -1058,8 +1062,15 @@ def create_app(
     app = FastAPI(
         title="clear-record",
         summary="Local project console: projects, glossary, meetings and runs.",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # Every route FastAPI provides is under the machine prefix too, so the
+        # app serves nothing at the root but ``/health`` and the compiled assets:
+        # the schema, the two
+        # documentation UIs and Swagger's own oauth2-redirect target are the
+        # machine surface's, and the prefix is the one declaration of it.
+        docs_url=f"{MACHINE_PREFIX}docs",
+        openapi_url=f"{MACHINE_PREFIX}openapi.json",
+        redoc_url=f"{MACHINE_PREFIX}redoc",
+        swagger_ui_oauth2_redirect_url=f"{MACHINE_PREFIX}docs/oauth2-redirect",
     )
     # The manager is the app's own run queue; exposing it lets the process
     # supervisor stop draining cleanly on shutdown (``serve``), and lets an
@@ -1340,7 +1351,7 @@ def create_app(
         render would raise the same refusal — which is also why this
         answers every page route, not only the ones that read a run directly.
         """
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith(auth_edge.MACHINE_PREFIX):
             return JSONResponse(status_code=409, content={"detail": str(exc)})
         return render(
             request,
@@ -1353,11 +1364,11 @@ def create_app(
     def enqueue_run(meeting: Meeting, body: RunCreate) -> RunSnapshotOut:
         """Resolve one run body on *meeting* and enqueue it: the one submission.
 
-        The **two JSON edges** that start a run — ``POST /api/meetings/{id}/runs``
-        and ``POST /api/runs`` — come through here, so the resolver, the
+        The **two JSON edges** that start a run — ``POST /api/v1/meetings/{id}/runs``
+        and ``POST /api/v1/runs`` — come through here, so the resolver, the
         in-flight guard, the refusal mapping and the recorded ``origin`` cannot
         come to differ between them. (The console's own form edge,
-        ``POST /ui/meetings/{id}/runs``, is not one of them: it answers with a run
+        ``POST /web/ui/meetings/{id}/runs``, is not one of them: it answers with a run
         fragment rather than a snapshot, and pins ``origin='console'`` as it
         resolves the picker's fields itself.)
 
@@ -1442,7 +1453,7 @@ def create_app(
         )
 
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
-    @app.get("/", response_class=HTMLResponse)
+    @app.get(CONSOLE_HOME, response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         """The Projects workspace: the console lands here, not on a dashboard.
 
@@ -1451,7 +1462,7 @@ def create_app(
         is never hijacked (ADR-0027); an update shows a notice, not a redirect.
         """
         if seen_version() is None and not registry.list_projects():
-            return RedirectResponse("/setup", status_code=303)
+            return RedirectResponse(SETUP_PATH, status_code=303)
         projects = views.project_rows(registry)
         return page(
             request,
@@ -1485,7 +1496,7 @@ def create_app(
             **context,
         )
 
-    @app.get("/projects/{slug}", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}", response_class=HTMLResponse)
     def page_project(request: Request, slug: str) -> HTMLResponse:
         """A project page: the URL is the source of truth for the selection.
 
@@ -1494,22 +1505,24 @@ def create_app(
         """
         return project_page(request, slug, "overview")
 
-    @app.get("/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/meetings", response_class=HTMLResponse)
     def page_project_meetings(request: Request, slug: str) -> HTMLResponse:
         """The Meetings tab: the operational surface."""
         return project_page(request, slug, "meetings")
 
-    @app.get("/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/glossary", response_class=HTMLResponse)
     def page_project_glossary(request: Request, slug: str) -> HTMLResponse:
         """The Glossary tab: the project's terms."""
         return project_page(request, slug, "glossary")
 
-    @app.get("/projects/{slug}/media", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/media", response_class=HTMLResponse)
     def page_project_media(request: Request, slug: str) -> HTMLResponse:
         """The Media tab: every meeting's tapes and transcripts."""
         return project_page(request, slug, "media")
 
-    @app.get("/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    @app.get(
+        "/web/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse
+    )
     def page_meeting(
         request: Request, slug: str, meeting_slug: str, offset: int = 0
     ) -> HTMLResponse:
@@ -1536,7 +1549,7 @@ def create_app(
             **meeting_view(request, meeting, offset=max(0, offset)),
         )
 
-    @app.get("/activity", response_class=HTMLResponse)
+    @app.get("/web/activity", response_class=HTMLResponse)
     def page_activity(request: Request) -> HTMLResponse:
         """The pipeline status page: what this node is doing right now.
 
@@ -1551,7 +1564,7 @@ def create_app(
             **views.activity_context(registry, locale(request)),
         )
 
-    @app.get("/settings", response_class=HTMLResponse)
+    @app.get("/web/settings", response_class=HTMLResponse)
     def page_settings(request: Request) -> HTMLResponse:
         """Settings lands on the first section, not an empty overview."""
         return page(
@@ -1563,7 +1576,7 @@ def create_app(
             ),
         )
 
-    @app.get("/settings/{section}", response_class=HTMLResponse)
+    @app.get("/web/settings/{section}", response_class=HTMLResponse)
     def page_settings_section(request: Request, section: str) -> HTMLResponse:
         """One Settings section, or the not-found page for an unknown slug."""
         try:
@@ -1667,7 +1680,7 @@ def create_app(
             return render(request, "auth.html", _auth_context(request, error=error))
         await run_in_threadpool(console.set_password, password, actor=CONSOLE)
         token = await run_in_threadpool(console.sign_in, password)
-        return _signed_in(request, token, redirect_to="/")
+        return _signed_in(request, token, redirect_to=CONSOLE_HOME)
 
     @app.post(SIGN_IN_PATH, response_class=HTMLResponse)
     async def sign_in(request: Request) -> Response:
@@ -1691,7 +1704,7 @@ def create_app(
                 ),
                 status_code=401,
             )
-        return _signed_in(request, token, redirect_to="/")
+        return _signed_in(request, token, redirect_to=CONSOLE_HOME)
 
     def _signed_in(
         request: Request, token: str | None, *, redirect_to: str
@@ -1714,7 +1727,7 @@ def create_app(
             )
         return response
 
-    @app.post("/ui/setup/download-model", response_class=HTMLResponse)
+    @app.post("/web/ui/setup/download-model", response_class=HTMLResponse)
     async def ui_setup_download_model(request: Request) -> HTMLResponse:
         """Download a transcription checkpoint, on the user's click.
 
@@ -1745,7 +1758,7 @@ def create_app(
             },
         )
 
-    @app.post("/ui/settings/models/download", response_class=HTMLResponse)
+    @app.post("/web/ui/settings/models/download", response_class=HTMLResponse)
     async def ui_settings_download_model(request: Request) -> HTMLResponse:
         """Download a chosen transcription checkpoint from Settings -> Models.
 
@@ -1766,16 +1779,16 @@ def create_app(
             {"error": error, **views.models_context(locale(request))},
         )
 
-    @app.get("/setup/agent", response_class=HTMLResponse)
+    @app.get("/web/setup/agent", response_class=HTMLResponse)
     def page_setup_agent(request: Request) -> HTMLResponse:
         """The setup wizard's Agent step as its own URL.
 
-        It mounts the same one flow (#agent-setup -> /ui/agent-setup) that
-        /settings/agent mounts, so the two entry points cannot drift.
+        It mounts the same one flow (#agent-setup -> /web/ui/agent-setup) that
+        /web/settings/agent mounts, so the two entry points cannot drift.
         """
         return page(request, "agent.html", nav="setup")
 
-    @app.post("/setup/complete")
+    @app.post("/web/setup/complete")
     def complete_setup() -> RedirectResponse:
         """Leave the wizard having seen this version, and land back in Projects.
 
@@ -1784,9 +1797,9 @@ def create_app(
         silently.
         """
         record_seen_version()
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(CONSOLE_HOME, status_code=303)
 
-    @app.post("/setup/restart")
+    @app.post("/web/setup/restart")
     def restart_setup() -> RedirectResponse:
         """Forget the marker: the nav Setup link returns and the wizard re-opens.
 
@@ -1794,13 +1807,13 @@ def create_app(
         so a returning user's harness and MCP client config survive it.
         """
         clear_seen_version()
-        return RedirectResponse("/setup", status_code=303)
+        return RedirectResponse(SETUP_PATH, status_code=303)
 
-    @app.post("/setup/dismiss")
+    @app.post("/web/setup/dismiss")
     def dismiss_setup() -> RedirectResponse:
         """Dismiss the update notice: the same marker write as COMPLETE."""
         record_seen_version()
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(CONSOLE_HOME, status_code=303)
 
     @app.post(SIGN_OUT_PATH)
     def sign_out(request: Request) -> RedirectResponse:
@@ -1836,7 +1849,7 @@ def create_app(
         )
         return response
 
-    @app.post("/ui/language")
+    @app.post("/web/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
         """Persist the console's explicit language choice, then reload.
 
@@ -1845,20 +1858,20 @@ def create_app(
         later; the redirect is always to the console root, so no request input
         ever becomes a redirect target.
         """
-        response = RedirectResponse("/", status_code=303)
+        response = RedirectResponse(CONSOLE_HOME, status_code=303)
         chosen = _shipped_locale(lang)
         if chosen is not None:
             response.set_cookie(
                 LANG_COOKIE,
                 chosen,
                 max_age=60 * 60 * 24 * 365,
-                path="/",
+                path=CONSOLE_PATH,
                 httponly=True,
                 samesite="lax",
             )
         return response
 
-    @app.get("/ui/projects", response_class=HTMLResponse)
+    @app.get("/web/ui/projects", response_class=HTMLResponse)
     def ui_projects(request: Request) -> HTMLResponse:
         return render(
             request,
@@ -1866,7 +1879,7 @@ def create_app(
             {"projects": views.project_rows(registry), "active_slug": None},
         )
 
-    @app.post("/ui/projects", response_class=HTMLResponse)
+    @app.post("/web/ui/projects", response_class=HTMLResponse)
     def ui_create_project(request: Request, name: str = Form(...)) -> HTMLResponse:
         """Create a project, or re-render the list with the service's message.
 
@@ -1895,25 +1908,27 @@ def create_app(
             response.headers["HX-Trigger"] = "project-created"
         return response
 
-    @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
         """The Overview tab as a fragment (the project page's default)."""
         return detail(request, slug, tab="overview")
 
-    @app.get("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/meetings", response_class=HTMLResponse)
     def ui_project_meetings(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="meetings")
 
-    @app.get("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_project_glossary(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="glossary")
 
-    @app.get("/ui/projects/{slug}/media", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/media", response_class=HTMLResponse)
     def ui_project_media(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="media")
 
     # --- HTML views: a meeting's transcript, artifacts and drafts ---------- #
-    @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    @app.get(
+        "/web/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse
+    )
     def ui_meeting(
         request: Request, slug: str, meeting_slug: str, offset: int = 0
     ) -> HTMLResponse:
@@ -1955,7 +1970,7 @@ def create_app(
         return render_meeting(request, meeting)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/accept",
+        "/web/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/accept",
         response_class=HTMLResponse,
     )
     def ui_accept_draft(
@@ -1973,7 +1988,7 @@ def create_app(
         return review_draft(request, meeting_id, draft_id, accept=True, version=version)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/reject",
+        "/web/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/reject",
         response_class=HTMLResponse,
     )
     def ui_reject_draft(
@@ -1990,7 +2005,7 @@ def create_app(
             request, meeting_id, draft_id, accept=False, version=version
         )
 
-    @app.post("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.post("/web/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_add_term(
         request: Request,
         slug: str,
@@ -2015,7 +2030,7 @@ def create_app(
             return detail(request, slug, tab="glossary", error=str(exc))
         return detail(request, slug, tab="glossary")
 
-    @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
+    @app.post("/web/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
         request: Request, term_id: int, status: str = Form(...)
     ) -> HTMLResponse:
@@ -2028,7 +2043,7 @@ def create_app(
             return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
-    @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
+    @app.delete("/web/ui/glossary/{term_id}", response_class=HTMLResponse)
     def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
         """Retire a term, re-rendering the tab.
 
@@ -2040,7 +2055,7 @@ def create_app(
         registry.retire_term(term_id, actor=CONSOLE)
         return detail(request, term.project_slug, tab="glossary")
 
-    @app.post("/ui/glossary/{term_id}/restore", response_class=HTMLResponse)
+    @app.post("/web/ui/glossary/{term_id}/restore", response_class=HTMLResponse)
     def ui_restore_term(request: Request, term_id: int) -> HTMLResponse:
         """Restore a retired term to the status it held, re-rendering the tab.
 
@@ -2059,7 +2074,7 @@ def create_app(
         return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
-    @app.post("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.post("/web/ui/projects/{slug}/meetings", response_class=HTMLResponse)
     def ui_create_meeting(
         request: Request,
         slug: str,
@@ -2094,7 +2109,7 @@ def create_app(
             return detail(request, slug, tab="meetings", error=str(exc))
         return detail(request, slug, tab="meetings")
 
-    @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_set_tapes(
         request: Request, meeting_id: int, paths: str = Form("")
     ) -> HTMLResponse:
@@ -2108,12 +2123,12 @@ def create_app(
             return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
-    @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
+    @app.get("/web/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
     def ui_meeting_storage(request: Request, meeting_id: int) -> HTMLResponse:
         """One meeting's storage panel: resolved path, sizes, tapes, controls."""
         return render_storage(request, lookup.meeting(registry, meeting_id))
 
-    @app.post("/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
     async def ui_upload_tape(
         request: Request, meeting_id: int, upload_id: str | None = None
     ) -> HTMLResponse:
@@ -2150,7 +2165,7 @@ def create_app(
         return render_storage(request, meeting)
 
     @app.delete(
-        "/ui/meetings/{meeting_id}/tapes/{tape_id}", response_class=HTMLResponse
+        "/web/ui/meetings/{meeting_id}/tapes/{tape_id}", response_class=HTMLResponse
     )
     def ui_delete_tape(request: Request, meeting_id: int, tape_id: int) -> HTMLResponse:
         """Delete one managed tape, re-rendering the panel."""
@@ -2166,7 +2181,7 @@ def create_app(
             )
         return render_storage(request, meeting)
 
-    @app.delete("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
+    @app.delete("/web/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_delete_meeting_tapes(request: Request, meeting_id: int) -> HTMLResponse:
         """Delete every uploaded tape of the meeting (the per-meeting control).
 
@@ -2193,7 +2208,7 @@ def create_app(
             )
         return render_storage(request, meeting)
 
-    @app.post("/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
     def ui_archive_meeting(
         request: Request, meeting_id: int, root: str = Form("")
     ) -> HTMLResponse:
@@ -2206,14 +2221,14 @@ def create_app(
             return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
-    @app.get("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
-    @app.post("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    @app.get("/web/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    @app.post("/web/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
     def ui_verify_archive(request: Request, archive_id: int) -> HTMLResponse:
         archive = lookup.archive(registry, archive_id)
         row = {"archive": archive, "verification": views.archive_status(archive)}
         return render(request, "_archive_status.html", {"row": row})
 
-    @app.get("/ui/profile-options", response_class=HTMLResponse)
+    @app.get("/web/ui/profile-options", response_class=HTMLResponse)
     def ui_profile_options(
         request: Request, profile: str = PROFILE_CUSTOM
     ) -> HTMLResponse:
@@ -2289,7 +2304,7 @@ def create_app(
             return render_run_error(request, meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
-    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
     async def ui_start_run(
         request: Request,
         meeting_id: int,
@@ -2333,7 +2348,7 @@ def create_app(
             auto=auto,
         )
 
-    @app.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
+    @app.post("/web/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
     def ui_cancel_run(request: Request, run_id: int) -> HTMLResponse:
         """Cancel a queued or running run.
 
@@ -2347,7 +2362,7 @@ def create_app(
         runs.cancel(run_id, actor=CONSOLE)
         return render_run(request, runs.require_state(run_id))
 
-    @app.post("/ui/runs/{run_id}/resume", response_class=HTMLResponse)
+    @app.post("/web/ui/runs/{run_id}/resume", response_class=HTMLResponse)
     def ui_resume_run(request: Request, run_id: int) -> HTMLResponse:
         """Start a new run continuing ``run_id``, and render it.
 
@@ -2364,11 +2379,11 @@ def create_app(
             return render_run_error(request, previous.meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
-    @app.get("/ui/runs/{run_id}", response_class=HTMLResponse)
+    @app.get("/web/ui/runs/{run_id}", response_class=HTMLResponse)
     def ui_run(request: Request, run_id: int) -> HTMLResponse:
         return render_run(request, lookup.run_state(runs, run_id))
 
-    @app.get("/ui/diagnostics")
+    @app.get("/web/ui/diagnostics")
     def ui_diagnostics() -> Response:
         """The same redacted bundle `clear-record diagnose` writes, as a download.
 
@@ -2384,7 +2399,7 @@ def create_app(
             },
         )
 
-    @app.get("/ui/webhooks", response_class=HTMLResponse)
+    @app.get("/web/ui/webhooks", response_class=HTMLResponse)
     def ui_webhooks(request: Request) -> HTMLResponse:
         """The webhook status panel: config validity and the last delivery (ADR-0020).
 
@@ -2427,12 +2442,12 @@ def create_app(
             ),
         )
 
-    @app.get("/ui/agent-setup", response_class=HTMLResponse)
+    @app.get("/web/ui/agent-setup", response_class=HTMLResponse)
     def ui_agent_setup(request: Request, part: str = "agent") -> HTMLResponse:
         """The setup state, as the harness and MCP rungs the page can check."""
         return agent_setup_panel(request, part="mcp" if part == "mcp" else "agent")
 
-    @app.post("/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
+    @app.post("/web/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
     def ui_agent_setup_mcp_harness(
         request: Request,
         harness: str = Form(...),
@@ -2462,7 +2477,7 @@ def create_app(
             ),
         )
 
-    @app.post("/ui/agent-setup/mcp/config", response_class=HTMLResponse)
+    @app.post("/web/ui/agent-setup/mcp/config", response_class=HTMLResponse)
     def ui_agent_setup_mcp_config(
         request: Request,
         config: str = Form(...),
@@ -2494,7 +2509,7 @@ def create_app(
             ),
         )
 
-    @app.post("/ui/hello-check", response_class=HTMLResponse)
+    @app.post("/web/ui/hello-check", response_class=HTMLResponse)
     def ui_hello_check(request: Request) -> HTMLResponse:
         """Run the hello-world acceptance check and render its outcome.
 
@@ -2513,7 +2528,7 @@ def create_app(
         result = run_hello_check(lang=locale(request))
         return render(request, "_hello_check.html", {"check": result})
 
-    @app.get("/api/agent/setup")
+    @app.get("/api/v1/agent/setup")
     def agent_setup_status() -> SetupStatusOut:
         """The machine surface for the agent setup state.
 
@@ -2530,13 +2545,13 @@ def create_app(
     # declaring ``GET`` and ``HEAD`` published ``health_health_head`` twice — an
     # OpenAPI document no client generator can key on (one operation wins and the
     # other is unreachable by id). Each method gets its own route and so its own
-    # id, with the HEAD probe named beside its GET in ``/api/openapi.json``.
+    # id, with the HEAD probe named beside its GET in ``/api/v1/openapi.json``.
     @app.get(HEALTH_PATH)
     @app.head(HEALTH_PATH)
     def health(request: Request) -> Response:
         """The liveness route: ``{"status": "ok"}``, and no other fact.
 
-        Anonymous and deliberately outside ``/api``: a tray, a supervisor's probe
+        Anonymous and deliberately outside ``/api/v1``: a tray, a supervisor's probe
         or a monitor has to tell a healthy node from a sign-in page without a
         session — and without learning anything else about the node. It names no
         registry, no version, no address and no session, and the body is the same
@@ -2559,7 +2574,7 @@ def create_app(
         return {"status": "ok"}
 
     # --- JSON API (machines, scripts and integrations) ---------------------- #
-    @app.get("/api/node")
+    @app.get("/api/v1/node")
     def node_address() -> NodeOut:
         """Where the node is — the record, vouched for by the socket this app holds.
 
@@ -2589,7 +2604,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=node.NO_NODE_MESSAGE)
         return NodeOut.of(recorded, status="ok")
 
-    @app.get("/api/webhooks")
+    @app.get("/api/v1/webhooks")
     def webhooks_status(request: Request) -> views.WebhookStatusOut:
         """Webhook endpoint health as JSON; see :func:`views.webhook_status_view`.
 
@@ -2600,7 +2615,7 @@ def create_app(
         """
         return views.webhook_status_view(locale(request), emitter.status())
 
-    @app.get("/api/projects")
+    @app.get("/api/v1/projects")
     def list_projects() -> list[ProjectCountOut]:
         counts = registry.term_counts()
         return [
@@ -2608,7 +2623,7 @@ def create_app(
             for project in registry.list_projects()
         ]
 
-    @app.post("/api/projects", status_code=201)
+    @app.post("/api/v1/projects", status_code=201)
     def create_project(request: Request, body: ProjectCreate) -> ProjectOut:
         """Create a project; ``default_archive_root`` is a local client's noun.
 
@@ -2633,11 +2648,11 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ProjectOut.model_validate(project)
 
-    @app.get("/api/projects/{slug}")
+    @app.get("/api/v1/projects/{slug}")
     def get_project(slug: str) -> ProjectOut:
         return ProjectOut.model_validate(lookup.project(registry, slug))
 
-    @app.patch("/api/projects/{slug}")
+    @app.patch("/api/v1/projects/{slug}")
     def update_project(slug: str, request: Request, body: ProjectUpdate) -> ProjectOut:
         """Update a project; a ``default_archive_root`` is a local client's noun.
 
@@ -2660,7 +2675,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ProjectOut.model_validate(project)
 
-    @app.get("/api/projects/{slug}/glossary")
+    @app.get("/api/v1/projects/{slug}/glossary")
     def list_terms(slug: str, status: str | None = None) -> list[TermOut]:
         lookup.project(registry, slug)
         try:
@@ -2669,7 +2684,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [TermOut.model_validate(term) for term in terms]
 
-    @app.post("/api/projects/{slug}/glossary", status_code=201)
+    @app.post("/api/v1/projects/{slug}/glossary", status_code=201)
     def add_term(slug: str, body: TermCreate) -> TermOut:
         lookup.project(registry, slug)
         try:
@@ -2688,7 +2703,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return TermOut.model_validate(term)
 
-    @app.patch("/api/glossary/{term_id}")
+    @app.patch("/api/v1/glossary/{term_id}")
     def update_term(term_id: int, body: TermUpdate) -> TermOut:
         lookup.term(registry, term_id)
         try:
@@ -2706,20 +2721,20 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TermOut.model_validate(term)
 
-    @app.delete("/api/glossary/{term_id}")
+    @app.delete("/api/v1/glossary/{term_id}")
     def delete_term(term_id: int) -> TermOut:
         """Retire a term: the row survives, the decoder drops it (ADR-0033).
 
         The verb is DELETE for the clients that already call it, but it no longer
         destroys anything: the response is the retired term, and
-        ``POST /api/glossary/{term_id}/restore`` puts it back — a ``PATCH`` states
+        ``POST /api/v1/glossary/{term_id}/restore`` puts it back — a ``PATCH`` states
         a status outright, where Restore returns the term to the status the
         retire took it from.
         """
         lookup.term(registry, term_id)
         return TermOut.model_validate(registry.retire_term(term_id, actor=API))
 
-    @app.post("/api/glossary/{term_id}/restore")
+    @app.post("/api/v1/glossary/{term_id}/restore")
     def restore_term(term_id: int) -> TermOut:
         """Restore a retired term to the status the retire took it from.
 
@@ -2738,7 +2753,7 @@ def create_app(
         return TermOut.model_validate(restored)
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
-    @app.post("/api/projects/{slug}/meetings", status_code=201)
+    @app.post("/api/v1/projects/{slug}/meetings", status_code=201)
     def create_meeting(slug: str, request: Request, body: MeetingCreate) -> MeetingOut:
         """Create a meeting; a ``workspace_path`` is a local client's noun.
 
@@ -2766,7 +2781,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return MeetingOut.model_validate(meeting)
 
-    @app.get("/api/projects/{slug}/meetings")
+    @app.get("/api/v1/projects/{slug}/meetings")
     def list_meetings(slug: str) -> list[MeetingOut]:
         lookup.project(registry, slug)
         return [
@@ -2774,12 +2789,12 @@ def create_app(
             for meeting in registry.list_meetings(slug)
         ]
 
-    @app.get("/api/meetings/{meeting_id}")
+    @app.get("/api/v1/meetings/{meeting_id}")
     def get_meeting(meeting_id: int) -> MeetingOut:
         return MeetingOut.model_validate(lookup.meeting(registry, meeting_id))
 
     # --- JSON API: a meeting's drafts -------------------------------------- #
-    @app.get("/api/meetings/{meeting_id}/agent")
+    @app.get("/api/v1/meetings/{meeting_id}/agent")
     def meeting_agent_drafts(meeting_id: int) -> AgentDraftsOut:
         """A meeting's draft surface: the kinds, the chains and the minutes."""
         meeting = lookup.meeting(registry, meeting_id)
@@ -2807,7 +2822,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return describe_draft(reviewed)
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
+    @app.post("/api/v1/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
     def accept_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
         """Accept a draft version and return what its acceptance produced.
 
@@ -2817,7 +2832,7 @@ def create_app(
         """
         return review_api(meeting_id, draft_id, accept=True, version=version)
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
+    @app.post("/api/v1/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
     def reject_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
         """Reject a draft version, keeping the chain on disk as history.
 
@@ -2825,7 +2840,7 @@ def create_app(
         """
         return review_api(meeting_id, draft_id, accept=False, version=version)
 
-    @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
+    @app.put("/api/v1/meetings/{meeting_id}/tapes", status_code=201)
     def set_tapes(meeting_id: int, request: Request, body: TapesUpdate) -> TapeSetOut:
         """Set a meeting's tapes; each path is a local client's noun.
 
@@ -2834,7 +2849,7 @@ def create_app(
         empty list names nothing and is answered for any client, but it does not
         clear the set — the registry refuses a recording set with no tapes, and a
         tape is removed one at a time
-        (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+        (``DELETE /api/v1/meetings/{id}/tapes/{tape_id}``).
         """
         lookup.meeting(registry, meeting_id)
         if body.paths:
@@ -2845,7 +2860,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeSetOut.model_validate(tape_set)
 
-    @app.post("/api/meetings/{meeting_id}/tapes", status_code=201)
+    @app.post("/api/v1/meetings/{meeting_id}/tapes", status_code=201)
     async def upload_tape(
         request: Request, meeting_id: int, upload_id: str | None = None
     ) -> TapeOut:
@@ -2889,7 +2904,7 @@ def create_app(
             ) from exc
         return TapeOut.model_validate(tape)
 
-    @app.get("/api/meetings/{meeting_id}/storage")
+    @app.get("/api/v1/meetings/{meeting_id}/storage")
     def meeting_storage(meeting_id: int) -> managed.MeetingStorage:
         """A managed meeting's workspace size, tapes and root free space (ADR-0024).
 
@@ -2899,7 +2914,7 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         return managed.meeting_storage(registry, meeting)
 
-    @app.delete("/api/meetings/{meeting_id}/tapes/{tape_id}")
+    @app.delete("/api/v1/meetings/{meeting_id}/tapes/{tape_id}")
     def delete_tape(meeting_id: int, tape_id: int) -> TapeDeletedOut:
         """Delete one managed tape's file and record.
 
@@ -2923,7 +2938,7 @@ def create_app(
             ),
         )
 
-    @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
+    @app.post("/api/v1/meetings/{meeting_id}/runs", status_code=202)
     def start_run(request: Request, meeting_id: int, body: RunCreate) -> RunSnapshotOut:
         """Start a run over a meeting — the route a **remote** client uses.
 
@@ -2946,7 +2961,7 @@ def create_app(
         _require_model_name(body.model)
         return enqueue_run(meeting, body)
 
-    @app.post("/api/runs", status_code=202)
+    @app.post("/api/v1/runs", status_code=202)
     def start_workspace_run(
         request: Request, body: WorkspaceRunCreate
     ) -> RunSnapshotOut:
@@ -3005,13 +3020,13 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return enqueue_run(meeting, body)
 
-    @app.get("/api/runs/{run_id}")
+    @app.get("/api/v1/runs/{run_id}")
     def get_run(run_id: int) -> RunSnapshotOut:
         run = lookup.run(registry, run_id)
         state = lookup.run_state(runs, run_id)
         return RunSnapshotOut(run=RunOut.model_validate(run), state=state.summary())
 
-    @app.get("/api/runs/{run_id}/events")
+    @app.get("/api/v1/runs/{run_id}/events")
     def run_events(run_id: int, after: int = 0) -> RunEventsOut:
         state = lookup.run_state(runs, run_id)
         events = state.events_since(after)
@@ -3021,7 +3036,7 @@ def create_app(
         )
 
     # --- JSON API: archives ------------------------------------------------- #
-    @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
+    @app.post("/api/v1/meetings/{meeting_id}/archives", status_code=201)
     def post_archive(
         meeting_id: int, request: Request, body: ArchiveCreate | None = None
     ) -> ArchiveOut:
@@ -3042,7 +3057,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ArchiveOut.model_validate(archive)
 
-    @app.get("/api/projects/{slug}/archives")
+    @app.get("/api/v1/projects/{slug}/archives")
     def list_project_archives(slug: str) -> list[ArchiveOut]:
         lookup.project(registry, slug)
         archives = [
@@ -3053,7 +3068,7 @@ def create_app(
         archives.sort(key=lambda archive: archive.id, reverse=True)
         return [ArchiveOut.model_validate(archive) for archive in archives]
 
-    @app.get("/api/meetings/{meeting_id}/archives")
+    @app.get("/api/v1/meetings/{meeting_id}/archives")
     def list_meeting_archives(meeting_id: int) -> list[ArchiveOut]:
         lookup.meeting(registry, meeting_id)
         return [
@@ -3061,7 +3076,7 @@ def create_app(
             for archive in registry.list_archives(meeting_id)
         ]
 
-    @app.post("/api/archives/{archive_id}/verify")
+    @app.post("/api/v1/archives/{archive_id}/verify")
     def post_verify(archive_id: int) -> ArchiveVerification:
         archive = lookup.archive(registry, archive_id)
         try:
@@ -3069,14 +3084,14 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @app.post("/api/shutdown", status_code=202)
-    def shutdown() -> ShutdownOut:
-        """Ask the managed server to stop (the desktop app's Quit button).
+    def ask_the_server_to_stop() -> None:
+        """Ask the managed server to stop, or refuse when nothing manages it.
 
         The console runs as a local server; a windowed desktop build has no
-        terminal to Ctrl-C, so the UI needs an explicit way to stop it. When the
-        app is served by something other than this module's ``serve()`` (e.g. a
-        test client), there is nothing to stop.
+        terminal to Ctrl-C, so an explicit way to stop it is needed. When the app
+        is served by something other than this module's ``serve()`` (e.g. a test
+        client), there is nothing to stop. One act, two callers: the console's own
+        Quit control and the machine lever below.
         """
         server = getattr(app.state, "server", None)
         if server is None:
@@ -3084,6 +3099,30 @@ def create_app(
                 status_code=409, detail="not running under the managed server"
             )
         server.should_exit = True
+
+    @app.post(f"{CONSOLE_PATH}/ui/shutdown", status_code=204)
+    def ui_shutdown() -> Response:
+        """The console's own Quit control: the header button, as a console route.
+
+        A console control is the console acting as itself, so it is answered under
+        the console's prefix and authorised by the console's session — the machine
+        API keeps its own shutdown lever for scripts and a supervisor (the tray
+        stops the node it started itself, in process), and the session cookie never
+        rides on ``/api/v1/*`` (``web/auth.py``). htmx gets ``204``,
+        which its config already refuses to swap anywhere.
+        """
+        ask_the_server_to_stop()
+        return Response(status_code=204)
+
+    @app.post("/api/v1/shutdown", status_code=202)
+    def shutdown() -> ShutdownOut:
+        """Ask the managed server to stop, for a machine client.
+
+        The tray's own use of the node is unchanged by the console moving: this
+        is the lever a script or a supervisor calls, and it answers the JSON
+        shape it always did.
+        """
+        ask_the_server_to_stop()
         return ShutdownOut(status="stopping")
 
     return app
@@ -3104,7 +3143,7 @@ def _open_console(server: NodeServer, requested: node.NodeAddress) -> None:
     open a dead endpoint. A node on an ephemeral port knows its port only once it
     has bound, so ``requested`` is the fallback for a server that has not.
     """
-    webbrowser.open((server.bound() or requested).url)
+    webbrowser.open((server.bound() or requested).url_for(CONSOLE_HOME))
 
 
 def serve(
@@ -3134,7 +3173,7 @@ def serve(
     without being asked — a crash, or a return no stop requested — is started
     again over the same registry, after :data:`_RESTART_PAUSE` so a fault that
     repeats cannot spin. A stop that *was* asked for ends the process as it does
-    an unsupervised node: ``POST /api/shutdown`` asks the server to stop
+    an unsupervised node: ``POST /api/v1/shutdown`` asks the server to stop
     (``should_exit``), and a signal ends it because uvicorn's ``capture_signals``
     restores the handlers it replaced and then re-raises what it caught — so
     Ctrl-C and ``SIGTERM`` finish the process by signal, not through the loop's
@@ -3172,7 +3211,7 @@ def _serve_forever(
         extra = {} if log_config is None else {"log_config": log_config}
         config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
         server = NodeServer(config)
-        # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
+        # Exposed so `POST /api/v1/shutdown` can ask the server to stop — the desktop
         # build has no terminal to interrupt.
         app.state.server = server
         if open_browser:

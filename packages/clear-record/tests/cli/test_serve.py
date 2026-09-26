@@ -192,7 +192,7 @@ def test_serve_supervise_ends_when_the_node_is_asked_to_stop(
 
     def asked_to_stop(self) -> None:
         runs.append(1)
-        self.should_exit = True  # what `POST /api/shutdown` sets
+        self.should_exit = True  # what `POST /api/v1/shutdown` sets
 
     monkeypatch.setattr(uvicorn.Server, "run", asked_to_stop)
 

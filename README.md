@@ -291,7 +291,7 @@ before you type it:
   proxy, Tailscale) is refused a directory with one sentence, rather than having a
   path of its own, or a same-named directory of the node's, acted on. A client
   elsewhere names what it wants the way the registry does: a run names its meeting
-  by id (`POST /api/meetings/{id}/runs`), and a tape is uploaded into a managed
+  by id (`POST /api/v1/meetings/{id}/runs`), and a tape is uploaded into a managed
   workspace. A **model is the exception in both directions** — it is addressed
   neither by path nor by id, and must already be on the node that runs the work —
   so `--model` names a checkpoint the node's models directory resolves (`small`,
@@ -464,7 +464,7 @@ CLI-only install stays audio-only:
 
 ```sh
 uv tool install 'clear-record[web]'    # or:  pip install 'clear-record[web]'
-clear-record web                       # serves http://127.0.0.1:8765 and opens it
+clear-record web                       # serves http://127.0.0.1:8765/web/ and opens it
 clear-record web --tailscale           # sets up Tailscale Serve for remote access
 ```
 
@@ -478,7 +478,7 @@ systemd/launchd unit — see the
 [deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
 `--no-browser` is `web`'s only; `--port`, `--host` and `--data-dir` control either
 launch; the server binds `127.0.0.1` by default and asks for **one console
-password** — set on the first run at `/setup`, replaceable from a terminal with
+password** — set on the first run at `/web/setup`, replaceable from a terminal with
 `clear-record password` — so leave `--host` on loopback and let your proxy be the
 ingress ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
 [ADR-0033](docs/adr/0033-the-auth-position.md)). The UI language comes from

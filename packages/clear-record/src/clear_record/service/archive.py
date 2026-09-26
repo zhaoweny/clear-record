@@ -256,7 +256,7 @@ class ArchiveVerification(Shape):
     """The result of re-checking an archive against its manifest (ADR-0030).
 
     Declared where it is computed: the console's archive row and
-    `/api/archives/{id}/verify` publish the same shape.
+    `/api/v1/archives/{id}/verify` publish the same shape.
 
     ``unverifiable`` is the third answer, beside a missing and a mismatched file:
     the manifest is there but cannot be read, parsed or trusted — or a listed

@@ -588,10 +588,10 @@ def _password(data_dir: str | None) -> int:
     )
     if replacing:
         click.echo(
-            tr("every signed-in browser is now signed out; sign in again at /setup")
+            tr("every signed-in browser is now signed out; sign in again at /web/setup")
         )
     else:
-        click.echo(tr("next: start the console and sign in at /setup"))
+        click.echo(tr("next: start the console and sign in at /web/setup"))
     return 0
 
 

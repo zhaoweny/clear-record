@@ -526,13 +526,19 @@ def start_serve(
     )
 
 
-def console_url(name: str, port: int) -> str:
-    """The tailnet HTTPS URL Serve publishes for the console.
+def console_url(name: str, port: int, home: str) -> str:
+    """The tailnet HTTPS URL Serve publishes, at the console's own home.
 
-    HTTPS on 443 is implicit in a URL; any other port is spelled out.
+    ``home`` is the console's home path — the caller passes
+    :data:`clear_record.web.auth.CONSOLE_HOME`, which this light module does not
+    import (nothing here may pull in FastAPI) — because the node serves the
+    console under that prefix and **nothing at the bare origin**: a URL without
+    it is a 404 waiting for the reader. HTTPS on 443 is implicit in a URL; any
+    other port is spelled out.
     """
     host = normalize_name(name)
-    return f"https://{host}/" if port == 443 else f"https://{host}:{port}/"
+    origin = f"https://{host}" if port == 443 else f"https://{host}:{port}"
+    return f"{origin}{home}"
 
 
 __all__ = [

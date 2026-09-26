@@ -22,7 +22,7 @@ const LEGS = ["ok", "tts", "backend", "model", "transcribe"];
 test("the Try it check reports a transcript or a leg-naming finding", async ({ page }) => {
   const errors = watch(page);
 
-  await page.goto("/settings/status");
+  await page.goto("/web/settings/status");
   await expect(page.locator("#hello-check")).toBeVisible();
   await page.getByRole("button", { name: "Run the check" }).click();
 
@@ -44,7 +44,7 @@ test("the Try it check reports a transcript or a leg-naming finding", async ({ p
 test("the same check runs from the agent flow's Try it stage", async ({ page }) => {
   const errors = watch(page);
 
-  await page.goto("/settings/agent");
+  await page.goto("/web/settings/agent");
   const stage = page.locator("#agent-stage-try");
   await expect(stage.locator("#hello-check")).toBeVisible();
   await stage.getByRole("button", { name: "Run the check" }).click();
@@ -57,10 +57,10 @@ test("the same check runs from the agent flow's Try it stage", async ({ page }) 
 });
 
 test("the setup wizard's Agent step mounts the same three-stage flow", async ({ page }) => {
-  await page.goto("/setup");
+  await page.goto("/web/setup");
 
   await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(3);
   await expect(page.locator("#setup-agent #hello-check")).toBeVisible();
   // The final step points at the permanent check, not a second implementation.
-  await expect(page.locator('#setup-try a[href="/settings/status"]')).toBeVisible();
+  await expect(page.locator('#setup-try a[href="/web/settings/status"]')).toBeVisible();
 });

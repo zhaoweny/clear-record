@@ -17,7 +17,7 @@ def _client(tmp_path, monkeypatch) -> TestClient:
 def test_console_offers_the_bundle_as_a_download(tmp_path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
 
-    res = client.get("/ui/diagnostics")
+    res = client.get("/web/ui/diagnostics")
 
     assert res.status_code == 200
     disposition = res.headers["content-disposition"]
@@ -30,4 +30,4 @@ def test_console_offers_the_bundle_as_a_download(tmp_path, monkeypatch) -> None:
 
 def test_index_links_the_download(tmp_path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
-    assert 'href="/ui/diagnostics"' in client.get("/").text
+    assert 'href="/web/ui/diagnostics"' in client.get("/web/").text

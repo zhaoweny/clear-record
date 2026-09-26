@@ -14,12 +14,12 @@
          render never re-hashes a multi-GB archive. #}
       <td id="archive-status-{{ row.archive.id }}"
           class="archive-status"
-          hx-get="/ui/archives/{{ row.archive.id }}/verify"
+          hx-get="/web/ui/archives/{{ row.archive.id }}/verify"
           hx-trigger="load"
           hx-swap="innerHTML"><span class="status status-checking"><span class="muted">{{ tr("checking…") }}</span></span></td>
       <td>
         <button class="btn btn-sm btn-ghost"
-                hx-post="/ui/archives/{{ row.archive.id }}/verify"
+                hx-post="/web/ui/archives/{{ row.archive.id }}/verify"
                 hx-target="#archive-status-{{ row.archive.id }}"
                 hx-swap="innerHTML">{{ tr("Verify") }}</button>
       </td>

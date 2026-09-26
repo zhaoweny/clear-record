@@ -28,22 +28,22 @@
        `hx-boost` turns it into an in-place body swap with history when JS is
        available. The current page is marked, never by colour alone. #}
     <nav class="app-nav" hx-boost="true" aria-label="{{ tr('Main navigation') }}">
-      <a href="/"{% if nav == 'projects' %} aria-current="page"{% endif %}>{{ tr("Projects") }}</a>
-      <a href="/activity"{% if nav == 'activity' %} aria-current="page"{% endif %}>{{ tr("Activity") }}</a>
-      <a href="/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>{{ tr("Settings") }}</a>
-      {% if setup_incomplete %}<a href="/setup"{% if nav == 'setup' %} aria-current="page"{% endif %}>{{ tr("Setup") }}</a>{% endif %}
+      <a href="/web/"{% if nav == 'projects' %} aria-current="page"{% endif %}>{{ tr("Projects") }}</a>
+      <a href="/web/activity"{% if nav == 'activity' %} aria-current="page"{% endif %}>{{ tr("Activity") }}</a>
+      <a href="/web/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>{{ tr("Settings") }}</a>
+      {% if setup_incomplete %}<a href="/web/setup"{% if nav == 'setup' %} aria-current="page"{% endif %}>{{ tr("Setup") }}</a>{% endif %}
     </nav>
     {# The status chip: what this node is doing right now, fed by
        `page()` from the same registry the Activity page renders — never a
        literal. It links to that page, so the header's short answer is one click
        from the detail; a page may still override the chip's own text through
        `{% block status %}`. #}
-    <a class="badge status-{{ chip.state }}" id="status" href="/activity">{% block status %}{{ chip.label }}{% endblock %}</a>
+    <a class="badge status-{{ chip.state }}" id="status" href="/web/activity">{% block status %}{{ chip.label }}{% endblock %}</a>
     {# The language switcher, beside the header's other controls: a plain form
        POST and a page reload — no client-side i18n framework. Each option is
        its own endonym so the control is legible in either locale; the current
        one is filled in and marked `aria-current`. #}
-    <form class="lang-switch" method="post" action="/ui/language"
+    <form class="lang-switch" method="post" action="/web/ui/language"
           aria-label="{{ tr('Language') }}">
       {% for code, name in language_choices %}
       {% if request.state.locale == code %}
@@ -53,17 +53,20 @@
       {% endif %}
       {% endfor %}
     </form>
-    <a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt"
+    <a class="btn btn-ghost" href="/web/ui/diagnostics" download="clear-record-diagnostics.txt"
        title="{{ tr("Download a redacted diagnostics bundle (not telemetry)") }}">{{ tr("Diagnostics") }}</a>
     {# Sign out, deliberately: the response ends the registry's session and
        clears the cookie. Quit beside it is a different act — it stops the node,
        and the session it does not touch survives until its own clocks say
-       otherwise. A plain form POST, no htmx, so it works without JavaScript. #}
-    <form method="post" action="/setup/sign-out">
+       otherwise. Quit is a console route too: the console acts as itself, so the
+       session cookie (scoped to the console's prefix) authorises it, and the
+       machine API keeps its own shutdown lever for scripts and a supervisor (the
+       tray stops its own node in process). #}
+    <form method="post" action="/web/setup/sign-out">
       <button class="btn btn-ghost" type="submit">{{ tr("Sign out") }}</button>
     </form>
     <button class="btn btn-ghost btn-danger-ghost"
-            hx-post="/api/shutdown" hx-swap="none"
+            hx-post="/web/ui/shutdown" hx-swap="none"
             onclick="this.disabled=true;this.textContent='{{ tr("stopping…") }}'">{{ tr("Quit") }}</button>
   </header>
   {# The upgrade path is a notice, never a hijack: only a marker naming a
@@ -73,8 +76,8 @@
   {% if setup_update and nav != 'setup' %}
   <div class="setup-notice">
     <span>{{ tr("clear-record was updated to {version}.", version=current_version) }}</span>
-    <a href="/setup?reason=update">{{ tr("Review setup") }}</a>
-    <form method="post" action="/setup/dismiss">
+    <a href="/web/setup?reason=update">{{ tr("Review setup") }}</a>
+    <form method="post" action="/web/setup/dismiss">
       <button type="submit" class="btn btn-sm btn-ghost">{{ tr("Dismiss") }}</button>
     </form>
   </div>

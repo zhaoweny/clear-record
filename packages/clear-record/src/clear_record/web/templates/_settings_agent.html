@@ -1,9 +1,9 @@
-{# The one guided agent flow, reached again from Setup; /setup/agent and
-   /settings/agent render the same panel, so there is no second copy. The link
+{# The one guided agent flow, reached again from Setup; /web/setup/agent and
+   /web/settings/agent render the same panel, so there is no second copy. The link
    is the discoverable entry point to the standalone Agent page. #}
-<div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+<div id="agent-setup" hx-get="/web/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
   <div class="muted">{{ tr("Loading agent setup…") }}</div>
 </div>
 <p class="muted settings-note">
-  <a href="/setup/agent">{{ tr("Open the agent flow as a page") }}</a>
+  <a href="/web/setup/agent">{{ tr("Open the agent flow as a page") }}</a>
 </p>

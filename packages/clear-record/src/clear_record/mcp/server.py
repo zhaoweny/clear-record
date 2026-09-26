@@ -195,7 +195,7 @@ class RunEventPageOut(Shape):
 
     Named for *this* edge: the web API publishes a page of the same stream
     (``web.app.RunEventsOut``) carrying the events and the cursor for a run whose
-    id and status the caller already has from ``/api/runs/{id}`` — the tool needs
+    id and status the caller already has from ``/api/v1/runs/{id}`` — the tool needs
     them because a tool call carries its own arguments and no path, so it reports
     the run's status and error beside the page. Two shapes, two names.
     """

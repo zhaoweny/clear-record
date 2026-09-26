@@ -1,6 +1,6 @@
 """The agent flow: one implementation, two entry points, and the Try it check.
 
-The flow is the same `#agent-setup` fragment at /setup/agent and /settings/agent,
+The flow is the same `#agent-setup` fragment at /web/setup/agent and /web/settings/agent,
 and Settings -> Status hosts the same `#hello-check` POST. The service call is
 monkeypatched so the **rendering** of both the success path and a finding is
 asserted with no system voice, no ASR backend and no model.
@@ -83,14 +83,14 @@ def _finding() -> HelloCheck:
 def test_both_entry_points_mount_the_same_flow(tmp_path) -> None:
     client = _client(tmp_path)
 
-    for path in ("/settings/agent", "/setup/agent"):
+    for path in ("/web/settings/agent", "/web/setup/agent"):
         page = client.get(path).text
         assert 'id="agent-setup"' in page, path
-        assert 'hx-get="/ui/agent-setup"' in page, path
+        assert 'hx-get="/web/ui/agent-setup"' in page, path
 
 
 def test_the_flow_has_the_three_numbered_stages(tmp_path) -> None:
-    panel = _client(tmp_path).get("/ui/agent-setup").text
+    panel = _client(tmp_path).get("/web/ui/agent-setup").text
 
     assert 'class="agent-flow"' in panel
     assert panel.count('class="agent-stage"') == 3
@@ -99,17 +99,17 @@ def test_the_flow_has_the_three_numbered_stages(tmp_path) -> None:
         assert label in panel, label
     # The Try it stage hosts the one check, posting to the one route.
     assert 'id="hello-check"' in panel
-    assert 'hx-post="/ui/hello-check"' in panel
+    assert 'hx-post="/web/ui/hello-check"' in panel
 
 
 def test_the_setup_wizard_agent_step_embeds_the_flow(tmp_path) -> None:
-    page = _client(tmp_path).get("/setup").text
+    page = _client(tmp_path).get("/web/setup").text
 
     assert 'id="agent-setup"' in page
-    assert 'hx-get="/ui/agent-setup"' in page
+    assert 'hx-get="/web/ui/agent-setup"' in page
     # The Try it step points at the acceptance test, not a second copy.
     assert 'id="setup-try"' in page
-    assert 'href="/settings/status"' in page
+    assert 'href="/web/settings/status"' in page
     assert "Hello-world check" in page
 
 
@@ -119,17 +119,17 @@ def test_the_setup_wizard_agent_step_embeds_the_flow(tmp_path) -> None:
 def test_the_mcp_fragment_still_renders_standalone(tmp_path) -> None:
     client = _client(tmp_path)
 
-    panel = client.get("/ui/agent-setup?part=mcp").text
+    panel = client.get("/web/ui/agent-setup?part=mcp").text
 
     assert 'class="mcp-setup"' in panel
     assert 'class="mcp-harness"' in panel
     assert 'class="mcp-config"' in panel
     assert 'name="config" value=""' in panel
-    assert "/ui/agent-setup/mcp/harness" in panel
-    assert "/ui/agent-setup/mcp/config" in panel
+    assert "/web/ui/agent-setup/mcp/harness" in panel
+    assert "/web/ui/agent-setup/mcp/config" in panel
     # Settings -> MCP still mounts exactly this fragment.
-    page = client.get("/settings/mcp").text
-    assert 'hx-get="/ui/agent-setup?part=mcp"' in page
+    page = client.get("/web/settings/mcp").text
+    assert 'hx-get="/web/ui/agent-setup?part=mcp"' in page
 
 
 # --- Try it: the success path and a finding ---------------------------------- #
@@ -141,7 +141,7 @@ def test_running_the_check_shows_the_transcript_and_the_mcp_leg(
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: _ok())
     client = _client(tmp_path)
 
-    response = client.post("/ui/hello-check")
+    response = client.post("/web/ui/hello-check")
 
     assert response.status_code == 200
     assert 'data-leg="ok"' in response.text
@@ -150,7 +150,7 @@ def test_running_the_check_shows_the_transcript_and_the_mcp_leg(
     assert "read_transcript" in response.text
     assert "clear-record mcp" in response.text
     # The run control survives the swap, so a returning user can re-run.
-    assert 'hx-post="/ui/hello-check"' in response.text
+    assert 'hx-post="/web/ui/hello-check"' in response.text
 
 
 def test_the_success_result_labels_only_what_the_check_proved(
@@ -158,7 +158,7 @@ def test_the_success_result_labels_only_what_the_check_proved(
 ) -> None:
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: _ok())
 
-    text = _client(tmp_path).post("/ui/hello-check").text
+    text = _client(tmp_path).post("/web/ui/hello-check").text
 
     # Three plainly-labelled states: the local chain, the integration config,
     # and the round-trip the console cannot prove.
@@ -178,7 +178,7 @@ def test_a_missing_mcp_config_is_named_not_overclaimed(tmp_path, monkeypatch) ->
     result = dataclasses.replace(_ok(), mcp_config=None)
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
 
-    text = _client(tmp_path).post("/ui/hello-check").text
+    text = _client(tmp_path).post("/web/ui/hello-check").text
 
     assert "Agent integration not configured" in text
     assert "No MCP client config is pointed at yet" in text
@@ -189,7 +189,7 @@ def test_a_missing_harness_is_named(tmp_path, monkeypatch) -> None:
     result = dataclasses.replace(_ok(), harness=None)
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
 
-    text = _client(tmp_path).post("/ui/hello-check").text
+    text = _client(tmp_path).post("/web/ui/hello-check").text
 
     assert "Agent integration not configured" in text
     assert "No harness is recorded yet" in text
@@ -199,7 +199,7 @@ def test_a_missing_config_and_harness_are_both_named(tmp_path, monkeypatch) -> N
     result = dataclasses.replace(_ok(), mcp_config=None, harness=None)
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: result)
 
-    text = _client(tmp_path).post("/ui/hello-check").text
+    text = _client(tmp_path).post("/web/ui/hello-check").text
 
     assert "Neither an MCP client config nor a harness is recorded yet" in text
 
@@ -208,7 +208,7 @@ def test_a_finding_names_the_leg_that_stopped(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(web_app, "run_hello_check", lambda **kwargs: _finding())
     client = _client(tmp_path)
 
-    response = client.post("/ui/hello-check")
+    response = client.post("/web/ui/hello-check")
 
     assert response.status_code == 200
     assert 'data-leg="tts"' in response.text
@@ -221,10 +221,10 @@ def test_the_check_is_skippable_and_the_status_copy_is_re_runnable(
 ) -> None:
     client = _client(tmp_path)
 
-    status = client.get("/settings/status").text
+    status = client.get("/web/settings/status").text
 
     assert 'id="hello-check"' in status
-    assert 'hx-post="/ui/hello-check"' in status
+    assert 'hx-post="/web/ui/hello-check"' in status
     assert "Run the check" in status
     # The idle state says nothing ran yet; no result is pre-rendered.
     assert "data-leg=" not in status
@@ -240,6 +240,6 @@ def test_the_check_language_follows_the_request_locale(tmp_path, monkeypatch) ->
     monkeypatch.setattr(web_app, "run_hello_check", fake)
     client = _client(tmp_path)
 
-    client.post("/ui/hello-check", headers={"Accept-Language": "zh-CN"})
+    client.post("/web/ui/hello-check", headers={"Accept-Language": "zh-CN"})
 
     assert seen.get("lang") == "zh_CN"

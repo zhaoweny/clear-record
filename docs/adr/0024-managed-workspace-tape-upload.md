@@ -60,7 +60,7 @@ Date: 2026-09-15
   (ADR-0007/ADR-0025). Uploaded tapes live in a `tapes/` subdirectory, which is
   not one of the workspace's own output dirs, so `discover_audio` finds them.
 - [DECISION] **A managed meeting's workspace is inside that root**, created when
-  the meeting is (`POST /api/projects/{slug}/meetings` with `managed: true`), or
+  the meeting is (`POST /api/v1/projects/{slug}/meetings` with `managed: true`), or
   lazily on first upload. A user-chosen `workspace_path` keeps working
   unchanged; an upload aimed at one is refused, because the app must not write
   its files into a user document.
@@ -86,8 +86,8 @@ Date: 2026-09-15
   as a tape *like a path is*: `start_run`, the archive and the MCP surface read
   the same `recording_set.paths` with no new plumbing.
 - [DECISION] **Storage visibility.** A meeting reports its workspace size and
-  its uploaded tapes (`GET /api/meetings/{id}/storage`), and a **managed** tape
-  can be deleted (`DELETE /api/meetings/{id}/tapes/{tape_id}`). A tape in a
+  its uploaded tapes (`GET /api/v1/meetings/{id}/storage`), and a **managed** tape
+  can be deleted (`DELETE /api/v1/meetings/{id}/tapes/{tape_id}`). A tape in a
   user-chosen workspace cannot — it is the user's document. **The archive is the
   durable copy**, and the delete response says so.
 - [DECISION] **Simple upload only, this slice.** A single streaming POST. A
@@ -185,7 +185,7 @@ copy**, and the delete response says so") is **superseded** by ADR-0033's
 shrink-the-irreversible-set rule: the archive stops being a note beside the
 delete and becomes its precondition. The original text is kept for the record.
 
-- [DECISION] **`DELETE /api/meetings/{id}/tapes/{tape_id}` refuses unless the
+- [DECISION] **`DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses unless the
   meeting has a verified archive.** The registry's archives are re-checked
   newest first against their manifests (`verify_archive`); the first that
   verifies is the durable copy the delete leans on, and the response's note names

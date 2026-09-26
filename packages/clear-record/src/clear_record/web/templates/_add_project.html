@@ -1,7 +1,7 @@
 {# One add-project form, shared by the workspace and the project page sidebar,
    so the two cannot drift; both swap the fragment into `#projects`. #}
 <form class="stack add-project"
-      hx-post="/ui/projects"
+      hx-post="/web/ui/projects"
       hx-target="#projects"
       hx-swap="innerHTML"
       hx-on:project-created="this.reset()">

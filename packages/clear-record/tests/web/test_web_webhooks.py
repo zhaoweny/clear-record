@@ -66,14 +66,14 @@ def test_not_configured_is_neither_healthy_nor_failing(tmp_path) -> None:
     """An opt-out must read as "not configured", not as success or failure."""
     client = _client(tmp_path, WebhookEmitter(()))
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "not_configured"
     assert view["configured"] is False
     assert view["problems"] == []
     assert view["endpoints"] == []
 
-    panel = client.get("/ui/webhooks").text
+    panel = client.get("/web/ui/webhooks").text
     assert "Not configured" in panel
     assert "No webhook endpoints are configured" in panel
     # The opt-out is not dressed as either of the two states it must stay apart
@@ -90,13 +90,13 @@ def test_a_malformed_config_is_a_problem_not_silence(tmp_path) -> None:
     assert emitter.problems  # the service already found it
     client = _client(tmp_path, emitter)
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "config_problem"
     # The config surface is the emitter's own, verbatim — never recomputed here.
     assert view["problems"] == list(emitter.problems)
     assert view["endpoints"] == []
-    assert "unknown event" in client.get("/ui/webhooks").text
+    assert "unknown event" in client.get("/web/ui/webhooks").text
 
 
 def test_a_named_secret_that_is_unset_is_per_endpoint(tmp_path) -> None:
@@ -110,7 +110,7 @@ def test_a_named_secret_that_is_unset_is_per_endpoint(tmp_path) -> None:
     )
     client = _client(tmp_path, emitter)
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "config_problem"
     good, bad = view["endpoints"]
@@ -127,13 +127,13 @@ def test_a_configured_endpoint_with_no_delivery_is_not_labelled_ok(tmp_path) -> 
     try:
         client = _client(tmp_path, emitter)
 
-        view = client.get("/api/webhooks").json()
+        view = client.get("/api/v1/webhooks").json()
 
         assert view["state"] == "no_delivery_yet"
         # The aggregate label must not fall through to the neutral "Configured"
         # (that read as a success the endpoint has not had).
         assert view["state_label"] == "No delivery yet"
-        assert "No delivery yet" in client.get("/ui/webhooks").text
+        assert "No delivery yet" in client.get("/web/ui/webhooks").text
     finally:
         emitter.close(timeout=5)
 
@@ -153,7 +153,7 @@ def test_a_delivered_event_is_recorded_and_shown(tmp_path) -> None:
         emitter.close(timeout=5)
     client = _client(tmp_path, emitter)
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "ok"
     endpoint = view["endpoints"][0]
@@ -180,7 +180,7 @@ def test_a_failed_delivery_shows_the_http_status_and_err(tmp_path) -> None:
         emitter.close(timeout=5)
     client = _client(tmp_path, emitter)
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "delivery_failed"
     endpoint = view["endpoints"][0]
@@ -189,7 +189,7 @@ def test_a_failed_delivery_shows_the_http_status_and_err(tmp_path) -> None:
     assert "500" in endpoint["last_delivery"]["error"]
     # The reason is legible on the panel too, so a user can tell a rejected
     # signature from an unreachable host.
-    assert "500" in client.get("/ui/webhooks").text
+    assert "500" in client.get("/web/ui/webhooks").text
 
 
 def test_an_unreachable_host_is_distinguishable_from_a_bad_status(tmp_path) -> None:
@@ -205,7 +205,7 @@ def test_an_unreachable_host_is_distinguishable_from_a_bad_status(tmp_path) -> N
         emitter.close(timeout=5)
     client = _client(tmp_path, emitter)
 
-    last = client.get("/api/webhooks").json()["endpoints"][0]["last_delivery"]
+    last = client.get("/api/v1/webhooks").json()["endpoints"][0]["last_delivery"]
 
     assert last["outcome"] == "failed"
     assert last["http_status"] is None  # no response at all
@@ -236,9 +236,9 @@ def test_the_signing_secret_never_reaches_the_console(tmp_path, monkeypatch) -> 
         emitter.close(timeout=5)
     client = _client(tmp_path, emitter)
 
-    api = client.get("/api/webhooks")
-    panel = client.get("/ui/webhooks")
-    home = client.get("/")
+    api = client.get("/api/v1/webhooks")
+    panel = client.get("/web/ui/webhooks")
+    home = client.get("/web/")
 
     for response in (api, panel, home):
         assert secret not in response.text
@@ -258,7 +258,7 @@ def test_a_config_problem_names_the_variable_not_the_value(tmp_path) -> None:
     )
     client = _client(tmp_path, emitter)
 
-    view = client.get("/api/webhooks").json()
+    view = client.get("/api/v1/webhooks").json()
 
     assert view["state"] == "config_problem"
     # The problem names the *variable* to set (the config field is ``secret_env``),

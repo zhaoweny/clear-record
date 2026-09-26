@@ -48,7 +48,7 @@ def status_text(
     """
     live = controller.state() if state is None else state
     if live is ServiceState.RUNNING:
-        return tr("Running at {url}", url=controller.url)
+        return tr("Running at {url}", url=controller.console_url)
     if live is ServiceState.UNREACHABLE:
         return tr("Not responding")
     return tr("Server not running")
@@ -90,7 +90,7 @@ def main(
 
     menu = QMenu()
     open_action = QAction(tr("Open console"), menu)
-    open_action.triggered.connect(lambda: webbrowser.open(controller.url))
+    open_action.triggered.connect(lambda: webbrowser.open(controller.console_url))
     menu.addAction(open_action)
 
     status_action = QAction(menu)
@@ -142,7 +142,7 @@ def main(
     poll.start()
 
     if open_browser and ready:
-        webbrowser.open(controller.url)
+        webbrowser.open(controller.console_url)
 
     try:
         return qt.exec()

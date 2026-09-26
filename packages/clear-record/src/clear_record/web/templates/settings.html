@@ -15,7 +15,7 @@
   <h2 class="sidebar-title">{{ tr("Settings") }}</h2>
   <ul class="settings-nav">
     {% for slug, label, _template in settings_sections %}
-    <li><a href="/settings/{{ slug }}"{% if section == slug %} aria-current="page"{% endif %}>{{ tr(label) }}</a></li>
+    <li><a href="/web/settings/{{ slug }}"{% if section == slug %} aria-current="page"{% endif %}>{{ tr(label) }}</a></li>
     {% endfor %}
   </ul>
 </aside>

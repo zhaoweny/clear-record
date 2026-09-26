@@ -53,8 +53,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
   now holds one console credential and every route but the setup page, the
   liveness route and the compiled assets needs a signed-in session. The ingress
   posture — the proxy is where a *remote* client enters — stands.)* Its run API is
-  `POST /api/meetings/{id}/runs` → 202, `GET /api/runs/{id}`, and
-  `GET /api/runs/{id}/events?after=<cursor>` — cursor-paged progress events.
+  `POST /api/v1/meetings/{id}/runs` → 202, `GET /api/v1/runs/{id}`, and
+  `GET /api/v1/runs/{id}/events?after=<cursor>` — cursor-paged progress events.
 - [FACT] **A client is already written.** `tray/service.py` supervises the server,
   health-probes it and speaks HTTP with the **stdlib `urllib`** — so a client needs
   no new third-party dependency, and that property is a fact rather than a hope.
@@ -158,8 +158,8 @@ promotes nothing the owner did not say beyond the label each clause carries.
 
   | prefix | surface | today |
   |---|---|---|
-  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the MCP server as it chooses) | spec'd, unbuilt: the `/api/v1` re-root belongs to the tracker's `console-ia` lane; today the routes are unversioned under `/api/…` |
-  | `/web` | the console BFF — pages and htmx fragments | served today at `/` and `/ui/*` |
+  | `/api/v1` | the JSON API — the contract every client speaks (the command line first, the MCP server as it chooses) | **built**: the API answers under `/api/v1`, and `/api/v1/docs` publishes its schema. (Unversioned under `/api/…` until 2026-09-26.) |
+  | `/web` | the console BFF — pages and htmx fragments | **built**: the console answers under `/web` — pages at `/web/…`, fragments at `/web/ui/…`. (At `/` and `/ui/*` until 2026-09-26.) |
   | `/mcp` | the agent surface | today **stdio only** (`clear-record mcp`) |
 
 - **The five preliminaries**, each labelled for itself — four resting on the
@@ -396,7 +396,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
   dialled at), or the very address this node is listening on — `serve --host
   192.168.1.5` records and dials exactly that, so a client on the node's machine
   sends it. `web.app._served_by` answers that address in process, the same one
-  `GET /api/node` vouches for and the record carries. It is also the same fact the
+  `GET /api/v1/node` vouches for and the record carries. It is also the same fact the
   request guard already reads.
 - [FACT] **What that admits, stated rather than left to be discovered.** `Host`
   says which name the client addressed, never where it sits, so this is **not**
@@ -415,11 +415,11 @@ promotes nothing the owner did not say beyond the label each clause carries.
   deployment.
 - [FACT] **The rule is enforced once, at the machine-facing edge, and reads the
   same to every client.** `web.app` takes a path only from a request that named
-  the node itself: `POST /api/runs` (a run's directory), `POST
-  /api/projects/{slug}/meetings` (a `workspace_path`), `PUT
-  /api/meetings/{id}/tapes` (a tape set), `POST /api/projects` and `PATCH
-  /api/projects/{slug}` (a project's `default_archive_root`, which is where its
-  archives are later written), `POST /api/meetings/{id}/archives` (a named
+  the node itself: `POST /api/v1/runs` (a run's directory), `POST
+  /api/v1/projects/{slug}/meetings` (a `workspace_path`), `PUT
+  /api/v1/meetings/{id}/tapes` (a tape set), `POST /api/v1/projects` and `PATCH
+  /api/v1/projects/{slug}` (a project's `default_archive_root`, which is where its
+  archives are later written), `POST /api/v1/meetings/{id}/archives` (a named
   root), and either run edge when the body names a **`glossary`** — the file the
   run decodes with, which is a path for the same reason a directory is — answer
   **403** with one sentence naming the rule and, per case, the shape to reach for
@@ -430,13 +430,13 @@ promotes nothing the owner did not say beyond the label each clause carries.
   registered; the console's run form and the MCP adapter carry `model` through in
   process, as the node's own surfaces.
 - [FACT] **The registry-addressed run is unchanged in behaviour.** `POST
-  /api/meetings/{id}/runs` still answers any client that can reach the node: a
+  /api/v1/meetings/{id}/runs` still answers any client that can reach the node: a
   meeting is named by id, no directory is involved, and the run takes the queue,
   the claim and the row it always took. That is the route a client elsewhere
   uses, and the sentence above names it.
 - [FACT] **The rules are stated where a client author meets them**, not
   discovered: in the request shapes' own declarations, so the OpenAPI schema at
-  `/api/docs` publishes them (`RunCreate`, `WorkspaceRunCreate`, `MeetingCreate`,
+  `/api/v1/docs` publishes them (`RunCreate`, `WorkspaceRunCreate`, `MeetingCreate`,
   `TapesUpdate`, `ArchiveCreate`, `ProjectCreate`, `ProjectUpdate`, and each
   route's description); in the command line's `run` help; in README's "A `run` is
   a node run" passage; and in the operator guide, where the proxy recipes must
@@ -446,7 +446,7 @@ promotes nothing the owner did not say beyond the label each clause carries.
   edge refuses.** The Decision makes the console an in-process backend-for-frontend —
   it *is* the node's own face, it shows back the paths the node resolved (the storage
   panel), and its forms name the node's folders rather than a client's — so the
-  machine-facing JSON routes are where the rule binds and the `/ui/*` forms and
+  machine-facing JSON routes are where the rule binds and the `/web/ui/*` forms and
   pages are deliberately **not** guarded. A visitor who reaches the console
   through the operator's proxy can therefore still type a path there; that path
   is the node's, and it is not offered as a way to name a file on the visitor's

@@ -12,7 +12,7 @@ const fixture = readFileSync(new URL("./fixtures/components.html", import.meta.u
 test.beforeAll(() => mkdirSync(shotsDir, { recursive: true }));
 
 async function render(page: Page, scheme: "light" | "dark", width: number, tag: string) {
-  await page.goto("/");
+  await page.goto("/web/");
   await page.setContent(fixture, { waitUntil: "load" });
   await page.setViewportSize({ width, height: 1000 });
   await page.emulateMedia({ colorScheme: scheme });

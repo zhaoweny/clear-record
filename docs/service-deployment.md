@@ -23,8 +23,8 @@ console password** (ADR-0013/ADR-0014; the credential itself is ADR-0033's —
 [§1](#the-console-credential-adr-0033) below).
 [DESIGN] It is a **backend**. Your reverse proxy is the **only ingress**: it
 terminates TLS and forwards to `127.0.0.1:8765`. Nothing else should be able to
-reach that port — a device that opens `http://<host>:8765/` directly reaches the
-sign-in page rather than the console, but a password typed over plain HTTP on a
+reach that port — a device that opens `http://<host>:8765/web/` directly reaches
+the sign-in page rather than the console, but a password typed over plain HTTP on a
 network is a password in the clear, so the port still belongs to loopback alone.
 
 Say this out loud once, because it is the whole posture: **bound to localhost is
@@ -108,7 +108,7 @@ compiled assets aside), and its whole body is `{"status": "ok"}`.
 No service manager? `clear-record serve --supervise` is the stand-in: the node
 keeps **itself** up — a server that stops without being asked is started again
 over the same registry, after a short pause — while an asked-for stop
-(`POST /api/shutdown`) or a signal ends it exactly as it does an unsupervised
+(`POST /api/v1/shutdown`) or a signal ends it exactly as it does an unsupervised
 node. No unit file and no root: just the command.
 
 ### macOS (launchd agent)
@@ -191,8 +191,8 @@ and publish nothing at all.
 ### The console credential (ADR-0033)
 
 [FACT, repo] The console gates everything it serves behind **one password**. A
-fresh install has none: every route but `/setup`, `/health` and the compiled
-assets redirects to `/setup` (the machine API answers `401` instead of a
+fresh install has none: every route but `/web/setup`, `/health` and the compiled
+assets redirects to `/web/setup` (the machine API answers `401` instead of a
 redirect), and that page is where the first run sets the credential. The password
 is stored in the registry as a salted `scrypt` hash — never in `config.toml`, in
 the agent setup file, in a log line or in the diagnostics bundle — and signing in
@@ -316,7 +316,7 @@ client dialling it from the network is treated as local too — your choice of b
 and trust is what admits it, and the bind stays loopback-only by default for
 exactly this reason. Two boundaries worth being clear about:
 
-- **The console is not that edge.** The `/ui/*` pages and forms are the node's
+- **The console is not that edge.** The `/web/ui/*` pages and forms are the node's
   own in-process face (ADR-0032), so they are not guarded: a visitor who reaches
   the console through your proxy can still type a path in its forms, and that path
   is a folder **on the node**; the console shows back the path the node resolved.
@@ -435,11 +435,11 @@ refused.
 #### The exposed port
 
 [DESIGN] Both ports default to the same number (8765), so a plain `--tailscale`
-publishes `https://<machine>.<tailnet>.ts.net:8765/`. Choose a different tailnet
+publishes `https://<machine>.<tailnet>.ts.net:8765/web/`. Choose a different tailnet
 port with `--tailscale-port` (the console's own `--port` is unchanged):
 
 ```sh
-clear-record web --tailscale --tailscale-port 443   # https://<machine>.<tailnet>.ts.net/
+clear-record web --tailscale --tailscale-port 443   # https://<machine>.<tailnet>.ts.net/web/
 ```
 
 The Serve **target** is always `http://127.0.0.1:<--port>`: Serve proxies only
@@ -554,11 +554,11 @@ partial or dropped upload leaves **no** tape behind.
 
 ### Storage visibility and deleting tapes
 
-[FACT] `GET /api/meetings/{id}/storage` reports the workspace size, the managed
+[FACT] `GET /api/v1/meetings/{id}/storage` reports the workspace size, the managed
 root's **free space** (`free_bytes`, `null` when the meeting is not managed or
 the filesystem cannot report it — the same accounting the upload guard checks),
 and the uploaded tapes (path, sha256, size);
-`DELETE /api/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
+`DELETE /api/v1/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
 a user-chosen workspace cannot be deleted here — it is your document.
 
 > **Deleting requires a verified archive.** The route re-checks the meeting's
@@ -568,12 +568,12 @@ a user-chosen workspace cannot be deleted here — it is your document.
 > With a verified archive the delete proceeds, and the response's note names the
 > archive that is the durable copy. An archive is a copy, never a move
 > (ADR-0006); archive the
-> meeting (`POST /api/meetings/{id}/archives`) before deleting its tapes.
+> meeting (`POST /api/v1/meetings/{id}/archives`) before deleting its tapes.
 
 Deleting a **glossary term** is likewise not a row delete: the console's and the
 API's `DELETE` retire the term instead — the row survives with `added_by` and
 `created_at`, stops biasing the decoder, and can be restored — `POST
-/api/glossary/{id}/restore`, or the console's Restore button — to the status it
+/api/v1/glossary/{id}/restore`, or the console's Restore button — to the status it
 held before the retire (a retired candidate returns as a candidate, never as
 owner-accepted truth).
 
@@ -582,7 +582,7 @@ owner-accepted truth).
 [DESIGN] Every surface before this one could only **read** local files. This one
 **writes** multi-GB files to the node. ADR-0021's shape does not change — the
 app still binds loopback, and the console's one credential is now in front of
-every route but `/setup`, `/health` and the compiled assets — but the reason the
+every route but `/web/setup`, `/health` and the compiled assets — but the reason the
 proxy must be
 the **only** ingress is now sharper: anything that can *sign in* can reach an
 upload endpoint and fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
@@ -672,7 +672,7 @@ cheap (`docs/architecture.md` §8).
 - **Per-user accounts, RBAC, and machine tokens.** The console has **one**
   credential and no usernames (ADR-0033), and the machine API carries no bearer
   token yet — what exists is: the salted hash in the registry, the human sessions
-  and their two windows, the `/setup` + `/health` + `/static` anonymous surface,
+  and their two windows, the `/web/setup` + `/health` + `/static` anonymous surface,
   and the rescue command (§1). A token for scripts, per-project authorization, and
   an approvals ceremony are all deferred, not rejected; the rule they will meet is
   ADR-0033's — a credential alone may not destroy something no durable copy can

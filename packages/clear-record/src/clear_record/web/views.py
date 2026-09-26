@@ -103,7 +103,7 @@ from clear_record.service.webhooks import WebhookStatus
 from clear_record.web import lookup
 
 #: The Settings page's sections (ADR-0027): each is a real URL,
-#: ``/settings/<slug>``. This is the control plane's spine, not the project
+#: ``/web/settings/<slug>``. This is the control plane's spine, not the project
 #: navigation. The pinned sections: each is one job at a time.
 #: Agent and MCP write the config; Status writes the setup marker (walk setup
 #: again) and Models can download a checkpoint. The rest show their config path.
@@ -678,7 +678,7 @@ class WebhookEndpointOut(Shape):
 
 
 class WebhookStatusOut(Shape):
-    """`/api/webhooks`: the overall state, the config problems, one row per endpoint.
+    """`/api/v1/webhooks`: the overall state, the config problems, one row per endpoint.
 
     The signing secret is nowhere in this shape — only whether an endpoint is
     signed — and a problem names the environment variable, never its value.
@@ -1311,7 +1311,7 @@ def status_context(registry: Registry, locale: str) -> dict:
         "backends": backend_rows(),
         "config_path": str(config_path()),
         # The permanent hello-world check renders its idle state here; the
-        # /ui/hello-check POST swaps a result into #hello-check.
+        # /web/ui/hello-check POST swaps a result into #hello-check.
         "check": None,
     }
 

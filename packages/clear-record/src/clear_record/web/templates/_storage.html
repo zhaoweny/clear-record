@@ -69,7 +69,7 @@
         <td>
           {% if storage.managed %}
           <button class="btn btn-sm btn-danger-ghost" type="button"
-                  hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes/{{ tape.id }}"
+                  hx-delete="/web/ui/meetings/{{ storage.meeting_id }}/tapes/{{ tape.id }}"
                   hx-target="#storage-{{ storage.meeting_id }}"
                   hx-swap="innerHTML"
                   hx-confirm="{{ tr("Delete this tape? It is unlinked, and the meeting's verified archive is the durable copy.") }}"
@@ -97,7 +97,7 @@
 
   {% if storage.managed and storage.tapes %}
   <button class="btn btn-sm btn-danger-ghost" type="button"
-          hx-delete="/ui/meetings/{{ storage.meeting_id }}/tapes"
+          hx-delete="/web/ui/meetings/{{ storage.meeting_id }}/tapes"
           hx-target="#storage-{{ storage.meeting_id }}"
           hx-swap="innerHTML"
           hx-confirm="{{ tr("Delete all of this meeting's tapes? Their files are unlinked, and the meeting's verified archive is the durable copy.") }}">{{ tr("Delete all tapes") }}</button>

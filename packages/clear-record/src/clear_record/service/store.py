@@ -2425,10 +2425,14 @@ class Registry:
         """Point the meeting's artifact rows at the copies that retain their bytes.
 
         The other half of a publication's preservation
-        (:func:`clear_record.pipeline.workspace.publish_run`): a root document no
-        run scope held was copied aside *before* it was replaced, and this is what
-        keeps the association honest — every row of the meeting whose ``path`` is
-        one of the moved paths is repointed at the copy, so the row keeps
+        (:func:`clear_record.pipeline.workspace.publish_run`): every root document
+        the publication is about to replace is paired, **before** the first swap,
+        with a path that holds the bytes it has — a copy made for it when no marked
+        directory held them, or the holder itself (a finished run's own identical
+        copy, or a retained copy an earlier attempt made) — and this is what keeps
+        the association honest: every row of the meeting whose ``path`` is one of
+        the replaced root paths is repointed at that preserved path, so the row
+        keeps
         describing the bytes it recorded instead of quietly describing whatever
         the publication put at the old path. That is the upgrade boundary's data
         loss, one row at a time: before this, the first run after an upgrade left

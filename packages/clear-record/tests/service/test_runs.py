@@ -7,6 +7,7 @@ events, artifact checksums — is exercised with no ASR backend and no GPU.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import itertools
 import json
@@ -28,6 +29,7 @@ import soundfile as sf
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from clear_record.pipeline import stages
+from clear_record.pipeline import workspace as workspace_module
 from clear_record.pipeline.workspace import Workspace, discover_audio
 from clear_record.core import (
     JobEvent,
@@ -3370,6 +3372,158 @@ def test_a_run_that_dies_mid_way_spares_the_earlier_run_and_the_published_copy(
         .text
         == "half"
     )
+
+
+def _exporting_pipeline(text: str):
+    """A pipeline that leaves a run's own copy with *text* as its Markdown export.
+
+    The export is the document a **stage command** also writes at the root
+    (``transcribe``/``calibrate`` name no run), so it is the one whose root row can
+    end up reading a later run's bytes.
+    """
+
+    def pipeline(directory, options, on_event) -> None:
+        workspace = Workspace.at(directory)
+        workspace.write_manifest([])
+        workspace.write_segments({"a": []}, {"backend": "fake"})
+        workspace.write_record(
+            RecordDocument(
+                sources=(),
+                alignment=None,
+                segments=(Segment(0.0, 1.0, str(workspace.run_id), "a"),),
+            )
+        )
+        workspace.export_dir.mkdir(parents=True, exist_ok=True)
+        (workspace.export_dir / "record.md").write_text(text, encoding="utf-8")
+
+    return pipeline
+
+
+def test_a_legacy_export_row_follows_the_bytes_it_recorded(tmp_path) -> None:
+    """A row that names the mutable root follows the preserved bytes, not the run's.
+
+    A **stage command** leaves ``export/record.md`` at the root and names no run
+    (ADR-0033), so the row it registered names the mutable root. When the first run
+    publishes **identical** Markdown there, nothing is at risk — a run's own copy
+    now holds those bytes — but the row's *association* is not automatic: the next
+    run writes different Markdown, the root is replaced, and the row is left
+    reading the newer content with a recorded ``sha256`` that no longer matches its
+    file. The publication therefore reports where every replaced root document's
+    bytes are (``Publication.preserved``), copied now or already held, and the rows
+    follow it.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    workspace = Workspace.at(meeting.workspace_path)
+    workspace.export_dir.mkdir(parents=True, exist_ok=True)
+    legacy = workspace.export_dir / "record.md"
+    legacy.write_text("legacy\n", encoding="utf-8")
+    registry.add_artifact(
+        meeting.id,
+        actor="console",
+        kind="export",
+        path=str(legacy),
+        sha256=hashlib.sha256(b"legacy\n").hexdigest(),
+        produced_by="stage",
+    )
+
+    manager = RunManager(registry, pipeline=_exporting_pipeline("legacy\n"))
+    first = manager.start(meeting, origin="console", actor="console")
+    assert manager.wait(first.id, timeout=10).status == "done"
+    # The row already followed the identical bytes the first run's copy holds.
+    followed = next(
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.produced_by == "stage"
+    )
+    assert Path(followed.path) != legacy, "the row still names the mutable root"
+
+    manager = RunManager(registry, pipeline=_exporting_pipeline("changed\n"))
+    second = manager.start(meeting, origin="console", actor="console")
+    assert manager.wait(second.id, timeout=10).status == "done"
+
+    row = next(
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.produced_by == "stage"
+    )
+    path = Path(row.path)
+    assert path.read_text(encoding="utf-8") == "legacy\n"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == row.sha256
+    # The root is the newest run's export, which is the data behaviour.
+    assert legacy.read_text(encoding="utf-8") == "changed\n"
+
+
+def test_a_retry_follows_the_bytes_the_failed_attempt_preserved(
+    tmp_path, monkeypatch
+) -> None:
+    """A failed attempt's preserved copy is where the retry's rows must go.
+
+    The first attempt copies the root's legacy documents aside and then dies
+    staging them (``ENOSPC``), so nothing is swapped and no row moves — the legacy
+    bytes are in the retained directory. The retry finds them **already preserved**
+    (the retained copy carries the same mark a run scope does) and has to report
+    that path: otherwise its successful publication replaces the root and the
+    legacy row reads the new run's bytes with a recorded ``sha256`` that no longer
+    matches. The association is recoverable because the holder is *found*, not
+    remembered across attempts.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    workspace = Workspace.at(meeting.workspace_path)
+    workspace.record_path.parent.mkdir(parents=True, exist_ok=True)
+    staged = '{"legacy": "staged"}'
+    workspace.record_path.write_text(staged, encoding="utf-8")
+    registry.add_artifact(
+        meeting.id,
+        actor="console",
+        kind="record",
+        path=str(workspace.record_path),
+        sha256=hashlib.sha256(staged.encode("utf-8")).hexdigest(),
+        produced_by="stage",
+    )
+
+    real_copy = workspace_module.shutil.copy2
+
+    def the_disk_fills_before_the_swap(source, target, *args, **kwargs):
+        # The staging copy is the one that lands beside its target as ``.tmp``.
+        if str(target).endswith(".tmp"):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copy(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(
+        workspace_module.shutil, "copy2", the_disk_fills_before_the_swap
+    )
+    manager = RunManager(registry, pipeline=_exporting_pipeline("one\n"))
+    failed = manager.start(meeting, origin="console", actor="console")
+    assert manager.wait(failed.id, timeout=10).status == "failed"
+    # Nothing was swapped and no row moved: the legacy document is untouched.
+    assert workspace.record_path.read_text(encoding="utf-8") == staged
+    assert next(
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.produced_by == "stage"
+    ).path == str(workspace.record_path)
+
+    monkeypatch.setattr(workspace_module.shutil, "copy2", real_copy)
+    manager = RunManager(registry, pipeline=_exporting_pipeline("two\n"))
+    retried = manager.start(meeting, origin="console", actor="console")
+    assert manager.wait(retried.id, timeout=10).status == "done"
+
+    row = next(
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.produced_by == "stage"
+    )
+    path = Path(row.path)
+    assert path != workspace.record_path
+    assert path.is_relative_to(workspace.root / "runs"), "not the preserved copy"
+    assert path.read_text(encoding="utf-8") == staged
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == row.sha256
 
 
 def test_a_resumed_run_continues_in_the_workspaces_chunk_cache(tmp_path) -> None:

@@ -1866,14 +1866,19 @@ class RunManager:
         #
         # What publication can still change is a row that named a **root**
         # document no run scope held — a pre-257 install's outputs, or a stage
-        # command's. Those are copied aside before they are replaced, and the rows
-        # follow the copies, so an artifact keeps reading the bytes it recorded
-        # rather than the run's (the upgrade boundary's data loss).
+        # command's. Publication pairs every root document it replaces with a path
+        # that still holds its bytes — a copy it made, a run's own copy that
+        # already held them, or an earlier publication's retained copy (the shape a
+        # retry after a failed attempt meets) — and the rows follow **that** pair,
+        # so an artifact keeps reading the bytes it recorded rather than the run's
+        # (the upgrade boundary's data loss). The mapping is wider than the copies:
+        # a document a marked directory already holds is a pair with nothing copied,
+        # and a row naming it needs the same move.
         publication = publish_run(scope)
-        if publication.retained:
+        if publication.preserved:
             self._registry.retain_artifact_paths(
                 meeting.id,
-                {str(root): str(copy) for root, copy in publication.retained},
+                {str(root): str(kept) for root, kept in publication.preserved},
                 actor=QUEUE,
             )
         artifacts = self._register_artifacts(meeting, run.id)

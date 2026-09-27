@@ -219,9 +219,15 @@ verbatim answers and the direction they answer are the
   run's own copy of its record — and a root whose documents no run's copy holds
   (an install from before run scoping, or a stage command's output) is copied into
   a retained copy under the workspace **before** it is replaced, with the artifact
-  rows that named those paths following the copies (the upgrade boundary,
-  corrected 2026-09-27: the first run after an upgrade used to be the last legacy
-  output's end); the run's manifest, its segments' `meta`,
+  rows that named those paths following the bytes they recorded: the copy just made
+  when nothing else held them, or the **holder** itself — a finished run's own
+  identical copy, or a retained copy an earlier *failed* attempt made, so the
+  association survives a retry. (Corrected 2026-09-27, second review: the rows were
+  moved only when the publication happened to copy, so a row naming the mutable
+  root kept reading a later run's bytes whenever an identical copy already existed.
+  The upgrade boundary itself was corrected the same day: the first run after an
+  upgrade used to be the last legacy output's end.) The run's manifest, its
+  segments' `meta`,
   its record's `metadata` and so its JSON export name the run, and its artifact
   rows point at its own copy (the Markdown/SRT/VTT exports carry no run id).
   Retention holds by construction, before any delete rule leans on it — the

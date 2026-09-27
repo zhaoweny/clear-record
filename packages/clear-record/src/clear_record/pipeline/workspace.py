@@ -888,7 +888,7 @@ PUBLISHED_DOCUMENTS = (MANIFEST, SEGMENTS, RECORD)
 #: outputs in, beside the run scopes: ``<workspace>/runs/retained-<stamp>/``. The
 #: upgrade boundary is what it exists for — a root whose documents name no run is
 #: held nowhere else, so overwriting them would be the last copy's end
-#: (:func:`_retain_unscoped_outputs`).
+#: (:func:`_preserve_unscoped_outputs`).
 RETENTION_PREFIX = "retained"
 
 
@@ -927,19 +927,25 @@ def _sha256(path: Path) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class Publication:
-    """What one publication wrote, and what it kept instead of overwriting.
+    """What one publication wrote, and where the bytes it replaced still are.
 
     ``published`` is the root paths written, in the order they landed.
-    ``retained`` pairs each root path that was **preserved** — copied into the
-    workspace's retained copy because no run scope held it — with the copy. That
-    pair is for the caller that owns the *association* between a path and a
-    record: the registry's artifact rows follow the copies, so a row keeps
-    describing the bytes it recorded. No pairs means the publication replaced
-    only documents a run's own scope already holds.
+    ``preserved`` pairs **every** root document this publication replaced that was
+    a file — whatever held its bytes before the swap — with a path that still
+    holds them: a run's own copy, an earlier publication's retained copy, or the
+    copy this publication made. That pair is for the caller that owns the
+    *association* between a path and a record: the registry's artifact rows follow
+    it, so a row naming the mutable root keeps describing the bytes it recorded
+    instead of quietly describing the run's. ``retained`` is the subset of
+    ``preserved`` this publication had to **copy** (into the workspace's retained
+    copy, because no marked directory held those bytes): the ordinary case is
+    ``()`` — a run's own copy already holds them, so nothing is written — and it is
+    what "was anything at risk here" reads.
     """
 
     published: tuple[Path, ...] = ()
     retained: tuple[tuple[Path, Path], ...] = ()
+    preserved: tuple[tuple[Path, Path], ...] = ()
 
 
 def _publication_targets(scope: Workspace, home: Workspace) -> list[tuple[Path, Path]]:
@@ -956,34 +962,43 @@ def _publication_targets(scope: Workspace, home: Workspace) -> list[tuple[Path, 
     return targets
 
 
-def _held_by_a_run_scope(home: Workspace, target: Path) -> bool:
-    """Whether a **run's own copy** holds *target*'s current bytes.
+def _preserving_path(home: Workspace, target: Path) -> Path | None:
+    """A path **other than** *target* that holds its current bytes, or ``None``.
 
-    That is what makes replacing the root's copy harmless, and the test is byte
-    identity rather than a name or a claim: a finished run's copy
-    (``<workspace>/runs/<run id>/``) is what its publication wrote, so a root
-    document some scope holds is one a reader can still reach afterwards. The
-    exceptions are the ones this exists for — a root written *before* runs were
-    scoped, a stage command's output (a stage writes at the root and names no
-    run), an operator's hand-edited manifest — none of which any scope holds.
+    The one lookup both halves of a publication's preservation need, because they
+    are the same fact: what makes replacing the root's copy harmless is that a
+    reader can still reach those bytes somewhere else, and *where* is exactly what
+    a row that named the mutable root has to be repointed at. The test is byte
+    identity, never a name or a claim: the marked directories under ``runs/`` — a
+    finished run's own copy (``<workspace>/runs/<run id>/``), or a retained copy an
+    earlier publication made (:func:`_retained_dir`, which is how a *retry* finds
+    the bytes a failed attempt preserved) — are asked for the same relative path
+    with the same size and ``sha256``.
+
+    ``None`` is the answer for a root document none of them holds — a root written
+    *before* runs were scoped, a stage command's output (a stage writes at the
+    root and names no run), an operator's hand-edited manifest — and for a target
+    that is not a file at all (no bytes to lose, and nothing to point at). The
+    scopes are read in name order so the answer is deterministic when more than one
+    holds the bytes.
     """
     if not target.is_file():
-        return True
+        return None
     try:
         size = target.stat().st_size
         want = _sha256(target)
     except OSError:
-        return False
+        return None
     relative = target.relative_to(home.root)
-    for name in _run_scopes(home.root):
+    for name in sorted(_run_scopes(home.root)):
         candidate = home.root / RUNS_DIR / name / relative
         try:
             if candidate.stat().st_size != size or _sha256(candidate) != want:
                 continue
         except OSError:
             continue
-        return True
-    return False
+        return candidate
+    return None
 
 
 def _retained_dir(home: Workspace) -> Path:
@@ -1015,30 +1030,43 @@ def _retained_dir(home: Workspace) -> Path:
     return directory
 
 
-def _retain_unscoped_outputs(
+def _preserve_unscoped_outputs(
     home: Workspace, targets: list[tuple[Path, Path]]
-) -> dict[Path, Path]:
-    """Copy aside the documents *targets* would replace that no run scope holds.
+) -> tuple[dict[Path, Path], dict[Path, Path]]:
+    """Where every replaced root document's bytes are, and what had to be copied.
 
-    The copy is made **before the first target is written**, so the bytes that
-    were at the root are never the ones at risk, and the run's own copy is never
-    touched — what is preserved is the root's copy of documents that no run's
-    copy holds. ``{}`` when every target is held by a run scope: the ordinary
-    case, which stays silent and writes nothing.
+    Returns ``(preserved, retained)``. ``preserved`` pairs each target that is a
+    file with a path that holds its pre-publication bytes: a copy this call made
+    into this publication's retained directory, a finished run's own copy that
+    already holds them, or an earlier publication's retained copy — the shape a
+    **retry** meets after a failed attempt, which is what makes the association
+    recoverable rather than remembered. ``retained`` is the subset this call had to
+    copy, which is the ordinary case's ``{}`` (a run's own copy holds it) and the
+    only case that writes anything.
+
+    The copies are made **before the first target is written**, so the bytes that
+    were at the root are never the ones at risk, and a run's own copy is never
+    touched. A target that is not a file is not reported at all: there are no bytes
+    to preserve and nothing a row could be pointed at.
     """
-    at_risk = [
-        target for _source, target in targets if not _held_by_a_run_scope(home, target)
-    ]
-    if not at_risk:
-        return {}
-    directory = _retained_dir(home)
+    preserved: dict[Path, Path] = {}
+    to_copy: list[Path] = []
+    for _source, target in targets:
+        holder = _preserving_path(home, target)
+        if holder is not None:
+            preserved[target] = holder
+        elif target.is_file():
+            to_copy.append(target)
     retained: dict[Path, Path] = {}
-    for target in at_risk:
-        copy = directory / target.relative_to(home.root)
-        copy.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target, copy)
-        retained[target] = copy
-    return retained
+    if to_copy:
+        directory = _retained_dir(home)
+        for target in to_copy:
+            copy = directory / target.relative_to(home.root)
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, copy)
+            retained[target] = copy
+        preserved.update(retained)
+    return preserved, retained
 
 
 def publish_run(scope: Workspace) -> Publication:
@@ -1096,11 +1124,17 @@ def publish_run(scope: Workspace) -> Publication:
     nowhere else: publishing over it would leave the artifact rows that named
     those paths describing the **new** run's bytes with the old ones gone — the
     upgrade boundary, where the first new run destroyed the last legacy output.
-    So every target about to be replaced that no run scope holds is copied into a
-    retained copy under the workspace before the first of them is written, and
-    :attr:`Publication.retained` names each move so the caller that owns the
-    association can follow it (:meth:`clear_record.service.store.Registry.
-    retain_artifact_paths`).
+    So every document about to be replaced is paired with a path that holds its
+    bytes — copied into a retained copy under the workspace **when no marked
+    directory holds them**, and otherwise the holder itself (a finished run's own
+    copy, or an earlier publication's retained copy, which is how a retry after a
+    failed attempt finds them) — before the first of them is written.
+    :attr:`Publication.preserved` names every pair and
+    :attr:`Publication.retained` only the copies, so the caller that owns the
+    association between a path and a row can follow **both** cases
+    (:meth:`clear_record.service.store.Registry.retain_artifact_paths`): a row
+    that named the mutable root follows the bytes it recorded even when this
+    publication had nothing to copy.
 
     Returns the paths written and the paths preserved. It writes each document of
     the run's own copy, and no more than that: what it did not write is the
@@ -1111,7 +1145,7 @@ def publish_run(scope: Workspace) -> Publication:
         return Publication()
     home = Workspace(scope.root)
     targets = _publication_targets(scope, home)
-    retained = _retain_unscoped_outputs(home, targets)
+    preserved, retained = _preserve_unscoped_outputs(home, targets)
     # **Every copy first, then one rename per document.** The copies are the half
     # that copies bytes and can therefore fail for want of space, and each lands
     # in a scratch file beside the target it will replace — so a publication that
@@ -1133,7 +1167,11 @@ def publish_run(scope: Workspace) -> Publication:
     for scratch, target in staged:
         _swap_file(scratch, target)
         published.append(target)
-    return Publication(published=tuple(published), retained=tuple(retained.items()))
+    return Publication(
+        published=tuple(published),
+        retained=tuple(retained.items()),
+        preserved=tuple(preserved.items()),
+    )
 
 
 def report_line(

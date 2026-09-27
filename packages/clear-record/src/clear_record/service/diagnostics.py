@@ -361,12 +361,13 @@ def build_bundle(facts: BundleFacts) -> str:
                 "  ^ NOT the write-ahead log: the conversion was refused when the"
             )
             out.append(
-                "    registry opened — another surface held its write lock past the"
+                "    registry opened. Either another writer held the file's write"
             )
             out.append(
-                "    busy timeout, or the filesystem cannot host the log's shared"
+                "    lock (refused at once), a reader held it (the change waited"
             )
-            out.append("    memory.")
+            out.append("    the busy timeout out and then failed), or the filesystem")
+            out.append("    cannot host the log's shared memory.")
     out.append("")
     out.append("# backend availability (and why)")
     if facts.backends:

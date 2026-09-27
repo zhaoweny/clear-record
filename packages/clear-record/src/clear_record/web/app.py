@@ -1192,8 +1192,9 @@ def create_app(
         event loop. **Both reads run in a worker thread** for that last clause's
         sake: they are synchronous registry calls, and a write lock another
         surface holds would otherwise stall this process's whole loop — every
-        unrelated request with it — for as long as the driver's busy timeout
-        allows, refused exception or not.
+        unrelated request with it — for as long as the connection's busy timeout
+        allows (five seconds, ``store._engine``'s policy), refused exception or
+        not.
 
         The refusal is a redirect for a browser and ``401`` for the machine
         surface, and it clears a cookie it knows to be dead rather than leaving a

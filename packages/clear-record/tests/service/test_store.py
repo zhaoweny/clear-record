@@ -2326,25 +2326,28 @@ def test_an_open_whose_conversion_is_refused_serves_in_the_mode_it_kept(
 ) -> None:
     """A refused conversion is tolerated, recorded, stated — and over at the next open.
 
-    The lock is a **writer's** and it is held for the whole of the conversion's
-    budget: the pragma waits, is refused, and the file keeps the rollback
-    journal. The registry then **serves** — this one migrates and reads its rows
-    — which is the tolerance that stays, and what is new is that it is no longer
-    silent: the mode is recorded on the registry
-    (:attr:`Registry.journal_mode`), stated in the node's log
+    The lock is **another writer's reservation** (``BEGIN IMMEDIATE``), and the
+    pragma is refused **at once** — SQLite does not make a mode change wait for a
+    lock it cannot take while that reservation stands (measured: 0.00 s for this
+    shape; a *reader's* shared lock is the shape that waits, and
+    ``test_a_conversion_that_must_wait_a_reader_pays_the_whole_budget`` drives
+    that one). The file keeps the rollback journal, and the registry then
+    **serves** — this one migrates and reads its rows — which is the tolerance
+    that stays; what is new is that it is no longer silent: the mode is recorded
+    on the registry (:attr:`Registry.journal_mode`), stated in the node's log
     (:data:`store.JOURNAL_MODE_DEGRADED`, with the mode and the reason) and, from
     there, carried by the diagnostics bundle.
 
     The lock is given back **at the refusal** rather than on a timer, so what
-    this test fixes is the order and not a clock: held past the busy timeout (the
-    wait is real, and it is what refuses the pragma), gone before the migration's
-    own write lock is attempted. A lock that *stayed* held would refuse the
-    migration too, and in the rollback journal any surviving lock forbids its
-    COMMIT as well (measured: a read-only ``BEGIN IMMEDIATE`` transaction cannot
-    commit while another connection holds ``SHARED``), which is why a registry
-    serving in the rollback journal is only reachable along this transient path —
-    and why the mode is worth stating when it happens, instead of being left for
-    whoever next debugs a reader that was refused.
+    this test fixes is the order and not a clock: the reservation is held while
+    the pragma is refused, and gone before the migration's own write lock is
+    attempted. A lock that *stayed* held would refuse the migration too — and in
+    the rollback journal any surviving lock forbids its COMMIT as well (measured:
+    a read-only ``BEGIN IMMEDIATE`` transaction cannot commit while another
+    connection holds ``SHARED``) — which is why a registry serving in the
+    rollback journal is only reachable along this transient path, and why the
+    mode is worth stating when it happens instead of being left for whoever next
+    debugs a reader that was refused.
     """
     db_path = tmp_path / "registry.sqlite3"
     _registry(tmp_path).create_project("Ops", actor="console")
@@ -2361,9 +2364,9 @@ def test_an_open_whose_conversion_is_refused_serves_in_the_mode_it_kept(
     def the_other_surface_gives_the_lock_back_at_the_refusal(engine):
         result = real_conversion(engine)
         if not attempts:
-            # The conversion is over — it waited the whole budget and was
-            # refused — so the other surface's lock has done the work this test
-            # is about, and it is released before the migration asks for it.
+            # The conversion is over — refused at once by the reservation — so
+            # the lock has done the work this test is about, and it is released
+            # before the migration asks for it.
             _release_lock(holder)
         attempts.append(result)
         return result
@@ -2399,6 +2402,76 @@ def test_an_open_whose_conversion_is_refused_serves_in_the_mode_it_kept(
     assert reopened.journal_mode == "wal" == _journal_mode(db_path)
     assert [project.slug for project in reopened.list_projects()] == ["ops"]
     assert len(_registry_log_events(store_module.JOURNAL_MODE_DEGRADED)) == 1
+
+
+def test_a_conversion_that_must_wait_a_reader_pays_the_whole_budget(tmp_path) -> None:
+    """The other refusal shape: a reader in the way is *waited out*, then refused.
+
+    What a refused conversion costs depends on what is in the way (see
+    :func:`clear_record.service.store._write_ahead_log`): another writer's
+    reservation is refused at once — the test above — while a **reader's** shared
+    lock makes the pragma wait the connection's whole busy timeout before it
+    fails, because the change needs exclusive access past that reader. Both
+    shapes are the registry's contract, so both are pinned.
+
+    This drives the seam directly rather than through an open, and that is
+    deliberate: a reader held for the whole attempt also refuses the migration's
+    COMMIT in the rollback journal, so an open under it cannot complete without a
+    clock deciding which of the two waits the reader outlives. The wait is the
+    box's budget, so this costs a fifth of a second rather than the policy's
+    five, and the assertion is built to be true of the *mechanism* — SQLite's
+    busy handler cannot return before its deadline — rather than of a machine's
+    speed.
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    _registry(tmp_path).create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+    engine = _engine_timing_out_box(db_path)
+
+    holder = sqlite3.connect(str(db_path), timeout=0)
+    holder.execute("BEGIN")
+    holder.execute("SELECT count(*) FROM project").fetchone()  # a reader's SHARED
+    try:
+        started = time.monotonic()
+        mode, reason = store_module._write_ahead_log(engine)
+        waited = time.monotonic() - started
+
+        assert mode == "delete"  # it asked for the log and reports what it has
+        assert reason and "lock" in reason, reason
+        assert waited >= _BOX_TIMEOUT, (
+            f"the pragma gave up after {waited:.2f}s: the reader was not waited out"
+        )
+        assert _journal_mode(db_path) == "delete"
+    finally:
+        holder.rollback()
+        holder.close()
+
+    # With the reader gone the same seam converts: what was measured is the
+    # reader's effect, not a permanently refused file.
+    assert store_module._write_ahead_log(engine) == ("wal", None)
+
+
+def test_an_actor_outside_the_vocabulary_registers_nothing(tmp_path) -> None:
+    """The registration reads the actor **before** it writes anything.
+
+    The decorated creates get that gate from ``audit.recorded``'s wrapper, which
+    runs it before the method body; this path composes the inserts itself, so the
+    gate has to be its own — and it has to be *first*, before the writer lock.
+    Left to the row-append, the gate would refuse **after** the registration had
+    committed: a folder registered under an unknown actor with no row to say who
+    registered it, which is the opposite of what the record is for (measured at
+    the reviewed tip: one project, one meeting, an empty record).
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+
+    with pytest.raises(ValueError, match="unknown actor"):
+        registry.meeting_for_workspace(str(workspace), actor="hacker")
+
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
+    assert registry.list_audit_events() == []
 
 
 def test_every_connection_carries_the_decided_policy(tmp_path) -> None:
@@ -2483,6 +2556,83 @@ def test_prolonged_contention_fails_within_the_budget(tmp_path, monkeypatch) -> 
     # Refused, and nothing half-written: the transaction rolled back with it.
     assert registry.list_projects() == []
     assert registry.list_meetings() == []
+    # ... and refused *audibly*: the row the creates owe cannot be written while
+    # the lock is held, so the loss is stated under the audit record's own name
+    # for it. The verb is the create that was in flight — the folder's project,
+    # the operation's first — and the vocabulary is unchanged.
+    assert [
+        (record["actor"], record["action"], record["outcome"])
+        for record in _registry_log_events("audit.row_lost")
+    ] == [("console", "project.create", "failed")]
+
+
+# --- the registration's lookup and its rows -------------------------------- #
+def test_a_re_registration_resolves_no_stored_workspace_path(
+    tmp_path, monkeypatch
+) -> None:
+    """The registration's hot path does no filesystem work **inside** the writer lock.
+
+    The lookup runs under the lock, so the resolving comparison
+    (:meth:`Registry._meeting_at`) must not be its common path: this node stores
+    the **resolved** path when it registers a folder, so the exact comparison
+    (:meth:`Registry._meeting_at_exact`) answers the second ``run <dir>`` from
+    one row comparison, and no stored path is resolved at all. Measured before
+    the split: 201 ``Path.resolve`` calls and about a second inside the lock for
+    a registry of 200 meetings, which is exactly the filesystem work a
+    read-then-write operation must keep out of its transaction.
+
+    Counting the resolver keeps that a fact about the seam rather than a claim in
+    a docstring: the input is resolved **once** (outside the lock, by the
+    caller's own step) and the scan — which resolves every stored path — is not
+    reached.
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    registered = registry.meeting_for_workspace(str(workspace), actor="console")
+
+    calls: list[str] = []
+    real_resolve = store_module._resolved_workspace
+
+    def counting(path: str) -> str:
+        calls.append(path)
+        return real_resolve(path)
+
+    monkeypatch.setattr(store_module, "_resolved_workspace", counting)
+    again = registry.meeting_for_workspace(str(workspace), actor="console")
+
+    assert again.id == registered.id
+    assert calls == [str(workspace)], "a stored path was resolved again"
+
+
+def test_a_workspace_stored_under_another_spelling_is_the_same_folder(
+    tmp_path,
+) -> None:
+    """The fallback arm: a spelling a *surface* stored still answers as this folder.
+
+    Registration stores the resolved path, so the exact comparison is the common
+    path — but the console and the API take a workspace path as a caller typed
+    it, and a registry can therefore hold a meeting whose ``workspace_path`` is a
+    spelling rather than the resolved path. The promise ("a relative,
+    trailing-separator or symlinked spelling is the same workspace") is what the
+    resolving arm is for, and it runs exactly when the exact comparison misses —
+    which is what keeps the decision the same while the syscalls stay off the hot
+    path.
+    """
+    registry = _registry(tmp_path)
+    real = tmp_path / "second"
+    real.mkdir()
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    registry.create_project("Ops", actor="console")
+    stored = registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(link), actor="console"
+    )
+
+    found = registry.meeting_for_workspace(str(real), actor="cli")
+
+    assert found.id == stored.id, "the spelling was not read as the same workspace"
+    assert len(registry.list_meetings()) == 1, "the lookup registered a second meeting"
 
 
 # --- a folder registered by two surfaces at once ---------------------------- #
@@ -2577,7 +2727,14 @@ def test_a_registration_that_fails_after_the_project_leaves_nothing(
     its own, so a meeting create that then failed left the folder half-registered
     (measured at ``b648294``: one ``project`` row, no meeting, and the ``ok`` row
     the project's create had already written). One transaction is what closes it.
-    Nothing is recorded either, because the rows belong to committed work.
+
+    What the rollback must **not** take with it is the record of the refusal: the
+    ``ok`` rows belong to committed work and are not written, and one ``failed``
+    row takes their place — the same row the base's decorated create would have
+    appended, under the same verb and the same target — because a registration
+    that failed is exactly what an audit record exists for. A caller therefore
+    sees a refusal and a record of it, and never a folder that was registered
+    without one.
 
     The second half is the point of the first: with no residue, the folder is
     registered for the first time by whoever asks next, under its own slug.
@@ -2595,14 +2752,21 @@ def test_a_registration_that_fails_after_the_project_leaves_nothing(
 
     assert registry.list_projects() == []
     assert registry.list_meetings() == []
-    assert registry.list_audit_events() == []
+    assert [
+        (row.action, row.target, row.outcome) for row in registry.list_audit_events()
+    ] == [("meeting.create", "meeting:second", "failed")]
 
     monkeypatch.undo()  # the injection is over: the directory is registrable
     meeting = registry.meeting_for_workspace(str(workspace), actor="console")
     assert (meeting.slug, meeting.workspace_path) == ("second", str(workspace))
-    assert [(row.action, row.target) for row in registry.list_audit_events()] == [
-        ("project.create", "project:second"),
-        ("meeting.create", "meeting:second"),
+    assert [
+        (row.action, row.target, row.outcome) for row in registry.list_audit_events()
+    ] == [
+        # The refused attempt first (the refusal is recorded when it happens),
+        # then the registration that succeeded.
+        ("meeting.create", "meeting:second", "failed"),
+        ("project.create", "project:second", "ok"),
+        ("meeting.create", "meeting:second", "ok"),
     ]
 
 

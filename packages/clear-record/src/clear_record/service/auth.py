@@ -234,7 +234,8 @@ def require_token_label(label: str) -> str:
 #: so a commit per request would block the event loop for every call a script
 #: makes — and a registry another process holds for a moment would then stall the
 #: whole node, not just that request (measured: a token request waiting out the
-#: driver's busy timeout held up an unrelated ``/health`` probe for seconds). What
+#: connection's busy timeout — five seconds, ``store._engine``'s own policy, not
+#: a driver default — held up an unrelated ``/health`` probe for seconds). What
 #: the console's list has to answer is "is this script still calling?", and a
 #: window answers that as well as an instant.
 TOKEN_TOUCH_INTERVAL = _dt.timedelta(minutes=5)

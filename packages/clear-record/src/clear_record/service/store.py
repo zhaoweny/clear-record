@@ -349,16 +349,28 @@ def _write_ahead_log(engine: Engine) -> tuple[str, str | None]:
 
     A **refused** conversion stays tolerated: the registry serves either way, and
     a registry that refused to open over a journal mode would be worse than one
-    working in the mode it has. The refusal arrives as an ``OperationalError`` —
-    another surface held the write lock past the busy timeout, or the filesystem
-    cannot host the log's shared memory — and the consequence is stated rather
-    than papered over: **a process whose conversion is refused serves in the
-    rollback journal until its next open.** The old shape retried the conversion
-    on *every* connection the engine made: it paid the busy timeout again on each
-    one, and it tried to convert the file in the middle of the traffic that was
-    contending for it. That retry is deliberately gone — the mode is decided once,
-    at a moment the node controls, and a refusal costs the one timeout this step
-    spends.
+    working in the mode it has. The refusal arrives as an ``OperationalError``,
+    and what it costs depends on what is in the way — measured, because the
+    difference matters when a report is read:
+
+    - **another writer's reservation** — the ``BEGIN IMMEDIATE`` a registration
+      or a migration holds — refuses the change **at once**. SQLite does not make
+      the pragma wait for a lock it knows a mode change cannot take while that
+      reservation stands;
+    - a **reader's shared lock** (or an exclusive one) makes the pragma wait the
+      connection's **whole busy timeout** and then fail: the change needs
+      exclusive access past it, and that is a wait the timeout governs;
+    - a **filesystem that cannot host the log's shared memory** refuses it for a
+      reason no amount of waiting improves.
+
+    Whatever the shape, the consequence is stated rather than papered over: **a
+    process whose conversion is refused serves in the rollback journal until its
+    next open.** The old shape retried the conversion on *every* connection the
+    engine made: it paid that wait — where there was one — again on each
+    connection, and it tried to convert the file in the middle of the traffic
+    that was contending for it. That retry is deliberately gone — the mode is
+    decided once, at a moment the node controls, and a refusal costs either the
+    one timeout this step spends or nothing at all.
 
     Returns the mode the file is in, and — when that is not the log — the reason
     it is not.
@@ -720,6 +732,20 @@ def _meeting_query() -> Select[tuple[entities.Meeting, str]]:
     """A meeting row joined to its project's slug."""
     return select(entities.Meeting, entities.Project.slug).join(
         entities.Project, entities.Project.id == entities.Meeting.project_id
+    )
+
+
+def _newest_first(statement: Select) -> Select:
+    """``statement`` ordered the way the registry reads meetings: newest first.
+
+    One declaration, because two reads depend on the order being the same: the
+    list a caller sees, and the registration's workspace lookup, which answers
+    with the **first** match — and therefore with the same meeting whichever of
+    its two arms found it.
+    """
+    return statement.order_by(
+        func.coalesce(entities.Meeting.recorded_at, entities.Meeting.created_at).desc(),
+        entities.Meeting.id.desc(),
     )
 
 
@@ -1822,14 +1848,11 @@ class Registry:
         """Every meeting, newest first — on the caller's session.
 
         The body of :meth:`list_meetings`, split out so the registration's scan
-        (:meth:`_meeting_at`) reads inside the transaction that decided it.
+        (:meth:`_meeting_at`) reads inside the transaction that decided it. The
+        order is :func:`_newest_first`'s, shared with the registration's exact
+        lookup so both arms of that lookup answer with the same meeting.
         """
-        stmt = _meeting_query().order_by(
-            func.coalesce(
-                entities.Meeting.recorded_at, entities.Meeting.created_at
-            ).desc(),
-            entities.Meeting.id.desc(),
-        )
+        stmt = _newest_first(_meeting_query())
         if project_slug is not None:
             stmt = stmt.where(entities.Project.slug == project_slug)
         return [self._meeting(row, slug) for row, slug in session.execute(stmt)]
@@ -2010,58 +2033,82 @@ class Registry:
         :data:`_MEETING_CREATED` — one declaration, so the two writers cannot
         drift), one row per create. That is the choice, and it is what makes *a
         row only for committed work* true here: a registration that rolls back
-        appends nothing at all, where the old shape had already committed the
+        appends no ``ok`` row, where the old shape had already committed the
         project's own transaction **and its ``ok`` row** before the meeting's
         create could fail. The pinned attempt's collision is not a refusal of
         this call — the call registers the folder — so the record holds the
         create that landed and not the attempt that did not.
 
+        **A refused registration is recorded, never silent.** A failure out of
+        the transaction appends one ``failed`` row for the create that was **in
+        flight** — the folder's project until a project is in hand, the meeting
+        after that — under the verb and the target rule the decorated create
+        would have used, through :meth:`record_refusal`, which states the loss
+        instead of appending when the registry refuses that append too. So the
+        vocabulary does not grow and the base's contract holds: a refused
+        registration leaves either a ``failed`` row or a stated loss. (An
+        ``OperationalError`` from the writer lock is the case that matters most:
+        the base's decorator owed a row, the held lock refused it, and the loss
+        was stated — the same shape, from the same seam.)
+
+        **The actor is read before anything is written.** The decorated creates
+        get that gate from :func:`~clear_record.service.audit.recorded`'s
+        wrapper, which runs it before the method body; this path composes the
+        inserts itself, so the gate is here instead — first, before the writer
+        lock is even taken — and a word outside the vocabulary refuses the call
+        with nothing written. Left to the row-append (which is gated too, being
+        :meth:`record_audit`), that refusal would arrive *after* the registration
+        had committed: a registered folder with no row to say who registered it,
+        which is the one hole the record exists to close.
+
         A ``ValueError`` that neither the look-again nor the computed slug
         explains is re-raised as itself, and every other failure propagates as it
-        does from any other unit of work: the transaction rolls back, and an
-        ``OperationalError`` from the lock is the driver's, not a class of this
+        does from any other unit of work: the transaction rolls back, one
+        ``failed`` row or a stated loss is left behind (see above), and an
+        ``OperationalError`` from the lock is the driver's class, not one of this
         method's own.
         """
+        actor = audit.require_actor(actor)
         resolved = _resolved_workspace(directory)
         name = Path(resolved).name or resolved
         created: list[tuple[str, str]] = []
-        with self._writer_session() as session:
-            meeting = self._meeting_at(session, resolved)
-            if meeting is not None:
-                return meeting
-            # The project's slug is pinned to the folder's own name for the
-            # reason the docstring gives; the lookup above it is inside the lock,
-            # so it decides between "use this project" and "create it" without a
-            # winner able to land between the two.
-            project = self._project_entity(session, _slugify(name))
-            if project is None:
-                project = self._insert_project(session, name, slug=_slugify(name))
-                created.append(
-                    (
-                        _PROJECT_CREATE,
-                        _PROJECT_CREATED({"slug": project.slug, "name": name}),
-                    )
-                )
-            # The folder's own slug, pinned — unless the collision below proves it
-            # belongs to another folder's meeting. `None` means the create
-            # computes the suffixed slug, and the row's target then names the
-            # title, exactly as the decorated create's row would.
-            slug_argument: str | None = _slugify(name)
-            try:
-                with session.begin_nested():
-                    row = self._insert_meeting(
-                        session,
-                        project.id,
-                        project.slug,
-                        name,
-                        slug=slug_argument,
-                        workspace_path=resolved,
-                    )
-            except ValueError as exc:
-                meeting = self._meeting_at(session, resolved)
+        # Which create a refusal belongs to: the operation's first, the folder's
+        # project, until a project is in hand — and the meeting's after that. The
+        # writer lock is taken before either, so a refusal that arrives from the
+        # lock itself is attributed to the create that would have run first.
+        in_flight = (
+            _PROJECT_CREATE,
+            _PROJECT_CREATED({"slug": _slugify(name), "name": name}),
+        )
+        try:
+            with self._writer_session() as session:
+                # The exact stored path first (no filesystem work, which the
+                # writer lock must not wrap), then the spelling-insensitive scan.
+                meeting = self._registered_meeting(session, resolved)
                 if meeting is not None:
                     return meeting
-                slug_argument = None
+                # The project's slug is pinned to the folder's own name for the
+                # reason the docstring gives; the lookup above it is inside the
+                # lock, so it decides between "use this project" and "create it"
+                # without a winner able to land between the two.
+                project = self._project_entity(session, _slugify(name))
+                if project is None:
+                    project = self._insert_project(session, name, slug=_slugify(name))
+                    created.append(
+                        (
+                            _PROJECT_CREATE,
+                            _PROJECT_CREATED({"slug": project.slug, "name": name}),
+                        )
+                    )
+                # The folder's own slug, pinned — unless the collision below
+                # proves it belongs to another folder's meeting. `None` means the
+                # create computes the suffixed slug, and the row's target then
+                # names the title, exactly as the decorated create's row would.
+                slug_argument: str | None = _slugify(name)
+                in_flight = (
+                    _MEETING_CREATE,
+                    _MEETING_CREATED({"slug": slug_argument, "title": name}),
+                )
                 try:
                     with session.begin_nested():
                         row = self._insert_meeting(
@@ -2069,26 +2116,83 @@ class Registry:
                             project.id,
                             project.slug,
                             name,
+                            slug=slug_argument,
                             workspace_path=resolved,
                         )
-                except ValueError:
-                    meeting = self._meeting_at(session, resolved)
+                except ValueError as exc:
+                    meeting = self._registered_meeting(session, resolved)
                     if meeting is not None:
                         return meeting
-                    raise exc
-            created.append(
-                (
-                    _MEETING_CREATE,
-                    _MEETING_CREATED({"slug": slug_argument, "title": name}),
+                    slug_argument = None
+                    in_flight = (
+                        _MEETING_CREATE,
+                        _MEETING_CREATED({"slug": None, "title": name}),
+                    )
+                    try:
+                        with session.begin_nested():
+                            row = self._insert_meeting(
+                                session,
+                                project.id,
+                                project.slug,
+                                name,
+                                workspace_path=resolved,
+                            )
+                    except ValueError:
+                        meeting = self._registered_meeting(session, resolved)
+                        if meeting is not None:
+                            return meeting
+                        raise exc
+                created.append(
+                    (
+                        _MEETING_CREATE,
+                        _MEETING_CREATED({"slug": slug_argument, "title": name}),
+                    )
                 )
-            )
-            registered = self._meeting(row, project.slug)
+                registered = self._meeting(row, project.slug)
+        except BaseException as exc:
+            # The refusal is recorded before it is re-raised — one `failed` row
+            # for the create that was in flight, or the stated loss when the
+            # registry refuses that row too (see the docstring).
+            self.record_refusal(actor, in_flight[0], in_flight[1], cause=exc)
+            raise
         # Committed. The rows the creates earned are appended now, each in a unit
         # of work of its own (`record_audit` tolerates the registry refusing one
         # and states the loss — see its docstring).
         for action, target in created:
             self.record_audit(actor, action, target)
         return registered
+
+    def _registered_meeting(self, session: Session, resolved: str) -> Meeting | None:
+        """The meeting registered for a folder — the exact path first, then any spelling.
+
+        One seam for the registration's lookup, so its two arms are one decision:
+        the **stored** path compared exactly (no filesystem work, which is what
+        the writer lock must not wrap), then the spelling-insensitive scan
+        (:meth:`_meeting_at`) for a workspace another surface stored as a caller
+        typed it. Both read on the caller's session, inside the transaction that
+        decided (:meth:`meeting_for_workspace`).
+        """
+        return self._meeting_at_exact(session, resolved) or self._meeting_at(
+            session, resolved
+        )
+
+    def _meeting_at_exact(self, session: Session, resolved: str) -> Meeting | None:
+        """The meeting whose **stored** workspace path is exactly ``resolved``.
+
+        The registration's first arm, and the one that keeps its hot path free of
+        filesystem work: this node stores the **resolved** path when it registers
+        a folder, so the second ``run <dir>`` over that folder is answered by one
+        row comparison — no ``Path.resolve`` for any of the meetings a busy
+        registry holds, which matters because the comparison runs inside the
+        writer lock (:meth:`meeting_for_workspace`). The spelling-insensitive
+        comparison is :meth:`_meeting_at`'s, and it runs only when this misses.
+        """
+        row = session.execute(
+            _newest_first(
+                _meeting_query().where(entities.Meeting.workspace_path == resolved)
+            )
+        ).first()
+        return None if row is None else self._meeting(*row)
 
     def _meeting_at(self, session: Session, resolved: str) -> Meeting | None:
         """The meeting registered for a resolved workspace path, or ``None``.
@@ -2097,6 +2201,14 @@ class Registry:
         decided from this scan (:meth:`meeting_for_workspace`): a decision read
         outside the lock it is taken in would be one another writer can
         invalidate before it is acted on.
+
+        This is the **fallback** arm: it compares by *resolved* path, so a
+        workspace stored as a relative, trailing-separator or symlinked spelling
+        is still the same folder (:func:`_resolved_workspace`) — which costs one
+        resolution per stored meeting, and therefore runs only when the exact
+        comparison found nothing. What it must not do is decide: both arms are
+        called inside the transaction's lock, and the syscalls are simply off the
+        common path, not out of the decision.
         """
         for meeting in self._list_meetings(session):
             if meeting.workspace_path and (

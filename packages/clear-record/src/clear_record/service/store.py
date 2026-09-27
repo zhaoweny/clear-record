@@ -1673,8 +1673,14 @@ class Registry:
         project's slug and the meeting's are each unique, so the write that lands
         second is refused. That refusal is not an error to report: the folder is
         registered, which is what the call asked for, so the loser looks once more
-        for the meeting the winner wrote and answers with it. A ``ValueError``
-        that scan does not explain is re-raised as itself.
+        for the meeting the winner wrote and answers with it. The **folder's own
+        slug is pinned** on the create, so two registrations of one folder compute
+        the same slug whatever either read: a loser whose scan and slug read both
+        missed the winner's row still collides with it, which is what makes the
+        rescue reachable at all (left to the auto-suffixing create, that loser
+        would insert ``<name>-2`` beside the winner and the workspace would have
+        two meetings). A ``ValueError`` that scan does not explain is re-raised as
+        itself.
         """
         resolved = _resolved_workspace(directory)
         meeting = self._meeting_at(resolved)
@@ -1682,25 +1688,60 @@ class Registry:
             return meeting
         name = Path(resolved).name or resolved
         try:
+            # Both slugs are **pinned to the folder's own name** (the project's
+            # here, the meeting's below): a registration's identity for a folder is
+            # the name derived from it, so two registrations of one folder compute
+            # the same slugs and the second insert collides — at either level.
+            # Left to the auto-suffixing creates, a looser read (the project's
+            # lookup missing, or the meeting's slug read landing after the
+            # winner's row) produced ``<name>-2`` and its insert **succeeded**: two
+            # projects holding a meeting for one workspace, or two meetings in one
+            # project, silently.
             project = self.get_project(_slugify(name)) or self.create_project(
-                name, actor=actor
+                name, slug=_slugify(name), actor=actor
             )
+            # The folder's **own** slug, pinned: a registration's identity for a
+            # folder is the name derived from it, so pinning it makes two
+            # registrations of one folder compute the same slug and the second
+            # insert collide — which is what the rescue below needs. Left to the
+            # uniquifier, a loser whose read lands *after* the winner's row would
+            # compute ``<name>-2`` and its own insert would **succeed**: two
+            # meetings for one workspace, silently (the write-ahead log removed the
+            # accidental serialization the rollback journal's commit exclusion
+            # provided, so this window is live).
             return self.create_meeting(
-                project.slug, name, workspace_path=resolved, actor=actor
+                project.slug,
+                name,
+                workspace_path=resolved,
+                slug=_slugify(name),
+                actor=actor,
             )
-        except ValueError:
-            # The rollback journal used to decide this race by accident: its
-            # commit excludes readers, so the two registrations were serialized
-            # and the second one's read found the first one's row. The
-            # write-ahead log does not serialize them (:func:`_write_ahead_log`),
-            # which leaves the loser the job the codebase already gives every
-            # read-then-write pair — read again, and answer with what the winner
-            # wrote (``runs.RunManager.start`` reads the same way over the
-            # one-active-run index).
+        except ValueError as exc:
+            # The write-ahead log does not serialize the two registrations
+            # (:func:`_write_ahead_log`), which leaves the loser the job the
+            # codebase already gives every read-then-write pair — read again, and
+            # answer with what the winner wrote (``runs.RunManager.start`` reads
+            # the same way over the one-active-run index).
             meeting = self._meeting_at(resolved)
-            if meeting is None:
-                raise
-            return meeting
+            if meeting is not None:
+                return meeting
+            # Not this folder's race: the pinned slug collided with another
+            # folder's meeting of the same name (a project's meetings share one
+            # slug space), or the project's own create lost its race and the
+            # project is there now. A slug the registry computes is what that case
+            # has always used, and the rescue gets the same look after it, since
+            # the winner may have landed in the meantime.
+            project = self.get_project(_slugify(name))
+            if project is not None:
+                try:
+                    return self.create_meeting(
+                        project.slug, name, workspace_path=resolved, actor=actor
+                    )
+                except ValueError:
+                    meeting = self._meeting_at(resolved)
+                    if meeting is not None:
+                        return meeting
+            raise exc
 
     def _meeting_at(self, resolved: str) -> Meeting | None:
         """The meeting registered for a resolved workspace path, or ``None``."""

@@ -3526,6 +3526,74 @@ def test_a_retry_follows_the_bytes_the_failed_attempt_preserved(
     assert hashlib.sha256(path.read_bytes()).hexdigest() == row.sha256
 
 
+def test_a_crash_after_the_swaps_leaves_the_rows_already_moved(
+    tmp_path, monkeypatch
+) -> None:
+    """The row move happens inside the publication, before its renames — not after.
+
+    ``publish_run`` copies the unscoped root documents aside, stages every file and
+    renames them into place; the caller then repoints the artifact rows that named
+    those root paths. With the move **after** the renames, a crash in the window
+    leaves the rows naming root paths that now hold the new run's bytes while the
+    preserved copies sit orphaned under ``runs/retained-*/`` — the very association
+    the retention exists to keep, unreconciled on restart. So the move happens at
+    the publication's own seam: after the copies and the staging, before the first
+    rename. The crash is injected at the rename after ``record.json`` (so the root's
+    record really is the run's), and the row must already be describing the bytes it
+    recorded.
+    """
+    registry = _registry(tmp_path)
+    tape = tmp_path / "a.wav"
+    tape.write_bytes(b"RIFFfake")
+    meeting = _meeting(registry, tmp_path, [tape])
+    workspace = Workspace.at(meeting.workspace_path)
+    workspace.record_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_text = '{"legacy": "staged"}'
+    workspace.record_path.write_text(staged_text, encoding="utf-8")
+    registry.add_artifact(
+        meeting.id,
+        actor="console",
+        kind="record",
+        path=str(workspace.record_path),
+        sha256=hashlib.sha256(staged_text.encode("utf-8")).hexdigest(),
+        produced_by="stage",
+    )
+
+    real_replace = workspace_module.os.replace
+    renames: list[Path] = []
+    root_dir = workspace.root
+
+    def the_swap_fails_part_way(source, target, *args, **kwargs):
+        target = Path(target)
+        # The publication's own renames land at the root; the pipeline's atomic
+        # writes land in the run's scope and are not what this drives.
+        if target.parent in (root_dir, root_dir / "export"):
+            renames.append(target)
+            if len(renames) == 4:  # manifest, segments, record, then an export
+                raise OSError(errno.EIO, "the rename failed")
+        return real_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(workspace_module.os, "replace", the_swap_fails_part_way)
+    manager = RunManager(registry, pipeline=_exporting_pipeline("new\n"))
+    run = manager.start(meeting, origin="console", actor="console")
+    assert manager.wait(run.id, timeout=10).status == "failed"
+    assert len(renames) == 4, "the injection did not land in the swap"
+    assert renames[2].name == "record.json"
+
+    row = next(
+        artifact
+        for artifact in registry.list_artifacts(meeting.id)
+        if artifact.produced_by == "stage"
+    )
+    path = Path(row.path)
+    assert path != workspace.record_path, (
+        "the row still names the mutable root, whose file now holds "
+        f"{workspace.record_path.read_text(encoding='utf-8')!r}"
+    )
+    assert path.read_text(encoding="utf-8") == staged_text
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == row.sha256
+
+
 def test_a_resumed_run_continues_in_the_workspaces_chunk_cache(tmp_path) -> None:
     """A resume is a new run with its own copy, over the *same* cache (ADR-0007)."""
     registry = _registry(tmp_path)

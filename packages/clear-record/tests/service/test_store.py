@@ -2311,9 +2311,9 @@ def test_a_registration_that_loses_the_project_race_answers_with_the_winner(
     refusal (`project slug 'second' already exists`, which the API edge turned
     into a 500).
 
-    The winner's write is injected into the loser's read-then-write window — the
-    one place the two can interleave — so the collision is a verdict and not a
-    timing. The rollback journal used to settle this by accident: a commit
+    The winner's write is injected immediately before the loser's own insert (the
+    window's write half; the pinned slug means there is no separate slug read to
+    inject at), so the collision is a verdict and not a timing. The rollback journal used to settle this by accident: a commit
     excludes readers, so the loser's scan saw the winner's row (see
     ``test_a_read_is_not_refused_while_another_surface_holds_the_write_lock``);
     the write-ahead log does not, which is what this fences.
@@ -2323,17 +2323,18 @@ def test_a_registration_that_loses_the_project_race_answers_with_the_winner(
     workspace = tmp_path / "second"
     workspace.mkdir()
 
-    real_unique = loser._unique_slug
+    real_create = loser.create_project
     injected: list[str] = []
 
-    def unique_slug_then_the_winner_registers(session, name: str) -> str:
-        slug = real_unique(session, name)  # the loser's read
+    def the_winner_registers_before_the_losers_insert(name, **kwargs):
         if not injected:
             injected.append(name)
             winner.meeting_for_workspace(str(workspace), actor="console")
-        return slug  # ... and the loser's own insert collides
+        return real_create(name, **kwargs)  # ... and it collides
 
-    monkeypatch.setattr(loser, "_unique_slug", unique_slug_then_the_winner_registers)
+    monkeypatch.setattr(
+        loser, "create_project", the_winner_registers_before_the_losers_insert
+    )
 
     meeting = loser.meeting_for_workspace(str(workspace), actor="api")
 
@@ -2345,16 +2346,63 @@ def test_a_registration_that_loses_the_project_race_answers_with_the_winner(
     assert len(winner.list_meetings()) == 1, "one folder, one meeting"
 
 
-def test_a_registration_that_loses_the_meeting_race_answers_with_the_winner(
+def test_a_project_lookup_that_missed_the_winner_is_no_duplicate(
     tmp_path, monkeypatch
 ) -> None:
-    """The meeting's own insert is the second place the race can lose.
+    """The same window one level up: the *project's* slug read can miss and suffix.
 
-    The folder's project can already be there — registered, or created by the
-    console — and then the two surfaces race to add the **meeting** for it
-    instead: both read the project's meeting slugs, and the unique constraint
-    over ``(project_id, slug)`` refuses the second row. Same answer as the
-    project's race (see the test above), because it is the same registration.
+    Both surfaces miss the folder's project, the winner then registers (its
+    project and its meeting for this folder), and the loser's project create reads
+    the slug as taken and computes ``second-2``: each of the two projects then
+    accepts a meeting for the same workspace — the duplicate the meeting slug's pin
+    closes, through the project's door. The project's own slug is pinned for the
+    same reason (a registration's identity for a folder is the name derived from
+    it), so the loser collides here too and the rescue answers with the winner.
+    """
+    winner = _registry(tmp_path)
+    loser = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+
+    real_lookup = loser.get_project
+    injected: list[str] = []
+
+    def the_winner_lands_right_after_the_losers_lookup(slug: str):
+        found = real_lookup(slug)
+        if found is None and not injected:
+            injected.append(slug)
+            winner.meeting_for_workspace(str(workspace), actor="console")
+            return None  # ... and the loser's lookup missed the row just written
+        return found
+
+    monkeypatch.setattr(
+        loser, "get_project", the_winner_lands_right_after_the_losers_lookup
+    )
+
+    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+
+    assert injected, "the winner never got into the loser's window"
+    assert (
+        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
+    )
+    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+
+
+def test_a_registration_whose_scan_missed_and_slug_read_saw_it_is_no_duplicate(
+    tmp_path, monkeypatch
+) -> None:
+    """The window between the scan and the slug read used to be a duplicate, not a rescue.
+
+    ``meeting_for_workspace``'s rescue runs only when a create **fails**, and the
+    creates are what auto-suffix their slugs: if the winner's row lands after the
+    loser's ``_meeting_at`` miss but *before* the loser's own slug read, the loser
+    reads the slug as taken, computes ``second-2``, and its insert **succeeds** —
+    two meetings registered for one workspace, silently, and resolving the folder
+    afterwards can flip between them (splitting runs and artifacts). The pair of
+    race tests above fences the other interleaving, where the winner lands between
+    the read and the insert and the unique constraint decides it; this is the one
+    the constraint never sees, because the loser renamed its own slug out of the
+    way.
     """
     winner = _registry(tmp_path)
     loser = _registry(tmp_path)
@@ -2362,20 +2410,59 @@ def test_a_registration_that_loses_the_meeting_race_answers_with_the_winner(
     workspace.mkdir()
     winner.create_project("second", actor="console")
 
-    real_unique = loser._unique_meeting_slug
+    real_meeting_at = loser._meeting_at
     injected: list[str] = []
 
-    def unique_slug_then_the_winner_registers(
-        session, project_id: int, title: str
-    ) -> str:
-        slug = real_unique(session, project_id, title)  # the loser's read
+    def the_winner_lands_right_after_the_losers_scan(resolved: str):
+        if not injected:
+            injected.append(resolved)
+            winner.meeting_for_workspace(str(workspace), actor="console")
+            return None  # ... and the loser's scan missed the row just written
+        return real_meeting_at(resolved)
+
+    monkeypatch.setattr(
+        loser, "_meeting_at", the_winner_lands_right_after_the_losers_scan
+    )
+
+    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+
+    assert injected, "the winner never got into the loser's window"
+    assert (
+        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
+    )
+    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+
+
+def test_a_registration_that_loses_the_meeting_race_answers_with_the_winner(
+    tmp_path, monkeypatch
+) -> None:
+    """The meeting's own insert is the second place the race can lose.
+
+    The folder's project can already be there — registered, or created by the
+    console — and then the two surfaces race to add the **meeting** for it
+    instead: the meeting's slug is **pinned** to the folder's own name, so the
+    unique constraint over ``(project_id, slug)`` decides it and refuses the second
+    row (there is no slug read left to interleave with, which is why the injection
+    here sits immediately before the loser's insert). Same answer as the project's
+    race (see the test above), because it is the same registration.
+    """
+    winner = _registry(tmp_path)
+    loser = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    winner.create_project("second", actor="console")
+
+    real_create = loser.create_meeting
+    injected: list[str] = []
+
+    def the_winner_registers_before_the_losers_insert(project_slug, title, **kwargs):
         if not injected:
             injected.append(title)
             winner.meeting_for_workspace(str(workspace), actor="console")
-        return slug  # ... and the loser's own insert collides
+        return real_create(project_slug, title, **kwargs)  # ... and it collides
 
     monkeypatch.setattr(
-        loser, "_unique_meeting_slug", unique_slug_then_the_winner_registers
+        loser, "create_meeting", the_winner_registers_before_the_losers_insert
     )
 
     meeting = loser.meeting_for_workspace(str(workspace), actor="api")

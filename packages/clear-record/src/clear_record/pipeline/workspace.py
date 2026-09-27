@@ -39,7 +39,7 @@ import hashlib
 import os
 import shutil
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -1069,7 +1069,11 @@ def _preserve_unscoped_outputs(
     return preserved, retained
 
 
-def publish_run(scope: Workspace) -> Publication:
+def publish_run(
+    scope: Workspace,
+    *,
+    on_preserved: Callable[[tuple[tuple[Path, Path], ...]], None] | None = None,
+) -> Publication:
     """Copy a finished run's own documents over the workspace's published copy.
 
     Called only for a run that **finished**: a run that stopped, failed or died
@@ -1136,6 +1140,15 @@ def publish_run(scope: Workspace) -> Publication:
     that named the mutable root follows the bytes it recorded even when this
     publication had nothing to copy.
 
+    ``on_preserved``, when given, is called **once** with the preserved pairs —
+    after every copy has landed and every document is staged, and **before** the
+    first rename. It is the seam for the caller that owns the *association* between
+    a root path and a row (the run path repoints the artifact rows at the preserved
+    copies there): moving the rows at that point means a crash anywhere after it
+    leaves them already describing the bytes they recorded, and a failure of the
+    move itself is the staging failure's shape — the root is untouched and the
+    scratch is cleaned up.
+
     Returns the paths written and the paths preserved. It writes each document of
     the run's own copy, and no more than that: what it did not write is the
     previous publication's, which is why the promise above is read **per
@@ -1158,6 +1171,16 @@ def publish_run(scope: Workspace) -> Publication:
     try:
         for source, target in targets:
             staged.append((_stage_file(source, target), target))
+        if preserved and on_preserved is not None:
+            # The caller's seam: the rows that named these root paths move at their
+            # preserved copies **here** — after every copy has landed and every file
+            # is staged, and before the first rename. With the move left until after
+            # the swaps, a crash in between left the rows naming root paths that now
+            # held the new run's bytes while the preserved copies sat orphaned under
+            # ``runs/retained-*/``, unreconciled on restart. A failure of the move
+            # itself takes the same path a staging failure does: the root was never
+            # touched, so the scratch is cleaned up and nothing has changed.
+            on_preserved(tuple(preserved.items()))
     except BaseException:
         # The root was never touched: the copies that did land are scratch.
         for scratch, _target in staged:

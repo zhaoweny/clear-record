@@ -1356,6 +1356,25 @@ class RunManager:
         meta.update(glossary_meta)
         return meta
 
+    def _move_rows(
+        self, meeting: Meeting, preserved: tuple[tuple[Path, Path], ...]
+    ) -> None:
+        """Point the meeting's artifact rows at the bytes this publication preserved.
+
+        The other half of a publication's preservation, run at the caller's seam
+        (:func:`clear_record.pipeline.workspace.publish_run`): every row of the
+        meeting whose ``path`` is one of the replaced root paths is repointed at the
+        path that holds the bytes it recorded. A publication that preserved nothing
+        adds nothing — the registry's own conditional answers ``None`` for a
+        mapping that matched no row — so the ordinary case writes no row and no
+        record.
+        """
+        self._registry.retain_artifact_paths(
+            meeting.id,
+            {str(root): str(kept) for root, kept in preserved},
+            actor=QUEUE,
+        )
+
     def _resolve_glossary(
         self, meeting: Meeting, options: PipelineOptions
     ) -> tuple[PipelineOptions, dict]:
@@ -1874,13 +1893,15 @@ class RunManager:
         # (the upgrade boundary's data loss). The mapping is wider than the copies:
         # a document a marked directory already holds is a pair with nothing copied,
         # and a row naming it needs the same move.
-        publication = publish_run(scope)
-        if publication.preserved:
-            self._registry.retain_artifact_paths(
-                meeting.id,
-                {str(root): str(kept) for root, kept in publication.preserved},
-                actor=QUEUE,
-            )
+        # The rows move **inside** the publication (its ``on_preserved`` seam,
+        # after the copies and before the first rename): a crash between the swaps
+        # and the move would otherwise leave them naming root paths that now hold
+        # this run's bytes, with the preserved copies orphaned under
+        # ``runs/retained-*/`` and nothing reconciling on restart.
+        def move_the_rows(preserved: tuple[tuple[Path, Path], ...]) -> None:
+            self._move_rows(meeting, preserved)
+
+        publish_run(scope, on_preserved=move_the_rows)
         artifacts = self._register_artifacts(meeting, run.id)
         ended_at = _now()
         self._registry.update_run(

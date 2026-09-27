@@ -177,6 +177,40 @@ def test_bundle_redacts_a_model_path_in_the_run_section() -> None:
     assert "/Users/alice" not in text
 
 
+def test_the_bundle_carries_the_registrys_journal_mode() -> None:
+    """A registry not on the write-ahead log is a fact the bundle states.
+
+    The mode is a property of the file and a registry serves either way, so the
+    difference stays invisible until something reads behind a committing writer
+    and is refused — which is why the one artifact a user can hand us says it
+    outright, and spells the consequence out when the mode is not the log
+    (``service.store._write_ahead_log``). With no registry gathered there is
+    nothing to state, and the section says that instead of guessing.
+    """
+
+    def bundle(journal_mode: str | None) -> str:
+        return diagnostics.build_bundle(
+            diagnostics.BundleFacts(
+                version="0.4.0",
+                python="3.14.0",
+                platform="TestOS",
+                machine="x86_64",
+                backends={},
+                options={},
+                journal_mode=journal_mode,
+            )
+        )
+
+    assert "journal_mode: wal" in bundle("wal")
+    assert "NOT the write-ahead log" not in bundle("wal")
+
+    degraded = bundle("delete")
+    assert "journal_mode: delete" in degraded
+    assert "NOT the write-ahead log" in degraded
+
+    assert "(not gathered: no registry was passed)" in bundle(None)
+
+
 def test_bundle_redacts_a_separator_free_glossary_filename() -> None:
     facts = diagnostics.BundleFacts(
         version="0.2.0",

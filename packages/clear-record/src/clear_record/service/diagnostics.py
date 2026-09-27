@@ -7,8 +7,9 @@ adds on top:
 
 * **Redaction** — no transcript text, no audio, no glossary terms, and file
   basenames replaced by **stable hashes** while the path shape is kept.
-* **Bundle assembly** — version, platform, backend availability **and
-  reasons**, the resolved model/knobs, the last run's status and error, and the
+* **Bundle assembly** — version, platform, the registry's journal mode, backend
+  availability **and reasons**, the resolved model/knobs, the last run's status
+  and error, and the
   recent log lines, rendered as one plain-text file.
 * The ``clear-record diagnose`` subcommand (registered through the
   ``clear_record.commands`` entry point) and the console download.
@@ -277,6 +278,10 @@ class BundleFacts:
     options: Mapping[str, object]
     run: Mapping[str, object] | None = None
     workspace: str | None = None
+    #: The journal mode the registry's file was in when it opened
+    #: (``Registry.journal_mode``). ``None`` when no registry was gathered: the
+    #: section is then left out rather than guessed at.
+    journal_mode: str | None = None
     log_lines: Sequence[str] = ()
     include_private: bool = False
     private_sections: Mapping[str, str] = dataclasses.field(default_factory=dict)
@@ -342,6 +347,27 @@ def build_bundle(facts: BundleFacts) -> str:
     out.append(f"python: {facts.python}")
     out.append(f"platform: {facts.platform}")
     out.append(f"machine: {facts.machine}")
+    out.append("")
+    out.append("# journal mode")
+    if facts.journal_mode is None:
+        out.append("(not gathered: no registry was passed)")
+    else:
+        out.append(f"journal_mode: {facts.journal_mode}")
+        if facts.journal_mode != "wal":
+            # The one fact worth spelling out: the registry serves either way,
+            # but not on the write-ahead log, which is a difference in what a
+            # reader of the log may expect (see store._write_ahead_log).
+            out.append(
+                "  ^ NOT the write-ahead log: the conversion was refused when the"
+            )
+            out.append(
+                "    registry opened. Either another writer held the file's write"
+            )
+            out.append(
+                "    lock (refused at once), a reader held it (the change waited"
+            )
+            out.append("    the busy timeout out and then failed), or the filesystem")
+            out.append("    cannot host the log's shared memory.")
     out.append("")
     out.append("# backend availability (and why)")
     if facts.backends:
@@ -516,7 +542,10 @@ def collect_bundle(
 
     Everything a bundle can leak is redacted in :func:`build_bundle`; this only
     gathers (and never reads transcript, audio or glossary unless the user opted
-    in). ``registry`` is optional: without one there is no run context.
+    in). ``registry`` is optional: without one there is no run context — and with
+    one, the mode the registry's file is in (:attr:`Registry.journal_mode`) is
+    part of what is gathered, since a registry not on the write-ahead log is a
+    fact a report should carry rather than something a reader has to infer.
     """
     from clear_record.core.diagnostics import read_recent
     from clear_record.service.archive import tool_version
@@ -533,6 +562,7 @@ def collect_bundle(
         options=_resolved_options(run_facts),
         run=run_facts,
         workspace=str(workspace) if workspace else None,
+        journal_mode=None if registry is None else registry.journal_mode,
         log_lines=read_recent(limit, explicit=log_dir),
         include_private=include_private,
         private_sections=_private_sections(workspace, include_private),
@@ -608,10 +638,11 @@ _PRIVATE_NOTE = (
 )
 
 _CONTENTS_NOTE = (
-    "[diagnose] the bundle contains: version/platform, backend availability with\n"
-    "  reasons, the resolved model/knobs, the last run's status and error, and recent\n"
-    "  log lines. Redaction is on by default. This is NOT telemetry: nothing was\n"
-    "  transmitted — attach the file to your report yourself."
+    "[diagnose] the bundle contains: version/platform, the registry's journal\n"
+    "  mode, backend availability with reasons, the resolved model/knobs, the\n"
+    "  last run's status and error, and recent log lines. Redaction is on by\n"
+    "  default. This is NOT telemetry: nothing was transmitted — attach the file\n"
+    "  to your report yourself."
 )
 
 _DRY_RUN_NOTE = (

@@ -785,7 +785,16 @@ _BUSY_TIMEOUT = 0.5
 
 
 def _timing_out_engine(path: Path, timeout: float = _BUSY_TIMEOUT):
-    """An engine like the registry's own, with a busy timeout a test can wait out."""
+    """An engine like the registry's own, with a busy timeout a test can wait out.
+
+    The budget is the *test's*, set through the driver's own ``timeout`` connect
+    argument — which is the knob the registry's ``PRAGMA busy_timeout`` sets on
+    its own connections — so this box deliberately does not set that pragma: a
+    test that shortened the budget only to have the policy write it back would
+    wait five seconds for a decision it is asserting. Nothing here converts a
+    journal mode either: that is the file's, decided once as a registry opens
+    (``store._write_ahead_log``).
+    """
     engine = create_engine(
         URL.create("sqlite", database=str(path)),
         poolclass=NullPool,
@@ -796,7 +805,6 @@ def _timing_out_engine(path: Path, timeout: float = _BUSY_TIMEOUT):
     def _connection_state(dbapi_connection, _record) -> None:
         dbapi_connection.execute("PRAGMA foreign_keys = ON")
         dbapi_connection.execute("PRAGMA recursive_triggers = ON")
-        store_module._write_ahead_log(dbapi_connection)
 
     return engine
 

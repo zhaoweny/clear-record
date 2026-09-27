@@ -53,6 +53,21 @@ Design notes:
 - **Nothing loads lazily.** The entities declare no relationships, so no
   attribute access can fire a query after the session that read the row is gone;
   every join is written out in the query that needs it.
+- **The SQLite policy is explicit, and the file's journal mode is decided once.**
+  Every connection the engine makes carries the decided per-connection state —
+  ``busy_timeout = 5000`` (the millisecond budget a writer waits for the write
+  lock), ``synchronous = FULL`` (a commit is synced before it is acknowledged),
+  ``foreign_keys`` and ``recursive_triggers`` on (:func:`_engine`) — and nothing
+  is left to a build's or a platform's default. The **journal mode** is a
+  property of the file rather than of a connection: the registry is put on
+  SQLite's write-ahead log once, as it opens, before the migration takes that
+  same write lock, and the mode the pragma answers with is what the registry
+  records, what a degraded open states in the node's log, and what the
+  diagnostics bundle carries (:func:`_write_ahead_log`). The log removes the
+  reader-refused-behind-a-commit class and the rollback journal's commit
+  exclusion; it does **not** remove contention — **writers still take turns**,
+  one at a time, and a write-write conflict is a wait bounded by the busy
+  timeout, then ``SQLITE_BUSY``.
 - **Alembic owns the schema, and the registry migrates when it opens**
   (ADR-0030). The revisions live in :mod:`clear_record.service.migrations`; the
   chain begins at the released baseline and an existing registry that stands at
@@ -70,7 +85,6 @@ import dataclasses
 import datetime as _dt
 import json
 import re
-import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -105,6 +119,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
+from clear_record.core.diagnostics import log_event
 from clear_record.core.events import JobEvent
 from clear_record.core.i18n import tr
 from clear_record.core.paths import registry_path
@@ -250,63 +265,139 @@ def _has_table(conn: Connection, name: str) -> bool:
     return inspect(conn).has_table(name)
 
 
-def _write_ahead_log(dbapi_connection: Any) -> None:
-    """Put the registry on SQLite's write-ahead log, once per file.
+#: The statement that takes SQLite's write lock: reserved up front, before the
+#: transaction's first read. Two seams issue it — :meth:`Registry._migrate`, on
+#: the Core connection the revisions run on (Alembic needs that connection), and
+#: :meth:`Registry._writer_session`, on the session a read-then-write operation
+#: runs in — and what they share is this statement and the reason for it: SQLite
+#: refuses to *upgrade* a read transaction to a write one (it answers
+#: ``SQLITE_BUSY`` without consulting the busy handler, because waiting there is
+#: the deadlock the handler exists to avoid), so a decision read outside the lock
+#: is a decision another writer can invalidate before it is written.
+_WRITE_LOCK = "BEGIN IMMEDIATE"
+
+#: The journal mode a registry's file is meant to be in. A property of the file,
+#: not of a connection: `PRAGMA journal_mode` with no assignment changes nothing
+#: (see :func:`_write_ahead_log`).
+_WAL = "wal"
+
+#: The log event that states a registry whose file is **not** on the write-ahead
+#: log when it opened. Component ``registry``; ``mode`` and ``reason`` are the
+#: fields. Tolerated, because the registry serves either way — and stated,
+#: because the difference is a guarantee the node otherwise loses in silence
+#: (see :func:`_write_ahead_log`).
+JOURNAL_MODE_DEGRADED = "registry.journal_mode.degraded"
+
+
+def _journal_mode(connection: Connection) -> str:
+    """The mode the registry's **file** is in, read back from its header.
+
+    ``PRAGMA journal_mode`` with no assignment answers with the mode the file is
+    in — one read of the header, taking no lock a writer holds. That is what
+    makes the conversion below a read-then-decide instead of a blind write, and
+    what lets an opened registry report the mode it actually has rather than the
+    one it asked for.
+    """
+    value = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
+    return str(value or "").strip().lower() or "unknown"
+
+
+def _write_ahead_log(engine: Engine) -> tuple[str, str | None]:
+    """Put the registry on SQLite's write-ahead log — once, as the registry opens.
 
     The default rollback journal is what makes a *reader* wait behind a writer,
     and lose: a commit holds ``PENDING`` and then ``EXCLUSIVE`` while it writes
-    the journal, syncs the database and deletes the journal again, and both
-    locks refuse every other connection's ``SHARED`` lock for the whole of that
-    — and no busy timeout can help, because there is no wait to be won. The node
-    writes continuously (a run appends a report per chunk, the heartbeat
+    the journal, syncs the database and deletes the journal again, and both locks
+    refuse every other connection's ``SHARED`` lock for the whole of that — and
+    no busy timeout can help, because there is no wait to be won (SQLite answers
+    ``SQLITE_BUSY`` without consulting the busy handler when waiting would
+    deadlock, which is what a lock upgrade inside a read transaction is). The
+    node writes continuously (a run appends a report per chunk, the heartbeat
     refreshes a row, and every audited mutation appends its own — ADR-0033), so
     under load those windows tile the timeline, and a reader behind them — the
     console's poll, the CLI's, a test's ``list_run_events`` — waits out the
-    whole busy timeout and then fails with ``database is locked``. The
-    write-ahead log removes the class instead of the wait: a reader reads the
-    last committed snapshot and takes no lock a writer holds, and a commit is
-    one append to the log rather than a journal write, two syncs and an unlink.
-    Durability is unchanged — the default ``synchronous=FULL`` syncs the log on
-    commit, so a committed event or audit row survives a crash — and what the
-    log adds on disk is the ``-wal`` and ``-shm`` files beside the registry
-    while it is open (both gone once the last connection closes, which
-    checkpoints the log back into the database; the pool holds no connection
-    between units of work).
+    whole busy timeout and then fails with ``database is locked``.
 
-    The mode is a property of the **file**, not of the connection, so the read
-    below is the whole of the work for every connection after the one that
-    converted it. The conversion itself does need the write lock, and SQLite
-    refuses it while another connection holds a lock of its own: the attempt
-    waits the driver's busy timeout out (five seconds, the default this engine's
-    connections carry) and *then* raises ``SQLITE_BUSY`` — it does not fail at
-    once, so a connection that meets the lock pays that wait before it gives up.
-    That refusal is tolerated: the connection that meets it works in the mode the
-    file is already in, the next connection tries again, and a registry on a
-    filesystem that cannot host the log's shared memory keeps working in the
-    rollback journal it had rather than failing to open.
+    What the log removes is exactly those two things: the
+    reader-refused-behind-a-commit class (a reader reads the last committed
+    snapshot and takes no lock a writer holds) and the rollback journal's commit
+    exclusion. It does **not** remove contention. **Writers still take turns** —
+    one writer at a time, before a reader as much as after one — and a
+    write-write conflict is a *wait* bounded by the busy timeout and then
+    ``SQLITE_BUSY``: two registrations, two run claims or two audit appends
+    serialize on that lock exactly as they did in the rollback journal. What no
+    longer happens is a *reader* failing because a writer happened to be
+    committing.
+
+    Durability is unchanged: ``synchronous=FULL`` (set on every connection, see
+    :func:`_engine`) syncs the log on commit, so a committed event or audit row
+    survives a crash. What the log adds on disk is the ``-wal`` and ``-shm``
+    files beside the registry while it is open (both gone once the last
+    connection closes, which checkpoints the log back into the database; the
+    pool holds no connection between units of work). **Keep the live database on
+    a local filesystem**: the ``-shm`` file is shared memory, and the conversion
+    below is the one step that needs a filesystem able to host it.
+
+    **Once, at open, read back and reported.** The mode belongs to the file, so
+    the conversion is not part of making a connection — it is one step of opening
+    a registry, taken before the migration's own step so that the migration's
+    write lock is taken in the mode the file will keep — and its answer is
+    *read*: the pragma returns the mode that resulted, this returns it, and
+    :class:`Registry` keeps it (as :attr:`Registry.journal_mode`), states it in
+    the node's log when it is not ``wal`` (:data:`JOURNAL_MODE_DEGRADED`, with
+    the mode and the reason) and hands it to the diagnostics bundle.
+
+    A **refused** conversion stays tolerated: the registry serves either way, and
+    a registry that refused to open over a journal mode would be worse than one
+    working in the mode it has. The refusal arrives as an ``OperationalError`` —
+    another surface held the write lock past the busy timeout, or the filesystem
+    cannot host the log's shared memory — and the consequence is stated rather
+    than papered over: **a process whose conversion is refused serves in the
+    rollback journal until its next open.** The old shape retried the conversion
+    on *every* connection the engine made: it paid the busy timeout again on each
+    one, and it tried to convert the file in the middle of the traffic that was
+    contending for it. That retry is deliberately gone — the mode is decided once,
+    at a moment the node controls, and a refusal costs the one timeout this step
+    spends.
+
+    Returns the mode the file is in, and — when that is not the log — the reason
+    it is not.
     """
-    mode = dbapi_connection.execute("PRAGMA journal_mode").fetchone()[0]
-    if str(mode).lower() == "wal":
-        return
-    try:
-        dbapi_connection.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.OperationalError:
-        # The lock belongs to another surface (or the filesystem): the file
-        # keeps the mode it has, and the next connection is the next attempt.
-        # Nothing here may fail a read or a write.
-        return
+    with engine.connect() as connection:
+        mode = _journal_mode(connection)
+        if mode == _WAL:
+            return mode, None
+        try:
+            converted = connection.exec_driver_sql("PRAGMA journal_mode = WAL").scalar()
+        except OperationalError as exc:
+            # The lock belongs to another surface, or the filesystem will not
+            # host the log: the file keeps the mode it has, and that mode is the
+            # fact this reports. Nothing here may fail a read or a write.
+            return mode, str(exc)
+        resulting = str(converted or "").strip().lower() or mode
+        if resulting == _WAL:
+            return resulting, None
+        # The pragma answered without raising and the answer is not the log's:
+        # a database that cannot host one (an in-memory file, a filesystem that
+        # refuses the shared-memory file). Reported, not raised, for the reason
+        # above; the reason is the mode it answered with.
+        return resulting, f"the pragma answered {resulting!r}"
 
 
 def _the_registry_refused(exc: BaseException) -> bool:
     """Whether ``exc`` is the registry's own refusal to make a write at all.
 
-    ``OperationalError`` is what the driver raises when a write cannot be made:
-    another surface holds the write lock past the connection's busy timeout, or
-    the file cannot be written (a full disk, an I/O error). It is the failure
-    :func:`_write_ahead_log` and the token's touch already tolerate, and it is
-    **not** a decision any code of this service made — which is what makes it the
-    one failure whose retry buys nothing: the wait it cost was the driver's busy
-    timeout, and a second attempt pays that timeout again for the same refusal.
+    ``OperationalError`` is what the driver raises when a write cannot be made,
+    and the two shapes it has do not cost the same wait: another surface holds
+    the write lock past the connection's busy timeout (**that** one spent the
+    timeout), or the file cannot be written at all — a full disk, an I/O error —
+    which waited nothing. The predicate is therefore deliberately the class and
+    not the message: what makes this the one failure no retry buys anything for
+    is not that it always spent the budget but that it is **not a decision any
+    code of this service made** — the lock it met is another surface's, and a
+    disk that refused the write will refuse it again. A second attempt costs the
+    whole timeout again when the failure was contention, and costs nothing and
+    changes nothing when it was the device.
     """
     return isinstance(exc, OperationalError)
 
@@ -314,28 +405,48 @@ def _the_registry_refused(exc: BaseException) -> bool:
 def _engine(db_path: Path) -> Engine:
     """The engine one registry reads and writes through.
 
-    SQLite keeps the connection's state, not just the database's: foreign-key
-    enforcement is off by default and is set per connection, so it is set on
-    every connection the engine makes — the guard the store's hand-written
-    connection used to carry, now the engine's own. ``recursive_triggers`` is the
-    same kind of per-connection state, and it is **defence in depth** for the
-    audit record: a ``REPLACE`` is refused here by the table's own insert-side
-    guard (``audit_event_no_replace``), which fires before the conflict path runs
-    and refuses whatever the connection's settings are; the pragma is the second
-    layer, for the delete half of ``REPLACE`` that the insert guard does not cover
-    (ADR-0033).
+    SQLite keeps most of a connection's behaviour as **per-connection** state, so
+    the policy this service has decided is set on every connection the engine
+    makes, in one place, and none of it is left to a default a build or a
+    platform could change:
+
+    - ``busy_timeout = 5000`` — the budget, in milliseconds, a *writer* waits for
+      the write lock before SQLite answers ``SQLITE_BUSY``. It is the same five
+      seconds ``sqlite3.connect`` sets by default: written out, so the promise is
+      readable here rather than inherited from a driver default that a future
+      change could move. It buys a **wait**, never a guarantee: the conflict it
+      cannot outlast still fails, and a reader refused by the rollback journal is
+      not waiting for anything a timeout could win.
+    - ``foreign_keys = ON`` — the guard the store's hand-written connection used
+      to carry, now the engine's own.
+    - ``recursive_triggers = ON`` — the same kind of per-connection state, and
+      it is **defence in depth** for the audit record: a ``REPLACE`` is refused
+      here by the table's own insert-side guard (``audit_event_no_replace``),
+      which fires before the conflict path runs and refuses whatever the
+      connection's settings are; the pragma is the second layer, for the delete
+      half of ``REPLACE`` that the insert guard does not cover (ADR-0033).
+    - ``synchronous = FULL`` — a commit is synced before it is acknowledged, in
+      the write-ahead log as much as in the rollback journal, so a committed
+      event or audit row survives a power loss. ``NORMAL`` would be faster and
+      would permit losing recently committed transactions after a crash; what
+      this file holds is recordings' metadata, the console's credential and the
+      audit record (ADR-0033), so durability is pinned rather than traded.
+
+    Two settings are deliberately **not** touched: ``wal_autocheckpoint`` stays
+    at its default 1000 pages and ``locking_mode`` at ``NORMAL``. They are the
+    decided policy, and naming them here is what makes that a decision rather
+    than whatever the driver happened to do; the log then checkpoints itself
+    instead of a request doing it.
+
+    The **journal mode** is not in this list, and no connection converts
+    anything: it is a property of the file, established once as the registry
+    opens (:func:`_write_ahead_log`).
 
     The pool is :class:`~sqlalchemy.pool.NullPool`, so a connection is made for
     one unit of work and closed with it: the discipline the hand-written
     connection had (connections are cheap; correctness beats pooling), and the
     one that keeps a connection from being handed to a second thread, since the
-    console, the web app's threadpool and the MCP server read one registry. The
-    busy timeout is the driver's default (``sqlite3.connect``'s five seconds),
-    which is what makes a *writer* meet another writer by waiting instead of
-    failing; it cannot do the same for a *reader*, which SQLite's default
-    rollback journal refuses outright while a commit holds the database. The log
-    the listener below applies is the answer to that, and
-    :func:`_write_ahead_log` carries the reasoning.
+    console, the web app's threadpool and the MCP server read one registry.
     """
     engine = create_engine(
         URL.create("sqlite", database=str(db_path)), poolclass=NullPool
@@ -343,9 +454,11 @@ def _engine(db_path: Path) -> Engine:
 
     @event.listens_for(engine, "connect")
     def _connection_state(dbapi_connection: Any, _record: Any) -> None:
+        """The policy above, applied to one new connection, in one place."""
+        dbapi_connection.execute("PRAGMA busy_timeout = 5000")
         dbapi_connection.execute("PRAGMA foreign_keys = ON")
         dbapi_connection.execute("PRAGMA recursive_triggers = ON")
-        _write_ahead_log(dbapi_connection)
+        dbapi_connection.execute("PRAGMA synchronous = FULL")
 
     return engine
 
@@ -658,6 +771,18 @@ def _term_query() -> Select[tuple[entities.GlossaryTerm, str]]:
 #: the schema rather than by whichever statement remembered to look.
 _CREDENTIAL_ROW = 1
 
+#: The verbs and the target rules of the two **create** rows (ADR-0033). They are
+#: module constants rather than literals at the decorators because a second writer
+#: appends the same rows: :meth:`Registry.meeting_for_workspace` registers a
+#: project and a meeting inside one transaction and writes their rows after its
+#: own commit, naming its subjects by these same rules — so what a registration's
+#: rows say cannot drift from what :meth:`Registry.create_project`'s and
+#: :meth:`Registry.create_meeting`'s rows say.
+_PROJECT_CREATE = "project.create"
+_PROJECT_CREATED = audit.subject("project", "slug", "name")
+_MEETING_CREATE = "meeting.create"
+_MEETING_CREATED = audit.subject("meeting", "slug", "title")
+
 
 class RegistryLocked(RuntimeError):
     """Another surface holds the registry's write lock while it migrates.
@@ -684,6 +809,14 @@ class RegistryLocked(RuntimeError):
 class Registry:
     """The single owner of the SQLite registry and its read/writes."""
 
+    #: The journal mode the registry's **file** is in, as read back when this
+    #: registry opened (:func:`_write_ahead_log`). ``"wal"`` unless the
+    #: conversion was refused, in which case this is the mode the file kept and
+    #: the open stated the degradation in the node's log
+    #: (:data:`JOURNAL_MODE_DEGRADED`). Public because it is a fact about the
+    #: registry a caller may need to report — the diagnostics bundle carries it.
+    journal_mode: str
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -694,6 +827,23 @@ class Registry:
         # database file and brings it to this build's schema.
         self._engine = _engine(self.db_path)
         self._sessions = sessionmaker(self._engine, expire_on_commit=False)
+        # The file's journal mode, decided once here rather than per connection
+        # (:func:`_write_ahead_log`), and **before** the migration below takes
+        # the write lock for its own step — so the migration runs in the mode
+        # the file will keep.
+        self.journal_mode, degraded = _write_ahead_log(self._engine)
+        if degraded is not None:
+            # Stated, never silent: a registry serving in the rollback journal
+            # has lost the reader-behind-a-commit guarantee along with it, and
+            # the mode and the reason are what a reader of the node's log needs
+            # to say so. Tolerated — the registry serves either way.
+            log_event(
+                "warning",
+                "registry",
+                JOURNAL_MODE_DEGRADED,
+                mode=self.journal_mode,
+                reason=degraded,
+            )
         self._migrate()
 
     @classmethod
@@ -710,19 +860,26 @@ class Registry:
     def _session(self) -> Iterator[Session]:
         """One unit of work: the session commits on a clean exit.
 
-        The busy timeout is the driver's default, which is also what makes a
-        second *process* (the console and an agent's MCP server share one
-        registry) wait for a writer instead of raising ``database is
-        locked`` — for a writer. A reader is not promised that wait: while a
-        commit holds the database, the rollback journal refuses another
-        connection's read lock outright, so no timeout can win it (see
-        :func:`_write_ahead_log`, which the engine applies to every connection).
+        The busy timeout is the one :func:`_engine` sets on every connection
+        (five seconds), which is also what makes a second *process* (the console
+        and an agent's MCP server share one registry) wait for a writer instead
+        of raising ``database is locked`` — for a **writer**. A reader's relation
+        to a writer is the *file's* journal mode, not a timeout: under the
+        write-ahead log (:func:`_write_ahead_log`, the mode a registry opens in)
+        a reader reads the last committed snapshot and is never refused by a
+        commit, while in the rollback journal a commit excludes it outright and
+        no timeout can win that wait. Neither is a guarantee that a *write*
+        succeeds: two writers take the lock in turn, and the one that arrives
+        while the other holds it past the timeout gets ``SQLITE_BUSY``.
+
         What the driver *does* keep here is the hand-written connection's
-        promise about the other shape SQLite refuses to wait for: pysqlite
-        begins the transaction when the first write executes, not when the
-        session reads, so a read followed by a write still reaches the write
-        lock holding no read lock, and the write waits on the busy timeout
-        rather than failing.
+        promise about the other shape SQLite refuses to wait for: pysqlite begins
+        the transaction when the first write executes, not when the session
+        reads, so a read followed by a write still reaches the write lock holding
+        no read lock, and the write waits on the busy timeout rather than
+        failing. An operation whose *decision* has to hold between its read and
+        its write does not rely on that: it takes the lock up front
+        (:meth:`_writer_session`).
 
         A session whose body raises is rolled back and closed, and the exception
         propagates unchanged: a ``ValueError`` or ``KeyError`` is the one the
@@ -736,6 +893,45 @@ class Registry:
         """
         session = self._sessions()
         try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    @contextmanager
+    def _writer_session(self) -> Iterator[Session]:
+        """One unit of work that takes SQLite's write lock **before its first read**.
+
+        A read-then-write operation whose read *decides* the write cannot take
+        its decision from a deferred transaction: the read holds no write lock,
+        so another writer can commit between the read and the write, and SQLite
+        refuses to upgrade a read transaction that has one — ``SQLITE_BUSY``,
+        without consulting the busy handler, because waiting there is exactly the
+        deadlock the busy handler exists to avoid. So the lock is taken up front
+        (:data:`_WRITE_LOCK`, on the connection, not as a query — SQLAlchemy's
+        own lazy ``BEGIN`` would leave the transaction deferred until the first
+        write) and *everything* the operation reads and writes runs inside it, on
+        this one session. Two such operations take the lock in turn instead of
+        interleaving; the loser is counted by the busy timeout rather than by the
+        lock's exclusion, which is what the same statement buys
+        :meth:`_migrate` — that method is the other seam, on the Core connection
+        the revisions run on, because Alembic needs the connection rather than a
+        session (see :data:`_WRITE_LOCK`).
+
+        This is deliberately **not** how every session begins. Ordinary reads and
+        writes are deferred (:meth:`_session`): taking the writer's reservation
+        for a read would make every reader compete for the one slot writers
+        share, while the operations here — registering a workspace, migrating a
+        registry — are the ones whose read is a decision. The cost is that a
+        lock held elsewhere is met as a wait and then as ``OperationalError``,
+        which propagates exactly as it does through :meth:`_session`.
+        """
+        session = self._sessions()
+        try:
+            session.connection().exec_driver_sql(_WRITE_LOCK)
             yield session
             session.commit()
         except BaseException:
@@ -759,7 +955,7 @@ class Registry:
         the console and an agent's MCP server, and both migrate at open,
         so the whole step — the version tables' read, the stamp, the revisions
         and the ladder row — runs on **one connection holding SQLite's write
-        lock from before that read** (``BEGIN IMMEDIATE``), and the revisions run
+        lock from before that read** (:data:`_WRITE_LOCK`), and the revisions run
         on that same connection (``migrations/env.py`` takes it from the
         configuration). Two openers therefore take the lock in turn instead of
         interleaving, and one that fails rolls back to exactly the registry the
@@ -768,15 +964,23 @@ class Registry:
         on the version table's own DDL (``table alembic_version already exists``)
         or, worse, left that table recording two revisions, which no later open
         can read (see :func:`_reduce_version_rows`).
+
+        This is one of the two seams that take that lock, and the other is
+        :meth:`_writer_session` (which registration uses): the statement and the
+        reason are shared, what runs inside differs — here a Core connection,
+        because Alembic runs on it, and there a session, because the operation's
+        reads and writes go through entities. This step also runs **after** the
+        journal mode is decided, so the write lock it takes is taken in the mode
+        the file will keep (:func:`_write_ahead_log`).
         """
         config = _alembic_config(self.db_path)
         known, head, lineage = _revision_history(config)
         with self._engine.connect() as conn:
-            # The write lock, taken before anything is read: SQLite refuses to
-            # upgrade a read transaction, and a decision read outside the lock is
-            # a decision another opener can invalidate before it is written.
+            # The write lock, taken before anything is read (:data:`_WRITE_LOCK`);
+            # a decision read outside the lock is a decision another opener can
+            # invalidate before it is written.
             try:
-                conn.exec_driver_sql("BEGIN IMMEDIATE")
+                conn.exec_driver_sql(_WRITE_LOCK)
             except OperationalError as exc:
                 # The lock belongs to another surface and it is still migrating:
                 # transient, so the message says what to do instead of letting a
@@ -834,20 +1038,22 @@ class Registry:
 
         **A row the registry will not take is stated, not raised.** The append is
         a write like any other, so the registry can refuse it: another surface
-        holds the write lock past the connection's busy timeout (the lock
-        :func:`_write_ahead_log` tolerates, and the shape
+        holds the write lock past the connection's busy timeout (the shape
         :meth:`touch_machine_token`'s **caller** tolerates — a token's use must
-        never fail the request it authenticated), or the file cannot be written at
-        all. Raising would make the
+        never fail the request it authenticated), or the file cannot be written
+        at all — a full disk, an I/O error, which waited nothing. Raising would
+        make the
         *record* the caller's answer — a refused call would report a database
         error instead of its own refusal, and a call that returned would report a
         failure it did not have — so the refusal is tolerated here: the row is
         lost, and the loss is stated in the node's log as
         :data:`~clear_record.service.audit.ROW_LOST` (component ``audit``, with
         the actor, action, target and outcome the row would have carried). The
-        attempt is **bounded**: it waits the connection's busy timeout at most,
+        attempt is **bounded** in the one case where a bound means anything: a
+        row refused by the lock waits the connection's busy timeout at most,
         once, and :meth:`record_refusal` is where the failure path spends that
-        budget rather than spending it twice.
+        budget rather than spending it twice. A row refused by the *device*
+        spends no budget at all, and no retry would change its answer.
         """
         actor = audit.require_actor(actor)
         if outcome not in audit.OUTCOMES:
@@ -887,9 +1093,10 @@ class Registry:
           the row and never the refusal;
         - the append is **not attempted** when ``cause`` — the refusal the call
           itself raised — is the registry refusing a write of its own
-          (:func:`_the_registry_refused`). That write already waited out the
-          driver's busy timeout; a second attempt would pay the same timeout for
-          the same refusal, so the budget is spent once and the loss is stated;
+          (:func:`_the_registry_refused`). A second attempt would meet the same
+          refusal: it would pay the whole busy timeout again when the refusal was
+          the lock, and would change nothing when it was the device. So the
+          budget is spent once and the loss is stated;
         - anything else the append raises — a value the record refuses, or a
           surprise — is caught here and stated, so no failure of the *record* can
           replace the call's outcome.
@@ -1223,7 +1430,39 @@ class Registry:
             n += 1
         return slug
 
-    @audit.recorded("project.create", audit.subject("project", "slug", "name"))
+    def _insert_project(
+        self,
+        session: Session,
+        name: str,
+        *,
+        slug: str | None = None,
+        notes: str = "",
+        default_archive_root: str | None = None,
+    ) -> entities.Project:
+        """Write one project row on ``session`` — the write half of the create.
+
+        Split out so that a **registration** can compose this with a meeting's
+        insert inside one transaction (:meth:`meeting_for_workspace`): this takes
+        the session it is given and writes no audit row of its own, while
+        :meth:`create_project` opens the session and owns the row its decorator
+        appends.
+        """
+        row_slug = slug or self._unique_slug(session, name)
+        project = entities.Project(
+            slug=row_slug,
+            name=name,
+            notes=notes,
+            default_archive_root=default_archive_root,
+            created_at=_now(),
+        )
+        session.add(project)
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            raise ValueError(f"project slug {row_slug!r} already exists") from exc
+        return project
+
+    @audit.recorded(_PROJECT_CREATE, _PROJECT_CREATED)
     def create_project(
         self,
         name: str,
@@ -1240,20 +1479,15 @@ class Registry:
         if explicit:
             _require_slug(explicit, "project")
         with self._session() as session:
-            slug = explicit or self._unique_slug(session, name)
-            project = entities.Project(
-                slug=slug,
-                name=name,
-                notes=notes,
-                default_archive_root=default_archive_root,
-                created_at=_now(),
+            return self._project(
+                self._insert_project(
+                    session,
+                    name,
+                    slug=explicit or None,
+                    notes=notes,
+                    default_archive_root=default_archive_root,
+                )
             )
-            session.add(project)
-            try:
-                session.flush()
-            except IntegrityError as exc:
-                raise ValueError(f"project slug {slug!r} already exists") from exc
-            return self._project(project)
 
     def list_projects(self) -> list[Project]:
         with self._session() as session:
@@ -1264,11 +1498,21 @@ class Registry:
             )
             return [self._project(row) for row in rows]
 
+    @staticmethod
+    def _project_entity(session: Session, slug: str) -> entities.Project | None:
+        """The project row answering to ``slug``, or ``None`` (the lookup half).
+
+        Reads on the caller's session, like :meth:`_meeting_at`: a registration
+        decides from this read whether it has a project to use or one to create,
+        so the read belongs to that transaction.
+        """
+        return session.scalar(
+            select(entities.Project).where(entities.Project.slug == slug)
+        )
+
     def get_project(self, slug: str) -> Project | None:
         with self._session() as session:
-            row = session.scalar(
-                select(entities.Project).where(entities.Project.slug == slug)
-            )
+            row = self._project_entity(session, slug)
             return self._project(row) if row is not None else None
 
     def require_project(self, slug: str) -> Project:
@@ -1499,7 +1743,46 @@ class Registry:
             n += 1
         return slug
 
-    @audit.recorded("meeting.create", audit.subject("meeting", "slug", "title"))
+    def _insert_meeting(
+        self,
+        session: Session,
+        project_id: int,
+        project_slug: str,
+        title: str,
+        *,
+        slug: str | None = None,
+        recorded_at: str | None = None,
+        workspace_path: str | None = None,
+    ) -> entities.Meeting:
+        """Write one meeting row on ``session`` — the write half of the create.
+
+        Split out for the same reason :meth:`_insert_project` is: a registration
+        composes the two inserts inside one transaction
+        (:meth:`meeting_for_workspace`), and its rows are the registration's,
+        written once that transaction has committed. ``project_slug`` is only
+        the refusal's own sentence — the row needs the project's id.
+        """
+        row_slug = slug or self._unique_meeting_slug(session, project_id, title)
+        row = entities.Meeting(
+            project_id=project_id,
+            slug=row_slug,
+            title=title,
+            recorded_at=recorded_at,
+            workspace_path=workspace_path,
+            notes="",
+            status="new",
+            created_at=_now(),
+        )
+        session.add(row)
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            raise ValueError(
+                f"meeting slug {row_slug!r} already exists in {project_slug!r}"
+            ) from exc
+        return row
+
+    @audit.recorded(_MEETING_CREATE, _MEETING_CREATED)
     def create_meeting(
         self,
         project_slug: str,
@@ -1518,27 +1801,29 @@ class Registry:
         if explicit:
             _require_slug(explicit, "meeting")
         with self._session() as session:
-            slug = explicit or self._unique_meeting_slug(session, project.id, title)
-            row = entities.Meeting(
-                project_id=project.id,
-                slug=slug,
-                title=title,
+            row = self._insert_meeting(
+                session,
+                project.id,
+                project_slug,
+                title,
+                slug=explicit or None,
                 recorded_at=recorded_at,
                 workspace_path=workspace_path,
-                notes="",
-                status="new",
-                created_at=_now(),
             )
-            session.add(row)
-            try:
-                session.flush()
-            except IntegrityError as exc:
-                raise ValueError(
-                    f"meeting slug {slug!r} already exists in {project_slug!r}"
-                ) from exc
             return self._meeting(row, project_slug)
 
     def list_meetings(self, project_slug: str | None = None) -> list[Meeting]:
+        with self._session() as session:
+            return self._list_meetings(session, project_slug)
+
+    def _list_meetings(
+        self, session: Session, project_slug: str | None = None
+    ) -> list[Meeting]:
+        """Every meeting, newest first — on the caller's session.
+
+        The body of :meth:`list_meetings`, split out so the registration's scan
+        (:meth:`_meeting_at`) reads inside the transaction that decided it.
+        """
         stmt = _meeting_query().order_by(
             func.coalesce(
                 entities.Meeting.recorded_at, entities.Meeting.created_at
@@ -1547,8 +1832,7 @@ class Registry:
         )
         if project_slug is not None:
             stmt = stmt.where(entities.Project.slug == project_slug)
-        with self._session() as session:
-            return [self._meeting(row, slug) for row, slug in session.execute(stmt)]
+        return [self._meeting(row, slug) for row, slug in session.execute(stmt)]
 
     def get_meeting(self, project_slug: str, meeting_slug: str) -> Meeting | None:
         with self._session() as session:
@@ -1667,85 +1951,154 @@ class Registry:
         and never walks a workspace, so ``runs.workspace_run_meeting`` is what
         reads the directory's audio into the meeting's tape set.
 
-        **Two surfaces registering one folder at once are a real pair** — the
-        command line's ``run <dir>`` and the console adding the same folder, say —
-        and neither the scan nor the creates above can stop the other writer: the
-        project's slug and the meeting's are each unique, so the write that lands
-        second is refused. That refusal is not an error to report: the folder is
-        registered, which is what the call asked for, so the loser looks once more
-        for the meeting the winner wrote and answers with it. The **folder's own
-        slug is pinned** on the create, so two registrations of one folder compute
-        the same slug whatever either read: a loser whose scan and slug read both
-        missed the winner's row still collides with it, which is what makes the
-        rescue reachable at all (left to the auto-suffixing create, that loser
-        would insert ``<name>-2`` beside the winner and the workspace would have
-        two meetings). A ``ValueError`` that scan does not explain is re-raised as
-        itself.
+        **One unit of work, and the write lock from before its first read.** The
+        lookup and the two creates are one decision — whether this folder is
+        registered, and under which slugs — so they run inside **one**
+        transaction that takes SQLite's writer slot up front
+        (:meth:`_writer_session`: ``BEGIN IMMEDIATE`` before the workspace
+        lookup, not a query on the session's lazy ``BEGIN``). Holding the lock
+        from the first read is what makes that read *decide*: no other writer can
+        insert a meeting for this folder between the lookup and this call's own
+        inserts, because there is only ever one writer. Two registrations of one
+        folder — the command line's ``run <dir>`` and the console adding the same
+        folder, in one process or in two — therefore take the lock in turn, and
+        the second one's scan finds the first one's committed row and answers
+        with it: **exactly one meeting** for the workspace, whichever side the
+        lock falls to. What the lock does not do is make the *loser* fail: a
+        registration that waits out its busy timeout and still cannot have the
+        lock is a refusal (``OperationalError``), as it is on any other write.
+
+        The single transaction also buys the *failure* case: a registration that
+        fails after the project create registers **nothing** — the project rolls
+        back with the meeting, unless it was already there — which is what the
+        creates below not opening sessions of their own is for. Left as separate
+        units of work (the shape this replaces), the project's transaction had
+        already committed by the time the meeting's create could fail, and the
+        folder was left half-registered: a project row with no meeting.
+
+        Both slugs are **pinned to the folder's own name** — the project's and
+        the meeting's — because a registration's identity for a folder is the
+        name derived from it, so two registrations of one folder compute the same
+        slugs. Left to the auto-suffixing creates, a looser read (the project's
+        lookup missing, or the meeting's slug read landing after a winner's row)
+        produced ``<name>-2`` and its insert **succeeded**: two projects holding
+        a meeting for one workspace, or two meetings in one project, silently,
+        splitting that folder's runs and artifacts between them.
+
+        A ``ValueError`` the pinned insert raises is the **other** collision: the
+        folder's own slug belongs to another folder's meeting of the same name (a
+        project's meetings share one slug space). That is not this folder's race,
+        and it is answered the way it always was — the folder is looked for once
+        more, and a slug the registry computes is used when it is not there. The
+        insert runs inside a **savepoint**, so a collision costs that attempt and
+        not the transaction: the project this registration created (if any) and
+        the lock it holds both survive to the retry. Under the lock the
+        look-again cannot find a *same-folder* winner that the first scan missed —
+        no writer can land in between — so what it answers is a folder that is
+        registered after all, and otherwise the collision is the other folder's.
+
+        **The creates' audit rows are written after the commit, and by this
+        method.** The two inserts cannot be the decorated :meth:`create_project`
+        and :meth:`create_meeting`, because a row those append is a unit of work
+        of its own — a second connection, which this method's own writer lock
+        would refuse (and refusing it would cost the busy timeout and lose the
+        row) — so they are :meth:`_insert_project` / :meth:`_insert_meeting`,
+        which take this transaction's session and write no row. The rows are
+        this method's then, appended once the transaction has committed, for the
+        creates that actually landed: the same verbs, the same actor and the same
+        targets the decorators' own rules compute (:data:`_PROJECT_CREATED`,
+        :data:`_MEETING_CREATED` — one declaration, so the two writers cannot
+        drift), one row per create. That is the choice, and it is what makes *a
+        row only for committed work* true here: a registration that rolls back
+        appends nothing at all, where the old shape had already committed the
+        project's own transaction **and its ``ok`` row** before the meeting's
+        create could fail. The pinned attempt's collision is not a refusal of
+        this call — the call registers the folder — so the record holds the
+        create that landed and not the attempt that did not.
+
+        A ``ValueError`` that neither the look-again nor the computed slug
+        explains is re-raised as itself, and every other failure propagates as it
+        does from any other unit of work: the transaction rolls back, and an
+        ``OperationalError`` from the lock is the driver's, not a class of this
+        method's own.
         """
         resolved = _resolved_workspace(directory)
-        meeting = self._meeting_at(resolved)
-        if meeting is not None:
-            return meeting
         name = Path(resolved).name or resolved
-        try:
-            # Both slugs are **pinned to the folder's own name** (the project's
-            # here, the meeting's below): a registration's identity for a folder is
-            # the name derived from it, so two registrations of one folder compute
-            # the same slugs and the second insert collides — at either level.
-            # Left to the auto-suffixing creates, a looser read (the project's
-            # lookup missing, or the meeting's slug read landing after the
-            # winner's row) produced ``<name>-2`` and its insert **succeeded**: two
-            # projects holding a meeting for one workspace, or two meetings in one
-            # project, silently.
-            project = self.get_project(_slugify(name)) or self.create_project(
-                name, slug=_slugify(name), actor=actor
-            )
-            # The folder's **own** slug, pinned: a registration's identity for a
-            # folder is the name derived from it, so pinning it makes two
-            # registrations of one folder compute the same slug and the second
-            # insert collide — which is what the rescue below needs. Left to the
-            # uniquifier, a loser whose read lands *after* the winner's row would
-            # compute ``<name>-2`` and its own insert would **succeed**: two
-            # meetings for one workspace, silently (the write-ahead log removed the
-            # accidental serialization the rollback journal's commit exclusion
-            # provided, so this window is live).
-            return self.create_meeting(
-                project.slug,
-                name,
-                workspace_path=resolved,
-                slug=_slugify(name),
-                actor=actor,
-            )
-        except ValueError as exc:
-            # The write-ahead log does not serialize the two registrations
-            # (:func:`_write_ahead_log`), which leaves the loser the job the
-            # codebase already gives every read-then-write pair — read again, and
-            # answer with what the winner wrote (``runs.RunManager.start`` reads
-            # the same way over the one-active-run index).
-            meeting = self._meeting_at(resolved)
+        created: list[tuple[str, str]] = []
+        with self._writer_session() as session:
+            meeting = self._meeting_at(session, resolved)
             if meeting is not None:
                 return meeting
-            # Not this folder's race: the pinned slug collided with another
-            # folder's meeting of the same name (a project's meetings share one
-            # slug space), or the project's own create lost its race and the
-            # project is there now. A slug the registry computes is what that case
-            # has always used, and the rescue gets the same look after it, since
-            # the winner may have landed in the meantime.
-            project = self.get_project(_slugify(name))
-            if project is not None:
-                try:
-                    return self.create_meeting(
-                        project.slug, name, workspace_path=resolved, actor=actor
+            # The project's slug is pinned to the folder's own name for the
+            # reason the docstring gives; the lookup above it is inside the lock,
+            # so it decides between "use this project" and "create it" without a
+            # winner able to land between the two.
+            project = self._project_entity(session, _slugify(name))
+            if project is None:
+                project = self._insert_project(session, name, slug=_slugify(name))
+                created.append(
+                    (
+                        _PROJECT_CREATE,
+                        _PROJECT_CREATED({"slug": project.slug, "name": name}),
                     )
+                )
+            # The folder's own slug, pinned — unless the collision below proves it
+            # belongs to another folder's meeting. `None` means the create
+            # computes the suffixed slug, and the row's target then names the
+            # title, exactly as the decorated create's row would.
+            slug_argument: str | None = _slugify(name)
+            try:
+                with session.begin_nested():
+                    row = self._insert_meeting(
+                        session,
+                        project.id,
+                        project.slug,
+                        name,
+                        slug=slug_argument,
+                        workspace_path=resolved,
+                    )
+            except ValueError as exc:
+                meeting = self._meeting_at(session, resolved)
+                if meeting is not None:
+                    return meeting
+                slug_argument = None
+                try:
+                    with session.begin_nested():
+                        row = self._insert_meeting(
+                            session,
+                            project.id,
+                            project.slug,
+                            name,
+                            workspace_path=resolved,
+                        )
                 except ValueError:
-                    meeting = self._meeting_at(resolved)
+                    meeting = self._meeting_at(session, resolved)
                     if meeting is not None:
                         return meeting
-            raise exc
+                    raise exc
+            created.append(
+                (
+                    _MEETING_CREATE,
+                    _MEETING_CREATED({"slug": slug_argument, "title": name}),
+                )
+            )
+            registered = self._meeting(row, project.slug)
+        # Committed. The rows the creates earned are appended now, each in a unit
+        # of work of its own (`record_audit` tolerates the registry refusing one
+        # and states the loss — see its docstring).
+        for action, target in created:
+            self.record_audit(actor, action, target)
+        return registered
 
-    def _meeting_at(self, resolved: str) -> Meeting | None:
-        """The meeting registered for a resolved workspace path, or ``None``."""
-        for meeting in self.list_meetings():
+    def _meeting_at(self, session: Session, resolved: str) -> Meeting | None:
+        """The meeting registered for a resolved workspace path, or ``None``.
+
+        Reads on the caller's session, because the caller is a registration that
+        decided from this scan (:meth:`meeting_for_workspace`): a decision read
+        outside the lock it is taken in would be one another writer can
+        invalidate before it is acted on.
+        """
+        for meeting in self._list_meetings(session):
             if meeting.workspace_path and (
                 _resolved_workspace(meeting.workspace_path) == resolved
             ):

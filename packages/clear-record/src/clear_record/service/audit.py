@@ -63,22 +63,27 @@ what :func:`refused_call` states at each entry point, as the exception types it
 records.
 
 **The row is not worth the caller's outcome.** The append is a write of its own,
-so the registry can refuse it — another surface holds its write lock past the
-driver's busy timeout, or the file cannot be written at all — and every caller
-here keeps what the *call* answered: a refused call still raises its own refusal
-(a database error from the record of it is not the service's answer, and it is
-what the HTTP surfaces would have answered a bare 500 for), and a call that
-returned still returns. The refusal is therefore tolerated, as
-:func:`~clear_record.service.store._write_ahead_log` and the token's touch
-tolerate it, and the row it costs is **stated** rather than raised: the node's log
+so the registry can refuse it — another surface holds the write lock past the
+connection's busy timeout (five seconds, the policy's own; see
+``store._engine``), or the file cannot be written at all (a full disk, an I/O
+error, which waited nothing and which no second attempt would change) — and every
+caller here keeps what the *call* answered: a refused call still raises its own
+refusal (a database error from the record of it is not the service's answer, and
+it is what the HTTP surfaces would have answered a bare 500 for), and a call that
+returned still returns. The refusal is therefore tolerated, as the token's touch
+tolerates its own (a use must never fail the request it authenticated) and as the
+registry's conversion to the write-ahead log does as it opens
+(:func:`~clear_record.service.store._write_ahead_log`) — and the row it costs is
+**stated** rather than raised: the node's log
 carries one ``audit.row_lost`` record (:data:`ROW_LOST`, component ``audit``) with
 the actor, action, target and outcome the row would have carried and the refusal
 that stopped it. That name is the whole of the narrowing: "one row per mutating
 call" holds *unless the registry will not take the row*, and where that happens a
-reader meets the loss in the log. The attempt is bounded — the connection's busy
-timeout, once
+reader meets the loss in the log. The attempt is bounded where a bound means
+anything — a row refused by the *lock* waits the connection's busy timeout once
 (:meth:`~clear_record.service.store.Registry.record_refusal` is where the failure
-path spends that budget rather than paying it twice).
+path spends that budget rather than paying it twice); a row refused by the device
+spends none of it.
 
 That the row is not in the same transaction as the write is the price of
 recording refusals at all, and it is the honest shape: the record is the

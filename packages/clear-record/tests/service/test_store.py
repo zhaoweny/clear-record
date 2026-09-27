@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import configparser
 import dataclasses
+import json
 import re
 import shutil
 import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import types
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -28,9 +30,10 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, UniqueConstraint, create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import NullPool
 
-from clear_record.core import JobEvent, PipelineOptions
+from clear_record.core import JobEvent, PipelineOptions, diagnostics
 from clear_record.core.paths import registry_path
 from clear_record.service import (
     RUN_ORIGINS,
@@ -45,7 +48,6 @@ from clear_record.service.lifecycle import active_run_predicate
 from clear_record.service.store import (
     _LADDER_VERSION,
     _alembic_config,
-    _write_ahead_log,
 )
 
 #: The repository root: the tree this test's git history lives in.
@@ -1805,8 +1807,33 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
         ]
 
 
-def _engine_timing_out_box(path: Path, timeout: float = 0.2):
-    """An engine like the registry's own, with a busy timeout a test can wait out."""
+#: The busy-timeout budget the short-timeout engine boxes carry: small enough
+#: that a test can wait out several of them in the time the registry's own
+#: five-second policy would take to expire once.
+_BOX_TIMEOUT = 0.2
+
+#: The per-connection policy as the *file* reports it, which is what a durable
+#: assertion about the contract can pin: milliseconds of waiting for a writer,
+#: SQLite's own code for FULL, and the two guards the audit record leans on. It
+#: is here rather than read off ``store`` because a test that imported the values
+#: it compares against would pass whatever the code said.
+_CONNECTION_POLICY = {
+    "busy_timeout": 5000,
+    "synchronous": 2,
+    "foreign_keys": 1,
+    "recursive_triggers": 1,
+}
+
+
+def _engine_timing_out_box(path: Path, timeout: float = _BOX_TIMEOUT):
+    """An engine like the registry's own, with a busy timeout a test can wait out.
+
+    It is not the registry's policy: the budget here is the *test's*, set through
+    the driver's own ``timeout`` connect argument (which is the knob the policy's
+    ``PRAGMA busy_timeout`` sets on the registry's connections), so the
+    short-timeout tests do not set that pragma and do not spend five seconds
+    waiting out a decision they are asserting.
+    """
     engine = create_engine(
         URL.create("sqlite", database=str(path)),
         poolclass=NullPool,
@@ -2130,7 +2157,7 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
         assert conn.execute("SELECT foreign_keys FROM pragma_probe").fetchone() == (1,)
 
 
-# --- the connection's own state, and the journal it reads through ----------- #
+# --- the connection's policy, and the journal the file reads through -------- #
 def test_a_read_is_not_refused_while_another_surface_holds_the_write_lock(
     tmp_path,
 ) -> None:
@@ -2146,9 +2173,10 @@ def test_a_read_is_not_refused_while_another_surface_holds_the_write_lock(
     read issued inside one of those windows therefore waits out the driver's
     busy timeout (5 s) and then fails with ``database is locked`` — the flake a
     cancel test's poll met under the gate's load, where the node's writes kept
-    the windows tiled. The write-ahead log the engine applies is what removes
-    that class: readers take no lock a writer holds, so the read below answers
-    while the writer is still holding the lock.
+    the windows tiled. The write-ahead log the registry's file is opened on
+    (:func:`clear_record.service.store._write_ahead_log`) is what removes that
+    class: readers take no lock a writer holds, so the read below answers while
+    the writer is still holding the lock.
 
     The writer's state is *held* here rather than raced for: ``BEGIN EXCLUSIVE``
     is the lock a commit holds across the journal write and the syncs, kept open
@@ -2202,6 +2230,37 @@ def _journal_mode(db_path: Path) -> str:
         return str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
 
 
+def _registry_log_events(event: str) -> list[dict]:
+    """Every record of that name the node's log holds, oldest first.
+
+    Read off the sink itself — the test environment redirects the log directory
+    into ``tmp_path`` — so what is asserted is what a reader of the log meets,
+    not what the code meant to write.
+    """
+    try:
+        lines = diagnostics.log_path().read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    return [
+        record
+        for record in (json.loads(line) for line in lines if line.strip())
+        if record.get("event") == event
+    ]
+
+
+def _release_lock(holder: sqlite3.Connection) -> None:
+    """Give a held lock back; a connection already released is not an error.
+
+    A timer may release the connection before the test's own ``finally`` does
+    (the waiting test does exactly that), and closing it twice raises.
+    """
+    try:
+        holder.rollback()
+        holder.close()
+    except sqlite3.ProgrammingError:  # a second release
+        pass
+
+
 def _in_the_rollback_journal(db_path: Path) -> None:
     """Put a registry on disk back in the rollback journal a released line left.
 
@@ -2226,9 +2285,16 @@ def test_an_existing_registry_converts_to_the_write_ahead_log_on_open(
     build created. The log's own files are the other half of it: they are beside
     the registry while a connection holds one, and the last close checkpoints
     them back into the database and takes them away.
+
+    What opened the file and what the file *is* are one fact: the mode the
+    registry recorded is the mode the pragma answered with, and the open said
+    nothing about a degradation. That starts at the **first** open — a registry
+    this build creates is on the log before it can hold a row — and the fixture
+    below takes the mode back only to meet it again as an upgrade would.
     """
     db_path = tmp_path / "registry.sqlite3"
     first = _registry(tmp_path)
+    assert first.journal_mode == "wal" == _journal_mode(db_path)
     first.create_project("Ops", actor="console")
     _in_the_rollback_journal(db_path)
     assert _journal_mode(db_path) == "delete"
@@ -2238,6 +2304,8 @@ def test_an_existing_registry_converts_to_the_write_ahead_log_on_open(
     reopened = Registry.open(db_path=db_path)
     assert [project.slug for project in reopened.list_projects()] == ["ops"]
     assert _journal_mode(db_path) == "wal"
+    assert reopened.journal_mode == "wal" == _journal_mode(db_path)
+    assert not _registry_log_events(store_module.JOURNAL_MODE_DEGRADED)
 
     wal = db_path.with_name(db_path.name + "-wal")
     shm = db_path.with_name(db_path.name + "-shm")
@@ -2253,222 +2321,324 @@ def test_an_existing_registry_converts_to_the_write_ahead_log_on_open(
     assert not wal.exists() and not shm.exists()
 
 
-def test_a_conversion_that_meets_a_held_lock_is_tolerated(tmp_path) -> None:
-    """The lock is another surface's, so the conversion gives up and yields.
+def test_an_open_whose_conversion_is_refused_serves_in_the_mode_it_kept(
+    tmp_path, monkeypatch
+) -> None:
+    """A refused conversion is tolerated, recorded, stated — and over at the next open.
 
-    ``_write_ahead_log`` runs on every connection the engine opens, and a
-    registry shared by the console and an agent's MCP server is read while the
-    other one writes: the conversion can meet a lock that is not its own. The
-    refusal is tolerated rather than raised — the connection works in the mode
-    the file is already in, and the read below answers — and the next connection
-    tries again, converting once the lock is free. The connection here carries a
-    short busy timeout so the refusal is the same one without the five-second
-    wait the engine's own connections would spend on it (see
-    :func:`clear_record.service.store._write_ahead_log`).
+    The lock is a **writer's** and it is held for the whole of the conversion's
+    budget: the pragma waits, is refused, and the file keeps the rollback
+    journal. The registry then **serves** — this one migrates and reads its rows
+    — which is the tolerance that stays, and what is new is that it is no longer
+    silent: the mode is recorded on the registry
+    (:attr:`Registry.journal_mode`), stated in the node's log
+    (:data:`store.JOURNAL_MODE_DEGRADED`, with the mode and the reason) and, from
+    there, carried by the diagnostics bundle.
+
+    The lock is given back **at the refusal** rather than on a timer, so what
+    this test fixes is the order and not a clock: held past the busy timeout (the
+    wait is real, and it is what refuses the pragma), gone before the migration's
+    own write lock is attempted. A lock that *stayed* held would refuse the
+    migration too, and in the rollback journal any surviving lock forbids its
+    COMMIT as well (measured: a read-only ``BEGIN IMMEDIATE`` transaction cannot
+    commit while another connection holds ``SHARED``), which is why a registry
+    serving in the rollback journal is only reachable along this transient path —
+    and why the mode is worth stating when it happens, instead of being left for
+    whoever next debugs a reader that was refused.
     """
     db_path = tmp_path / "registry.sqlite3"
-    registry = _registry(tmp_path)
-    registry.create_project("Ops", actor="console")
+    _registry(tmp_path).create_project("Ops", actor="console")
     _in_the_rollback_journal(db_path)
+    assert _journal_mode(db_path) == "delete"
+    monkeypatch.setattr(store_module, "_engine", _engine_timing_out_box)
 
-    holder = sqlite3.connect(str(db_path))
-    holder.execute("BEGIN")
-    holder.execute("SELECT count(*) FROM project").fetchone()  # a reader's SHARED
+    holder = sqlite3.connect(str(db_path), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+
+    real_conversion = store_module._write_ahead_log
+    attempts: list[tuple[str, str | None]] = []
+
+    def the_other_surface_gives_the_lock_back_at_the_refusal(engine):
+        result = real_conversion(engine)
+        if not attempts:
+            # The conversion is over — it waited the whole budget and was
+            # refused — so the other surface's lock has done the work this test
+            # is about, and it is released before the migration asks for it.
+            _release_lock(holder)
+        attempts.append(result)
+        return result
+
+    monkeypatch.setattr(
+        store_module,
+        "_write_ahead_log",
+        the_other_surface_gives_the_lock_back_at_the_refusal,
+    )
     try:
-        dbapi = sqlite3.connect(str(db_path), timeout=0.1)
-        try:
-            _write_ahead_log(dbapi)  # the refusal is swallowed, not raised
-            assert dbapi.execute("SELECT count(*) FROM project").fetchone()[0] == 1
-        finally:
-            dbapi.close()
-        assert _journal_mode(db_path) == "delete"  # the file kept the mode it had
+        registry = Registry.open(db_path=db_path)
+
+        assert attempts[0][0] == "delete"  # asked for the log, did not get it
+        assert registry.journal_mode == "delete"  # ... and records what it has
+        assert _journal_mode(db_path) == "delete"
+        assert [project.slug for project in registry.list_projects()] == ["ops"]
+    finally:
+        _release_lock(holder)
+
+    degraded = _registry_log_events(store_module.JOURNAL_MODE_DEGRADED)
+    assert [(record["level"], record["mode"]) for record in degraded] == [
+        ("warning", "delete")
+    ]
+    # The reason is the registry's own refusal, not a sentence of its own: a
+    # reader of the log must be able to tell a lock apart from a filesystem that
+    # will not host the log at all.
+    assert "lock" in degraded[0]["reason"], degraded[0]["reason"]
+
+    # The next open finds the file free to change and converts — and it says
+    # nothing, because there is nothing to say.
+    reopened = Registry.open(db_path=db_path)
+    assert attempts[1] == ("wal", None)
+    assert reopened.journal_mode == "wal" == _journal_mode(db_path)
+    assert [project.slug for project in reopened.list_projects()] == ["ops"]
+    assert len(_registry_log_events(store_module.JOURNAL_MODE_DEGRADED)) == 1
+
+
+def test_every_connection_carries_the_decided_policy(tmp_path) -> None:
+    """The connection policy is a promise about the *database*, not about a listener.
+
+    SQLite keeps this state per connection and resets every new one to its own
+    default, so "which pragmas are set" is only answerable by asking a connection
+    the registry's own engine made — and the answer is the decision
+    (:func:`clear_record.service.store._engine`), not the code that applies it:
+    five seconds of waiting for a writer, a commit that is synced before it is
+    acknowledged, and the two guards the audit record leans on. Asked of two
+    connections, because the promise is about every one of them.
+    """
+    registry = _registry(tmp_path)
+
+    for _ in range(2):
+        with registry._engine.connect() as conn:
+            assert {
+                pragma: conn.exec_driver_sql(f"PRAGMA {pragma}").scalar()
+                for pragma in _CONNECTION_POLICY
+            } == _CONNECTION_POLICY
+
+
+def test_a_second_writer_waits_out_a_held_lock_and_then_succeeds(tmp_path) -> None:
+    """The busy timeout is a *wait*, and the write that waited lands afterwards.
+
+    The registration takes the writer lock before its first read
+    (:meth:`Registry._writer_session`), so a lock another surface holds makes it
+    wait rather than look and collide. The lock is released a moment before the
+    policy's budget runs out, and what comes back is the registration — one
+    meeting, registered once. (The *other* end of the budget — contention that
+    outlasts it — is ``test_prolonged_contention_fails_within_the_budget``.)
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    holder = sqlite3.connect(str(registry.db_path), timeout=0, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    released = threading.Timer(0.05, _release_lock, args=(holder,))
+    released.start()
+    try:
+        meeting = registry.meeting_for_workspace(str(workspace), actor="console")
+    finally:
+        released.join(timeout=10)
+        _release_lock(holder)
+
+    assert meeting.slug == "second"
+    assert [meeting.slug for meeting in registry.list_meetings()] == ["second"]
+
+
+def test_prolonged_contention_fails_within_the_budget(tmp_path, monkeypatch) -> None:
+    """A writer that never gets the lock is refused **after the budget**, not left waiting.
+
+    The policy pins the budget at 5000 ms — asserted, as a fact about a
+    connection, by ``test_every_connection_carries_the_decided_policy``; the
+    engine here is the short-timeout box so that *this* test waits the box's own
+    fifth of a second instead of five seconds of the suite's, and what it checks
+    is that the wait is the configured one and that the end of it is the driver's
+    refusal (``OperationalError``, the class every caller of this store already
+    handles) rather than a success or a hang. The registration is the operation:
+    it takes the lock before it reads anything, so there is no path on which it
+    reads around a held lock and collides instead.
+    """
+    monkeypatch.setattr(store_module, "_engine", _engine_timing_out_box)
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    holder = sqlite3.connect(str(registry.db_path), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(OperationalError, match="database is locked"):
+            registry.meeting_for_workspace(str(workspace), actor="console")
+        waited = time.monotonic() - started
     finally:
         holder.rollback()
         holder.close()
 
-    # The next connection tries again — and with the lock free, it converts.
-    dbapi = sqlite3.connect(str(db_path))
-    try:
-        _write_ahead_log(dbapi)
-    finally:
-        dbapi.close()
-    assert _journal_mode(db_path) == "wal"
+    assert _BOX_TIMEOUT <= waited < 5 * _BOX_TIMEOUT, (
+        f"the refusal took {waited:.2f}s, which is not the configured budget"
+    )
+    # Refused, and nothing half-written: the transaction rolled back with it.
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
 
 
 # --- a folder registered by two surfaces at once ---------------------------- #
-def test_a_registration_that_loses_the_project_race_answers_with_the_winner(
+def test_two_registrations_of_one_folder_leave_one_meeting(
     tmp_path, monkeypatch
 ) -> None:
-    """The loser of a registration race answers with the meeting the winner wrote.
+    """Registering one folder twice at once is one meeting, and the loser registers nothing.
 
-    Two surfaces registering one folder at once are a real pair — the command
-    line's ``run <dir>`` asking the node, and the console adding the same folder
-    — and nothing in the registration can stop the other writer: the scan reads,
-    and the creates that follow are what the registry's unique constraints
-    decide (the project's slug, the meeting's per project). When the second write
-    loses, the folder **is** registered, which is what the call asked for, so the
-    loser answers with the winner's meeting rather than with the constraint's
-    refusal (`project slug 'second' already exists`, which the API edge turned
-    into a 500).
+    Two surfaces registering one folder are a real pair — the command line's
+    ``run <dir>`` and the console adding the same folder — and what makes them
+    one meeting is the writer lock the registration takes **before its first
+    read**: the loser's own transaction cannot begin until the winner's has
+    committed, so the loser's scan reads the winner's row and it creates nothing
+    at all.
 
-    The winner's write is injected immediately before the loser's own insert (the
-    window's write half; the pinned slug means there is no separate slug read to
-    inject at), so the collision is a verdict and not a timing. The rollback journal used to settle this by accident: a commit
-    excludes readers, so the loser's scan saw the winner's row (see
-    ``test_a_read_is_not_refused_while_another_surface_holds_the_write_lock``);
-    the write-ahead log does not, which is what this fences.
+    The winner is paused *inside* its transaction here — its row flushed, nothing
+    committed — so the loser's wait is against a lock that is not going away
+    until this test says so, and there is no interleaving in which the loser
+    reads around the lock and collides instead. That is what the earlier form of
+    this test injected (a winner landing in the loser's window between the scan
+    and the insert) and what the lock removes: the window it fired into no longer
+    exists, so it is the *wait* that has to be fenced rather than a moment inside
+    the loser. The observable is the record, not a timing: both calls answer with
+    one meeting, and there is exactly **one** ``meeting.create`` row, because the
+    loser's own row would describe a meeting this folder does not have.
     """
     winner = _registry(tmp_path)
     loser = _registry(tmp_path)
     workspace = tmp_path / "second"
     workspace.mkdir()
+    in_the_transaction = threading.Event()
+    released = threading.Event()
+    real_insert = winner._insert_meeting
 
-    real_create = loser.create_project
-    injected: list[str] = []
+    def the_winner_holds_its_lock(*args, **kwargs):
+        row = real_insert(*args, **kwargs)
+        in_the_transaction.set()
+        assert released.wait(timeout=10), "the lock was never released"
+        return row
 
-    def the_winner_registers_before_the_losers_insert(name, **kwargs):
-        if not injected:
-            injected.append(name)
-            winner.meeting_for_workspace(str(workspace), actor="console")
-        return real_create(name, **kwargs)  # ... and it collides
+    monkeypatch.setattr(winner, "_insert_meeting", the_winner_holds_its_lock)
+    answered: list[tuple[int, str]] = []
+    failures: list[BaseException] = []
 
-    monkeypatch.setattr(
-        loser, "create_project", the_winner_registers_before_the_losers_insert
-    )
+    def the_winner_registers() -> None:
+        try:
+            meeting = winner.meeting_for_workspace(str(workspace), actor="console")
+            answered.append((meeting.id, meeting.slug))
+        except BaseException as exc:  # the failure this test is not about
+            failures.append(exc)
 
-    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+    def the_late_registration() -> None:
+        try:
+            meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+            answered.append((meeting.id, meeting.slug))
+        except BaseException as exc:
+            failures.append(exc)
 
-    assert injected, "the winner never got into the loser's window"
-    assert (
-        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
-    )
-    assert [project.slug for project in winner.list_projects()] == ["second"]
-    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+    winner_thread = threading.Thread(target=the_winner_registers, daemon=True)
+    late_thread = threading.Thread(target=the_late_registration, daemon=True)
+    winner_thread.start()
+    assert in_the_transaction.wait(timeout=10), "the winner never got its lock"
+    late_thread.start()
+    time.sleep(0.05)  # long enough for the late call to reach the lock
+    assert not failures and not answered, "the late call did not wait"
+    released.set()
+    winner_thread.join(timeout=10)
+    late_thread.join(timeout=10)
+
+    assert not winner_thread.is_alive() and not late_thread.is_alive()
+    assert not failures, failures[0]
+    one = winner.list_meetings()
+    assert len(one) == 1, "one folder, one meeting"
+    assert answered == [(one[0].id, "second"), (one[0].id, "second")]
+    assert [(row.action, row.target) for row in winner.list_audit_events()] == [
+        ("project.create", "project:second"),
+        ("meeting.create", "meeting:second"),
+    ]
+    # The loser wrote no rows of its own: it registered nothing (it reads the
+    # same file, so this is the same record).
+    assert loser.list_audit_events() == winner.list_audit_events()
 
 
-def test_a_project_lookup_that_missed_the_winner_is_no_duplicate(
+def test_a_registration_that_fails_after_the_project_leaves_nothing(
     tmp_path, monkeypatch
 ) -> None:
-    """The same window one level up: the *project's* slug read can miss and suffix.
+    """Half a registration is not a registration: the project rolls back with the meeting.
 
-    Both surfaces miss the folder's project, the winner then registers (its
-    project and its meeting for this folder), and the loser's project create reads
-    the slug as taken and computes ``second-2``: each of the two projects then
-    accepts a meeting for the same workspace — the duplicate the meeting slug's pin
-    closes, through the project's door. The project's own slug is pinned for the
-    same reason (a registration's identity for a folder is the name derived from
-    it), so the loser collides here too and the rescue answers with the winner.
+    The failure is injected **inside** the registration's transaction and *after*
+    the project create — the shape a disk that fills up mid-operation has, and
+    the shape the base could not survive: there the project was a unit of work of
+    its own, so a meeting create that then failed left the folder half-registered
+    (measured at ``b648294``: one ``project`` row, no meeting, and the ``ok`` row
+    the project's create had already written). One transaction is what closes it.
+    Nothing is recorded either, because the rows belong to committed work.
+
+    The second half is the point of the first: with no residue, the folder is
+    registered for the first time by whoever asks next, under its own slug.
     """
-    winner = _registry(tmp_path)
-    loser = _registry(tmp_path)
+    registry = _registry(tmp_path)
     workspace = tmp_path / "second"
     workspace.mkdir()
 
-    real_lookup = loser.get_project
-    injected: list[str] = []
+    def the_disk_fills_up(*args, **kwargs):
+        raise RuntimeError("no space left on device")
 
-    def the_winner_lands_right_after_the_losers_lookup(slug: str):
-        found = real_lookup(slug)
-        if found is None and not injected:
-            injected.append(slug)
-            winner.meeting_for_workspace(str(workspace), actor="console")
-            return None  # ... and the loser's lookup missed the row just written
-        return found
+    monkeypatch.setattr(registry, "_insert_meeting", the_disk_fills_up)
+    with pytest.raises(RuntimeError, match="no space left"):
+        registry.meeting_for_workspace(str(workspace), actor="console")
 
-    monkeypatch.setattr(
-        loser, "get_project", the_winner_lands_right_after_the_losers_lookup
-    )
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
+    assert registry.list_audit_events() == []
 
-    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
-
-    assert injected, "the winner never got into the loser's window"
-    assert (
-        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
-    )
-    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+    monkeypatch.undo()  # the injection is over: the directory is registrable
+    meeting = registry.meeting_for_workspace(str(workspace), actor="console")
+    assert (meeting.slug, meeting.workspace_path) == ("second", str(workspace))
+    assert [(row.action, row.target) for row in registry.list_audit_events()] == [
+        ("project.create", "project:second"),
+        ("meeting.create", "meeting:second"),
+    ]
 
 
-def test_a_registration_whose_scan_missed_and_slug_read_saw_it_is_no_duplicate(
-    tmp_path, monkeypatch
+def test_a_folders_own_slug_taken_by_another_folder_is_computed_again(
+    tmp_path,
 ) -> None:
-    """The window between the scan and the slug read used to be a duplicate, not a rescue.
+    """Two folders of one name: the second gets a meeting of its own, under a computed slug.
 
-    ``meeting_for_workspace``'s rescue runs only when a create **fails**, and the
-    creates are what auto-suffix their slugs: if the winner's row lands after the
-    loser's ``_meeting_at`` miss but *before* the loser's own slug read, the loser
-    reads the slug as taken, computes ``second-2``, and its insert **succeeds** —
-    two meetings registered for one workspace, silently, and resolving the folder
-    afterwards can flip between them (splitting runs and artifacts). The pair of
-    race tests above fences the other interleaving, where the winner lands between
-    the read and the insert and the unique constraint decides it; this is the one
-    the constraint never sees, because the loser renamed its own slug out of the
-    way.
+    A project's meetings share one slug space, so registering ``a/second`` and
+    then ``b/second`` pins ``second`` twice and the second insert collides. That
+    is **not** the same folder's race — the lock cannot settle it, since both
+    registrations are legitimate — so the pinned attempt is given up and the
+    create computes ``second-2``, which is what this case has always done. The
+    registration holds its transaction across the collision: the attempt runs
+    inside a savepoint, so the collision costs that attempt and not the project
+    (or the folder's own registration) it is part of.
+
+    Both folders are registered, each with one meeting, and the folder that
+    answers a repeat call is the folder's own.
     """
-    winner = _registry(tmp_path)
-    loser = _registry(tmp_path)
-    workspace = tmp_path / "second"
-    workspace.mkdir()
-    winner.create_project("second", actor="console")
+    registry = _registry(tmp_path)
+    first = tmp_path / "a" / "second"
+    second = tmp_path / "b" / "second"
+    for path in (first, second):
+        path.mkdir(parents=True)
 
-    real_meeting_at = loser._meeting_at
-    injected: list[str] = []
+    one = registry.meeting_for_workspace(str(first), actor="console")
+    two = registry.meeting_for_workspace(str(second), actor="console")
 
-    def the_winner_lands_right_after_the_losers_scan(resolved: str):
-        if not injected:
-            injected.append(resolved)
-            winner.meeting_for_workspace(str(workspace), actor="console")
-            return None  # ... and the loser's scan missed the row just written
-        return real_meeting_at(resolved)
-
-    monkeypatch.setattr(
-        loser, "_meeting_at", the_winner_lands_right_after_the_losers_scan
-    )
-
-    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
-
-    assert injected, "the winner never got into the loser's window"
-    assert (
-        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
-    )
-    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
-
-
-def test_a_registration_that_loses_the_meeting_race_answers_with_the_winner(
-    tmp_path, monkeypatch
-) -> None:
-    """The meeting's own insert is the second place the race can lose.
-
-    The folder's project can already be there — registered, or created by the
-    console — and then the two surfaces race to add the **meeting** for it
-    instead: the meeting's slug is **pinned** to the folder's own name, so the
-    unique constraint over ``(project_id, slug)`` decides it and refuses the second
-    row (there is no slug read left to interleave with, which is why the injection
-    here sits immediately before the loser's insert). Same answer as the project's
-    race (see the test above), because it is the same registration.
-    """
-    winner = _registry(tmp_path)
-    loser = _registry(tmp_path)
-    workspace = tmp_path / "second"
-    workspace.mkdir()
-    winner.create_project("second", actor="console")
-
-    real_create = loser.create_meeting
-    injected: list[str] = []
-
-    def the_winner_registers_before_the_losers_insert(project_slug, title, **kwargs):
-        if not injected:
-            injected.append(title)
-            winner.meeting_for_workspace(str(workspace), actor="console")
-        return real_create(project_slug, title, **kwargs)  # ... and it collides
-
-    monkeypatch.setattr(
-        loser, "create_meeting", the_winner_registers_before_the_losers_insert
-    )
-
-    meeting = loser.meeting_for_workspace(str(workspace), actor="api")
-
-    assert injected, "the winner never got into the loser's window"
-    assert (
-        meeting.id == winner.meeting_for_workspace(str(workspace), actor="console").id
-    )
-    assert len(winner.list_meetings()) == 1, "one folder, one meeting"
+    assert (one.slug, two.slug) == ("second", "second-2")
+    assert one.id != two.id
+    assert registry.meeting_for_workspace(str(second), actor="api").id == two.id
+    assert registry.meeting_for_workspace(str(first), actor="api").id == one.id
+    assert len(registry.list_meetings()) == 2
+    assert [(row.action, row.target) for row in registry.list_audit_events()] == [
+        ("project.create", "project:second"),
+        ("meeting.create", "meeting:second"),
+        ("meeting.create", "meeting:second"),
+    ]

@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import dataclasses
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import JobEvent, PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The claiming owner a live run is seeded with. A host this machine is not, so
 #: "the row names its owner's host" cannot pass by accident.
@@ -36,7 +36,9 @@ COST = {
 def _console(registry: Registry) -> TestClient:
     """A console over ``registry`` whose run queue is stopped (see the module)."""
     manager = RunManager(registry, start_queue=False)
-    return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    return signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    )
 
 
 def _chip(page: str) -> str:
@@ -51,16 +53,40 @@ def _id_mark(run_id: int) -> str:
 
 def _seeded(registry: Registry):
     """Two projects with one live run each and one finished run behind them."""
-    registry.create_project("Ops")
-    registry.create_project("Field interviews")
-    on_air = registry.create_meeting("ops", "Kickoff")
-    later = registry.create_meeting("field-interviews", "Interview 04")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_project(
+        "Field interviews",
+        actor="console",
+    )
+    on_air = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    later = registry.create_meeting(
+        "field-interviews",
+        "Interview 04",
+        actor="console",
+    )
 
     # A finished run: the history section's own row, with a cost record.
     finished = registry.create_run(
-        on_air.id, backend="apple", model="small", language="en", origin="cli"
+        on_air.id,
+        backend="apple",
+        model="small",
+        language="en",
+        origin="cli",
+        actor="console",
     )
-    registry.update_run(finished.id, status="done", progress={"cost": COST})
+    registry.update_run(
+        finished.id,
+        status="done",
+        progress={"cost": COST},
+        actor="console",
+    )
 
     # The run in flight: claimed by a live owner (a host:pid string) and with a
     # persisted progress event — the only place a live run's stage and progress
@@ -76,16 +102,27 @@ def _seeded(registry: Registry):
         run_options=dataclasses.asdict(
             PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
         ),
+        actor="console",
     )
-    registry.claim_run(running.id, owner=OWNER)
+    registry.claim_run(
+        running.id,
+        owner=OWNER,
+        actor="console",
+    )
     registry.add_run_event(
         running.id,
         JobEvent(stage="transcribe", index=3, total=12, eta_s=42.0, elapsed_s=36.0),
+        actor="console",
     )
 
     # And the queue behind it, started by an agent.
     queued = registry.create_run(
-        later.id, backend="apple", model="small", language="en", origin="mcp"
+        later.id,
+        backend="apple",
+        model="small",
+        language="en",
+        origin="mcp",
+        actor="console",
     )
     return running, queued, finished
 
@@ -95,7 +132,7 @@ def test_the_page_lists_the_live_queue_across_projects(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    page = client.get("/activity")
+    page = client.get("/web/activity")
 
     assert page.status_code == 200
     text = page.text
@@ -120,7 +157,7 @@ def test_a_running_run_shows_the_rate_so_far(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
     waiting = next(row for row in rows if _id_mark(queued.id) in row)
 
@@ -141,10 +178,12 @@ def test_a_run_past_transcribe_reports_no_rate_so_far(tmp_path) -> None:
     client = _console(registry)
     running, _queued, _finished = _seeded(registry)
     registry.add_run_event(
-        running.id, JobEvent(stage="reconcile", index=9, total=10, elapsed_s=3.0)
+        running.id,
+        JobEvent(stage="reconcile", index=9, total=10, elapsed_s=3.0),
+        actor="console",
     )
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
 
     assert "x realtime" not in live
@@ -160,31 +199,50 @@ def test_the_newest_outcome_is_the_last_finish_not_the_last_row(tmp_path) -> Non
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     # Created first — and the run that finished last, by failing.
     created_first = registry.create_run(
-        meeting.id, backend="apple", model="small", language="en", origin="api"
+        meeting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        origin="api",
+        actor="console",
     )
     registry.update_run(
         created_first.id,
         status="failed",
         ended_at="2026-09-17T11:00:00+00:00",
         error="no ggml model on disk",
+        actor="console",
     )
     # Created second, finished an hour earlier: the row written last is not the
     # newest outcome.
     created_second = registry.create_run(
-        meeting.id, backend="apple", model="small", language="en", origin="console"
+        meeting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        origin="console",
+        actor="console",
     )
     registry.update_run(
         created_second.id,
         status="done",
         ended_at="2026-09-17T10:00:00+00:00",
         progress={"cost": COST},
+        actor="console",
     )
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     history = text.split("Recently finished")[1]
 
     # The failure is the newest *outcome*, so the chip points at it — and at the
@@ -198,8 +256,15 @@ def test_the_newest_outcome_is_the_last_finish_not_the_last_row(tmp_path) -> Non
 
 def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: float):
     """A running run whose last transcribe event says what it has done."""
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
@@ -209,8 +274,13 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
         run_options=dataclasses.asdict(
             PipelineOptions(backend="apple", model="small", chunk_seconds=30.0)
         ),
+        actor="console",
     )
-    registry.claim_run(run.id, owner=OWNER)
+    registry.claim_run(
+        run.id,
+        owner=OWNER,
+        actor="console",
+    )
     registry.add_run_event(
         run.id,
         JobEvent(
@@ -220,6 +290,7 @@ def _seeded_running(registry: Registry, *, index: int, reused: int, elapsed_s: f
             total=240,
             elapsed_s=elapsed_s,
         ),
+        actor="console",
     )
     return run
 
@@ -235,7 +306,7 @@ def test_a_resumed_run_rates_only_the_chunks_it_decoded(tmp_path) -> None:
     client = _console(registry)
     run = _seeded_running(registry, index=8, reused=4, elapsed_s=4.4)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     row = next(
         part for part in text.split('class="run status-') if f"#{run.id}</span>" in part
     )
@@ -250,7 +321,7 @@ def test_a_fully_reused_run_reports_no_rate(tmp_path) -> None:
     client = _console(registry)
     run = _seeded_running(registry, index=6, reused=6, elapsed_s=0.02)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
     row = next(
         part for part in text.split('class="run status-') if f"#{run.id}</span>" in part
     )
@@ -264,7 +335,7 @@ def test_a_finished_run_shows_its_recorded_speed_and_duration(tmp_path) -> None:
     client = _console(registry)
     _running, _queued, finished = _seeded(registry)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     # The speed is the record's own ratio, derived here, and the
     # duration is the wall clock the same record measured.
@@ -278,14 +349,31 @@ def test_a_failed_run_shows_its_outcome_and_why(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
     _seeded(registry)
-    registry.create_project("Retro")
-    meeting = registry.create_meeting("retro", "Weekly")
-    failed = registry.create_run(
-        meeting.id, backend="apple", model="small", language="en", origin="api"
+    registry.create_project(
+        "Retro",
+        actor="console",
     )
-    registry.update_run(failed.id, status="failed", error="no ggml model on disk")
+    meeting = registry.create_meeting(
+        "retro",
+        "Weekly",
+        actor="console",
+    )
+    failed = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        origin="api",
+        actor="console",
+    )
+    registry.update_run(
+        failed.id,
+        status="failed",
+        error="no ggml model on disk",
+        actor="console",
+    )
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert "failed" in text and "no ggml model on disk" in text
     assert "api" in text
@@ -294,18 +382,43 @@ def test_a_failed_run_shows_its_outcome_and_why(tmp_path) -> None:
 def test_history_leads_with_the_newest_run(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     older = registry.create_run(
-        meeting.id, backend="apple", model="small", language="en"
+        meeting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        actor="console",
     )
-    registry.update_run(older.id, status="done", progress={"cost": COST})
+    registry.update_run(
+        older.id,
+        status="done",
+        progress={"cost": COST},
+        actor="console",
+    )
     newer = registry.create_run(
-        meeting.id, backend="apple", model="large", language="en"
+        meeting.id,
+        backend="apple",
+        model="large",
+        language="en",
+        actor="console",
     )
-    registry.update_run(newer.id, status="failed", error="the tape was unreadable")
+    registry.update_run(
+        newer.id,
+        status="failed",
+        error="the tape was unreadable",
+        actor="console",
+    )
 
-    history = client.get("/activity").text.split("Recently finished")[1]
+    history = client.get("/web/activity").text.split("Recently finished")[1]
 
     assert history.index("the tape was unreadable") < history.index(_id_mark(older.id))
 
@@ -314,7 +427,7 @@ def test_an_idle_node_says_so(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert "No runs in flight." in text
     assert "No finished runs yet." in text
@@ -323,35 +436,61 @@ def test_an_idle_node_says_so(tmp_path) -> None:
 def test_the_chip_reports_the_live_queue_and_the_newest_outcome(tmp_path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
 
     # Nothing has run yet: the chip is idle, and says so in its own class.
-    idle = client.get("/").text
+    idle = client.get("/web/").text
     assert ">idle</a>" in idle
     assert "status-neutral" in _chip(idle)
 
     # A queued run the node has not picked up yet is queued, not running.
-    run = registry.create_run(meeting.id, backend="apple", model="small", language="en")
-    queued = client.get("/").text
+    run = registry.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        actor="console",
+    )
+    queued = client.get("/web/").text
     assert ">queued 1</a>" in queued
     assert "status-queued" in _chip(queued)
 
     # In flight: the chip counts the running run, and links to the page.
-    registry.claim_run(run.id, owner=OWNER)
-    running = client.get("/").text
-    assert 'href="/activity">running 1</a>' in running
+    registry.claim_run(
+        run.id,
+        owner=OWNER,
+        actor="console",
+    )
+    running = client.get("/web/").text
+    assert 'href="/web/activity">running 1</a>' in running
     assert "status-running" in _chip(running)
 
     # The newest outcome decides once nothing is in flight: a failure needs
     # attention, a deliberate stop does not.
-    registry.update_run(run.id, status="failed", error="the tape was unreadable")
-    failed = client.get("/").text
+    registry.update_run(
+        run.id,
+        status="failed",
+        error="the tape was unreadable",
+        actor="console",
+    )
+    failed = client.get("/web/").text
     assert ">needs attention</a>" in failed
     assert "status-failed" in _chip(failed)
 
-    registry.update_run(run.id, status="stopped")
-    stopped = client.get("/").text
+    registry.update_run(
+        run.id,
+        status="stopped",
+        actor="console",
+    )
+    stopped = client.get("/web/").text
     assert ">idle</a>" in stopped
 
 
@@ -381,16 +520,41 @@ def test_the_chip_reports_the_heaviest_in_flight_state(tmp_path) -> None:
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
-    waiting = registry.create_meeting("ops", "Kickoff")
-    executing = registry.create_meeting("ops", "Retro")
-    registry.create_run(waiting.id, backend="apple", model="small", language="en")
-    claimed = registry.create_run(
-        executing.id, backend="apple", model="small", language="en"
+    registry.create_project(
+        "Ops",
+        actor="console",
     )
-    registry.claim_run(claimed.id, owner=OWNER)
+    waiting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    executing = registry.create_meeting(
+        "ops",
+        "Retro",
+        actor="console",
+    )
+    registry.create_run(
+        waiting.id,
+        backend="apple",
+        model="small",
+        language="en",
+        actor="console",
+    )
+    claimed = registry.create_run(
+        executing.id,
+        backend="apple",
+        model="small",
+        language="en",
+        actor="console",
+    )
+    registry.claim_run(
+        claimed.id,
+        owner=OWNER,
+        actor="console",
+    )
 
-    chip = _chip(client.get("/").text)
+    chip = _chip(client.get("/web/").text)
 
     assert "status-running" in chip
     assert ">running 1</a>" in chip
@@ -403,7 +567,7 @@ def test_the_chip_and_the_page_are_translated(tmp_path) -> None:
     _seeded(registry)
     client.cookies.set("cr_lang", "zh_CN")
 
-    text = client.get("/activity").text
+    text = client.get("/web/activity").text
 
     assert ">运行中 1 个</a>" in _chip(text)
     assert "活动" in text  # the nav entry and the page heading
@@ -419,7 +583,7 @@ def test_a_queued_row_names_no_machine(tmp_path) -> None:
     client = _console(registry)
     running, queued, _finished = _seeded(registry)
 
-    rows = client.get("/activity").text.split('class="run status-')
+    rows = client.get("/web/activity").text.split('class="run status-')
     live = next(row for row in rows if _id_mark(running.id) in row)
     waiting = next(row for row in rows if _id_mark(queued.id) in row)
 
@@ -448,9 +612,10 @@ def test_the_row_shows_the_newest_events_own_text(tmp_path) -> None:
             source="a",
             message="[transcribe]   a chunk 3/240: 12 segment(s)",
         ),
+        actor="console",
     )
 
-    page = client.get("/activity").text
+    page = client.get("/web/activity").text
     row = next(
         part for part in page.split('class="run status-') if f"#{run.id}</span>" in part
     )

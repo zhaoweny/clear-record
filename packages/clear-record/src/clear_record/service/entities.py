@@ -240,11 +240,136 @@ class Archive(Base):
     created_at: Mapped[str] = mapped_column(Text)
 
 
+class AuditEvent(Base):
+    """``audit_event`` — the row one mutating service call appends (ADR-0033).
+
+    A **conditional** write that matched no row, and a **key miss**, append
+    nothing, because nothing happened.
+
+    ``at`` is when the call happened, ``actor`` who made it (a word of
+    :data:`~clear_record.service.lifecycle.ACTORS`), ``action`` the verb,
+    ``target`` what it touched, and ``outcome`` how it ended.
+
+    ``target`` carries the service's own **address** for what was touched
+    (``project:demo``, ``run:12``, ``draft:9f2c…``) and no foreign key, so a row
+    outlives what it names: a deleted tape's audit row still says who deleted it.
+    No relationship either, like every other entity here.
+
+    The table is **append-only for row DML**, not only by convention: revision
+    0010 puts triggers on it that refuse every ``UPDATE``, every ``DELETE`` and
+    every ``REPLACE``/``INSERT`` of an id the table already holds (SQLite fires
+    ``BEFORE INSERT`` before ``REPLACE``'s conflict path deletes the row). That is
+    the file-level guard, and it is scoped to those statements: an **append** is
+    what the table is for, and other statements that reach the file — ``ALTER
+    TABLE``, ``DROP TRIGGER``, a schema edit through ``PRAGMA writable_schema`` —
+    are not refused by the triggers, so the record is append-only, not
+    tamper-proof against a process that rewrites the schema. The registry's engine
+    also turns ``recursive_triggers`` on for every connection it makes, which is
+    defence in depth: it lets the delete half of a ``REPLACE`` reach the delete
+    trigger too, where the insert-side guard above sees only the insert half. See
+    :meth:`~clear_record.service.store.Registry.record_audit`.
+    """
+
+    __tablename__ = "audit_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(Text)
+
+
+class ConsoleCredential(Base):
+    """``console_credential`` — the one credential that gates the console.
+
+    **One row**, enforced by the table rather than by the code that writes it:
+    ``CHECK (id = 1)`` means a second credential cannot exist, so "there is one
+    human and one credential" (ADR-0033) is a property of the file. ``encoded`` is
+    the salted hash :func:`~clear_record.service.auth.hash_password` produces
+    (``scrypt$n$r$p$salt$hash``) — never a password, and never logged — and
+    ``updated_at`` is when it was last set or replaced.
+
+    No interface column, no username, no ``added_by``: who set it is an audit
+    question, answered by the ``credential.set`` row, and an identity stored
+    beside a shared secret is one more thing to leak.
+    """
+
+    __tablename__ = "console_credential"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    encoded: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[str] = mapped_column(Text)
+
+
+class ConsoleSession(Base):
+    """``console_session`` — one signed-in browser's server-side session.
+
+    The primary key is the **digest** of the cookie's token
+    (:func:`~clear_record.service.auth.token_digest`), so a registry leak hands
+    out no cookie that works and the process holds no session state at all: every
+    request re-reads this row, which is what makes sign-out and revoke-all take
+    effect on the next request with no restart. Four instants and nothing else —
+    there is no user to name, and the client's address is deliberately not kept
+    (one local human, and an address is a fact to leak for no question it
+    answers).
+
+    The two deadlines are absolute instants, computed when the session was opened
+    or last touched: ``idle_deadline`` moves forward with each accepted request,
+    ``absolute_deadline`` never moves.
+    """
+
+    __tablename__ = "console_session"
+
+    token_digest: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[str] = mapped_column(Text)
+    seen_at: Mapped[str] = mapped_column(Text)
+    idle_deadline: Mapped[str] = mapped_column(Text)
+    absolute_deadline: Mapped[str] = mapped_column(Text)
+
+
+class MachineToken(Base):
+    """``machine_token`` — one labelled bearer token a script presents.
+
+    A **second** way to satisfy the auth gate for the machine surface, and only
+    for it: the plaintext is a high-entropy bearer secret, shown once at minting
+    and stored here as its SHA-256 **digest** — the cookie's own treatment, every
+    request re-reads the row, which is what makes a revoke effective on the next
+    request with no restart. ``label`` is unique, so a label names one token: it
+    is what the console lists, what an audit row's target carries
+    (``token:<label>``) and what the operator matches a script against.
+
+    ``created_at`` is when it was minted; ``last_used_at`` is the last request it
+    authenticated — written lazily, at most once per touch interval
+    (:data:`~clear_record.service.auth.TOKEN_TOUCH_INTERVAL`), so a window of
+    calls leaves the previous stamp — and is **nullable**: a token minted and
+    never presented says so. Neither instant is a deadline: a token has no clocks
+    (ADR-0033's tokens are not sessions), so it lives until it is revoked.
+
+    The row is destroyable, unlike an audit row: revoking a token deletes it, and
+    the ``token.revoke`` audit row is what outlives it — the same division the
+    sessions have, where the row is bookkeeping and the credential's own writes
+    are attributed.
+    """
+
+    __tablename__ = "machine_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, unique=True)
+    token_digest: Mapped[str] = mapped_column(Text, unique=True)
+    created_at: Mapped[str] = mapped_column(Text)
+    last_used_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 __all__ = [
     "Archive",
     "Artifact",
+    "AuditEvent",
     "Base",
+    "ConsoleCredential",
+    "ConsoleSession",
     "GlossaryTerm",
+    "MachineToken",
     "Meeting",
     "PipelineRun",
     "Project",

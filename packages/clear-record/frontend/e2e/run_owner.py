@@ -132,6 +132,7 @@ def main() -> int:
             chunk_seconds=CHUNK_SECONDS,
         ),
         origin="cli",
+        actor="cli",
     )
     deadline = time.monotonic() + CLAIM_TIMEOUT_S
     owner = None

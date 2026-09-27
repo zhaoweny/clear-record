@@ -9,7 +9,7 @@
   <form class="row upload-form"
         x-on:htmx:before:request="busy = true"
         x-on:htmx:finally:request="busy = false"
-        hx-post="/ui/meetings/{{ storage.meeting_id }}/tapes/upload"
+        hx-post="/web/ui/meetings/{{ storage.meeting_id }}/tapes/upload"
         hx-encoding="multipart/form-data"
         hx-target="#storage-{{ storage.meeting_id }}"
         hx-swap="innerHTML">

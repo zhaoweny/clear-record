@@ -51,6 +51,7 @@ from clear_record.pipeline.workspace import (
     Workspace,
     discover_inputs,
     is_audio,
+    publish_run,
     report_line,
 )
 from clear_record.core import (
@@ -63,10 +64,14 @@ from clear_record.core import (
 from clear_record.core.diagnostics import log_event
 from clear_record.core.i18n import deferred
 from clear_record.core.pipeline import pipeline_spec
+from clear_record.service import audit
 from clear_record.service.diagnostics import machine_description
 from clear_record.service.glossary import (
+    CONFIRMED,
+    filter_terms,
     project_snapshot,
     snapshot_from_text,
+    write_run_snapshot,
     write_snapshot,
 )
 from clear_record.service.lifecycle import (
@@ -76,6 +81,7 @@ from clear_record.service.lifecycle import (
     FINISH,
     INTERRUPT,
     INTERRUPTED,
+    QUEUE,
     QUEUED,
     RESTART_REASON,
     RUN_IN_FLIGHT,
@@ -141,7 +147,7 @@ class RunChannel:
         if self._signal.is_set():
             raise RunCancelled("the run was cancelled")
         with self._events_lock:
-            self._registry.add_run_event(self._run_id, event)
+            self._registry.add_run_event(self._run_id, event, actor=QUEUE)
 
 
 #: The pipeline stages, in declared order: a run's cost record times each one
@@ -280,16 +286,20 @@ def collect_artifacts(workspace: Path) -> list[tuple[str, Path]]:
     """The pipeline's outputs as ``(kind, path)`` pairs.
 
     Kinds line up with what the console shows: the reconciled ``record``, the
-    ``transcript`` it came from, and each ``export`` file.
+    ``transcript`` it came from, and each ``export`` file. The names are the
+    workspace's own (:class:`~clear_record.pipeline.workspace.Workspace`), so the
+    layout stays in one place: an opened run scope reads its own copy, and an
+    unmarked directory the workspace itself.
     """
+    opened = Workspace.at(workspace)
     found: list[tuple[str, Path]] = []
-    record = workspace / "record.json"
+    record = opened.record_path
     if record.is_file():
         found.append(("record", record))
-    segments = workspace / "segments.json"
+    segments = opened.segments_path
     if segments.is_file():
         found.append(("transcript", segments))
-    export_dir = workspace / "export"
+    export_dir = opened.export_dir
     if export_dir.is_dir():
         found.extend(
             ("export", path) for path in sorted(export_dir.iterdir()) if path.is_file()
@@ -547,7 +557,7 @@ NO_INPUTS_LEFT_BY_DECLARATION = deferred(
 )
 
 
-def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
+def workspace_run_meeting(registry: Registry, directory: str, *, actor: str) -> Meeting:
     """The meeting a run over workspace *directory* is a run of, tapes and all.
 
     A run command's subject is a workspace **directory** (``clear-record run
@@ -588,6 +598,14 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
     exception, which the edge would answer with a 500: the walk is where the file
     is read, so this is where the operator's sentence belongs.
 
+    ``actor`` is the **transport** that asked, one of
+    :data:`~clear_record.service.lifecycle.ACTORS` — never a word the request
+    carries. It is required because this function writes: the meeting it resolves
+    (:meth:`~clear_record.service.store.Registry.meeting_for_workspace`) and the
+    tape set it sets (:meth:`~clear_record.service.store.Registry.set_recording_set`)
+    are each recorded against it in the audit record (ADR-0033), so a refused
+    walk and a run that starts are attributable to the surface that called.
+
     The caller then enqueues this meeting through :meth:`RunManager.start` like
     any other run: one queue, one claim, one registry row. A *path sent by a
     client* means a path on **this node's** filesystem — the direction's open
@@ -607,10 +625,10 @@ def workspace_run_meeting(registry: Registry, directory: str) -> Meeting:
         raise ValueError(CANNOT_READ_DECLARATION) from exc
     if not kept and any(is_audio(path) for path in walked_past):
         raise ValueError(NO_INPUTS_LEFT_BY_DECLARATION)
-    meeting = registry.meeting_for_workspace(directory)
+    meeting = registry.meeting_for_workspace(directory, actor=actor)
     tapes = [str(path) for path in kept]
     if tapes:
-        registry.set_recording_set(meeting.id, tapes)
+        registry.set_recording_set(meeting.id, tapes, actor=actor)
     return meeting
 
 
@@ -692,7 +710,7 @@ class RunManager:
     MCP server **and the command line** — meets at one queue and exactly one of
     them executes a run. The command line is a client of the node rather than a
     second executor (ADR-0032): ``clear-record run`` asks the node for a run
-    (``POST /api/runs``, the node's ``start_workspace_run``) and follows the row
+    (``POST /api/v1/runs``, the node's ``start_workspace_run``) and follows the row
     the node owns, so the ``cli`` origin is recorded for a run that really is the
     node's.
     The in-process pieces are a fast path, not the guarantee: :attr:`_pending`
@@ -874,6 +892,7 @@ class RunManager:
             # complete are still in its persisted event stream.
             reaped = self._registry.interrupt_run(
                 run.id,
+                actor=QUEUE,
                 observed=run,
                 ended_at=ended_at,
                 # The row's ``error`` carries the message **ID**, not a rendered
@@ -901,7 +920,9 @@ class RunManager:
                 continue
             meeting = self._registry.meeting_by_id(run.meeting_id)
             if meeting is not None and meeting.status == "running":
-                self._registry.set_meeting_status(run.meeting_id, "interrupted")
+                self._registry.set_meeting_status(
+                    run.meeting_id, "interrupted", actor=QUEUE
+                )
             log_event(
                 "warning",
                 "runs",
@@ -1025,6 +1046,7 @@ class RunManager:
         *,
         auto: dict | None = None,
         origin: str,
+        actor: str,
         resumes: int | None = None,
     ) -> PipelineRun:
         """Enqueue a run at the back of the node's FIFO and return its row.
@@ -1037,10 +1059,19 @@ class RunManager:
         raises for a known active run — but a *different* meeting now waits
         honestly instead of fighting for the one GPU.
 
-        ``origin`` says which surface started it, one of :data:`RUN_ORIGINS`
+        ``origin`` says which surface **started** it, one of :data:`RUN_ORIGINS`
         (RUN-02). It is required — a start path that does not name itself would
         record a run whose provenance nobody can trust — and recorded with the
-        row, so it survives the restart that ends this process.
+        row, so it survives the restart that ends this process. ``actor`` is a
+        **different thing** and is required beside it: the transport that called
+        the service, which is what the run's enqueue is recorded against in the
+        audit record (ADR-0033). The two are separate on purpose. ``origin`` is
+        the surface the *run* is attributable to and a run request may name it —
+        the command line asks the node for a run whose ``origin`` is ``cli`` —
+        while the actor is the transport that carried the request, which for that
+        same command is the node's API. Copying one into the other would let a
+        client write itself into the audit record by filling in a body field,
+        which is the hole the actor argument exists to close.
 
         ``resumes`` names the run this one continues (RUN-04). The link is
         recorded with the row and checked by the registry (same meeting, run
@@ -1055,27 +1086,38 @@ class RunManager:
         """
         if origin not in RUN_ORIGINS:
             raise ValueError(f"origin must be one of {RUN_ORIGINS}, got {origin!r}")
-        if not meeting.workspace_path:
-            self._refuse(meeting, "meeting has no workspace path")
-            raise ValueError(
-                deferred("meeting has no workspace path; set one before running")
-            )
-        tape_set = self._registry.latest_recording_set(meeting.id)
-        if tape_set is None:
-            self._refuse(meeting, "meeting has no tape set")
-            raise ValueError(
-                deferred("meeting has no tape set; select tapes before running")
-            )
-        if self._registry.active_run_for_meeting(meeting.id) is not None:
-            self._active_run_refusal(meeting)
+        with audit.refused_call(
+            self._registry,
+            actor,
+            "run.enqueue",
+            f"meeting:{meeting.id}",
+            refusals=(ValueError,),
+        ):
+            # The guards this call owns: no workspace, no tape set, a run already
+            # in flight. Each is a policy answer, so each leaves a ``failed`` row
+            # (ADR-0033); a registry error is not one and passes through as it is.
+            if not meeting.workspace_path:
+                self._refuse(meeting, "meeting has no workspace path")
+                raise ValueError(
+                    deferred("meeting has no workspace path; set one before running")
+                )
+            tape_set = self._registry.latest_recording_set(meeting.id)
+            if tape_set is None:
+                self._refuse(meeting, "meeting has no tape set")
+                raise ValueError(
+                    deferred("meeting has no tape set; select tapes before running")
+                )
+            if self._registry.active_run_for_meeting(meeting.id) is not None:
+                self._active_run_refusal(meeting)
 
-        options = dataclasses.replace(
-            options or PipelineOptions(), audio_files=tuple(tape_set.paths)
-        )
-        options, run_meta = self._resolve_glossary(meeting, options)
+            options = dataclasses.replace(
+                options or PipelineOptions(), audio_files=tuple(tape_set.paths)
+            )
+            options, run_meta = self._resolve_glossary(meeting, options)
         try:
             run = self._registry.create_run(
                 meeting.id,
+                actor=actor,
                 backend=options.backend,
                 model=options.model,
                 language=options.language,
@@ -1119,7 +1161,7 @@ class RunManager:
         return run
 
     # --- cancel and resume (RUN-04) ----------------------------------------- #
-    def cancel(self, run_id: int) -> PipelineRun:
+    def cancel(self, run_id: int, *, actor: str) -> PipelineRun:
         """Cancel a queued or running run, and return its row as it now stands.
 
         Two different acts, chosen by where the run actually is:
@@ -1143,6 +1185,10 @@ class RunManager:
         Cancelling a run that is already terminal is a no-op (a second click, a
         stale page): the row is returned unchanged. ``KeyError`` for an unknown
         run, so each caller owns its 404.
+
+        ``actor`` is the surface that asked for the cancel, and it is what the
+        move is recorded against in the audit record (ADR-0033): the one that
+        stops a queued run and the one that records the request both carry it.
         """
         run = self._registry.get_run(run_id)
         if run is None:
@@ -1154,6 +1200,7 @@ class RunManager:
             ended_at = _now()
             stopped = self._registry.stop_run(
                 run_id,
+                actor=actor,
                 ended_at=ended_at,
                 progress=self._progress(run_id, STOP_QUEUED.target, ended_at=ended_at),
             )
@@ -1167,7 +1214,9 @@ class RunManager:
                 if meeting is not None and meeting.status == "running":
                     # A cancel before the run started leaves the meeting runnable,
                     # not recorded and not failed.
-                    self._registry.set_meeting_status(run.meeting_id, "ready")
+                    self._registry.set_meeting_status(
+                        run.meeting_id, "ready", actor=actor
+                    )
                 log_event(
                     "info",
                     "runs",
@@ -1185,7 +1234,7 @@ class RunManager:
             if current.status != RUNNING:
                 return current
 
-        requested = self._registry.request_cancel(run_id)
+        requested = self._registry.request_cancel(run_id, actor=actor)
         if requested is None:
             # Terminal between the read and the write: report what it is now.
             current = self._registry.get_run(run_id)
@@ -1203,7 +1252,7 @@ class RunManager:
         )
         return requested
 
-    def resume(self, run_id: int, *, origin: str) -> PipelineRun:
+    def resume(self, run_id: int, *, origin: str, actor: str) -> PipelineRun:
         """Start a new run that continues ``run_id``, re-using its chunk cache.
 
         The previous run's **own resolved options** are what it continues with:
@@ -1211,6 +1260,11 @@ class RunManager:
         plan, so resuming with the same ones is exactly what makes the cached
         chunks reusable. ``resume`` is forced on — a resume that re-decoded
         everything would be a plain re-run wearing the name.
+
+        ``origin`` and ``actor`` are :meth:`start`'s two words with the same
+        division of labour: the new run records the surface that asked, and this
+        call — including its own refusals — is recorded against the transport
+        (ADR-0033).
 
         Only a terminal run can be resumed (a live one is cancelled first), and
         its options must be on the row: a run old enough to predate them cannot be
@@ -1220,21 +1274,30 @@ class RunManager:
         previous = self._registry.get_run(run_id)
         if previous is None:
             raise KeyError(run_id)
-        if previous.status in ACTIVE_RUN_STATUSES:
-            # Placeholder-free, like the service's other refusals: the console
-            # renders the message it is given, and the user is looking at the run.
-            raise ValueError(deferred("this run is still in flight; cancel it first"))
-        options = self._options_from_row(previous)
-        if options is None:
-            raise ValueError(
-                deferred(
-                    "this run did not record the options it ran with, "
-                    "so it cannot be resumed"
+        with audit.refused_call(
+            self._registry,
+            actor,
+            "run.resume",
+            f"run:{run_id}",
+            refusals=(ValueError,),
+        ):
+            if previous.status in ACTIVE_RUN_STATUSES:
+                # Placeholder-free, like the service's other refusals: the console
+                # renders the message it is given, and the user is looking at the run.
+                raise ValueError(
+                    deferred("this run is still in flight; cancel it first")
                 )
-            )
-        meeting = self._registry.meeting_by_id(previous.meeting_id)
-        if meeting is None:
-            raise ValueError(deferred("the run's meeting no longer exists"))
+            options = self._options_from_row(previous)
+            if options is None:
+                raise ValueError(
+                    deferred(
+                        "this run did not record the options it ran with, "
+                        "so it cannot be resumed"
+                    )
+                )
+            meeting = self._registry.meeting_by_id(previous.meeting_id)
+            if meeting is None:
+                raise ValueError(deferred("the run's meeting no longer exists"))
         run = self.start(
             meeting,
             # The scope is *this* run's assertion about which chunks may be
@@ -1244,6 +1307,7 @@ class RunManager:
                 options, resume=True, rerun_sources=None, rerun_range=None
             ),
             origin=origin,
+            actor=actor,
             resumes=previous.id,
         )
         log_event(
@@ -1292,6 +1356,25 @@ class RunManager:
         meta.update(glossary_meta)
         return meta
 
+    def _move_rows(
+        self, meeting: Meeting, preserved: tuple[tuple[Path, Path], ...]
+    ) -> None:
+        """Point the meeting's artifact rows at the bytes this publication preserved.
+
+        The other half of a publication's preservation, run at the caller's seam
+        (:func:`clear_record.pipeline.workspace.publish_run`): every row of the
+        meeting whose ``path`` is one of the replaced root paths is repointed at the
+        path that holds the bytes it recorded. A publication that preserved nothing
+        adds nothing — the registry's own conditional answers ``None`` for a
+        mapping that matched no row — so the ordinary case writes no row and no
+        record.
+        """
+        self._registry.retain_artifact_paths(
+            meeting.id,
+            {str(root): str(kept) for root, kept in preserved},
+            actor=QUEUE,
+        )
+
     def _resolve_glossary(
         self, meeting: Meeting, options: PipelineOptions
     ) -> tuple[PipelineOptions, dict]:
@@ -1305,11 +1388,15 @@ class RunManager:
            terms**: it is written to the meeting's workspace ``glossary.txt``, so
            a glossary edit reaches the next run with no extra wiring (the
            ADR-0031 tuning loop).
-        3. When the project has **no confirmed terms**, the registry has nothing
-           to say and the user's ``glossary.txt`` — a documented, user-editable
-           artifact (``clear-record glossary`` / the README) — **stands**: it is
-           left untouched and used as the run's glossary. With no such file the
-           run simply has no glossary.
+        3. When the project has **no confirmed terms**, the workspace
+           ``glossary.txt`` — a documented, user-editable artifact
+           (``clear-record glossary`` / the README) — **stands**: the registry
+           writes no snapshot at all, so a hand-written file is never clobbered
+           (least of all with an empty one). But a term the registry has since
+           **retired or demoted** must not reach the decoder through a stale
+           file an earlier run wrote from the registry, so the bias is that
+           file's terms minus the registry's unconfirmed ones, published to an
+           app-owned file the user's document never sees.
 
         Candidates and retired terms never reach the decoder. The returned meta
         records the glossary path and its sha256, so a re-run is explainable.
@@ -1320,17 +1407,34 @@ class RunManager:
         assert meeting.workspace_path is not None  # guaranteed by start()
         workspace = Workspace.at(meeting.workspace_path)
         snapshot = project_snapshot(self._registry, meeting.project_slug)
-        if snapshot.empty:
-            # The registry is authoritative only when it has confirmed terms;
-            # otherwise the user's file stands and is never clobbered.
-            if workspace.glossary_path.exists():
-                return options, self._glossary_meta(workspace.glossary_path)
-            return options, {}
+        if not snapshot.empty:
+            path = write_snapshot(workspace, snapshot)
+            return (
+                dataclasses.replace(options, glossary=str(path)),
+                {"glossary": str(path), "glossary_sha256": snapshot.sha256},
+            )
 
-        path = write_snapshot(workspace, snapshot)
+        # Nothing confirmed: the registry never rewrites the user's file. The
+        # bias is what the file holds minus every term the registry has retired
+        # or left unconfirmed; when that is the file's own content the file is
+        # simply used as it stands.
+        if not workspace.glossary_path.exists():
+            return options, {}
+        blocked = [
+            term.term
+            for term in self._registry.list_terms(meeting.project_slug)
+            if term.status != CONFIRMED
+        ]
+        if not blocked:
+            return options, self._glossary_meta(workspace.glossary_path)
+        text = workspace.glossary_path.read_text(encoding="utf-8")
+        filtered = filter_terms(text.splitlines(), blocked)
+        if filtered.terms == snapshot_from_text(text).terms:
+            return options, self._glossary_meta(workspace.glossary_path)
+        path = write_run_snapshot(workspace, filtered)
         return (
             dataclasses.replace(options, glossary=str(path)),
-            {"glossary": str(path), "glossary_sha256": snapshot.sha256},
+            {"glossary": str(path), "glossary_sha256": filtered.sha256},
         )
 
     def _refuse(self, meeting: Meeting, reason: str) -> None:
@@ -1427,7 +1531,7 @@ class RunManager:
 
     def _execute_run(self, run: PipelineRun) -> None:
         try:
-            claimed = self._registry.claim_run(run.id, owner=self._owner)
+            claimed = self._registry.claim_run(run.id, actor=QUEUE, owner=self._owner)
         except (SQLAlchemyError, MalformedRunOptions) as exc:
             # The claim is one statement, and either way it failed this pass:
             # the database would not take it (a locked registry, a disk error) or
@@ -1493,6 +1597,7 @@ class RunManager:
                 ended_at = _now()
                 self._registry.update_run(
                     run.id,
+                    actor=QUEUE,
                     status=FAIL.target,
                     ended_at=ended_at,
                     error=error,
@@ -1502,7 +1607,7 @@ class RunManager:
                 )
                 # The pipeline's own failure path sets this; a failure raised
                 # around that path must not leave the meeting "running".
-                self._registry.set_meeting_status(run.meeting_id, "failed")
+                self._registry.set_meeting_status(run.meeting_id, "failed", actor=QUEUE)
             except Exception:  # noqa: BLE001 - the registry is the last resort
                 pass
             log_event(
@@ -1559,7 +1664,10 @@ class RunManager:
                     # looks dead 30 s later and its meeting and the node are freed.
                     # The registry raises SQLAlchemy's errors (ADR-0030), which
                     # wrap the driver's own.
-                    landed = self._registry.heartbeat_run(run_id)
+                    landed = self._registry.heartbeat_run(
+                        run_id,
+                        actor=QUEUE,
+                    )
                     asked_to_stop = landed and self._registry.cancel_requested(run_id)
                     reaped = not landed and self._was_reaped(run_id)
                 except (SQLAlchemyError, MalformedRunOptions) as exc:
@@ -1672,10 +1780,26 @@ class RunManager:
         self, run: PipelineRun, meeting: Meeting, options: PipelineOptions
     ) -> None:
         assert meeting.workspace_path is not None
+        # This run's own copy of its outputs: the pipeline writes its documents
+        # into ``<workspace>/runs/<run id>/``, so a run that dies half-way cannot
+        # touch the workspace's published copy or an earlier run's — a run's
+        # documents are run-scoped (ADR-0033). What a run only *reads* stays the
+        # meeting workspace's — its tapes, the ``glossary.txt`` a hand-edit lands
+        # in and the ``.clear-record-ignore`` declaration — while three things a
+        # node run writes at the workspace root all the same: the normalized
+        # ``audio/`` the ingest stage writes there, the ``glossary.txt`` its
+        # glossary resolution publishes when the registry has confirmed terms, and
+        # the durable ``transcribe.log``. The app-owned chunk cache is neither: it
+        # lives in the app's own cache directory, keyed per workspace, and a run
+        # only advances it, so a resume continues the same cache. ``begin_scope``
+        # makes the directory and marks it, so opening it again resolves back to
+        # this workspace — the mark, not the name, is what makes a directory a
+        # scope.
+        scope = Workspace.at(meeting.workspace_path).begin_scope(run.id)
         # The row is already ``running``: the claim wrote that status, its
         # ``started_at`` and its first heartbeat in one conditional update. A
         # second write here would be a second, unconditional source of truth.
-        self._registry.set_meeting_status(meeting.id, "running")
+        self._registry.set_meeting_status(meeting.id, "running", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1706,7 +1830,7 @@ class RunManager:
             # ``RunCancelled`` — and a stop is an outcome, not a failure, whether
             # it arrives before the first stage line or during one.
             report_declaration_exclusions(meeting, options, sink)
-            self._pipeline(meeting.workspace_path, options, sink)
+            self._pipeline(str(scope.outputs), options, sink)
         except RunCancelled:
             # A cancel is an outcome, not a failure (RUN-04): the run stopped
             # where its own signal said to, so it is recorded as ``stopped`` with
@@ -1730,12 +1854,13 @@ class RunManager:
             ended_at = _now()
             self._registry.update_run(
                 run.id,
+                actor=QUEUE,
                 status=FAIL.target,
                 ended_at=ended_at,
                 error=error,
                 progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
             )
-            self._registry.set_meeting_status(meeting.id, "failed")
+            self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
             log_event(
                 "error",
                 "runs",
@@ -1752,15 +1877,41 @@ class RunManager:
             )
             return
 
+        # The run finished: its own copy becomes the workspace's published copy,
+        # which is the default read from here on, and its artifacts are the files
+        # in its own copy — so a later run's publication cannot change what a
+        # **run's** artifact points at (ADR-0033). A run that stopped or failed
+        # returned above and publishes nothing.
+        #
+        # What publication can still change is a row that named a **root**
+        # document no run scope held — a pre-257 install's outputs, or a stage
+        # command's. Publication pairs every root document it replaces with a path
+        # that still holds its bytes — a copy it made, a run's own copy that
+        # already held them, or an earlier publication's retained copy (the shape a
+        # retry after a failed attempt meets) — and the rows follow **that** pair,
+        # so an artifact keeps reading the bytes it recorded rather than the run's
+        # (the upgrade boundary's data loss). The mapping is wider than the copies:
+        # a document a marked directory already holds is a pair with nothing copied,
+        # and a row naming it needs the same move.
+        # The rows move **inside** the publication (its ``on_preserved`` seam,
+        # after the copies and before the first rename): a crash between the swaps
+        # and the move would otherwise leave them naming root paths that now hold
+        # this run's bytes, with the preserved copies orphaned under
+        # ``runs/retained-*/`` and nothing reconciling on restart.
+        def move_the_rows(preserved: tuple[tuple[Path, Path], ...]) -> None:
+            self._move_rows(meeting, preserved)
+
+        publish_run(scope, on_preserved=move_the_rows)
         artifacts = self._register_artifacts(meeting, run.id)
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=FINISH.target,
             ended_at=ended_at,
             progress=self._progress(run.id, FINISH.target, ended_at=ended_at),
         )
-        self._registry.set_meeting_status(meeting.id, "recorded")
+        self._registry.set_meeting_status(meeting.id, "recorded", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1799,6 +1950,7 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=STOP_RUNNING.target,
             ended_at=ended_at,
             error=error,
@@ -1806,7 +1958,7 @@ class RunManager:
                 run.id, STOP_RUNNING.target, error, ended_at=ended_at
             ),
         )
-        self._registry.set_meeting_status(meeting.id, "ready")
+        self._registry.set_meeting_status(meeting.id, "ready", actor=QUEUE)
         log_event(
             "info",
             "runs",
@@ -1846,7 +1998,7 @@ class RunManager:
             return False
         error = str(exc)
         try:
-            moved = self._registry.fail_unreadable_run(run_id, error=error)
+            moved = self._registry.fail_unreadable_run(run_id, actor=QUEUE, error=error)
             if not moved:
                 # The row is not this build's to fail any more, so there is no
                 # failure to record on it, on its meeting or in a notification:
@@ -1859,7 +2011,7 @@ class RunManager:
                 else None
             )
             if meeting is not None:
-                self._registry.set_meeting_status(meeting.id, "failed")
+                self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
                 self._webhooks.emit(
                     FAIL.event,
                     project_id=meeting.project_id,
@@ -1926,13 +2078,14 @@ class RunManager:
         ended_at = _now()
         self._registry.update_run(
             run.id,
+            actor=QUEUE,
             status=FAIL.target,
             ended_at=ended_at,
             error=error,
             progress=self._progress(run.id, FAIL.target, error, ended_at=ended_at),
         )
         if meeting is not None:
-            self._registry.set_meeting_status(meeting.id, "failed")
+            self._registry.set_meeting_status(meeting.id, "failed", actor=QUEUE)
             self._webhooks.emit(
                 FAIL.event,
                 project_id=meeting.project_id,
@@ -1988,27 +2141,17 @@ class RunManager:
         """
         row = self._registry.get_run(run_id)
         stages: dict[str, float | None] = dict.fromkeys(_STAGES)
-        finished: set[str] = set()
         for event in events:
             if event.stage not in stages or event.elapsed_s is None:
                 continue
             stages[event.stage] = event.elapsed_s
-            if event.done:
-                finished.add(event.stage)
-            else:
-                finished.discard(event.stage)
-        # ``segments.json`` is written at the **end** of the transcribe stage,
-        # and transcribe's own terminal event is emitted by the chunk pool
-        # *before* that write (``pipeline/stages.py``). Only a stage that runs
-        # strictly after the write proves the transcript on disk is this run's:
-        # reconcile and export both do. A run that finished transcribe and then
-        # died before the write would otherwise report the previous run's
-        # transcript as its own.
-        meta = (
-            self._segments_meta(row)
-            if "reconcile" in finished or "export" in finished
-            else {}
-        )
+        # The meta is read from **this run's own copy** (``_segments_meta``): the
+        # run scope's ``segments.json``, or nothing. A previous run's transcript
+        # lives in its own scope, so it can never be read as this run's — the
+        # "a stage ran strictly after transcribe's write" guard the in-place
+        # workspace needed is gone with the in-place write (ADR-0033). A run that
+        # wrote no transcript carries ``{}`` and reports unknown.
+        meta = self._segments_meta(row)
         report = meta.get("chunk_report")
         report = report if isinstance(report, dict) else {}
         reused = int_or_none(report.get("reused"))
@@ -2030,12 +2173,10 @@ class RunManager:
             "model": meta.get("model") or (row.model if row else None),
             "jobs": int_or_none(meta.get("jobs")),
             "chunk_seconds": chunk_seconds,
-            # The transcribe stage's worker-memory measurement, read from
-            # the same guarded meta as the transcript: segments.json belongs
-            # to whichever run wrote it last, so the axis needs this run's
-            # own copy (BENCH-01). A run that never reached the guarded meta
-            # carries None/None and reports unknown -- never a previous
-            # run's peak.
+            # The transcribe stage's worker-memory measurement, read from the
+            # same meta as the transcript: it is this run's own copy (BENCH-01),
+            # so a run that never wrote one carries None/None and reports
+            # unknown -- never a previous run's peak.
             "peak_rss_bytes": int_or_none(meta.get("peak_rss_bytes")),
             "peak_rss_reason": (
                 meta.get("peak_rss_reason")
@@ -2049,14 +2190,22 @@ class RunManager:
         }
 
     def _segments_meta(self, row: PipelineRun | None) -> dict:
-        """The transcript meta the run's workspace holds (``{}`` when none)."""
+        """The transcript meta **this run's own copy** holds (``{}`` when none).
+
+        The run's scope is written by this run alone, so a transcript read here is
+        this run's and a previous run's can never be mistaken for it — the read
+        goes to ``<workspace>/runs/<run id>/segments.json``, not to whatever the
+        workspace's published copy happens to hold (ADR-0033).
+        """
         if row is None:
             return {}
         meeting = self._registry.meeting_by_id(row.meeting_id)
         if meeting is None or not meeting.workspace_path:
             return {}
         try:
-            _, meta = Workspace.at(meeting.workspace_path).load_segments()
+            _, meta = (
+                Workspace.at(meeting.workspace_path).run_scope(row.id).load_segments()
+            )
         except (OSError, ValueError, TypeError, AttributeError):
             # No transcript yet (or none this process can read): every
             # transcript-derived primitive is simply unknown.
@@ -2066,8 +2215,16 @@ class RunManager:
     def _register_artifacts(
         self, meeting: Meeting, run_id: int
     ) -> list[tuple[str, Path]]:
+        """Record this run's documents as artifacts of **its own copy**.
+
+        The paths are the run scope's — ``<workspace>/runs/<run id>/record.json``
+        and its siblings — so the row names the run that produced the file and a
+        later run's copy can never change what an earlier run's artifact points
+        at (ADR-0033).
+        """
         assert meeting.workspace_path is not None
-        artifacts = collect_artifacts(Path(meeting.workspace_path))
+        scope = Workspace.at(meeting.workspace_path).run_scope(run_id)
+        artifacts = collect_artifacts(scope.outputs)
         for kind, path in artifacts:
             try:
                 digest = _sha256(path)
@@ -2075,6 +2232,7 @@ class RunManager:
                 digest = None
             self._registry.add_artifact(
                 meeting.id,
+                actor=QUEUE,
                 run_id=run_id,
                 kind=kind,
                 path=str(path),

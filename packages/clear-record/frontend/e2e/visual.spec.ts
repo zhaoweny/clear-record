@@ -30,38 +30,38 @@ async function shoot(page: Page, name: string, size: Size, scheme: Scheme) {
 for (const scheme of ["light", "dark"] as const) {
   for (const size of [DESKTOP, MOBILE]) {
     test(`projects ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/web/");
       await page.locator("#projects .project").first().waitFor();
       await shoot(page, "projects", size, scheme);
     });
 
     // One capture per project tab: the split is the point of this ticket.
     test(`project overview ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync");
+      await page.goto("/web/projects/q3-sync");
       await page.locator("#detail h2").waitFor();
       await shoot(page, "project-overview", size, scheme);
     });
 
     test(`project meetings ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync/meetings");
+      await page.goto("/web/projects/q3-sync/meetings");
       await page.locator("#detail .meeting").first().waitFor();
       await shoot(page, "project-meetings", size, scheme);
     });
 
     test(`project glossary ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync/glossary");
+      await page.goto("/web/projects/q3-sync/glossary");
       await page.locator(".table-glossary").waitFor();
       await shoot(page, "project-glossary", size, scheme);
     });
 
     test(`project media ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync/media");
+      await page.goto("/web/projects/q3-sync/media");
       await page.locator(".media-meeting").first().waitFor();
       await shoot(page, "project-media", size, scheme);
     });
 
     test(`meeting ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/projects/q3-sync/meetings/kickoff");
+      await page.goto("/web/projects/q3-sync/meetings/kickoff");
       await page.locator("pre.transcript").first().waitFor();
       await shoot(page, "meeting", size, scheme);
     });
@@ -69,7 +69,7 @@ for (const scheme of ["light", "dark"] as const) {
     // The pipeline status page (RUN-03): the live queue and the history, with
     // the header chip fed from the same reads.
     test(`activity ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/activity");
+      await page.goto("/web/activity");
       await page.locator(".activity .run").first().waitFor();
       await shoot(page, "activity", size, scheme);
     });
@@ -85,14 +85,14 @@ for (const scheme of ["light", "dark"] as const) {
       { slug: "status", name: "status", marker: "#hello-check" },
     ]) {
       test(`settings ${section.name} ${size.tag} ${scheme}`, async ({ page }) => {
-        await page.goto(`/settings/${section.slug}`);
+        await page.goto(`/web/settings/${section.slug}`);
         await page.locator(section.marker).first().waitFor();
         await shoot(page, `settings-${section.name}`, size, scheme);
       });
     }
 
     test(`setup ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/setup");
+      await page.goto("/web/setup");
       await page.locator(".agent-setup").waitFor();
       await shoot(page, "setup", size, scheme);
     });
@@ -100,13 +100,13 @@ for (const scheme of ["light", "dark"] as const) {
     // Ticket 05: the agent flow as its own entry point, and the permanent
     // diagnostic at its deterministic finding state on this machine.
     test(`setup agent ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/setup/agent");
+      await page.goto("/web/setup/agent");
       await page.locator(".agent-flow").waitFor();
       await shoot(page, "setup-agent", size, scheme);
     });
 
     test(`settings status finding ${size.tag} ${scheme}`, async ({ page }) => {
-      await page.goto("/settings/status");
+      await page.goto("/web/settings/status");
       await page.getByRole("button", { name: "Run the check" }).click();
       await page.locator("#hello-check .hello-result").waitFor();
       await shoot(page, "settings-status-finding", size, scheme);

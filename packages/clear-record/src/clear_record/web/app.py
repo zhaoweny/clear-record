@@ -15,9 +15,10 @@ Three pieces, in this order:
 
 Two surfaces over the same **thin** service adapter:
 
-- ``/api/*`` returns JSON — the machine surface the GUI, scripts and
+- ``/api/v1/*`` returns JSON — the machine surface the GUI, scripts and
   integrations share. Every route is a small translation of a service call.
-- ``/ui/*`` returns HTML fragments for the browser, driven by **htmx** (partial
+- ``/web/*`` returns the console for a browser: full pages under ``/web`` itself
+  and HTML fragments under ``/web/ui/*``, driven by **htmx** (partial
   updates) and **Alpine.js** (local UI state). Server-rendered: the assets are
   **built** from ``frontend/`` (Tailwind v4 + Vite) and the **compiled output is
   committed** under ``static/``, so the console works offline and a plain install
@@ -26,11 +27,19 @@ Two surfaces over the same **thin** service adapter:
 No domain logic lives here, which is what lets the GUI, the MCP server and
 scripts share one tested service seam.
 
-The app binds localhost by default and has no authentication —
-it is a local-first tool, not a hosted service (ADR-0013). "Localhost-only"
-bounds who can connect, not who can act: the :mod:`clear_record.web.guard`
-middleware rejects a hostile page's cross-origin or rebound requests (ADR-0021),
-while remote access stays the operator's reverse proxy.
+The app binds localhost by default and holds one credential (ADR-0033): every
+route but the setup page, the liveness route and the compiled assets needs a
+signed-in session, and the anonymous surface is a list the route-table test
+enumerates. "Localhost-only" bounds who can connect, not who can act: the
+:mod:`clear_record.web.guard` middleware rejects a hostile page's cross-origin or
+rebound requests before the auth middleware looks at a session (ADR-0021), while
+remote access stays the operator's reverse proxy. That same middleware resolves a
+**declared** proxy's forwarded headers into the request first, so the auth gate's
+cookie and the URLs built downstream are the browser's — while the path-local rule
+reads the ``Host`` the client itself sent (``guard.client_named_host``), so no
+forwarded name can make a client look local. The server under the
+app is told to leave those headers alone (:class:`NodeServer`), which keeps the
+operator's declaration the one decision.
 """
 
 from __future__ import annotations
@@ -48,16 +57,19 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import UploadFile
+from starlette.datastructures import Headers, UploadFile
 
-from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob
-from clear_record.core import i18n
-from clear_record.core import node
+from clear_record.core import PROFILE_CUSTOM, RUN_KNOBS, RunKnob, i18n, node
 from clear_record.core.i18n import deferred, install_if_unset, tr, trn
+from clear_record.core.node import HEALTH_PATH
 from clear_record.service import (
+    API,
     BUNDLE_FILENAME,
+    CONSOLE,
     RUN_IN_FLIGHT,
+    TASK_KINDS,
     AgentDraftsOut,
     ArchiveOut,
     ArtifactOut,
@@ -80,7 +92,6 @@ from clear_record.service import (
     RunState,
     RunSummary,
     Shape,
-    TASK_KINDS,
     Tape,
     TapeOut,
     TapeSetOut,
@@ -103,24 +114,14 @@ from clear_record.service.agent_flow import (
     transcription_status,
 )
 from clear_record.service.archive import ArchiveVerification
-from clear_record.service.auto import (
-    DEFAULT_MODEL,
-    MODEL_LADDER,
-    render_message as render_service_message,
+from clear_record.service.auth import (
+    LOCAL_SESSION_REFRESH_S,
+    PASSWORD_MIN_LENGTH,
+    ConsoleAuth,
+    SessionState,
+    refresh_local_session,
+    require_password,
 )
-from clear_record.service.setup import (
-    SetupError,
-    SetupStatusOut,
-    clear_seen_version,
-    record_seen_version,
-    remember_harness,
-    resolve_harness,
-    seen_version,
-    setup_view,
-    write_mcp_config,
-)
-from clear_record.service.webhooks import WebhookEmitter, default_emitter
-from clear_record.web import guard, lookup, views
 
 # --- the process adapters the view seam reads from *this* module ----------- #
 # These names are bound here on purpose and are deliberately unused *here*: the
@@ -149,20 +150,50 @@ from clear_record.web import guard, lookup, views
 # (``tests/web/test_web_agent_setup.py``) are read through the seam *and* called
 # by a route, so both hazards apply to them at once.
 from clear_record.service.auto import (  # noqa: F401
+    DEFAULT_MODEL,
+    MODEL_LADDER,
     available_backend_ids,
     models_on_disk,
 )
+from clear_record.service.auto import (
+    render_message as render_service_message,
+)
 from clear_record.service.diagnostics import backend_status  # noqa: F401
-from clear_record.service.setup import find_harness  # noqa: F401
+from clear_record.service.setup import (
+    SetupError,
+    SetupStatusOut,
+    clear_seen_version,
+    find_harness,  # noqa: F401
+    record_seen_version,
+    remember_harness,
+    resolve_harness,
+    seen_version,
+    setup_view,
+    write_mcp_config,
+)
+from clear_record.service.webhooks import WebhookEmitter, default_emitter
+from clear_record.web import auth as auth_edge
+from clear_record.web import guard, lookup, views
+from clear_record.web.auth import (
+    CONSOLE_HOME,
+    CONSOLE_PATH,
+    CREDENTIAL_PATH,
+    MACHINE_PREFIX,
+    REVOKE_ALL_PATH,
+    SETUP_PATH,
+    SIGN_IN_PATH,
+    SIGN_OUT_PATH,
+    TOKENS_PATH,
+)
 
 # ``_auto_view``, ``ACTIVE_RUN_LABELS`` and ``SETTINGS_SECTIONS`` moved to the
 # view seam; they are imported here because the console's tests read them from
 # **this** module (`tests/test_i18n_boundaries.py`, `tests/web/test_web_activity.py`,
 # `tests/web/test_web_settings.py`) — the seam moved the code, not the names.
 from clear_record.web.views import (  # noqa: F401
-    _auto_view,
     ACTIVE_RUN_LABELS,
     SETTINGS_SECTIONS,
+    _auto_view,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -371,10 +402,10 @@ class TapesUpdate(BaseModel):
     Each path is a file on this node's filesystem, so the route takes one only
     from a request that addressed the node by its own address; a client elsewhere
     sends the tape's bytes to the managed workspace instead
-    (``POST /api/meetings/{id}/tapes``). An empty list names no path and is
+    (``POST /api/v1/meetings/{id}/tapes``). An empty list names no path and is
     therefore not refused for where it came from — but it does **not** clear the
     set: the registry refuses a recording set with no tapes, so a meeting is
-    emptied one tape at a time (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+    emptied one tape at a time (``DELETE /api/v1/meetings/{id}/tapes/{tape_id}``).
     """
 
     paths: list[str]
@@ -384,7 +415,7 @@ class RunCreate(BaseModel):
     """A run request: the knobs, and how the client names what it runs.
 
     Every field here is a **knob**. What the run runs *over* is the route's own
-    subject, not a field: ``POST /api/meetings/{id}/runs`` names a meeting by its
+    subject, not a field: ``POST /api/v1/meetings/{id}/runs`` names a meeting by its
     registry id, and :class:`WorkspaceRunCreate` adds the one field a client that
     addressed the node itself uses instead.
 
@@ -485,7 +516,7 @@ class WorkspaceRunCreate(RunCreate):
     a client that reached the node through the name the operator published for it
     is elsewhere and is refused with one sentence, rather than having a path of
     its own — or a same-named file on the node — acted on. Such a client
-    addresses a run the way the registry does: ``POST /api/meetings/{id}/runs``.
+    addresses a run the way the registry does: ``POST /api/v1/meetings/{id}/runs``.
     """
 
     directory: str
@@ -543,15 +574,8 @@ class ArchiveCreate(BaseModel):
 # data boundary, and what a template needs is a context, not a shape.
 
 
-class HealthOut(Shape):
-    """`/api/health`: the process is up, and which registry it opened."""
-
-    status: str
-    registry: str
-
-
 class NodeOut(Shape):
-    """`/api/node`: where this node is, as every surface resolves it."""
+    """`/api/v1/node`: where this node is, as every surface resolves it."""
 
     status: str
     url: str
@@ -561,13 +585,13 @@ class NodeOut(Shape):
 
 
 class ShutdownOut(Shape):
-    """`/api/shutdown`: the managed server has been asked to stop."""
+    """`/api/v1/shutdown`: the managed server has been asked to stop."""
 
     status: str
 
 
 class TapeDeletedOut(Shape):
-    """`DELETE /api/meetings/{id}/tapes/{tape_id}`: the row that went, and the caveat."""
+    """`DELETE /api/v1/meetings/{id}/tapes/{tape_id}`: the row that went, and the copy it leaned on."""
 
     deleted: TapeOut
     note: str
@@ -607,7 +631,7 @@ def _content_length(request: Request) -> int | None:
 #
 # Two rules settle how a *client* names what it wants, and this edge is where a
 # machine client meets them: they are stated in the request shapes above (and so
-# in the OpenAPI schema ``/api/docs`` publishes), and enforced here.
+# in the OpenAPI schema ``/api/v1/docs`` publishes), and enforced here.
 #
 # - **A path is a local client's noun.** A directory — a run's workspace, a
 #   meeting's ``workspace_path``, a tape's files, an archive location a project or
@@ -636,8 +660,8 @@ PATH_IS_LOCAL = (
     "node takes one only from a client that addressed the node itself — its own "
     "address, not another name for it (a proxy's hostname, say) — so name what "
     "you want the way the registry addresses it instead: a run by its meeting's "
-    "id (POST /api/meetings/{id}/runs); a tape's bytes by upload into a managed "
-    "workspace (POST /api/meetings/{id}/tapes); a workspace by leaving it to the "
+    "id (POST /api/v1/meetings/{id}/runs); a tape's bytes by upload into a managed "
+    "workspace (POST /api/v1/meetings/{id}/tapes); a workspace by leaving it to the "
     "node (`managed: true`); an archive location by omitting it, so the "
     "*project's* own root stands when it has one; a glossary by omitting it, so "
     "the node's own stands."
@@ -697,8 +721,18 @@ def _local_client(request: Request) -> bool:
     test would refuse a local client (the documented container posture) while
     accepting a remote one (every proxied deployment). What the client *named*
     is the fact that settles it.
+
+    The name read is the one the **client** sent
+    (:func:`clear_record.web.guard.client_named_host`), never the name a declared
+    peer forwards: a forwarded ``X-Forwarded-Host`` is honoured for the URLs the
+    app builds and for the guard's ``Host`` check, and for nothing here — so a
+    client-supplied ``X-Forwarded-Host: 127.0.0.1`` cannot satisfy this rule
+    through a peer the operator declared. A proxy that pins its published name in
+    ``Host`` is what keeps a client from choosing the name this rule reads; that
+    is the operator's recipe (``docs/service-deployment.md``), not this
+    function's business.
     """
-    name = guard.host_name(request.headers.get("host"))
+    name = guard.host_name(guard.client_named_host(request.scope))
     if guard.is_loopback_host(name):
         return True
     served = _served_by(request.app)
@@ -744,14 +778,17 @@ async def _receive_tape(
     *,
     declared: int | None,
     upload_id: str | None,
+    actor: str,
 ) -> Tape:
     """Read one multipart tape body and store it, for both upload surfaces.
 
     The form parse, the ``file`` part check and the threadpool
     :func:`managed.upload_tape` call are identical on the HTML and JSON routes;
-    only how a refusal is presented differs. A malformed body or a missing
-    ``file`` part raises the same :class:`managed.UploadRejected` the guards do,
-    so each caller maps it to its own shape (a re-render, or an HTTP status).
+    only how a refusal is presented differs — and ``actor``, the surface doing
+    the upload, which the tape's own registration is recorded against
+    (ADR-0033). A malformed body or a missing ``file`` part raises the same
+    :class:`managed.UploadRejected` the guards do, so each caller maps it to its
+    own shape (a re-render, or an HTTP status).
     """
     # Accepted deviation from ADR-0024:67-71 (which decides multipart -> a sibling
     # .part on the managed root, and defers only resumability): Starlette 1.6
@@ -780,10 +817,64 @@ async def _receive_tape(
         registry,
         meeting,
         upload.file,
+        actor=actor,
         filename=upload.filename,
         declared_bytes=declared,
         upload_id=upload_id,
     )
+
+
+#: How long :meth:`LocalSessionKeeper.stop` waits for the keeper thread. The
+#: thread is parked on the refresh interval's event, which ``stop`` sets, so the
+#: wait ends at once in every case but a keeper mid-write.
+_LOCAL_SESSION_JOIN_S = 5.0
+
+
+class LocalSessionKeeper:
+    """The session a node publishes for its own machine, kept live while it runs.
+
+    ADR-0033's boundary: a surface running as the node's own operating-system user
+    is inside it, so the command line is not asked for a password — it presents
+    the session the node published for that user (ADR-0032 makes it a client of
+    the node like any other). What is kept here is the *node's* half: publish one
+    at startup, look again on a timer, and re-open it when the published one no
+    longer names a live session (an idle window, the absolute lifetime, or
+    ``revoke_all``). One look-up a minute, and a write only when the answer
+    changed — so the file's bytes are a fact about the registry, not a value that
+    moves under a reader.
+    """
+
+    def __init__(self, console: ConsoleAuth) -> None:
+        self._console = console
+        self._stopping = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> str:
+        """Publish a session for this machine and keep it live until :meth:`stop`."""
+        self._stopping.clear()
+        token = refresh_local_session(self._console)
+        self._thread = threading.Thread(
+            target=self._keep, name="cr-local-session", daemon=True
+        )
+        self._thread.start()
+        return token
+
+    def stop(self) -> None:
+        """Stop the keeper and take the node's session file down with it."""
+        self._stopping.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(_LOCAL_SESSION_JOIN_S)
+        node.forget_local_session()
+
+    def _keep(self) -> None:
+        while not self._stopping.wait(LOCAL_SESSION_REFRESH_S):
+            try:
+                refresh_local_session(self._console)
+            except Exception:  # noqa: BLE001 - the next tick retries; the node stays up
+                logging.getLogger("uvicorn.error").warning(
+                    "clear-record: could not refresh the local session; retrying"
+                )
 
 
 class NodeServer(uvicorn.Server):
@@ -792,6 +883,10 @@ class NodeServer(uvicorn.Server):
     Every node posture starts its server through this class — the ``serve`` and
     ``web`` commands (one entry point) and the tray's supervisor — so the address
     is published and cleared in one place, the same way, wherever a node runs.
+    The **local session** is published and kept here for the same reason: the
+    command line is a client of *every* node posture, including the one the tray
+    runs in its own process, so the session belongs to the node's start and stop
+    rather than to whichever entry point remembered to ask for it.
 
     :meth:`startup` records **after** ``super().startup()``: uvicorn binds its
     sockets there (0.53 runs the app's lifespan startup first), so that is the
@@ -810,6 +905,22 @@ class NodeServer(uvicorn.Server):
     runs there; it is only unfindable.
     """
 
+    def __init__(self, config: uvicorn.Config) -> None:
+        """Narrow the server's own forwarded-header handling to nothing.
+
+        Every console posture — ``serve``, ``web`` and the tray's own node —
+        starts its server through this class, and the console's request guard is
+        where a **declared** proxy's ``X-Forwarded-*`` headers are honoured. The
+        server's own handling would decide first and decide differently: it
+        believes a **loopback** peer's ``X-Forwarded-Proto`` whatever the operator
+        declared, hands the guard a scheme and a client that are already rewritten
+        to judge, and honours no ``X-Forwarded-Host`` at all — the shape
+        ``CR_TRUSTED_PROXIES`` replaces. So the server never touches a forwarded
+        header, in any posture, and the declaration is the decision.
+        """
+        config.proxy_headers = False
+        super().__init__(config)
+
     async def startup(self, sockets=None) -> None:
         await super().startup(sockets)
         address = self.bound()
@@ -824,16 +935,66 @@ class NodeServer(uvicorn.Server):
                 address.url,
                 exc,
             )
+        self._publish_local_session()
 
     async def shutdown(self, sockets=None) -> None:
+        self._stop_local_session()
         await super().shutdown(sockets)
         node.forget()
+
+    def _publish_local_session(self) -> None:
+        """Publish the session this machine's clients present, or say why not.
+
+        Same posture as the address record beside it: a state directory that
+        cannot be written is not a reason to refuse to serve — the node runs, and
+        its own command line is refused like any other anonymous client, which the
+        refusal spells out.
+        """
+        console = self._auth()
+        if console is None:
+            return
+        try:
+            keeper = LocalSessionKeeper(console)
+            keeper.start()
+        except (OSError, SQLAlchemyError) as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "clear-record: could not publish this node's local session (%s); "
+                "the command line on this machine will be asked to sign in",
+                exc,
+            )
+            return
+        self._local_session = keeper
+
+    def _stop_local_session(self) -> None:
+        keeper = getattr(self, "_local_session", None)
+        if keeper is None:
+            return
+        self._local_session = None
+        keeper.stop()
+
+    def _auth(self) -> ConsoleAuth | None:
+        """The auth seam the app this server runs carries, if it has one.
+
+        ``config.app`` is the object the caller handed uvicorn — a FastAPI app for
+        every posture here — while ``loaded_app`` is uvicorn's own resolution of
+        it and is only set once the server loads, so it is tried first for a
+        caller that named the app as an import string and ``config.app`` is what
+        covers the rest.
+        """
+        for candidate in (
+            getattr(self.config, "loaded_app", None),
+            getattr(self.config, "app", None),
+        ):
+            seam = getattr(getattr(candidate, "state", None), "auth", None)
+            if seam is not None:
+                return seam
+        return None
 
     def bound(self) -> node.NodeAddress | None:
         """The TCP address this server bound, or ``None`` (e.g. a unix socket).
 
         Two callers ask: :meth:`startup`, which records it, and
-        ``GET /api/node``, which answers with a record only when it is this.
+        ``GET /api/v1/node``, which answers with a record only when it is this.
         """
         for listener in getattr(self, "servers", ()):
             for sock in listener.sockets or ():
@@ -905,6 +1066,7 @@ def create_app(
     runs: RunManager | None = None,
     *,
     trusted_hosts: Sequence[str] | None = None,
+    trusted_proxies: Sequence[str] | None = None,
     webhooks: WebhookEmitter | None = None,
 ) -> FastAPI:
     """Build the app around an opened registry (inject a temp one in tests).
@@ -916,6 +1078,12 @@ def create_app(
     ``trusted_hosts`` overrides the extra hostnames the request guard accepts
     (default: ``CR_TRUSTED_HOSTS``, on top of loopback); tests and embedders can
     pass an explicit set, and ``()`` pins the loopback-only default.
+
+    ``trusted_proxies`` overrides the peers whose forwarded headers the request
+    guard honours (default: ``CR_TRUSTED_PROXIES``, and **nobody** — not even
+    loopback); ``()`` pins "believe no forwarded header at all". The guard
+    resolves them into each request before any other middleware reads it, and
+    ``--tailscale`` passes the loopback hop Serve proxies from.
 
     ``webhooks`` is the emitter whose health the console reports; it defaults to
     the shared config-driven one the runs already deliver through, and a test can
@@ -934,20 +1102,39 @@ def create_app(
     app = FastAPI(
         title="clear-record",
         summary="Local project console: projects, glossary, meetings and runs.",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # Every route FastAPI provides is under the machine prefix too, so the
+        # app serves nothing at the root but ``/health`` and the compiled assets:
+        # the schema, the two
+        # documentation UIs and Swagger's own oauth2-redirect target are the
+        # machine surface's, and the prefix is the one declaration of it.
+        docs_url=f"{MACHINE_PREFIX}docs",
+        openapi_url=f"{MACHINE_PREFIX}openapi.json",
+        redoc_url=f"{MACHINE_PREFIX}redoc",
+        swagger_ui_oauth2_redirect_url=f"{MACHINE_PREFIX}docs/oauth2-redirect",
     )
     # The manager is the app's own run queue; exposing it lets the process
     # supervisor stop draining cleanly on shutdown (``serve``), and lets an
     # embedder reach the same seam.
     app.state.runs = runs
     app.state.webhooks = emitter
+    # The auth seam this app gates every request with, and the registry it reads
+    # and writes the credential and the sessions through. Both are exposed the
+    # way the run manager is: the process that started the app (or a test driving
+    # it) can reach the same seam rather than a second copy of it.
+    console = ConsoleAuth(registry)
+    app.state.auth = console
+    app.state.registry = registry
     app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
     extra_hosts = (
         guard.normalize_hosts(trusted_hosts)
         if trusted_hosts is not None
         else guard.trusted_extra_hosts()
+    )
+    proxy_peers = (
+        guard.normalize_hosts(trusted_proxies)
+        if trusted_proxies is not None
+        else guard.trusted_proxies()
     )
 
     def locale(request: Request) -> str:
@@ -981,6 +1168,84 @@ def create_app(
         return await call_next(request)
 
     @app.middleware("http")
+    async def request_auth(request: Request, call_next):
+        """Hold every request to the anonymous surface or a live credential.
+
+        The gate reads the cookie on **every** request, so the answer is the
+        registry's and never a copy the process cached: revoking a session, or
+        signing out in another browser, takes effect on the next request these
+        two make. An anonymous request is not gated but is still *read* — the
+        setup page and the sign-in form ask whether the visitor already has a
+        session — and reading never moves the idle clock (``touch=False``), so a
+        probe or a shared link cannot keep a session alive.
+
+        **A machine request has a second way in: a bearer token.** The same
+        property holds — the row is read per request, so revoking a token is
+        effective on the very next one with no restart — and the branch is
+        deliberately inside the ``machine_request`` arm alone, so a token can
+        never open the console's pages or fragments. A token that names no row
+        (revoked, another install's, a guess) is refused exactly as an absent
+        one. Its use moves ``last_used_at`` — **lazily**, at most once per
+        ``TOKEN_TOUCH_INTERVAL``, so a script's burst of calls performs no write
+        at all — and a write it does make is one the gate tolerates losing: a
+        locked registry costs the timestamp, never the request, and never the
+        event loop. **Both reads run in a worker thread** for that last clause's
+        sake: they are synchronous registry calls, and a write lock another
+        surface holds would otherwise stall this process's whole loop — every
+        unrelated request with it — for as long as the connection's busy timeout
+        allows (five seconds, ``store._engine``'s policy), refused exception or
+        not.
+
+        The refusal is a redirect for a browser and ``401`` for the machine
+        surface, and it clears a cookie it knows to be dead rather than leaving a
+        value that will be refused again. An htmx request is answered with
+        ``HX-Redirect`` **and no redirect of its own** — the header has to be on
+        the response htmx actually sees, and a 303 is followed transparently by
+        the browser's own request before htmx looks at anything, which is what
+        would swap a whole sign-in page into whichever fragment asked.
+        """
+        anonymous = auth_edge.answers_anonymously(request.method, request.url.path)
+        token = request.cookies.get(auth_edge.SESSION_COOKIE)
+        # Both auth reads are **synchronous registry calls, so neither runs on
+        # the event loop**: a session whose lazy idle touch is due, or a token
+        # presentation, takes SQLite's write lock, and a lock another surface
+        # holds would stall this process's whole loop — an unrelated anonymous
+        # `/health` included, which is the wait the reviewer measured, not a
+        # refusal. Off-thread, a held lock costs a worker thread and the write
+        # (`ConsoleAuth` already tolerates losing it); the loop keeps answering.
+        # The pattern is the KDF's and the model download's in this file.
+        state = await run_in_threadpool(console.session, token, touch=not anonymous)
+        request.state.session_state = state
+        request.state.session_token = token if state is SessionState.ACTIVE else None
+        if anonymous or state is SessionState.ACTIVE:
+            return await call_next(request)
+        if auth_edge.machine_request(request):
+            presented = auth_edge.bearer_token(request)
+            if (
+                await run_in_threadpool(console.authenticate_token, presented)
+                is not None
+            ):
+                # A live token is the second way in, and this request's whole
+                # credential: the route it reaches writes as the API's actor,
+                # exactly as a cookie-authenticated machine request does.
+                return await call_next(request)
+            return JSONResponse(
+                status_code=401, content={"detail": auth_edge.AUTH_REQUIRED}
+            )
+        if request.headers.get("hx-request"):
+            # htmx is told to navigate the window; the 303 below would be followed
+            # by the browser itself and its target swapped into the fragment.
+            response: Response = Response(status_code=200)
+            response.headers["HX-Redirect"] = auth_edge.SETUP_PATH
+        else:
+            response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        if token is not None:
+            auth_edge.clear_session_cookie(
+                response, secure=auth_edge.secure_request(request)
+            )
+        return response
+
+    @app.middleware("http")
     async def request_guard(request: Request, call_next):
         """Reject a hostile page's rebound or cross-origin requests (ADR-0021).
 
@@ -988,12 +1253,32 @@ def create_app(
         rebound read is still a disclosure); ``Origin``/``Referer`` on the
         state-changing ones. A rejection is a plain 403 with an actionable
         message — it is the attacker's request, not the operator's UI.
+
+        A declared proxy's forwarded headers are resolved into the request
+        **before** either check and before anything inside this middleware reads
+        it: the checks then judge the request the *browser* made (its scheme, its
+        name), and the auth gate — registered earlier, so running after this one
+        — reads the scheme this writes when it decides the cookie's ``Secure``.
+        An undeclared peer's headers are not read at all, so its request is
+        judged exactly as the socket delivered it.
         """
-        problem = guard.host_problem(request.headers.get("host"), extra_hosts)
+        guard.apply_forwarded(
+            request.scope,
+            guard.forwarded_facts(
+                request.headers,
+                request.client.host if request.client else None,
+                proxy_peers,
+            ),
+        )
+        # ``Request`` caches the headers it was built with, and this layer's
+        # request predates the resolution above, so the checks read the scope's
+        # own headers — the resolved ones — rather than that stale copy.
+        headers = Headers(scope=request.scope)
+        problem = guard.host_problem(headers.get("host"), extra_hosts)
         if problem is None and request.method not in guard.SAFE_METHODS:
             problem = guard.source_problem(
-                request.headers.get("origin"),
-                request.headers.get("referer"),
+                headers.get("origin"),
+                headers.get("referer"),
                 extra_hosts,
             )
         if problem is not None:
@@ -1165,7 +1450,7 @@ def create_app(
         render would raise the same refusal — which is also why this
         answers every page route, not only the ones that read a run directly.
         """
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith(auth_edge.MACHINE_PREFIX):
             return JSONResponse(status_code=409, content={"detail": str(exc)})
         return render(
             request,
@@ -1178,11 +1463,11 @@ def create_app(
     def enqueue_run(meeting: Meeting, body: RunCreate) -> RunSnapshotOut:
         """Resolve one run body on *meeting* and enqueue it: the one submission.
 
-        The **two JSON edges** that start a run — ``POST /api/meetings/{id}/runs``
-        and ``POST /api/runs`` — come through here, so the resolver, the
+        The **two JSON edges** that start a run — ``POST /api/v1/meetings/{id}/runs``
+        and ``POST /api/v1/runs`` — come through here, so the resolver, the
         in-flight guard, the refusal mapping and the recorded ``origin`` cannot
         come to differ between them. (The console's own form edge,
-        ``POST /ui/meetings/{id}/runs``, is not one of them: it answers with a run
+        ``POST /web/ui/meetings/{id}/runs``, is not one of them: it answers with a run
         fragment rather than a snapshot, and pins ``origin='console'`` as it
         resolves the picker's fields itself.)
 
@@ -1246,7 +1531,14 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin=body.origin
+                meeting,
+                resolved.options,
+                auto=resolved.meta,
+                # The caller declares the run's ``origin`` (``cli`` for the
+                # command line); the actor is *this transport*, so a client
+                # cannot name itself in the audit record (ADR-0033).
+                origin=body.origin,
+                actor=API,
             )
         except ValueError as exc:
             # A refusal the start path made (see the docstring above), or an
@@ -1260,7 +1552,7 @@ def create_app(
         )
 
     # --- full pages (real URLs; hx-boost for speed, plain links without JS) --- #
-    @app.get("/", response_class=HTMLResponse)
+    @app.get(CONSOLE_HOME, response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         """The Projects workspace: the console lands here, not on a dashboard.
 
@@ -1269,7 +1561,7 @@ def create_app(
         is never hijacked (ADR-0027); an update shows a notice, not a redirect.
         """
         if seen_version() is None and not registry.list_projects():
-            return RedirectResponse("/setup", status_code=303)
+            return RedirectResponse(SETUP_PATH, status_code=303)
         projects = views.project_rows(registry)
         return page(
             request,
@@ -1303,7 +1595,7 @@ def create_app(
             **context,
         )
 
-    @app.get("/projects/{slug}", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}", response_class=HTMLResponse)
     def page_project(request: Request, slug: str) -> HTMLResponse:
         """A project page: the URL is the source of truth for the selection.
 
@@ -1312,22 +1604,24 @@ def create_app(
         """
         return project_page(request, slug, "overview")
 
-    @app.get("/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/meetings", response_class=HTMLResponse)
     def page_project_meetings(request: Request, slug: str) -> HTMLResponse:
         """The Meetings tab: the operational surface."""
         return project_page(request, slug, "meetings")
 
-    @app.get("/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/glossary", response_class=HTMLResponse)
     def page_project_glossary(request: Request, slug: str) -> HTMLResponse:
         """The Glossary tab: the project's terms."""
         return project_page(request, slug, "glossary")
 
-    @app.get("/projects/{slug}/media", response_class=HTMLResponse)
+    @app.get("/web/projects/{slug}/media", response_class=HTMLResponse)
     def page_project_media(request: Request, slug: str) -> HTMLResponse:
         """The Media tab: every meeting's tapes and transcripts."""
         return project_page(request, slug, "media")
 
-    @app.get("/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    @app.get(
+        "/web/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse
+    )
     def page_meeting(
         request: Request, slug: str, meeting_slug: str, offset: int = 0
     ) -> HTMLResponse:
@@ -1354,7 +1648,7 @@ def create_app(
             **meeting_view(request, meeting, offset=max(0, offset)),
         )
 
-    @app.get("/activity", response_class=HTMLResponse)
+    @app.get("/web/activity", response_class=HTMLResponse)
     def page_activity(request: Request) -> HTMLResponse:
         """The pipeline status page: what this node is doing right now.
 
@@ -1369,7 +1663,7 @@ def create_app(
             **views.activity_context(registry, locale(request)),
         )
 
-    @app.get("/settings", response_class=HTMLResponse)
+    @app.get("/web/settings", response_class=HTMLResponse)
     def page_settings(request: Request) -> HTMLResponse:
         """Settings lands on the first section, not an empty overview."""
         return page(
@@ -1381,7 +1675,7 @@ def create_app(
             ),
         )
 
-    @app.get("/settings/{section}", response_class=HTMLResponse)
+    @app.get("/web/settings/{section}", response_class=HTMLResponse)
     def page_settings_section(request: Request, section: str) -> HTMLResponse:
         """One Settings section, or the not-found page for an unknown slug."""
         try:
@@ -1394,17 +1688,28 @@ def create_app(
             )
         return page(request, "settings.html", nav="settings", **context)
 
-    @app.get("/setup", response_class=HTMLResponse)
+    @app.get(SETUP_PATH, response_class=HTMLResponse)
     def page_setup(request: Request) -> HTMLResponse:
-        """Setup: system readiness, a numbered sequence.
+        """Setup: the credential step, the sign-in form, or system readiness.
 
-        The Transcription step states ASR backend and checkpoint readiness from
-        the service (transcription_status), so the wizard says what is actually
-        ready instead of describing theory. The Agent step embeds the one agent
-        flow (the same #agent-setup mount Settings -> Agent uses), and the Try it
-        step points at that flow's Try it check and at the permanent copy in
-        Settings -> Status. Nothing here is a second tape implementation.
+        Which of the three is the registry's state and this request's: with no
+        credential yet it is the **first run's step** — set one, and you are
+        signed in; with a credential set but no session it is the **sign-in
+        form**; signed in it is the readiness wizard it has always been
+        (ADR-0027). The two anonymous states are the whole of the anonymous
+        surface's one page, and neither reads a project, a meeting or a
+        transcript: the wizard's own content is only ever rendered to a session.
+
+        The wizard's steps are unchanged: the Transcription step states ASR
+        backend and checkpoint readiness from the service
+        (``transcription_status``), the Agent step embeds the one agent flow
+        (the same #agent-setup mount Settings -> Agent uses), and the Try it step
+        points at that flow's Try it check and at the permanent copy in
+        Settings -> Status. Nothing here is a second tape implementation — this
+        gate is a state in front of it, not a replacement for it.
         """
+        if request.state.session_state is not SessionState.ACTIVE:
+            return render(request, "auth.html", _auth_context(request, error=""))
         return page(
             request,
             "setup.html",
@@ -1415,7 +1720,122 @@ def create_app(
             default_model=DEFAULT_MODEL,
         )
 
-    @app.post("/ui/setup/download-model", response_class=HTMLResponse)
+    def _auth_context(request: Request, *, error: str) -> dict:
+        """The anonymous page's context: which step, and what went wrong.
+
+        ``first_run`` is the registry's answer, and it decides whether the page
+        asks for a new password or for the existing one. The password rule rides
+        along so the form can state it before the operator types, rather than
+        after a round trip.
+        """
+        return {
+            "first_run": not console.configured(),
+            "error": error,
+            "password_min_length": PASSWORD_MIN_LENGTH,
+        }
+
+    @app.post(CREDENTIAL_PATH, response_class=HTMLResponse)
+    async def set_credential(request: Request) -> Response:
+        """Set the console's credential on the first run, and sign in with it.
+
+        **Refused once a credential exists, and the write is what refuses.** This
+        form is anonymous — it has to be, nobody can sign in yet — so if it could
+        also *replace* the credential, anyone who could reach the page could take
+        the console over. Reading "is one set" before the body and then writing
+        cannot promise that: a request whose body arrives after another request
+        has already set the credential would read the old answer and replace what
+        that request wrote. The claim
+        (:meth:`~clear_record.service.auth.ConsoleAuth.claim_password`) is one
+        insert-only statement instead, so the loser of that race is answered
+        ``409`` and the credential the winner set keeps working. The rescue
+        command is the way back for a credential that is lost or broken
+        (``clear-record password``), and it runs as the operator on the node.
+
+        The new password is checked against the one rule
+        (:data:`~clear_record.service.auth.PASSWORD_MIN_LENGTH`) and confirmed,
+        then hashed in a worker thread (the KDF is deliberately slow, and the
+        event loop is serving a node), and the reply starts the session the
+        operator just earned — a refusal starts nothing.
+        """
+        form = await request.form()
+        password = str(form.get("password") or "")
+        confirm = str(form.get("confirm") or "")
+        error = ""
+        if password != confirm:
+            error = tr("the two passwords do not match.")
+        else:
+            try:
+                require_password(password)
+            except ValueError as exc:
+                error = str(exc)
+        if error:
+            return render(request, "auth.html", _auth_context(request, error=error))
+        claimed = await run_in_threadpool(
+            console.claim_password, password, actor=CONSOLE
+        )
+        if not claimed:
+            return render(
+                request,
+                "auth.html",
+                _auth_context(
+                    request,
+                    error=tr(
+                        "a password is already set for this console; sign in, "
+                        "or replace it on the node with the password command "
+                        "(clear-record password)."
+                    ),
+                ),
+                status_code=409,
+            )
+        token = await run_in_threadpool(console.sign_in, password)
+        return _signed_in(request, token, redirect_to=CONSOLE_HOME)
+
+    @app.post(SIGN_IN_PATH, response_class=HTMLResponse)
+    async def sign_in(request: Request) -> Response:
+        """Start a session from the sign-in form, or re-render it refused.
+
+        One answer for a wrong password and for a registry with no credential:
+        the page already says which state it is in, and the request learns
+        nothing a guess could use. The KDF runs in a worker thread for the same
+        reason the set does.
+        """
+        form = await request.form()
+        password = str(form.get("password") or "")
+        token = await run_in_threadpool(console.sign_in, password)
+        if token is None:
+            return render(
+                request,
+                "auth.html",
+                _auth_context(
+                    request,
+                    error=tr("that password does not match this console's."),
+                ),
+                status_code=401,
+            )
+        return _signed_in(request, token, redirect_to=CONSOLE_HOME)
+
+    def _signed_in(
+        request: Request, token: str | None, *, redirect_to: str
+    ) -> Response:
+        """Answer a session's first request: the cookie, then the console.
+
+        The cookie's ``Secure`` follows the scheme this request arrived by
+        (:func:`clear_record.web.auth.secure_request`), and its ``Max-Age`` is the
+        session's **absolute lifetime** — the browser need not keep it a second
+        past the registry's own ceiling, and the registry is what decides either
+        way.
+        """
+        response = RedirectResponse(redirect_to, status_code=303)
+        if token is not None:
+            auth_edge.set_session_cookie(
+                response,
+                token,
+                secure=auth_edge.secure_request(request),
+                max_age=int(console.policy.absolute_lifetime.total_seconds()),
+            )
+        return response
+
+    @app.post("/web/ui/setup/download-model", response_class=HTMLResponse)
     async def ui_setup_download_model(request: Request) -> HTMLResponse:
         """Download a transcription checkpoint, on the user's click.
 
@@ -1446,7 +1866,7 @@ def create_app(
             },
         )
 
-    @app.post("/ui/settings/models/download", response_class=HTMLResponse)
+    @app.post("/web/ui/settings/models/download", response_class=HTMLResponse)
     async def ui_settings_download_model(request: Request) -> HTMLResponse:
         """Download a chosen transcription checkpoint from Settings -> Models.
 
@@ -1467,16 +1887,16 @@ def create_app(
             {"error": error, **views.models_context(locale(request))},
         )
 
-    @app.get("/setup/agent", response_class=HTMLResponse)
+    @app.get("/web/setup/agent", response_class=HTMLResponse)
     def page_setup_agent(request: Request) -> HTMLResponse:
         """The setup wizard's Agent step as its own URL.
 
-        It mounts the same one flow (#agent-setup -> /ui/agent-setup) that
-        /settings/agent mounts, so the two entry points cannot drift.
+        It mounts the same one flow (#agent-setup -> /web/ui/agent-setup) that
+        /web/settings/agent mounts, so the two entry points cannot drift.
         """
         return page(request, "agent.html", nav="setup")
 
-    @app.post("/setup/complete")
+    @app.post("/web/setup/complete")
     def complete_setup() -> RedirectResponse:
         """Leave the wizard having seen this version, and land back in Projects.
 
@@ -1485,9 +1905,9 @@ def create_app(
         silently.
         """
         record_seen_version()
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(CONSOLE_HOME, status_code=303)
 
-    @app.post("/setup/restart")
+    @app.post("/web/setup/restart")
     def restart_setup() -> RedirectResponse:
         """Forget the marker: the nav Setup link returns and the wizard re-opens.
 
@@ -1495,15 +1915,101 @@ def create_app(
         so a returning user's harness and MCP client config survive it.
         """
         clear_seen_version()
-        return RedirectResponse("/setup", status_code=303)
+        return RedirectResponse(SETUP_PATH, status_code=303)
 
-    @app.post("/setup/dismiss")
+    @app.post("/web/setup/dismiss")
     def dismiss_setup() -> RedirectResponse:
         """Dismiss the update notice: the same marker write as COMPLETE."""
         record_seen_version()
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(CONSOLE_HOME, status_code=303)
 
-    @app.post("/ui/language")
+    @app.post(SIGN_OUT_PATH)
+    def sign_out(request: Request) -> RedirectResponse:
+        """End this session and land on the sign-in form.
+
+        Gated like every other mutation: an anonymous POST here has no session to
+        end and is answered with the setup page's redirect like any other. The
+        row goes first and the cookie is cleared in this response, so the *next*
+        request — from this browser or from a stolen copy of the cookie — is
+        refused whether or not the browser kept its half of the bargain.
+        """
+        console.sign_out(request.state.session_token)
+        response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        auth_edge.clear_session_cookie(
+            response, secure=auth_edge.secure_request(request)
+        )
+        return response
+
+    @app.post(REVOKE_ALL_PATH)
+    def revoke_all_sessions(request: Request) -> RedirectResponse:
+        """End **every** session — this one included — and land on sign-in.
+
+        The remedy for a browser the operator no longer trusts: it takes effect
+        on the next request any of them makes, with no restart — for every session
+        a *browser* holds. The node's own-machine session is the one client that
+        comes back: nobody is at that end to sign in, so the keeper re-opens it
+        within ``LOCAL_SESSION_REFRESH_S`` (the documented bargain of that
+        credential, not a session surviving the sweep — the sweep ends the row
+        like any other). Settings → Status
+        posts it, and the response ends the session that asked, so the browser
+        that clicked is signed out too — which is the point rather than a
+        surprise, and it lands on the sign-in form.
+        """
+        console.revoke_all()
+        response = RedirectResponse(auth_edge.SETUP_PATH, status_code=303)
+        auth_edge.clear_session_cookie(
+            response, secure=auth_edge.secure_request(request)
+        )
+        return response
+
+    @app.post(TOKENS_PATH, response_class=HTMLResponse)
+    def mint_token(request: Request, label: str = Form(...)) -> HTMLResponse:
+        """Mint a labelled machine token and show its plaintext **once**.
+
+        The plaintext exists in this response and nowhere else: the registry
+        stores the digest, so the fragment htmx swaps in is the only place the
+        value ever appears, and reloading Settings — a GET, which re-renders the
+        list from the registry — cannot reproduce it. That is the whole of "shown
+        once", and it is why this is a POST's body rather than a query parameter
+        or a second page.
+
+        A label already in use, or one the rule refuses, re-renders the block at
+        200 with the service's own sentence, the console's convention for a form
+        refusal (htmx does not swap a 4xx, so a 409 would make the failure
+        invisible). The actor is the console's, never a field of the form: the
+        audit record says which surface minted the token, and a client cannot
+        name itself.
+        """
+        try:
+            minted, _row = console.mint_token(label, actor=CONSOLE)
+        except ValueError as exc:
+            return render(
+                request,
+                "_settings_tokens.html",
+                views.tokens_context(registry, error=str(exc)),
+            )
+        return render(
+            request,
+            "_settings_tokens.html",
+            views.tokens_context(registry, minted=minted),
+        )
+
+    @app.post(f"{TOKENS_PATH}/{{token_id}}/revoke", response_class=HTMLResponse)
+    def revoke_token(request: Request, token_id: int) -> HTMLResponse:
+        """Revoke one machine token and re-render the list.
+
+        Effective on the very next request a client makes with it, because the
+        gate reads the row per request and there is nothing cached to expire. The
+        row's label is what the revoke names — the audit record's target is
+        ``token:<label>``, which outlives the row — and an id naming no token (a
+        stale page, a second click) revokes nothing and re-renders the same list.
+        """
+        row = registry.machine_token_by_id(token_id)
+        if row is not None:
+            console.revoke_token(row.label, actor=CONSOLE)
+        return render(request, "_settings_tokens.html", views.tokens_context(registry))
+
+    @app.post("/web/ui/language")
     def ui_set_language(request: Request, lang: str = Form(...)) -> RedirectResponse:
         """Persist the console's explicit language choice, then reload.
 
@@ -1512,20 +2018,20 @@ def create_app(
         later; the redirect is always to the console root, so no request input
         ever becomes a redirect target.
         """
-        response = RedirectResponse("/", status_code=303)
+        response = RedirectResponse(CONSOLE_HOME, status_code=303)
         chosen = _shipped_locale(lang)
         if chosen is not None:
             response.set_cookie(
                 LANG_COOKIE,
                 chosen,
                 max_age=60 * 60 * 24 * 365,
-                path="/",
+                path=CONSOLE_PATH,
                 httponly=True,
                 samesite="lax",
             )
         return response
 
-    @app.get("/ui/projects", response_class=HTMLResponse)
+    @app.get("/web/ui/projects", response_class=HTMLResponse)
     def ui_projects(request: Request) -> HTMLResponse:
         return render(
             request,
@@ -1533,7 +2039,7 @@ def create_app(
             {"projects": views.project_rows(registry), "active_slug": None},
         )
 
-    @app.post("/ui/projects", response_class=HTMLResponse)
+    @app.post("/web/ui/projects", response_class=HTMLResponse)
     def ui_create_project(request: Request, name: str = Form(...)) -> HTMLResponse:
         """Create a project, or re-render the list with the service's message.
 
@@ -1543,7 +2049,7 @@ def create_app(
         """
         error = None
         try:
-            registry.create_project(name)
+            registry.create_project(name, actor=CONSOLE)
         except ValueError as exc:
             error = str(exc)
         response = render(
@@ -1562,25 +2068,27 @@ def create_app(
             response.headers["HX-Trigger"] = "project-created"
         return response
 
-    @app.get("/ui/projects/{slug}", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}", response_class=HTMLResponse)
     def ui_project(request: Request, slug: str) -> HTMLResponse:
         """The Overview tab as a fragment (the project page's default)."""
         return detail(request, slug, tab="overview")
 
-    @app.get("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/meetings", response_class=HTMLResponse)
     def ui_project_meetings(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="meetings")
 
-    @app.get("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_project_glossary(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="glossary")
 
-    @app.get("/ui/projects/{slug}/media", response_class=HTMLResponse)
+    @app.get("/web/ui/projects/{slug}/media", response_class=HTMLResponse)
     def ui_project_media(request: Request, slug: str) -> HTMLResponse:
         return detail(request, slug, tab="media")
 
     # --- HTML views: a meeting's transcript, artifacts and drafts ---------- #
-    @app.get("/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse)
+    @app.get(
+        "/web/ui/projects/{slug}/meetings/{meeting_slug}", response_class=HTMLResponse
+    )
     def ui_meeting(
         request: Request, slug: str, meeting_slug: str, offset: int = 0
     ) -> HTMLResponse:
@@ -1612,9 +2120,9 @@ def create_app(
             )
         try:
             if accept:
-                agent.promote(draft, version=version)
+                agent.promote(draft, actor=CONSOLE, version=version)
             else:
-                agent.reject(draft, version=version)
+                agent.reject(draft, actor=CONSOLE, version=version)
         except (MeetingAgentError, PromotionError) as exc:
             return render_meeting(
                 request, meeting, error=views.error_message(locale(request), exc)
@@ -1622,7 +2130,7 @@ def create_app(
         return render_meeting(request, meeting)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/accept",
+        "/web/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/accept",
         response_class=HTMLResponse,
     )
     def ui_accept_draft(
@@ -1640,7 +2148,7 @@ def create_app(
         return review_draft(request, meeting_id, draft_id, accept=True, version=version)
 
     @app.post(
-        "/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/reject",
+        "/web/ui/meetings/{meeting_id}/agent/drafts/{draft_id}/reject",
         response_class=HTMLResponse,
     )
     def ui_reject_draft(
@@ -1657,7 +2165,7 @@ def create_app(
             request, meeting_id, draft_id, accept=False, version=version
         )
 
-    @app.post("/ui/projects/{slug}/glossary", response_class=HTMLResponse)
+    @app.post("/web/ui/projects/{slug}/glossary", response_class=HTMLResponse)
     def ui_add_term(
         request: Request,
         slug: str,
@@ -1671,6 +2179,7 @@ def create_app(
             registry.add_term(
                 slug,
                 term,
+                actor=CONSOLE,
                 reading=reading or None,
                 aliases=aliases or None,
                 definition=definition or None,
@@ -1681,27 +2190,51 @@ def create_app(
             return detail(request, slug, tab="glossary", error=str(exc))
         return detail(request, slug, tab="glossary")
 
-    @app.post("/ui/glossary/{term_id}/status", response_class=HTMLResponse)
+    @app.post("/web/ui/glossary/{term_id}/status", response_class=HTMLResponse)
     def ui_set_status(
         request: Request, term_id: int, status: str = Form(...)
     ) -> HTMLResponse:
         term = lookup.term(registry, term_id)
         try:
-            term = registry.update_term(term_id, status=status)
+            term = registry.update_term(term_id, status=status, actor=CONSOLE)
         except ValueError as exc:
             # An invalid status is fixable in the form; re-render the tab with
             # the service's message at 200 (htmx does not swap a 4xx).
             return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
-    @app.delete("/ui/glossary/{term_id}", response_class=HTMLResponse)
+    @app.delete("/web/ui/glossary/{term_id}", response_class=HTMLResponse)
     def ui_delete_term(request: Request, term_id: int) -> HTMLResponse:
+        """Retire a term, re-rendering the tab.
+
+        The transport verb is still DELETE, but the row survives: a retire is a
+        status change, so the term keeps its ``added_by``/``created_at`` and the
+        console can restore it (ADR-0033).
+        """
         term = lookup.term(registry, term_id)
-        registry.delete_term(term_id)
+        registry.retire_term(term_id, actor=CONSOLE)
+        return detail(request, term.project_slug, tab="glossary")
+
+    @app.post("/web/ui/glossary/{term_id}/restore", response_class=HTMLResponse)
+    def ui_restore_term(request: Request, term_id: int) -> HTMLResponse:
+        """Restore a retired term to the status it held, re-rendering the tab.
+
+        "Restore" is not "confirm": the service returns the term to the status
+        the retire took it from, so a retired candidate comes back a candidate
+        (ADR-0033). A term that is not retired has nothing to restore *to*, and
+        the service refuses it; that refusal is fixable by looking at the row, so
+        it re-renders the tab with the service's message at 200, as the status
+        form's does. The move is the console's, and is recorded as such.
+        """
+        term = lookup.term(registry, term_id)
+        try:
+            registry.restore_term(term_id, actor=CONSOLE)
+        except ValueError as exc:
+            return detail(request, term.project_slug, tab="glossary", error=str(exc))
         return detail(request, term.project_slug, tab="glossary")
 
     # --- HTML views: meetings and live runs --------------------------------- #
-    @app.post("/ui/projects/{slug}/meetings", response_class=HTMLResponse)
+    @app.post("/web/ui/projects/{slug}/meetings", response_class=HTMLResponse)
     def ui_create_meeting(
         request: Request,
         slug: str,
@@ -1720,11 +2253,12 @@ def create_app(
             meeting = registry.create_meeting(
                 slug,
                 title,
+                actor=CONSOLE,
                 workspace_path=workspace_path or None,
                 recorded_at=recorded_at or None,
             )
             if not workspace_path:
-                managed.ensure_managed_workspace(registry, meeting)
+                managed.ensure_managed_workspace(registry, meeting, actor=CONSOLE)
         except managed.UploadRejected as exc:
             # The meeting exists but its managed workspace could not be made:
             # re-render the tab with the service's message.
@@ -1735,26 +2269,26 @@ def create_app(
             return detail(request, slug, tab="meetings", error=str(exc))
         return detail(request, slug, tab="meetings")
 
-    @app.post("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_set_tapes(
         request: Request, meeting_id: int, paths: str = Form("")
     ) -> HTMLResponse:
         meeting = lookup.meeting(registry, meeting_id)
         tapes = [line.strip() for line in paths.splitlines() if line.strip()]
         try:
-            registry.set_recording_set(meeting_id, tapes)
+            registry.set_recording_set(meeting_id, tapes, actor=CONSOLE)
         except ValueError as exc:
             # A tape set is fixable in the form, so re-render the tab with the
             # service's message at 200 (htmx does not swap a 4xx; see base.html).
             return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
-    @app.get("/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
+    @app.get("/web/ui/meetings/{meeting_id}/storage", response_class=HTMLResponse)
     def ui_meeting_storage(request: Request, meeting_id: int) -> HTMLResponse:
         """One meeting's storage panel: resolved path, sizes, tapes, controls."""
         return render_storage(request, lookup.meeting(registry, meeting_id))
 
-    @app.post("/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/tapes/upload", response_class=HTMLResponse)
     async def ui_upload_tape(
         request: Request, meeting_id: int, upload_id: str | None = None
     ) -> HTMLResponse:
@@ -1770,10 +2304,15 @@ def create_app(
         declared = _content_length(request)
         try:
             meeting = managed.precheck_upload(
-                registry, meeting, declared, upload_id=upload_id
+                registry, meeting, declared, upload_id=upload_id, actor=CONSOLE
             )
             await _receive_tape(
-                registry, meeting, request, declared=declared, upload_id=upload_id
+                registry,
+                meeting,
+                request,
+                declared=declared,
+                upload_id=upload_id,
+                actor=CONSOLE,
             )
         except managed.UploadRejected as exc:
             return render_storage(
@@ -1786,14 +2325,14 @@ def create_app(
         return render_storage(request, meeting)
 
     @app.delete(
-        "/ui/meetings/{meeting_id}/tapes/{tape_id}", response_class=HTMLResponse
+        "/web/ui/meetings/{meeting_id}/tapes/{tape_id}", response_class=HTMLResponse
     )
     def ui_delete_tape(request: Request, meeting_id: int, tape_id: int) -> HTMLResponse:
         """Delete one managed tape, re-rendering the panel."""
         meeting = lookup.meeting(registry, meeting_id)
         lookup.tape(registry, meeting, tape_id)
         try:
-            managed.delete_tape(registry, meeting, tape_id)
+            managed.delete_tape(registry, meeting, tape_id, actor=CONSOLE)
         except managed.UploadRejected as exc:
             return render_storage(
                 request,
@@ -1802,17 +2341,27 @@ def create_app(
             )
         return render_storage(request, meeting)
 
-    @app.delete("/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
+    @app.delete("/web/ui/meetings/{meeting_id}/tapes", response_class=HTMLResponse)
     def ui_delete_meeting_tapes(request: Request, meeting_id: int) -> HTMLResponse:
         """Delete every uploaded tape of the meeting (the per-meeting control).
 
-        Still manual and still confirmed: the archive is the durable copy, and
-        nothing here deletes on the node's own initiative (owner, 2026-09-15).
+        Still manual and still confirmed: each delete needs a **verified archive
+        that holds the tape's own bytes** as its durable copy, and nothing here
+        deletes on the node's own initiative (owner, 2026-09-15).
         """
         meeting = lookup.meeting(registry, meeting_id)
         try:
-            for tape in registry.list_tapes(meeting_id):
-                managed.delete_tape(registry, meeting, tape.id)
+            # One verification for the batch: one archive is the durable copy
+            # for every tape asked for, so it is verified once — and it is the
+            # **bytes it holds** that license the batch, not the meeting's
+            # membership (the rule `delete_tapes` states). Each drop is recorded
+            # against the console.
+            managed.delete_tapes(
+                registry,
+                meeting,
+                [tape.id for tape in registry.list_tapes(meeting_id)],
+                actor=CONSOLE,
+            )
         except managed.UploadRejected as exc:
             return render_storage(
                 request,
@@ -1821,27 +2370,27 @@ def create_app(
             )
         return render_storage(request, meeting)
 
-    @app.post("/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/archives", response_class=HTMLResponse)
     def ui_archive_meeting(
         request: Request, meeting_id: int, root: str = Form("")
     ) -> HTMLResponse:
         meeting = lookup.meeting(registry, meeting_id)
         try:
-            archive_meeting(registry, meeting, root or None)
+            archive_meeting(registry, meeting, root or None, actor=CONSOLE)
         except ValueError as exc:
             # A missing archive root is fixable in the form, so re-render the
             # tab with the message rather than an error status htmx skips.
             return detail(request, meeting.project_slug, tab="meetings", error=str(exc))
         return detail(request, meeting.project_slug, tab="meetings")
 
-    @app.get("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
-    @app.post("/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    @app.get("/web/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
+    @app.post("/web/ui/archives/{archive_id}/verify", response_class=HTMLResponse)
     def ui_verify_archive(request: Request, archive_id: int) -> HTMLResponse:
         archive = lookup.archive(registry, archive_id)
         row = {"archive": archive, "verification": views.archive_status(archive)}
         return render(request, "_archive_status.html", {"row": row})
 
-    @app.get("/ui/profile-options", response_class=HTMLResponse)
+    @app.get("/web/ui/profile-options", response_class=HTMLResponse)
     def ui_profile_options(
         request: Request, profile: str = PROFILE_CUSTOM
     ) -> HTMLResponse:
@@ -1902,7 +2451,11 @@ def create_app(
             return render_run_error(request, meeting_id, tr(str(exc)))
         try:
             run = runs.start(
-                meeting, resolved.options, auto=resolved.meta, origin="console"
+                meeting,
+                resolved.options,
+                auto=resolved.meta,
+                origin="console",
+                actor=CONSOLE,
             )
         except ValueError as exc:
             # A conflict while a run is live: re-render the live fragment so its
@@ -1913,7 +2466,7 @@ def create_app(
             return render_run_error(request, meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
-    @app.post("/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
+    @app.post("/web/ui/meetings/{meeting_id}/runs", response_class=HTMLResponse)
     async def ui_start_run(
         request: Request,
         meeting_id: int,
@@ -1957,7 +2510,7 @@ def create_app(
             auto=auto,
         )
 
-    @app.post("/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
+    @app.post("/web/ui/runs/{run_id}/cancel", response_class=HTMLResponse)
     def ui_cancel_run(request: Request, run_id: int) -> HTMLResponse:
         """Cancel a queued or running run.
 
@@ -1968,10 +2521,10 @@ def create_app(
         cancelled run that is already terminal is a no-op rather than an error.
         """
         lookup.run_state(runs, run_id)
-        runs.cancel(run_id)
+        runs.cancel(run_id, actor=CONSOLE)
         return render_run(request, runs.require_state(run_id))
 
-    @app.post("/ui/runs/{run_id}/resume", response_class=HTMLResponse)
+    @app.post("/web/ui/runs/{run_id}/resume", response_class=HTMLResponse)
     def ui_resume_run(request: Request, run_id: int) -> HTMLResponse:
         """Start a new run continuing ``run_id``, and render it.
 
@@ -1981,18 +2534,18 @@ def create_app(
         """
         previous = lookup.run(registry, run_id)
         try:
-            run = runs.resume(run_id, origin="console")
+            run = runs.resume(run_id, origin="console", actor=CONSOLE)
         except ValueError as exc:
             # A refusal is the run's own message (already in flight, or no
             # recorded options to continue with), rendered where the user asked.
             return render_run_error(request, previous.meeting_id, tr(str(exc)))
         return render_run(request, runs.require_state(run.id))
 
-    @app.get("/ui/runs/{run_id}", response_class=HTMLResponse)
+    @app.get("/web/ui/runs/{run_id}", response_class=HTMLResponse)
     def ui_run(request: Request, run_id: int) -> HTMLResponse:
         return render_run(request, lookup.run_state(runs, run_id))
 
-    @app.get("/ui/diagnostics")
+    @app.get("/web/ui/diagnostics")
     def ui_diagnostics() -> Response:
         """The same redacted bundle `clear-record diagnose` writes, as a download.
 
@@ -2008,7 +2561,7 @@ def create_app(
             },
         )
 
-    @app.get("/ui/webhooks", response_class=HTMLResponse)
+    @app.get("/web/ui/webhooks", response_class=HTMLResponse)
     def ui_webhooks(request: Request) -> HTMLResponse:
         """The webhook status panel: config validity and the last delivery (ADR-0020).
 
@@ -2051,12 +2604,12 @@ def create_app(
             ),
         )
 
-    @app.get("/ui/agent-setup", response_class=HTMLResponse)
+    @app.get("/web/ui/agent-setup", response_class=HTMLResponse)
     def ui_agent_setup(request: Request, part: str = "agent") -> HTMLResponse:
         """The setup state, as the harness and MCP rungs the page can check."""
         return agent_setup_panel(request, part="mcp" if part == "mcp" else "agent")
 
-    @app.post("/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
+    @app.post("/web/ui/agent-setup/mcp/harness", response_class=HTMLResponse)
     def ui_agent_setup_mcp_harness(
         request: Request,
         harness: str = Form(...),
@@ -2086,7 +2639,7 @@ def create_app(
             ),
         )
 
-    @app.post("/ui/agent-setup/mcp/config", response_class=HTMLResponse)
+    @app.post("/web/ui/agent-setup/mcp/config", response_class=HTMLResponse)
     def ui_agent_setup_mcp_config(
         request: Request,
         config: str = Form(...),
@@ -2118,7 +2671,7 @@ def create_app(
             ),
         )
 
-    @app.post("/ui/hello-check", response_class=HTMLResponse)
+    @app.post("/web/ui/hello-check", response_class=HTMLResponse)
     def ui_hello_check(request: Request) -> HTMLResponse:
         """Run the hello-world acceptance check and render its outcome.
 
@@ -2137,7 +2690,7 @@ def create_app(
         result = run_hello_check(lang=locale(request))
         return render(request, "_hello_check.html", {"check": result})
 
-    @app.get("/api/agent/setup")
+    @app.get("/api/v1/agent/setup")
     def agent_setup_status() -> SetupStatusOut:
         """The machine surface for the agent setup state.
 
@@ -2147,12 +2700,43 @@ def create_app(
         """
         return setup_view().as_dict()
 
-    # --- JSON API (machines, scripts and integrations) ---------------------- #
-    @app.get("/api/health")
-    def health() -> HealthOut:
-        return HealthOut(status="ok", registry=str(registry.db_path))
+    # --- liveness: the one route that reveals nothing ---------------------- #
+    #
+    # Two registrations of one handler, not one route with two methods: FastAPI
+    # names an operation from the route's *first* method, so a single route
+    # declaring ``GET`` and ``HEAD`` published ``health_health_head`` twice — an
+    # OpenAPI document no client generator can key on (one operation wins and the
+    # other is unreachable by id). Each method gets its own route and so its own
+    # id, with the HEAD probe named beside its GET in ``/api/v1/openapi.json``.
+    @app.get(HEALTH_PATH)
+    @app.head(HEALTH_PATH)
+    def health(request: Request) -> Response:
+        """The liveness route: ``{"status": "ok"}``, and no other fact.
 
-    @app.get("/api/node")
+        Anonymous and deliberately outside ``/api/v1``: a tray, a supervisor's probe
+        or a monitor has to tell a healthy node from a sign-in page without a
+        session — and without learning anything else about the node. It names no
+        registry, no version, no address and no session, and the body is the same
+        whether or not a browser is signed in, so a probe can require *exactly*
+        this answer (:func:`clear_record.core.node.reach` requires its 200 and
+        follows no redirect). The old ``/api/health`` named the registry path and
+        is gone; this is the only liveness route, and the tray probes it.
+
+        The request guard still applies (a rebound ``Host`` is refused here as
+        everywhere), and nothing else does: the gate **passes it through** — a
+        cookie the request happens to carry is read, never required, and the idle
+        clock is left alone (``touch=False``), so a probe cannot hold a session
+        open — and no token is issued.
+        """
+        if request.method == "HEAD":
+            # A supervisor's HEAD probe reads the status line, and a route that
+            # answered 405 to it would read as an unhealthy node. The body is
+            # what GET adds; the answer is the same ``200``.
+            return Response(status_code=200)
+        return {"status": "ok"}
+
+    # --- JSON API (machines, scripts and integrations) ---------------------- #
+    @app.get("/api/v1/node")
     def node_address() -> NodeOut:
         """Where the node is — the record, vouched for by the socket this app holds.
 
@@ -2182,7 +2766,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=node.NO_NODE_MESSAGE)
         return NodeOut.of(recorded, status="ok")
 
-    @app.get("/api/webhooks")
+    @app.get("/api/v1/webhooks")
     def webhooks_status(request: Request) -> views.WebhookStatusOut:
         """Webhook endpoint health as JSON; see :func:`views.webhook_status_view`.
 
@@ -2193,7 +2777,7 @@ def create_app(
         """
         return views.webhook_status_view(locale(request), emitter.status())
 
-    @app.get("/api/projects")
+    @app.get("/api/v1/projects")
     def list_projects() -> list[ProjectCountOut]:
         counts = registry.term_counts()
         return [
@@ -2201,7 +2785,7 @@ def create_app(
             for project in registry.list_projects()
         ]
 
-    @app.post("/api/projects", status_code=201)
+    @app.post("/api/v1/projects", status_code=201)
     def create_project(request: Request, body: ProjectCreate) -> ProjectOut:
         """Create a project; ``default_archive_root`` is a local client's noun.
 
@@ -2217,6 +2801,7 @@ def create_app(
         try:
             project = registry.create_project(
                 body.name,
+                actor=API,
                 notes=body.notes,
                 default_archive_root=body.default_archive_root,
                 slug=body.slug,
@@ -2225,11 +2810,11 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ProjectOut.model_validate(project)
 
-    @app.get("/api/projects/{slug}")
+    @app.get("/api/v1/projects/{slug}")
     def get_project(slug: str) -> ProjectOut:
         return ProjectOut.model_validate(lookup.project(registry, slug))
 
-    @app.patch("/api/projects/{slug}")
+    @app.patch("/api/v1/projects/{slug}")
     def update_project(slug: str, request: Request, body: ProjectUpdate) -> ProjectOut:
         """Update a project; a ``default_archive_root`` is a local client's noun.
 
@@ -2243,6 +2828,7 @@ def create_app(
         try:
             project = registry.update_project(
                 slug,
+                actor=API,
                 name=body.name,
                 notes=body.notes,
                 default_archive_root=body.default_archive_root,
@@ -2251,7 +2837,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ProjectOut.model_validate(project)
 
-    @app.get("/api/projects/{slug}/glossary")
+    @app.get("/api/v1/projects/{slug}/glossary")
     def list_terms(slug: str, status: str | None = None) -> list[TermOut]:
         lookup.project(registry, slug)
         try:
@@ -2260,13 +2846,14 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [TermOut.model_validate(term) for term in terms]
 
-    @app.post("/api/projects/{slug}/glossary", status_code=201)
+    @app.post("/api/v1/projects/{slug}/glossary", status_code=201)
     def add_term(slug: str, body: TermCreate) -> TermOut:
         lookup.project(registry, slug)
         try:
             term = registry.add_term(
                 slug,
                 body.term,
+                actor=API,
                 reading=body.reading,
                 aliases=body.aliases,
                 definition=body.definition,
@@ -2278,12 +2865,13 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return TermOut.model_validate(term)
 
-    @app.patch("/api/glossary/{term_id}")
+    @app.patch("/api/v1/glossary/{term_id}")
     def update_term(term_id: int, body: TermUpdate) -> TermOut:
         lookup.term(registry, term_id)
         try:
             term = registry.update_term(
                 term_id,
+                actor=API,
                 term=body.term,
                 reading=body.reading,
                 aliases=body.aliases,
@@ -2295,13 +2883,39 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TermOut.model_validate(term)
 
-    @app.delete("/api/glossary/{term_id}", status_code=204)
-    def delete_term(term_id: int) -> None:
+    @app.delete("/api/v1/glossary/{term_id}")
+    def delete_term(term_id: int) -> TermOut:
+        """Retire a term: the row survives, the decoder drops it (ADR-0033).
+
+        The verb is DELETE for the clients that already call it, but it no longer
+        destroys anything: the response is the retired term, and
+        ``POST /api/v1/glossary/{term_id}/restore`` puts it back — a ``PATCH`` states
+        a status outright, where Restore returns the term to the status the
+        retire took it from.
+        """
         lookup.term(registry, term_id)
-        registry.delete_term(term_id)
+        return TermOut.model_validate(registry.retire_term(term_id, actor=API))
+
+    @app.post("/api/v1/glossary/{term_id}/restore")
+    def restore_term(term_id: int) -> TermOut:
+        """Restore a retired term to the status the retire took it from.
+
+        The counterpart of the retire above; ``PATCH status=…`` states a status
+        outright, while this puts the term back where it was (ADR-0033). The
+        move is recorded against this API, as the retire is. Restoring a term
+        that is not retired would invent a status, so the service refuses it —
+        the same 400, carrying the service's own message, as the other bad
+        transitions on this surface.
+        """
+        lookup.term(registry, term_id)
+        try:
+            restored = registry.restore_term(term_id, actor=API)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return TermOut.model_validate(restored)
 
     # --- JSON API: meetings, tapes and runs --------------------------------- #
-    @app.post("/api/projects/{slug}/meetings", status_code=201)
+    @app.post("/api/v1/projects/{slug}/meetings", status_code=201)
     def create_meeting(slug: str, request: Request, body: MeetingCreate) -> MeetingOut:
         """Create a meeting; a ``workspace_path`` is a local client's noun.
 
@@ -2317,18 +2931,19 @@ def create_app(
             meeting = registry.create_meeting(
                 slug,
                 body.title,
+                actor=API,
                 recorded_at=body.recorded_at,
                 workspace_path=None if body.managed else body.workspace_path,
             )
             if body.managed:
-                meeting = managed.ensure_managed_workspace(registry, meeting)
+                meeting = managed.ensure_managed_workspace(registry, meeting, actor=API)
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return MeetingOut.model_validate(meeting)
 
-    @app.get("/api/projects/{slug}/meetings")
+    @app.get("/api/v1/projects/{slug}/meetings")
     def list_meetings(slug: str) -> list[MeetingOut]:
         lookup.project(registry, slug)
         return [
@@ -2336,12 +2951,12 @@ def create_app(
             for meeting in registry.list_meetings(slug)
         ]
 
-    @app.get("/api/meetings/{meeting_id}")
+    @app.get("/api/v1/meetings/{meeting_id}")
     def get_meeting(meeting_id: int) -> MeetingOut:
         return MeetingOut.model_validate(lookup.meeting(registry, meeting_id))
 
     # --- JSON API: a meeting's drafts -------------------------------------- #
-    @app.get("/api/meetings/{meeting_id}/agent")
+    @app.get("/api/v1/meetings/{meeting_id}/agent")
     def meeting_agent_drafts(meeting_id: int) -> AgentDraftsOut:
         """A meeting's draft surface: the kinds, the chains and the minutes."""
         meeting = lookup.meeting(registry, meeting_id)
@@ -2361,15 +2976,15 @@ def create_app(
         draft = lookup.draft(agent, draft_id)
         try:
             reviewed = (
-                agent.promote(draft, version=version)
+                agent.promote(draft, actor=API, version=version)
                 if accept
-                else agent.reject(draft, version=version)
+                else agent.reject(draft, actor=API, version=version)
             )
         except (MeetingAgentError, PromotionError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return describe_draft(reviewed)
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
+    @app.post("/api/v1/meetings/{meeting_id}/agent/drafts/{draft_id}/accept")
     def accept_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
         """Accept a draft version and return what its acceptance produced.
 
@@ -2379,7 +2994,7 @@ def create_app(
         """
         return review_api(meeting_id, draft_id, accept=True, version=version)
 
-    @app.post("/api/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
+    @app.post("/api/v1/meetings/{meeting_id}/agent/drafts/{draft_id}/reject")
     def reject_agent_draft(meeting_id: int, draft_id: str, version: int) -> DraftView:
         """Reject a draft version, keeping the chain on disk as history.
 
@@ -2387,7 +3002,7 @@ def create_app(
         """
         return review_api(meeting_id, draft_id, accept=False, version=version)
 
-    @app.put("/api/meetings/{meeting_id}/tapes", status_code=201)
+    @app.put("/api/v1/meetings/{meeting_id}/tapes", status_code=201)
     def set_tapes(meeting_id: int, request: Request, body: TapesUpdate) -> TapeSetOut:
         """Set a meeting's tapes; each path is a local client's noun.
 
@@ -2396,18 +3011,18 @@ def create_app(
         empty list names nothing and is answered for any client, but it does not
         clear the set — the registry refuses a recording set with no tapes, and a
         tape is removed one at a time
-        (``DELETE /api/meetings/{id}/tapes/{tape_id}``).
+        (``DELETE /api/v1/meetings/{id}/tapes/{tape_id}``).
         """
         lookup.meeting(registry, meeting_id)
         if body.paths:
             _require_local_client(request)
         try:
-            tape_set = registry.set_recording_set(meeting_id, body.paths)
+            tape_set = registry.set_recording_set(meeting_id, body.paths, actor=API)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeSetOut.model_validate(tape_set)
 
-    @app.post("/api/meetings/{meeting_id}/tapes", status_code=201)
+    @app.post("/api/v1/meetings/{meeting_id}/tapes", status_code=201)
     async def upload_tape(
         request: Request, meeting_id: int, upload_id: str | None = None
     ) -> TapeOut:
@@ -2429,7 +3044,7 @@ def create_app(
         declared = _content_length(request)
         try:
             meeting = managed.precheck_upload(
-                registry, meeting, declared, upload_id=upload_id
+                registry, meeting, declared, upload_id=upload_id, actor=API
             )
         except managed.UploadRejected as exc:
             raise HTTPException(
@@ -2438,7 +3053,12 @@ def create_app(
 
         try:
             tape = await _receive_tape(
-                registry, meeting, request, declared=declared, upload_id=upload_id
+                registry,
+                meeting,
+                request,
+                declared=declared,
+                upload_id=upload_id,
+                actor=API,
             )
         except managed.UploadRejected as exc:
             raise HTTPException(
@@ -2446,7 +3066,7 @@ def create_app(
             ) from exc
         return TapeOut.model_validate(tape)
 
-    @app.get("/api/meetings/{meeting_id}/storage")
+    @app.get("/api/v1/meetings/{meeting_id}/storage")
     def meeting_storage(meeting_id: int) -> managed.MeetingStorage:
         """A managed meeting's workspace size, tapes and root free space (ADR-0024).
 
@@ -2456,28 +3076,32 @@ def create_app(
         meeting = lookup.meeting(registry, meeting_id)
         return managed.meeting_storage(registry, meeting)
 
-    @app.delete("/api/meetings/{meeting_id}/tapes/{tape_id}")
+    @app.delete("/api/v1/meetings/{meeting_id}/tapes/{tape_id}")
     def delete_tape(meeting_id: int, tape_id: int) -> TapeDeletedOut:
         """Delete one managed tape's file and record.
 
-        The archive is the durable copy; the response says so, and a tape in a
-        user-chosen workspace is refused (it is not app-owned data).
+        The delete requires a **verified archive that holds the tape's current
+        bytes** — the durable copy — so it is refused (400) when none verifies, or
+        when none holds them, with the archive action named; a tape in a
+        user-chosen workspace is refused too (it is not
+        app-owned data). On success the note names the archive that made the
+        delete reconstructible (ADR-0033).
         """
         meeting = lookup.meeting(registry, meeting_id)
         lookup.tape(registry, meeting, tape_id)
         try:
-            tape = managed.delete_tape(registry, meeting, tape_id)
+            deletion = managed.delete_tape(registry, meeting, tape_id, actor=API)
         except managed.UploadRejected as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TapeDeletedOut(
-            deleted=TapeOut.model_validate(tape),
+            deleted=TapeOut.model_validate(deletion.tape),
             note=(
-                "the archive is the durable copy; archive this meeting before "
-                "deleting its tapes if you need to keep it"
+                "the verified archive holding the tape is the durable copy: "
+                f"{deletion.archive.root_path}"
             ),
         )
 
-    @app.post("/api/meetings/{meeting_id}/runs", status_code=202)
+    @app.post("/api/v1/meetings/{meeting_id}/runs", status_code=202)
     def start_run(request: Request, meeting_id: int, body: RunCreate) -> RunSnapshotOut:
         """Start a run over a meeting — the route a **remote** client uses.
 
@@ -2500,7 +3124,7 @@ def create_app(
         _require_model_name(body.model)
         return enqueue_run(meeting, body)
 
-    @app.post("/api/runs", status_code=202)
+    @app.post("/api/v1/runs", status_code=202)
     def start_workspace_run(
         request: Request, body: WorkspaceRunCreate
     ) -> RunSnapshotOut:
@@ -2543,7 +3167,9 @@ def create_app(
         if not body.directory.strip():
             raise HTTPException(status_code=400, detail=BLANK_DIRECTORY)
         try:
-            meeting = workspace_run_meeting(registry, body.directory)
+            # The caller declares the directory, and the run request declares its
+            # ``origin``; the actor is *this transport* (ADR-0033).
+            meeting = workspace_run_meeting(registry, body.directory, actor=API)
         except ValueError as exc:
             # Both directory-path refusals: a folder whose own
             # ``.clear-record-ignore`` names every audio file it holds (so the
@@ -2557,13 +3183,13 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return enqueue_run(meeting, body)
 
-    @app.get("/api/runs/{run_id}")
+    @app.get("/api/v1/runs/{run_id}")
     def get_run(run_id: int) -> RunSnapshotOut:
         run = lookup.run(registry, run_id)
         state = lookup.run_state(runs, run_id)
         return RunSnapshotOut(run=RunOut.model_validate(run), state=state.summary())
 
-    @app.get("/api/runs/{run_id}/events")
+    @app.get("/api/v1/runs/{run_id}/events")
     def run_events(run_id: int, after: int = 0) -> RunEventsOut:
         state = lookup.run_state(runs, run_id)
         events = state.events_since(after)
@@ -2573,7 +3199,7 @@ def create_app(
         )
 
     # --- JSON API: archives ------------------------------------------------- #
-    @app.post("/api/meetings/{meeting_id}/archives", status_code=201)
+    @app.post("/api/v1/meetings/{meeting_id}/archives", status_code=201)
     def post_archive(
         meeting_id: int, request: Request, body: ArchiveCreate | None = None
     ) -> ArchiveOut:
@@ -2589,12 +3215,12 @@ def create_app(
         if root:
             _require_local_client(request)
         try:
-            archive = archive_meeting(registry, meeting, root)
+            archive = archive_meeting(registry, meeting, root, actor=API)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ArchiveOut.model_validate(archive)
 
-    @app.get("/api/projects/{slug}/archives")
+    @app.get("/api/v1/projects/{slug}/archives")
     def list_project_archives(slug: str) -> list[ArchiveOut]:
         lookup.project(registry, slug)
         archives = [
@@ -2605,7 +3231,7 @@ def create_app(
         archives.sort(key=lambda archive: archive.id, reverse=True)
         return [ArchiveOut.model_validate(archive) for archive in archives]
 
-    @app.get("/api/meetings/{meeting_id}/archives")
+    @app.get("/api/v1/meetings/{meeting_id}/archives")
     def list_meeting_archives(meeting_id: int) -> list[ArchiveOut]:
         lookup.meeting(registry, meeting_id)
         return [
@@ -2613,22 +3239,27 @@ def create_app(
             for archive in registry.list_archives(meeting_id)
         ]
 
-    @app.post("/api/archives/{archive_id}/verify")
+    @app.post("/api/v1/archives/{archive_id}/verify")
     def post_verify(archive_id: int) -> ArchiveVerification:
         archive = lookup.archive(registry, archive_id)
         try:
-            return verify_archive(archive.root_path)
+            # The registry's sealed manifest digest is what makes this an answer
+            # about *this archive's* record rather than about whatever manifest
+            # is on the disk now.
+            return verify_archive(
+                archive.root_path, manifest_sha256=archive.manifest_sha256
+            )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @app.post("/api/shutdown", status_code=202)
-    def shutdown() -> ShutdownOut:
-        """Ask the managed server to stop (the desktop app's Quit button).
+    def ask_the_server_to_stop() -> None:
+        """Ask the managed server to stop, or refuse when nothing manages it.
 
         The console runs as a local server; a windowed desktop build has no
-        terminal to Ctrl-C, so the UI needs an explicit way to stop it. When the
-        app is served by something other than this module's ``serve()`` (e.g. a
-        test client), there is nothing to stop.
+        terminal to Ctrl-C, so an explicit way to stop it is needed. When the app
+        is served by something other than this module's ``serve()`` (e.g. a test
+        client), there is nothing to stop. One act, two callers: the console's own
+        Quit control and the machine lever below.
         """
         server = getattr(app.state, "server", None)
         if server is None:
@@ -2636,6 +3267,30 @@ def create_app(
                 status_code=409, detail="not running under the managed server"
             )
         server.should_exit = True
+
+    @app.post(f"{CONSOLE_PATH}/ui/shutdown", status_code=204)
+    def ui_shutdown() -> Response:
+        """The console's own Quit control: the header button, as a console route.
+
+        A console control is the console acting as itself, so it is answered under
+        the console's prefix and authorised by the console's session — the machine
+        API keeps its own shutdown lever for scripts and a supervisor (the tray
+        stops the node it started itself, in process), and the session cookie never
+        rides on ``/api/v1/*`` (``web/auth.py``). htmx gets ``204``,
+        which its config already refuses to swap anywhere.
+        """
+        ask_the_server_to_stop()
+        return Response(status_code=204)
+
+    @app.post("/api/v1/shutdown", status_code=202)
+    def shutdown() -> ShutdownOut:
+        """Ask the managed server to stop, for a machine client.
+
+        The tray's own use of the node is unchanged by the console moving: this
+        is the lever a script or a supervisor calls, and it answers the JSON
+        shape it always did.
+        """
+        ask_the_server_to_stop()
         return ShutdownOut(status="stopping")
 
     return app
@@ -2656,7 +3311,7 @@ def _open_console(server: NodeServer, requested: node.NodeAddress) -> None:
     open a dead endpoint. A node on an ephemeral port knows its port only once it
     has bound, so ``requested`` is the fallback for a server that has not.
     """
-    webbrowser.open((server.bound() or requested).url)
+    webbrowser.open((server.bound() or requested).url_for(CONSOLE_HOME))
 
 
 def serve(
@@ -2666,6 +3321,7 @@ def serve(
     open_browser: bool,
     data_dir: str | None = None,
     trusted_hosts: Sequence[str] | None = None,
+    trusted_proxies: Sequence[str] | None = None,
     log_config: dict | None = None,
     supervise: bool = False,
 ) -> int:
@@ -2677,6 +3333,11 @@ def serve(
     the
     ``CR_TRUSTED_HOSTS`` default.
 
+    ``trusted_proxies`` is forwarded the same way and for the same reason: the
+    peers whose forwarded headers the guard honours (default:
+    ``CR_TRUSTED_PROXIES``), which ``--tailscale`` uses to declare the loopback
+    hop Serve proxies from without asking the operator for a second variable.
+
     ``log_config`` is forwarded to uvicorn: ``serve`` passes the diagnostics-sink
     config so a headless node's logs land beside every other clear-record record;
     ``None`` keeps uvicorn's own (stderr) logging, which is right for the
@@ -2686,7 +3347,7 @@ def serve(
     without being asked — a crash, or a return no stop requested — is started
     again over the same registry, after :data:`_RESTART_PAUSE` so a fault that
     repeats cannot spin. A stop that *was* asked for ends the process as it does
-    an unsupervised node: ``POST /api/shutdown`` asks the server to stop
+    an unsupervised node: ``POST /api/v1/shutdown`` asks the server to stop
     (``should_exit``), and a signal ends it because uvicorn's ``capture_signals``
     restores the handlers it replaced and then re-raises what it caught — so
     Ctrl-C and ``SIGTERM`` finish the process by signal, not through the loop's
@@ -2694,12 +3355,44 @@ def serve(
     what ``serve --supervise`` passes.
     """
     registry = Registry.open(data_dir=data_dir)
+    # The node's own files — the address record and the session its machine's
+    # clients present — are published and cleared by the server this runs
+    # (:class:`NodeServer`), so every posture that serves the console has them.
+    return _serve_forever(
+        registry,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+        trusted_hosts=trusted_hosts,
+        trusted_proxies=trusted_proxies,
+        log_config=log_config,
+        supervise=supervise,
+    )
+
+
+def _serve_forever(
+    registry: Registry,
+    *,
+    host: str,
+    port: int,
+    open_browser: bool,
+    trusted_hosts: Sequence[str] | None,
+    trusted_proxies: Sequence[str] | None,
+    log_config: dict | None,
+    supervise: bool,
+) -> int:
+    """The node's own loop: one server, restarted while supervising (ADR-0013)."""
     while True:
-        app = create_app(registry, trusted_hosts=trusted_hosts)
+        app = create_app(
+            registry, trusted_hosts=trusted_hosts, trusted_proxies=trusted_proxies
+        )
         extra = {} if log_config is None else {"log_config": log_config}
+        # The forwarded-header posture is the server class's, not this line's:
+        # :class:`NodeServer` starts every console with the server's own handling
+        # off, so the guard's declaration is the decision.
         config = uvicorn.Config(app, host=host, port=port, log_level="info", **extra)
         server = NodeServer(config)
-        # Exposed so `POST /api/shutdown` can ask the server to stop — the desktop
+        # Exposed so `POST /api/v1/shutdown` can ask the server to stop — the desktop
         # build has no terminal to interrupt.
         app.state.server = server
         if open_browser:

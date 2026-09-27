@@ -72,13 +72,22 @@ _RELEASED_ROW = {
 def _seeded_run(tmp_path) -> tuple[Registry, int]:
     """A registry holding one queued run, with its complete options row."""
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     return registry, run.id
 

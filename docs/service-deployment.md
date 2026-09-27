@@ -9,20 +9,23 @@ Provenance: [FACT] claims are verifiable in this repo or in the sources the
 research note cites; [DESIGN] is a chosen shape; [OPEN] is unresolved.
 
 This guide is the operator half of [ADR-0021](adr/0021-localhost-only-deployment.md).
-The reasoning — why localhost-only, why the proxy owns authentication, what was
-deferred — lives in
+The reasoning — why localhost-only, why the proxy stays the ingress, what the
+console's own credential adds to that (ADR-0033), and what was deferred — lives
+in
 [`docs/research/2026-09-15-clear-record-as-a-service.md`](research/2026-09-15-clear-record-as-a-service.md);
 this page does not repeat it. Read that for the *why*; read this for the *how*.
 
 ## The shape, in one paragraph
 
 [FACT, repo] `clear-record web` / `clear-record serve` start a uvicorn server that
-**binds `127.0.0.1:8765` by default and ships no authentication**
-(ADR-0013/ADR-0014).
+**binds `127.0.0.1:8765` by default and gates everything it serves behind one
+console password** (ADR-0013/ADR-0014; the credential itself is ADR-0033's —
+[§1](#the-console-credential-adr-0033) below).
 [DESIGN] It is a **backend**. Your reverse proxy is the **only ingress**: it
-terminates TLS, authenticates you, and forwards to `127.0.0.1:8765`. Nothing
-else should be able to reach that port — if another device can open
-`http://<host>:8765/` directly, it bypasses every control on this page.
+terminates TLS and forwards to `127.0.0.1:8765`. Nothing else should be able to
+reach that port — a device that opens `http://<host>:8765/web/` directly reaches
+the sign-in page rather than the console, but a password typed over plain HTTP on a
+network is a password in the clear, so the port still belongs to loopback alone.
 
 Say this out loud once, because it is the whole posture: **bound to localhost is
 not the same as safe from the browser.** A hostile page open in the same browser
@@ -81,6 +84,8 @@ Environment=CR_DATA_DIR=%h/.local/share/clear-record
 Environment=CR_MODELS_DIR=%h/.local/share/clear-record/models
 # Add the hostname your proxy serves, so the guard trusts the browser's Origin:
 # Environment=CR_TRUSTED_HOSTS=console.example.com
+# Declare the proxy itself, so its forwarded headers are believed (§2):
+# Environment=CR_TRUSTED_PROXIES=127.0.0.1
 Restart=on-failure
 RestartSec=5
 
@@ -99,12 +104,13 @@ webhooks are configured, their signing secret is read from the process
 environment at delivery time — put it in an `EnvironmentFile=` with mode
 `0600` and accept that systemd warns environment variables are not a secret
 store (research note §1.4). Readiness can be polled from `ExecStartPost=` at
-`GET /api/health`.
+`GET /health` — it and the setup page are what answer without a credential (the
+compiled assets aside), and its whole body is `{"status": "ok"}`.
 
 No service manager? `clear-record serve --supervise` is the stand-in: the node
 keeps **itself** up — a server that stops without being asked is started again
 over the same registry, after a short pause — while an asked-for stop
-(`POST /api/shutdown`) or a signal ends it exactly as it does an unsupervised
+(`POST /api/v1/shutdown`) or a signal ends it exactly as it does an unsupervised
 node. No unit file and no root: just the command.
 
 ### macOS (launchd agent)
@@ -133,6 +139,7 @@ account. Save as `~/Library/LaunchAgents/com.clear-record.web.plist`:
     <key>CR_DATA_DIR</key><string>/Users/you/Library/Application Support/clear-record</string>
     <key>CR_MODELS_DIR</key><string>/Users/you/Library/Application Support/clear-record/models</string>
     <!-- <key>CR_TRUSTED_HOSTS</key><string>console.example.com</string> -->
+    <!-- <key>CR_TRUSTED_PROXIES</key><string>127.0.0.1</string> -->
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -168,19 +175,176 @@ docker run --detach --name clear-record \
   --volume clear-record-models:/models \
   --volume /path/to/workspace:/workspace \
   -e CR_DATA_DIR=/data -e CR_MODELS_DIR=/models \
+  -e CR_TRUSTED_HOSTS=console.example.com \
   clear-record-web:local \
   clear-record serve --host 0.0.0.0 --port 8765
 ```
 
 Two honest notes. `--host 0.0.0.0` is **inside** the container only — the
 `--publish 127.0.0.1:8765:8765` keeps the exposed port loopback-only on the
-host, and the request guard is what still refuses a rebound `Host` there. Add a
+host, and the request guard is what still refuses a rebound `Host` there;
+`CR_TRUSTED_HOSTS` is required all the same, because a bind past loopback with
+nothing declaring how the console is reached refuses to start (the paragraph
+below). And the peer a container's console sees is **not** `127.0.0.1`: it is
+whatever address your publishing puts in front of the container (with Docker's
+own port forwarding, normally the bridge gateway). So a `CR_TRUSTED_PROXIES`
+line for a container names *that* address — the address the console actually
+sees, never the host's loopback — or the forwarded headers stay unread and the
+session cookie is not `Secure` (§2). Add a
 GPU with `--gpus all` (NVIDIA, via the Container Toolkit) or
 `--device /dev/dri` (Vulkan), and a health probe against
-`GET /api/health`; if the proxy is itself a container, put both on one network
+`GET /health`; if the proxy is itself a container, put both on one network
 and publish nothing at all.
 
+### The console credential (ADR-0033)
+
+[FACT, repo] The console gates everything it serves behind **one password**. A
+fresh install has none: every route but `/web/setup`, `/health` and the compiled
+assets redirects to `/web/setup` (the machine API answers `401` instead of a
+redirect), and that page is where the first run sets the credential. The password
+is stored in the registry as a salted `scrypt` hash — never in `config.toml`, in
+the agent setup file, in a log line or in the diagnostics bundle — and signing in
+holds a **server-side session**: the browser gets an opaque cookie (`HttpOnly`,
+`SameSite=Lax`, scoped to the console, and `Secure` once TLS reaches the app), the
+registry holds only that cookie's digest, and every request re-reads the row.
+
+| Window | Default | What it means |
+|---|---|---|
+| Idle timeout | 12 hours | a session that sits unused this long is over; the clock moves on a request only once under half the window is left (the write is lazy, so a busy session costs the node no write per call) |
+| Absolute lifetime | 30 days | a session never outlives this, however busy it is |
+
+Sign out from the console's header. Settings → Status carries **Sign out
+everywhere**, which ends every session this node has issued — both take effect on
+the **next** request, with no restart.
+
+**The rescue.** Lost the password, or the page will not let you in? On the machine
+the node runs on:
+
+```sh
+clear-record password     # --data-dir / CR_DATA_DIR points at another registry
+```
+
+It prompts twice, writes the credential into the registry itself, prints the next
+step, and needs no session, no browser and no running node. Replacing a credential
+ends every session the old one opened, and a registry it cannot read is refused
+rather than half-written.
+
+#### Machine tokens for scripts (ADR-0033)
+
+[FACT, repo] A **script** that calls the machine API needs a credential of its
+own, and the operator is the only one who mints it: Settings → Status →
+**Machine tokens** → *Mint token*. A token is **labelled** (the label is the
+handle you match a script against), and the plaintext is shown **once**, in the
+response to the mint — the registry keeps only its SHA-256 digest, so no reload,
+no second visit and no copy of the registry can produce it again. The list
+beside the form shows every token's label, when it was minted, when it was last
+used and a **Revoke** button. Present it as a header:
+
+```sh
+curl -H "Authorization: Bearer $CR_TOKEN" http://127.0.0.1:8765/api/v1/projects
+```
+
+| Fact | What it means for the operator |
+|---|---|
+| Shown once | the plaintext exists in the mint response and nowhere else — not in the registry, not in a log line, not in the diagnostics bundle. Lost it? Revoke that token and mint another. |
+| Hashed at rest | the registry holds a SHA-256 digest of the token, never the token itself, so a leaked registry hands out no usable credential. |
+| Last used | a token's use moves `last_used_at` at most once per window (the gate records it lazily, so a busy script never costs the node a write per call); the list answers "is this script still calling?", and `never` means the token has not been presented yet. |
+| Revoked on the next request | a revoke **deletes** the row and the gate reads the row per request, so the very next call is refused — no restart, no grace window. |
+| No expiry | a token is not a session: it has no idle or absolute clock and lives until it is revoked. |
+| One label, one token | a second mint under a label already in use is refused rather than silently producing a second credential. |
+
+**Sign out everywhere** ends every browser session **and the node's own published
+one**: it deletes every `console_session` row, so the very next request from any
+of them is refused, with no restart. The one session that comes back is the one
+the node opens for its own machine (the command line): a running node checks its
+own session and re-opens it within a minute, because nobody is at that end to
+sign in. A token is a different
+credential and is revoked one row at a time, from the list above.
+
+**What a token can never do.** It authenticates the **machine API**
+(`/api/v1/…`) and nothing else: it cannot open a console page or fragment, and it
+cannot mint or revoke tokens. And it cannot destroy: no token — and no session,
+and no MCP client — authorizes an operation that destroys data a durable copy
+cannot reconstruct (ADR-0033). The machine API carries two `DELETE` verbs, and
+both are reconstructible: `DELETE /api/v1/glossary/{term_id}` **retires** a term
+(the row survives, and `POST /api/v1/glossary/{term_id}/restore` puts it back),
+and `DELETE /api/v1/meetings/{id}/tapes/{tape_id}` refuses until a **verified
+archive holds the tape's current bytes** — the durable copy its answer names —
+and unlinks nothing
+when it refuses. A **third** such verb would be a decision rather than an
+accident: the suite walks the table and fails on one.
+
+**The prefix is the whole of the test.** A request is a *machine* request when
+its path starts with `/api/v1/` and a console request otherwise, so a credential
+never turns a console path into a machine one: `/api/v1` **without** its trailing
+slash, and a machine path this release retired (`/api/health`, `/api/projects`),
+are answered as console requests — a `303` to `/web/setup` for a client that
+carries no session, token or not, where the machine API would have answered
+`401`'s JSON. A script upgraded from an earlier release that kept its token must
+address `/api/v1/…`; on an old path it gets the setup redirect (and `curl -L`
+would follow it to the setup page).
+
+**A bind past loopback needs a name the guard trusts.** The guard answers `403`
+to a `Host` that is neither loopback nor a name in `CR_TRUSTED_HOSTS`, so a
+non-loopback `--host` with none declared refuses to start — before a port is
+taken — with a message naming the ways forward:
+
+```
+refusing to bind '0.0.0.0': the request guard answers 403 to any Host but
+loopback or a name in CR_TRUSTED_HOSTS, and none is named, so this console would
+serve nobody.
+  Ways forward:
+    - keep the loopback bind (the default) and let your reverse proxy be the ingress: drop --host
+    - name the hostname this console answers to: CR_TRUSTED_HOSTS=<hostname>
+    - name the address your own command line and tray dial as well, so they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>
+    - let Tailscale Serve front it: --tailscale
+  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer>[,<peer>...], a
+  comma-separated list of the peers whose forwarded headers are honoured — but
+  that is not a name this console answers to: the hostname it forwards still has
+  to be in CR_TRUSTED_HOSTS.
+```
+
+`CR_TRUSTED_PROXIES` is a declaration too, and deliberately **not** a trust
+source: it names the peers whose forwarded headers the console honours (§2), and
+it makes no `Host` trustable — a forwarded name is checked exactly as a direct
+one is — which is why admitting a bind on the peer alone would start a console
+that refuses every request, the very thing this refusal exists to prevent.
+
+**The node's own machine.** A surface running as the same operating-system user
+as the node — the command line first — is inside the boundary this gate defends
+(ADR-0033), so it is never asked for the password: the node opens **one session
+for its own machine** through the same path a sign-in uses and publishes its token
+at `local-session` in its **state** directory (beside the address record — the
+platform state directory, or `CR_STATE_DIR`), mode
+`0600`, removed when the node exits cleanly. Anything that can read that file —
+your own account, and root — can act on the console as you; nothing on the network
+can, because the file is not served and a browser carries its own cookie. The node
+keeps it current while it runs: a fresh one is minted when the old reaches a
+deadline of its own clocks, or after **Sign out everywhere**, and a stale file is
+refused exactly like any other dead session.
+
+This file is the node's **own-machine credential**, and it is deliberately not a
+machine token. A token's plaintext is shown once and stored only as a digest, so
+a node could not hand its own command line a token across restarts without
+minting (and listing) a new one at every start — and a credential the operator
+can revoke from a page is the wrong shape for a client that has to keep working
+when nobody is looking. The file is a capability the node's own account already
+had: it can read and write the registry itself. The constraints above are the
+contract — one session through the same path, the same two clocks, written beside
+the address record at `0600`, removed on a clean exit, and refused like any other
+dead session once it is stale — and the suite pins each of them.
+
+The loopback default is unaffected: `clear-record serve` with no `--host` always
+starts. `CR_TRUSTED_HOSTS` names the hosts the console answers to (the one
+declaration the guard's own check reads); `CR_TRUSTED_PROXIES` names the peers
+whose forwarded headers the console honours (§2) and is still not a host it
+answers to — the name a proxy forwards has to be in `CR_TRUSTED_HOSTS` as well.
+
 ## 2. The request guard (on by default)
+
+[FACT, repo] The guard runs **outside** the auth gate: a request with a `Host` the
+console does not trust is refused `403` before a session is looked at, so DNS
+rebinding and CSRF are answered whatever cookie a request carries.
 
 [FACT, repo] `clear_record.web.guard`, installed as middleware in
 `clear_record.web.app`, rejects a hostile browser's requests before any handler
@@ -226,16 +390,73 @@ client dialling it from the network is treated as local too — your choice of b
 and trust is what admits it, and the bind stays loopback-only by default for
 exactly this reason. Two boundaries worth being clear about:
 
-- **The console is not that edge.** The `/ui/*` pages and forms are the node's
+- **The console is not that edge.** The `/web/ui/*` pages and forms are the node's
   own in-process face (ADR-0032), so they are not guarded: a visitor who reaches
   the console through your proxy can still type a path in its forms, and that path
   is a folder **on the node**; the console shows back the path the node resolved.
   The refusal belongs to the JSON API, the surface where a program names what it
   wants.
-- **Forward the original `Host`.** Caddy and Tailscale Serve do; nginx does with
-  `$host` and does **not** with `$proxy_host`. Rewriting it to a loopback name
-  would make every visitor look local, and a path typed on another machine would
-  then be resolved here.
+- **Pin the published name**; never forward the client's own `Host`. `Host` is
+  the name the path-local rule reads, so both recipes below set it — and
+  `X-Forwarded-Host` with it — to the hostname you published: `$proxy_host` is
+  the node's loopback name, which would make every visitor look local and let a
+  path typed on another machine be resolved here, while a client's own `Host`
+  passed through (nginx's `$host`) leaves that same decision to the client.
+
+### Forwarded headers: declare your proxy (`CR_TRUSTED_PROXIES`)
+
+[FACT, repo] A proxy that terminates TLS tells the console what the browser
+actually saw with `X-Forwarded-Proto` (and usually `X-Forwarded-Host` /
+`X-Forwarded-For`). The console believes those headers **only from a peer you
+declared**:
+
+```sh
+CR_TRUSTED_PROXIES=127.0.0.1
+```
+
+That single declaration is the whole of it, and it is **your responsibility** —
+nothing else makes a forwarded header readable. The value is a comma-separated
+list (`CR_TRUSTED_PROXIES=127.0.0.1,10.0.0.7`) when more than one hop forwards to
+the console. In a systemd unit it is the
+environment form §1 uses, `Environment=CR_TRUSTED_PROXIES=127.0.0.1`; launchd and
+containers set the same variable their own way. With a declared peer:
+
+| Header | What the console does with it |
+|---|---|
+| `X-Forwarded-Proto` | the request's scheme: the session cookie is marked `Secure` over your TLS, and the absolute URLs the app builds are the `https` ones (the console's own links are relative today, so this is the foundation rather than a visible change) |
+| `X-Forwarded-Host` | the authority the app's absolute URLs are built from (port included) — and the name the guard's `Host` check then judges, so it still has to be in `CR_TRUSTED_HOSTS`. It never decides whether the client addressed the node itself: that rule reads the `Host` the **client** sent (§3), so a forwarded `127.0.0.1` cannot make a remote client local |
+| `X-Forwarded-For` | the address the app attributes the request to (the rightmost entry that is not itself a declared proxy; a chain of nothing but declared peers takes its leftmost entry) — nothing reads it yet: the server's access log prints the transport peer, not this |
+
+A request from **any other peer** is judged by the socket it arrived on and the
+`Host` it carries: its forwarded headers are ignored rather than merged in, so a
+client cannot nominate its own scheme, name or address. With nothing declared — a
+stock install — no forwarded header is read at all, and uvicorn's own
+`FORWARDED_ALLOW_IPS` knob does nothing here: the console's server leaves
+forwarded headers to the declaration, so this is the only line that decides.
+
+**The forwarded name drives the URLs, never the path-local rule.** With a declared
+peer, `X-Forwarded-Host` becomes the authority the app's absolute URLs name and
+the name the guard's `Host` check judges, and that is all: whether a client may
+name a **path** on this node is decided from the `Host` the client itself sent, so
+a client's `X-Forwarded-Host: 127.0.0.1` cannot make it look local. The value is
+still the client's to choose — it puts it in its own request — so where a proxy
+*dials from* the request's own name, pin the published name instead: the recipes
+below set `X-Forwarded-Host` (and `Host`) to the hostname you published rather
+than forwarding `$host`, because a client that names `127.0.0.1` at the proxy
+would otherwise be naming the node. `Host` deserves the same care: the path-local
+rule reads the name the client addressed, so a proxy that copies the client's
+`Host` through leaves that name to the client.
+
+**If your proxy already runs on this machine, declare it:** the console no longer
+believes a loopback peer by default, and without the declaration the session
+cookie simply is not marked `Secure` (and absolute URLs, if a surface ever builds
+one, follow the socket). `--tailscale` declares Serve's own loopback hop for you
+(§3); your own nginx, Caddy or `tailscale serve` needs `127.0.0.1` named here.
+
+This is *not* how you decide who may reach the console — that is still your proxy
+and nothing else (§3). It is what makes the console's own answers correct behind
+it: a `Secure` session cookie, and absolute URLs that name the host the browser is
+really talking to.
 
 ## 3. Front it with a proxy
 
@@ -253,25 +474,36 @@ server {
         auth_basic_user_file /etc/nginx/clear-record.htpasswd;
 
         proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $host;   # the name the browser used — do not rewrite
+        # Pin the name you published — never `$host`, which a client's own Host
+        # sets (§2: the path-local rule reads what the client named).
+        proxy_set_header Host console.example.com;
+        proxy_set_header X-Forwarded-Host console.example.com;
+        proxy_set_header X-Forwarded-Proto $scheme;   # so the cookie can be Secure
     }
 }
 ```
 
 Create the password file with `htpasswd -c /etc/nginx/clear-record.htpasswd you`.
-Be explicit that `Host` is passed through: **do not** rewrite it to
-`127.0.0.1:8765`. The node reads the name the client addressed to tell a client on
-its machine from one that came in through this proxy: a name that is the node's
-own (its loopback, or the address it listens on) is what lets a client name a
-**path** for the node to resolve through the JSON API — a run's workspace
-directory, a tape, an archive root (ADR-0032) — while a client arriving through
-this proxy is told, in one sentence, to address work the registry's way instead.
-Rewriting `Host` would make every visitor look local, and a path typed on another
-machine would then be resolved here. `CR_TRUSTED_HOSTS=console.example.com` is
-required either way: `Host` is a name the guard must trust, and the browser's
-`Origin` is the public name too. This is HTTP Basic auth: use TLS, and treat the
-password as the only barrier between the internet and a console with no
-accounts of its own.
+Both names are pinned to the hostname you published, and that is the point. The
+node reads the name the client addressed to tell a client on its machine from one
+that came in through this proxy: a name that is the node's own (its loopback, or
+the address it listens on) is what lets a client name a **path** for the node to
+resolve through the JSON API — a run's workspace directory, a tape, an archive
+root (ADR-0032) — while a client arriving through this proxy is told, in one
+sentence, to address work the registry's way instead. Leaving `$host` there hands
+that decision to the client, and the forwarded name drives the URLs the console
+builds, so a client that sends `Host: 127.0.0.1` — or an `X-Forwarded-Host` a
+proxy copies through — would be treated as being on this machine and have a path
+of its own resolved here.
+`CR_TRUSTED_HOSTS=console.example.com` is required: `Host` is a name the guard
+must trust, and the browser's `Origin` is the public name too.
+`proxy_set_header X-Forwarded-Proto $scheme` and `CR_TRUSTED_PROXIES=127.0.0.1`
+(the address nginx dials *from*) are what tell the console the browser is on TLS
+and make it mark the session cookie `Secure` — without them it falls back to the
+socket's own plain-HTTP facts and the cookie is not `Secure`.
+This is HTTP Basic auth: use TLS, and treat the proxy's password as the **outer**
+barrier — the console's own credential (§1, *The console credential*) sits behind
+it and does not replace it.
 
 ### Caddy (`forward_auth`)
 
@@ -286,13 +518,25 @@ console.example.com {
         uri /api/verify?rd=https://auth.example.com/
         copy_headers Remote-User Remote-Groups
     }
-    reverse_proxy 127.0.0.1:8765
+    reverse_proxy 127.0.0.1:8765 {
+        # Caddy mirrors the request's Host into X-Forwarded-Host; pin both to the
+        # published name rather than leaving the client to choose it (§2).
+        header_up Host console.example.com
+        header_up X-Forwarded-Host console.example.com
+    }
 }
 ```
 
-Caddy passes the original `Host` through, so set
-`CR_TRUSTED_HOSTS=console.example.com` and the guard will accept both the
-`Host` and the browser's `Origin`. Caddy obtains and renews TLS automatically.
+Caddy passes incoming headers through and sets the forwarded headers itself,
+including `X-Forwarded-Host`, which it copies from the request's `Host` (it
+ignores incoming `X-Forwarded-*` values unless you configure `trusted_proxies`).
+Pinning `Host` and `X-Forwarded-Host` to the hostname you published is what keeps
+the client from choosing the name the console's path-local rule reads (§2), and
+`CR_TRUSTED_HOSTS=console.example.com` is required either way: the guard accepts
+the `Host` and the browser's `Origin`, and the name Caddy forwards is the one
+checked. Set `CR_TRUSTED_PROXIES=127.0.0.1`, the address Caddy dials from, so its
+`X-Forwarded-Proto` is believed and the session cookie is `Secure`. Caddy obtains
+and renews TLS automatically.
 
 ### Tailscale
 
@@ -312,8 +556,13 @@ clear-record serve --tailscale      # for a service unit (no browser)
 It reads the name from `tailscale status --json` (`Self.DNSName`, trailing dot
 normalized), runs
 `tailscale serve --https=<port> http://127.0.0.1:<console-port>`, and prints the
-URL (`https://<machine>.<tailnet>.ts.net/`, or with `:<port>` when the exposed
-port is not 443).
+URL (`https://<machine>.<tailnet>.ts.net/web/`, or with `:<port>` when the exposed
+port is not 443). It also **declares Serve's own hop** (`127.0.0.1`, the address
+Serve proxies from) as a trusted proxy, so Serve's `X-Forwarded-Proto` is believed
+and a tailnet request gets a `Secure` session cookie — no second variable for you
+to set. Running `tailscale serve` yourself instead? Declare that hop yourself:
+`CR_TRUSTED_PROXIES=127.0.0.1` (plus the tailnet name in `CR_TRUSTED_HOSTS`), or
+the console judges the request by the plain loopback socket it arrives on.
 
 #### Finding the `tailscale` binary
 
@@ -345,11 +594,11 @@ refused.
 #### The exposed port
 
 [DESIGN] Both ports default to the same number (8765), so a plain `--tailscale`
-publishes `https://<machine>.<tailnet>.ts.net:8765/`. Choose a different tailnet
+publishes `https://<machine>.<tailnet>.ts.net:8765/web/`. Choose a different tailnet
 port with `--tailscale-port` (the console's own `--port` is unchanged):
 
 ```sh
-clear-record web --tailscale --tailscale-port 443   # https://<machine>.<tailnet>.ts.net/
+clear-record web --tailscale --tailscale-port 443   # https://<machine>.<tailnet>.ts.net/web/
 ```
 
 The Serve **target** is always `http://127.0.0.1:<--port>`: Serve proxies only
@@ -379,10 +628,11 @@ independently refuses a second listener on a busy port, so the snapshot is a
 courtesy on top of that safety net.) If the existing rule is not the console,
 pick a free port with `--tailscale-port`.
 
-> **The tailnet is the authentication.** The console still ships no accounts of
-> its own, so **anyone who can reach your tailnet can reach the console.** If
-> that is not what you want, use tailnet access controls and device approval —
-> there is no second password on this path (ADR-0021).
+> **The tailnet is the perimeter; the console has its own password.** The
+> tailnet still decides *who can reach the console*, and since ADR-0033's gate
+> landed the console also asks for its own credential — one password, its own
+> sessions — so a device on your tailnet that is not yours still cannot read your
+> meetings. Keep tailnet access controls and device approval as the outer layer.
 
 [DESIGN] A **refused Serve is a warning, not a dead console**: the flag is a
 convenience, so if Serve cannot start the console starts anyway with the tailnet
@@ -463,24 +713,41 @@ partial or dropped upload leaves **no** tape behind.
 
 ### Storage visibility and deleting tapes
 
-[FACT] `GET /api/meetings/{id}/storage` reports the workspace size, the managed
+[FACT] `GET /api/v1/meetings/{id}/storage` reports the workspace size, the managed
 root's **free space** (`free_bytes`, `null` when the meeting is not managed or
 the filesystem cannot report it — the same accounting the upload guard checks),
 and the uploaded tapes (path, sha256, size);
-`DELETE /api/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
+`DELETE /api/v1/meetings/{id}/tapes/{tape_id}` deletes a **managed** tape. A tape in
 a user-chosen workspace cannot be deleted here — it is your document.
 
-> **The archive is the durable copy.** Deleting workspace tapes frees the node;
-> archive the meeting first (`POST /api/meetings/{id}/archives`) if you need to
-> keep it. An archive is a copy, never a move (ADR-0006).
+> **Deleting requires a verified archive that holds the tape.** The route
+> re-checks the meeting's archives against their manifests (`verify_archive`)
+> and refuses with 400 when none verifies, or when **no single verified archive
+> holds every tape being deleted** — *archive the meeting again* — unlinking
+> nothing; the refusal
+> names the archive action and the tapes missing from at least one verified
+> archive, and the console's controls state the precondition.
+> With such an archive the delete proceeds, and the response's note names the
+> archive that is the durable copy. An archive is a copy, never a move
+> (ADR-0006); archive the
+> meeting (`POST /api/v1/meetings/{id}/archives`) before deleting its tapes.
+
+Deleting a **glossary term** is likewise not a row delete: the console's and the
+API's `DELETE` retire the term instead — the row survives with `added_by` and
+`created_at`, stops biasing the decoder, and can be restored — `POST
+/api/v1/glossary/{term_id}/restore`, or the console's Restore button — to the
+status it held before the retire (a retired candidate returns as a candidate,
+never as owner-accepted truth).
 
 ### Security: uploads raise the stakes on the proxy
 
 [DESIGN] Every surface before this one could only **read** local files. This one
 **writes** multi-GB files to the node. ADR-0021's shape does not change — the
-app still binds loopback and ships no auth — but the reason the proxy must be
-the **only** ingress is now sharper: anything that can reach an upload endpoint
-can fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
+app still binds loopback, and the console's one credential is now in front of
+every route but `/web/setup`, `/health` and the compiled assets — but the reason the
+proxy must be
+the **only** ingress is now sharper: anything that can *sign in* can reach an
+upload endpoint and fill your disk. Keep the bind on `127.0.0.1`, keep the proxy in front, and
 treat `CR_TRUSTED_HOSTS` as the minimal, explicit hatch it is (§2). The managed
 root's permissions and free space are operator concerns; the guards bound an
 upload, they do not make a public port safe.
@@ -564,15 +831,25 @@ cheap (`docs/architecture.md` §8).
 
 ## 6. What this does not cover
 
-- **In-app authentication.** There is none, by design, for now (ADR-0021
-  defers, not rejects, LAN auth). The proxy is the auth.
+- **Per-user accounts and RBAC.** The console has **one** credential and no
+  usernames (ADR-0033): every surface's mutation is attributed to the surface
+  (`console`, `api`, `mcp`, `cli`, `queue`), not to a person, and a token is
+  labelled for the operator's own bookkeeping rather than being an identity —
+  the audit record still signs the HTTP API's writes as `api`, not
+  `api:<token label>`. What exists: the salted hash in the registry, the human
+  sessions and their two windows, the machine tokens (§1) and the node's own
+  ready-made session for its own machine, the `/web/setup` + `/health` +
+  `/static` anonymous surface, and the rescue command. Per-project
+  authorization, an approvals ceremony and a per-token actor are deferred, not
+  rejected; the rule they will meet is ADR-0033's — a credential alone may not
+  destroy something no durable copy can reconstruct.
+- **Remote MCP.** `/mcp` over HTTP is decided, not mounted (ADR-0017, ADR-0033):
+  a machine token authenticates the JSON machine API (`/api/v1`) today, and the
+  `/mcp` transport stays deferred until a client needs a non-local one.
 - **A published container image.** You build it, whisper.cpp and all.
 - **Flatpak as a service.** [FACT] Flatpak has **no supported background-service
   model** — the request to export systemd user units is an open issue from 2019.
   Flatpak is the desktop bundle (ADR-0015), not the node.
-- **Trusting `X-Forwarded-*`.** [OPEN] in ADR-0021 (deferred, not built: no
-  code reads `X-Forwarded-*` or `CR_TRUSTED_PROXIES`); the UI uses relative
-  URLs, so a proxy that terminates TLS does not need them today.
 - **Resumable/chunked upload.** A single POST restarts a dropped transfer
   (ADR-0024, §4).
 
@@ -580,6 +857,12 @@ cheap (`docs/architecture.md` §8).
 
 - [ADR-0024](adr/0024-managed-workspace-tape-upload.md) — the managed workspace.
 - [ADR-0021](adr/0021-localhost-only-deployment.md) — the decision.
-- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — localhost-only, no auth.
+- [ADR-0033](adr/0033-the-auth-position.md) — the credential, the sessions, and
+  what the auth position does *not* build.
+- [ADR-0013](adr/0013-bundled-web-and-service-surface.md) — the console and the
+  `serve` command ship in the single dist, behind the `[web]` extra. The
+  loopback-only, no-auth posture is
+  [ADR-0021](adr/0021-localhost-only-deployment.md)'s (superseded in part by
+  ADR-0033).
 - [Research: clear-record as a service](research/2026-09-15-clear-record-as-a-service.md)
   — systemd/container/Flatpak/launchd, the auth options, and state durability.

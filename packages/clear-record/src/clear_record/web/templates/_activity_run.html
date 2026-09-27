@@ -12,7 +12,7 @@
   <div class="run-head">
     <span class="badge status-{{ run.status }}">{{ run.status }}</span>
     {% if row.meeting_slug %}
-    <a href="/projects/{{ row.project_slug }}/meetings/{{ row.meeting_slug }}">{{ row.meeting_title }}</a>
+    <a href="/web/projects/{{ row.project_slug }}/meetings/{{ row.meeting_slug }}">{{ row.meeting_title }}</a>
     {% else %}<span>{{ row.meeting_title }}</span>{% endif %}
     {% if row.project_name %}<span class="muted">{{ row.project_name }}</span>{% endif %}
     {% if row.position %}<span class="run-count">{{ tr("position {n}", n=row.position) }}</span>{% endif %}

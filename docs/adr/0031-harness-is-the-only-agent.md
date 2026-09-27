@@ -165,7 +165,7 @@ Date: 2026-09-23
 
 ## Consequences / review hook
 
-- **The console asks for nothing.** Settings → Agent and `/setup/agent` are the
+- **The console asks for nothing.** Settings → Agent and `/web/setup/agent` are the
   harness and MCP-client-config rungs plus the hello-world acceptance check;
   `service.setup` keeps `find_harness`/`resolve_harness`/`write_mcp_config` and
   drops the endpoint probe, the verify call and the managed-block writer.
@@ -187,3 +187,13 @@ Date: 2026-09-23
 - **Revisit** if a genuinely in-app, model-free job appears (a deterministic
   check, say): that is a feature, not a runner, and it would not bring a
   credential back.
+
+## Update (2026-09-26) — the declared author becomes the transport's actor
+
+- [DECISION] [ADR-0033](0033-the-auth-position.md) supersedes the **declared**
+  part of this ADR's author provenance: a draft version's author becomes the actor
+  its transport supplies — `mcp`, the stdio adapter that writes every version —
+  rather than a string a caller chooses; an accept/reject **decision** is recorded
+  against the transport that makes it (`console` for the console, `api` for a
+  machine client, `mcp` for the adapter). The chain shape, the accept/reject
+  decisions, and everything else here stand.

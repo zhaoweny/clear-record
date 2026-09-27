@@ -12,6 +12,11 @@ artifacts. It is intentionally not a database::
         transcribe.log      Durable append-only log of every stage's lines.
         audio/              Normalized 16 kHz mono copies of the sources.
         export/             Markdown/SRT/VTT/JSON artifacts from `export`.
+        runs/<run id>/      One run's own copy of the documents above — its
+                            manifest, segments, record and export/ (ADR-0033).
+                            A node run writes here and a finished run publishes
+                            that copy at the root; the directory is marked by
+                            .clear-record-run.json. Not an input.
         .clear-record-ignore  Inputs discovery must not take (one glob per
                             line, relative to the workspace).
 
@@ -29,10 +34,12 @@ here is ever committed.
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 import hashlib
 import os
+import shutil
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -61,6 +68,36 @@ RECORD = "record.json"
 EXPORT_DIR = "export"
 AUDIO_DIR = "audio"
 CHUNKS_DIR = "chunks"
+#: The workspace's per-run copy area: ``<workspace>/runs/<run id>/`` holds one
+#: run's own manifest, transcript segments, reconciled record and exports, so a
+#: later run writes *its* own copies and the earlier run's stay readable
+#: (ADR-0033: rewrite-in-place is destructive in kind; run outputs are
+#: run-scoped snapshots and prior versions are retained). The workspace root
+#: holds the **published** copy of the newest run — the default read — and a
+#: finished run publishes its own copy there (see :func:`publish_run`).
+RUNS_DIR = "runs"
+
+#: The marker an **app-owned directory under ``runs/``** carries, naming the
+#: workspace it belongs to: a run's own copy area
+#: (:meth:`Workspace.begin_scope`) names the run it is as well, while a retained
+#: copy of the root's unscoped outputs (:func:`_retained_dir`) belongs to no run
+#: and names none. It is what makes such a directory the app's own: ``runs`` is
+#: an ordinary word, so a workspace that happens to sit at ``…/runs/7`` must not
+#: be mistaken for a run scope — only a **marked** directory resolves back to the
+#: workspace whose run wrote it, and only a marked directory is skipped by
+#: discovery (everything else under ``runs/`` is the operator's, and is
+#: classified like any other file). Hidden, like
+#: :data:`IGNORE_FILE`, so it is not itself an input or a file the walk narrates.
+RUN_MARKER = ".clear-record-run.json"
+
+#: The app-owned directory for a run's own glossary snapshot, a **sibling** of
+#: the chunk cache (:data:`CHUNKS_DIRNAME`) under the platform cache root. It
+#: must not live *inside* the chunk-cache namespace: a source's cache is a
+#: directory there named by the source's id, so a source whose id slugs to
+#: ``glossary.txt`` (any audio file named ``glossary.txt.<ext>``) would be the
+#: very path this file needs — a directory where a file must be. Keyed per
+#: workspace like the chunk cache (:attr:`Workspace.run_glossary_path`).
+RUN_GLOSSARY_DIRNAME = "run-glossary"
 GLOSSARY = "glossary.txt"
 TRANSCRIBE_LOG = "transcribe.log"
 GROUND_TRUTH = "ground_truth.json"
@@ -88,7 +125,10 @@ def is_audio(path: Path) -> bool:
 
 
 # Workspace-managed subdirectories that must never be re-discovered as sources
-# (they hold our own normalized/derived output).
+# (they hold our own normalized/derived output). ``runs/`` is **not** here: only
+# a *marked* run scope under it is the app's own, so it is handled by
+# :func:`_run_scopes` — an operator's own `runs/` audio would otherwise be
+# dropped without a word.
 SKIP_DIRS = {AUDIO_DIR, EXPORT_DIR, CHUNKS_DIR}
 
 #: The workspace's own bookkeeping files, by name, wherever the walk meets them.
@@ -180,6 +220,29 @@ class DeclarationUnreadable(ValueError):
         super().__init__(f"cannot read {path}: {detail}")
 
 
+def _run_scopes(directory: Path) -> frozenset[str]:
+    """The names under ``<directory>/runs/`` that are **marked** — the app's own.
+
+    A marked directory is the app's own output — one run's copy area
+    (:data:`RUN_MARKER`), or a retained copy of the root's unscoped outputs
+    (:func:`_retained_dir`), which carries the same mark and names no run — so
+    the walk never takes anything under it as an input. Any *other* directory
+    under ``runs/`` is the operator's — a capture folder that happens to be
+    named ``runs`` with a take in it, say — and its files are classified like
+    any other: narrowing the rule to marked scopes is what keeps a workspace's
+    own audio from being dropped without a word (the previous name-based skip
+    silently swallowed it, and the pass then refused with "no audio files
+    found"). An unlistable ``runs/`` has no scopes to name, and the walk
+    underneath it is ``rglob``'s to skip.
+    """
+    runs = directory / RUNS_DIR
+    try:
+        children = list(runs.iterdir())
+    except OSError:
+        return frozenset()
+    return frozenset(child.name for child in children if (child / RUN_MARKER).is_file())
+
+
 def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
     """Recursively classify *directory*: ``(audio inputs, files walked past)``.
 
@@ -198,8 +261,9 @@ def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
 
     Not every other file is narrated, because not every other file is a tape:
     the workspace's own output dirs (:data:`SKIP_DIRS`), its bookkeeping files
-    (:data:`WORKSPACE_FILES`) and the app's own agent-artifact directory
-    (:data:`AGENT_DIRNAME`) are its own state, and a hidden entry (a checkout's
+    (:data:`WORKSPACE_FILES`), the app's own agent-artifact directory
+    (:data:`AGENT_DIRNAME`) and each **marked run scope** under ``runs/``
+    (:func:`_run_scopes`) are its own state, and a hidden entry (a checkout's
     ``.git``, a stray ``.DS_Store``, the upload scratch file
     ``.cr-upload-*.part``) is machinery, not an input. Only *this* walk is kept
     off the agent directory: audio beneath it still discovers, so it is not in
@@ -208,11 +272,14 @@ def discover_inputs(directory: Path) -> tuple[list[Path], list[Path]]:
     audio: list[Path] = []
     skipped: list[Path] = []
     patterns = Workspace.at(directory).ignore_patterns()
+    scopes = _run_scopes(directory)
     for p in sorted(directory.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(directory).parts
         if rel and rel[0] in SKIP_DIRS:
+            continue
+        if rel and rel[0] == RUNS_DIR and len(rel) > 1 and rel[1] in scopes:
             continue
         if is_audio(p):
             if _ignored("/".join(rel), patterns):
@@ -441,6 +508,53 @@ class ChunkCache:
         _publish_json(self.segments_path(index), [to_dict(s) for s in segments])
 
 
+def _run_scope(directory: Path) -> tuple[Path, int | None]:
+    """``(workspace, run id)`` for a directory: a marked run scope, or a workspace.
+
+    A **run scope** is a directory the app made for one run and marked as such
+    with :data:`RUN_MARKER` — ``<workspace>/runs/<run id>/.clear-record-run.json``,
+    naming the workspace it belongs to and the run it is
+    (:meth:`Workspace.begin_scope`). Only a marked directory opens as a scope.
+    ``runs`` is an ordinary word: a meeting workspace that happens to sit at
+    ``…/runs/7`` is a workspace like any other, and inferring a scope from the
+    leaf name alone put its outputs in a *different* directory, left its own
+    tapes outside the walk, and made ``read_transcript`` raise.
+
+    Within a scope, :attr:`Workspace.root` is the workspace the marker names —
+    where the tapes' normalized ``audio/``, the ``glossary.txt`` a hand-edit
+    lands in, the ``.clear-record-ignore`` declaration, the chunk cache's key
+    and the published copy live — and the documents go to the scope itself.
+    Anything unmarked is the workspace itself, which is what keeps a stage
+    command, ``calibrate`` and a test's temporary directory writing exactly
+    where they wrote before. A marker that cannot be read declares nothing and
+    opens the directory as its own workspace; a scope's writes then land in the
+    scope directory itself, which is where they were going anyway.
+    """
+    try:
+        marker = load_json(directory / RUN_MARKER)
+    except (OSError, ValueError):
+        return directory, None
+    if not isinstance(marker, Mapping):
+        return directory, None
+    workspace = marker.get("workspace")
+    run_id = marker.get("run_id")
+    if not isinstance(workspace, str) or not workspace:
+        return directory, None
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id < 1:
+        return directory, None
+    return Path(workspace), run_id
+
+
+def _read_manifest(path: Path) -> tuple[list[Source], Alignment | None]:
+    """Parse one manifest file: ``(sources, alignment)``."""
+    data = load_json(path)
+    sources = [source_from_dict(s) for s in data["sources"]]
+    alignment = (
+        alignment_from_dict(data["alignment"]) if data.get("alignment") else None
+    )
+    return sources, alignment
+
+
 @dataclasses.dataclass(frozen=True)
 class Workspace:
     """The single owner of a workspace's on-disk layout and read/writes.
@@ -448,26 +562,103 @@ class Workspace:
     Open one with :meth:`at`. Every path and every read/write on workspace state
     goes through this object, so the layout lives in one place and a temporary
     directory can substitute for it in tests.
+
+    A workspace opened at a directory **marked** as one run's scope
+    (:func:`_run_scope`, :data:`RUN_MARKER`) is that run's own copy area: the
+    run's documents are written there, as the run's retained copy, and
+    :attr:`root` stays the workspace the run belongs to. What that changes is
+    *where the documents go* (:attr:`outputs`) **and the run id they name
+    themselves with** — the manifest, the segments' ``meta`` and the record's
+    ``metadata`` (:meth:`write_manifest`, :meth:`write_segments`,
+    :meth:`write_record`); the inputs and the shared state — normalized audio,
+    the glossary, the ignore declaration, the transcription log, the chunk cache
+    — are the workspace's, so a re-run resumes the same cache and a resumed run
+    reads the same glossary as before (ADR-0033). An unmarked directory is never
+    a scope, however it is named.
     """
 
     root: Path
+    #: The run this workspace is the copy area of (``None``: the workspace
+    #: itself, which is where a stage command and ``calibrate`` write).
+    run_id: int | None = None
 
     @classmethod
     def at(cls, directory: str | Path) -> Workspace:
-        return cls(Path(directory))
+        return cls(*_run_scope(Path(directory)))
+
+    def run_scope(self, run_id: int) -> Workspace:
+        """This workspace's own copy area for one run (``<root>/runs/<run_id>``).
+
+        A value, not a creator: the directory and its marker are
+        :meth:`begin_scope`'s to make. A scope value is all a caller needs to
+        *read or write* a known run's own copy (the run path does exactly that
+        for a run whose scope was begun when it was claimed).
+        """
+        return dataclasses.replace(self, run_id=run_id)
+
+    def begin_scope(self, run_id: int) -> Workspace:
+        """Create this workspace's own copy area for one run, and mark it.
+
+        The marker (:data:`RUN_MARKER`) is what makes the directory a scope:
+        it names the workspace and the run, so opening the directory again — by
+        a stage, by a reader, by the run path after a restart or a re-claim —
+        resolves back to this workspace instead of guessing from the path. The
+        marker is published atomically (``.tmp`` + rename, :func:`_publish_json`),
+        as the chunk cache's meta and bodies are: a reader that opens the scope
+        mid-write must see a complete marker or none, never a torn body that would
+        silently open the scope as its own workspace. The document writers
+        (:meth:`write_manifest`, :meth:`write_segments`, :meth:`write_record` and
+        :meth:`write_ground_truth`) go through ``write_json`` and write in place,
+        by contrast. The marker is rewritten for a run that begins again in a
+        scope that already exists, which is idempotent; a **resume** is a *new*
+        run and begins its own scope.
+        """
+        scope = self.run_scope(run_id)
+        scope.outputs.mkdir(parents=True, exist_ok=True)
+        _publish_json(
+            scope.outputs / RUN_MARKER,
+            {"workspace": str(scope.root), "run_id": run_id},
+        )
+        return scope
 
     # --- paths ------------------------------------------------------------- #
     @property
+    def outputs(self) -> Path:
+        """Where this workspace's documents are written and read.
+
+        The workspace itself (:attr:`root`) for a plain workspace; the run's own
+        directory for a run's scope. It is the one difference between the two
+        *paths*, and it is derived here so no caller composes a run path by hand.
+        A scope's documents also name their run — the manifest, the segments'
+        ``meta`` and the record's ``metadata`` — which a plain workspace's never
+        do.
+        """
+        if self.run_id is None:
+            return self.root
+        return self.root / RUNS_DIR / str(self.run_id)
+
+    @property
     def manifest_path(self) -> Path:
-        return self.root / MANIFEST
+        return self.outputs / MANIFEST
 
     @property
     def segments_path(self) -> Path:
-        return self.root / SEGMENTS
+        return self.outputs / SEGMENTS
 
     @property
     def record_path(self) -> Path:
-        return self.root / RECORD
+        return self.outputs / RECORD
+
+    @property
+    def published_manifest_path(self) -> Path:
+        """The workspace's manifest at its root — the copy a reader opens.
+
+        It is the **published** copy of the newest finished run, and it is also
+        where an operator's hand-edit lands, which is why a run scope reads its
+        declarations here and not from its own copy
+        (:meth:`load_published_manifest`).
+        """
+        return self.root / MANIFEST
 
     @property
     def glossary_path(self) -> Path:
@@ -475,7 +666,7 @@ class Workspace:
 
     @property
     def export_dir(self) -> Path:
-        return self.root / EXPORT_DIR
+        return self.outputs / EXPORT_DIR
 
     @property
     def audio_dir(self) -> Path:
@@ -485,6 +676,26 @@ class Workspace:
     def chunks_dir(self) -> Path:
         """This workspace's app-owned chunk-cache root (ADR-0007/ADR-0025)."""
         return resolve_cache_dir() / CHUNKS_DIRNAME / _cache_key(self.root)
+
+    @property
+    def run_glossary_path(self) -> Path:
+        """An app-owned glossary file a run may hand the decoder.
+
+        ``glossary.txt`` is the user's document (ADR-0007): a run that has no
+        confirmed term never rewrites it, and publishes the bias it does have —
+        the file's own terms minus the registry's unconfirmed ones (ADR-0033) —
+        here instead, beside the app's cache rather than in the workspace.
+
+        It lives under :data:`RUN_GLOSSARY_DIRNAME`, **outside** the chunk-cache
+        namespace (:attr:`chunks_dir`), and is keyed per workspace by the same
+        :func:`_cache_key`: a source's cache is a *directory* under ``chunks/``
+        named by the source's id, so a source whose id slugs to ``glossary.txt``
+        (any audio file named ``glossary.txt.<ext>``) would otherwise be the very
+        path this file needs — a directory where a file must be.
+        """
+        return (
+            resolve_cache_dir() / RUN_GLOSSARY_DIRNAME / f"{_cache_key(self.root)}.txt"
+        )
 
     @property
     def ground_truth_path(self) -> Path:
@@ -514,15 +725,28 @@ class Workspace:
         data: dict = {"sources": [to_dict(s) for s in sources]}
         if alignment is not None:
             data["alignment"] = to_dict(alignment)
+        if self.run_id is not None:
+            # A run's own copy names the run that wrote it, and the published copy
+            # is that same body: a reader of the workspace's manifest can tell
+            # which run's inputs it is looking at (ADR-0033).
+            data["run_id"] = self.run_id
         write_json(self.manifest_path, data)
 
     def load_manifest(self) -> tuple[list[Source], Alignment | None]:
-        data = load_json(self.manifest_path)
-        sources = [source_from_dict(s) for s in data["sources"]]
-        alignment = (
-            alignment_from_dict(data["alignment"]) if data.get("alignment") else None
-        )
-        return sources, alignment
+        """This workspace's own copy: the run's, or the published one."""
+        return _read_manifest(self.manifest_path)
+
+    def load_published_manifest(self) -> tuple[list[Source], Alignment | None]:
+        """The workspace root's manifest — the newest **published** copy.
+
+        The declarations a run carries over are read from here and not from the
+        run's own copy: ``manifest.json`` is also where an operator declares a
+        source's start or role by hand, and a run scope's copy is written fresh by
+        its own ``ingest`` (``_manifest_starts``/``_manifest_roles``), so reading
+        the run's copy would drop exactly the declarations that flow exists for.
+        For a plain workspace this is the same file :meth:`load_manifest` reads.
+        """
+        return _read_manifest(self.published_manifest_path)
 
     # --- segments ---------------------------------------------------------- #
     def write_segments(
@@ -535,8 +759,15 @@ class Workspace:
                 src: [to_dict(s) for s in segs] for src, segs in per_source.items()
             }
         }
-        if meta:
-            payload["meta"] = meta
+        stamped = dict(meta) if meta else {}
+        if self.run_id is not None:
+            # The transcript names the run that produced it, so a reader (or an
+            # agent) reading the workspace's copy can say which run it is
+            # (ADR-0033); the workspace's own documents — a stage command's,
+            # ``calibrate``'s — have no run to name.
+            stamped["run_id"] = self.run_id
+        if stamped:
+            payload["meta"] = stamped
         write_json(self.segments_path, payload)
 
     def load_segments(self) -> tuple[dict[str, list[Segment]], dict]:
@@ -549,6 +780,13 @@ class Workspace:
 
     # --- record ------------------------------------------------------------ #
     def write_record(self, record: RecordDocument) -> None:
+        if self.run_id is not None:
+            # As in ``write_segments``: the reconciled record names the run whose
+            # copy it is, in its own metadata, so the artifact carries its
+            # provenance rather than needing the registry beside it.
+            record = dataclasses.replace(
+                record, metadata={**record.metadata, "run_id": self.run_id}
+            )
         write_json(self.record_path, record)
 
     def load_record(self) -> RecordDocument:
@@ -641,6 +879,324 @@ class Workspace:
                 pass
 
 
+#: The documents the workspace publishes from a finished run's own copy: its
+#: manifest, its transcript segments and its reconciled record. The exports are
+#: published beside them, one file each (:func:`publish_run`).
+PUBLISHED_DOCUMENTS = (MANIFEST, SEGMENTS, RECORD)
+
+#: The prefix of the directory a publication keeps the root's **unscoped**
+#: outputs in, beside the run scopes: ``<workspace>/runs/retained-<stamp>/``. The
+#: upgrade boundary is what it exists for — a root whose documents name no run is
+#: held nowhere else, so overwriting them would be the last copy's end
+#: (:func:`_preserve_unscoped_outputs`).
+RETENTION_PREFIX = "retained"
+
+
+def _stage_file(source: Path, target: Path) -> Path:
+    """Copy *source* beside *target* under a scratch name; return that name.
+
+    The half of a publication that copies bytes, and so the half that can fail
+    for want of space (the reproduction: ENOSPC on the third document). It
+    writes over nothing — the copy lands at ``<target>.tmp``, the scratch name
+    the workspace's own writers use and its walks skip — so a publication that
+    fails here has replaced nothing at the root.
+    """
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, tmp)
+    return tmp
+
+
+def _swap_file(staged: Path, target: Path) -> None:
+    """Put *staged* in *target*'s place by rename: one document, all of one run.
+
+    A rename within one directory: no bytes are copied and no space is needed, so
+    a reader sees the whole of one document or the whole of the other, and this is
+    the step :func:`publish_run` may take only once every copy has landed.
+    """
+    os.replace(staged, target)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@dataclasses.dataclass(frozen=True)
+class Publication:
+    """What one publication wrote, and where the bytes it replaced still are.
+
+    ``published`` is the root paths written, in the order they landed.
+    ``preserved`` pairs **every** root document this publication replaced that was
+    a file — whatever held its bytes before the swap — with a path that still
+    holds them: a run's own copy, an earlier publication's retained copy, or the
+    copy this publication made. That pair is for the caller that owns the
+    *association* between a path and a record: the registry's artifact rows follow
+    it, so a row naming the mutable root keeps describing the bytes it recorded
+    instead of quietly describing the run's. ``retained`` is the subset of
+    ``preserved`` this publication had to **copy** (into the workspace's retained
+    copy, because no marked directory held those bytes): the ordinary case is
+    ``()`` — a run's own copy already holds them, so nothing is written — and it is
+    what "was anything at risk here" reads.
+    """
+
+    published: tuple[Path, ...] = ()
+    retained: tuple[tuple[Path, Path], ...] = ()
+    preserved: tuple[tuple[Path, Path], ...] = ()
+
+
+def _publication_targets(scope: Workspace, home: Workspace) -> list[tuple[Path, Path]]:
+    """The ``(source, target)`` pairs a publication of *scope* would write."""
+    targets: list[tuple[Path, Path]] = []
+    for name in PUBLISHED_DOCUMENTS:
+        source = scope.outputs / name
+        if source.is_file():
+            targets.append((source, home.root / name))
+    if scope.export_dir.is_dir():
+        for source in sorted(scope.export_dir.iterdir()):
+            if source.is_file():
+                targets.append((source, home.export_dir / source.name))
+    return targets
+
+
+def _preserving_path(home: Workspace, target: Path) -> Path | None:
+    """A path **other than** *target* that holds its current bytes, or ``None``.
+
+    The one lookup both halves of a publication's preservation need, because they
+    are the same fact: what makes replacing the root's copy harmless is that a
+    reader can still reach those bytes somewhere else, and *where* is exactly what
+    a row that named the mutable root has to be repointed at. The test is byte
+    identity, never a name or a claim: the marked directories under ``runs/`` — a
+    finished run's own copy (``<workspace>/runs/<run id>/``), or a retained copy an
+    earlier publication made (:func:`_retained_dir`, which is how a *retry* finds
+    the bytes a failed attempt preserved) — are asked for the same relative path
+    with the same size and ``sha256``.
+
+    ``None`` is the answer for a root document none of them holds — a root written
+    *before* runs were scoped, a stage command's output (a stage writes at the
+    root and names no run), an operator's hand-edited manifest — and for a target
+    that is not a file at all (no bytes to lose, and nothing to point at). The
+    scopes are read in name order so the answer is deterministic when more than one
+    holds the bytes.
+    """
+    if not target.is_file():
+        return None
+    try:
+        size = target.stat().st_size
+        want = _sha256(target)
+    except OSError:
+        return None
+    relative = target.relative_to(home.root)
+    for name in sorted(_run_scopes(home.root)):
+        candidate = home.root / RUNS_DIR / name / relative
+        try:
+            if candidate.stat().st_size != size or _sha256(candidate) != want:
+                continue
+        except OSError:
+            continue
+        return candidate
+    return None
+
+
+def _retained_dir(home: Workspace) -> Path:
+    """A fresh directory under ``runs/`` for one publication's retained copy.
+
+    Stamped like an archive's directory, with the same collision rule (the next
+    free name): a second publication that finds *other* unscoped documents must
+    not merge them into the first copy's directory, because the first copy is
+    what an artifact row may already be reading. It is written **with** the same
+    :data:`RUN_MARKER` a run scope carries, naming no run — which is what the copy
+    is: the app's own retained output, so the walk under ``runs/`` reads nothing
+    of it as an input (its ``record.json`` is not offered to a later run as an
+    output to reconcile, and its ``export/`` is not a directory the walk opens).
+    Nothing resolves the directory back to a *run* — what reaches it is the
+    artifact row repointed at it — and the marker is the walk's own answer to
+    "whose directory is this", the same answer a scope gives.
+    """
+    parent = home.root / RUNS_DIR
+    stem = f"{RETENTION_PREFIX}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    name, suffix = stem, 2
+    while (parent / name).exists():
+        name, suffix = f"{stem}-{suffix}", suffix + 1
+    directory = parent / name
+    # Marked like a run scope (:data:`RUN_MARKER`) and naming no run, which is
+    # what the copy is: the app's own retained output, so the walk never reads it
+    # as an input. The name carries the publication's stamp, so a reader can tell
+    # which one preserved what.
+    _publish_json(directory / RUN_MARKER, {"workspace": str(home.root)})
+    return directory
+
+
+def _preserve_unscoped_outputs(
+    home: Workspace, targets: list[tuple[Path, Path]]
+) -> tuple[dict[Path, Path], dict[Path, Path]]:
+    """Where every replaced root document's bytes are, and what had to be copied.
+
+    Returns ``(preserved, retained)``. ``preserved`` pairs each target that is a
+    file with a path that holds its pre-publication bytes: a copy this call made
+    into this publication's retained directory, a finished run's own copy that
+    already holds them, or an earlier publication's retained copy — the shape a
+    **retry** meets after a failed attempt, which is what makes the association
+    recoverable rather than remembered. ``retained`` is the subset this call had to
+    copy, which is the ordinary case's ``{}`` (a run's own copy holds it) and the
+    only case that writes anything.
+
+    The copies are made **before the first target is written**, so the bytes that
+    were at the root are never the ones at risk, and a run's own copy is never
+    touched. A target that is not a file is not reported at all: there are no bytes
+    to preserve and nothing a row could be pointed at.
+    """
+    preserved: dict[Path, Path] = {}
+    to_copy: list[Path] = []
+    for _source, target in targets:
+        holder = _preserving_path(home, target)
+        if holder is not None:
+            preserved[target] = holder
+        elif target.is_file():
+            to_copy.append(target)
+    retained: dict[Path, Path] = {}
+    if to_copy:
+        directory = _retained_dir(home)
+        for target in to_copy:
+            copy = directory / target.relative_to(home.root)
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, copy)
+            retained[target] = copy
+        preserved.update(retained)
+    return preserved, retained
+
+
+def publish_run(
+    scope: Workspace,
+    *,
+    on_preserved: Callable[[tuple[tuple[Path, Path], ...]], None] | None = None,
+) -> Publication:
+    """Copy a finished run's own documents over the workspace's published copy.
+
+    Called only for a run that **finished**: a run that stopped, failed or died
+    returns before this, so it publishes nothing and the workspace keeps the last
+    complete run's copy — the property that makes rewrite no longer destructive
+    (ADR-0033). What it copies is the run's own manifest, segments and record,
+    and every export file, so every document the run wrote is at the root exactly
+    as the run's own copy holds it; the run's copy itself is left untouched, which
+    is what keeps an earlier run's record readable after a later one. Two kinds of
+    document it did **not** write stay as the previous publication left them, and
+    they are why the root is not this run's copy document for document:
+
+    - a document the run never wrote is skipped rather than published as an
+      absence, so the root keeps the last run that *did* write it: the root's
+      ``manifest.json`` can be a later run's while its ``record.json`` is an
+      earlier one's, and each of those names the run that wrote it, never the
+      publication's;
+    - nothing prunes the root's ``export/``, so an export file the run did not
+      write (an earlier run's export set was wider) stays published although this
+      run's own copy does not hold it — and the Markdown/SRT/VTT exports carry no
+      run id, so an export is the previous publication's until this one rewrites
+      it under the same name.
+
+    **A publication that fails while copying replaces nothing.** The bytes are
+    copied first, each into a scratch file beside the target it will replace, and
+    only when every copy has landed are they put in place — a rename per document,
+    inside one directory, which copies nothing and so cannot fail for want of
+    space. A publication that fails while copying (the disk filling on the third
+    document, the shape the review reproduced) therefore leaves the root as the
+    **previous complete run**: the reader meets one run's documents, never two
+    runs' side by side, and "a finished run's copy becomes the root's" holds on
+    that path too. The swap itself is the window that is left, and it is narrower
+    than the claim it used to carry: it is a sequence of renames of files that are
+    already written, so no read lands on a half-copied document — but nothing
+    reconciles a rename that fails part-way (an I/O error, a permission changed
+    under the process, another writer), so the documents already renamed are this
+    run's and the rest are the previous run's, and only the next publication
+    settles it. A set-level commit — a versioned directory and one atomic pointer —
+    is what would close that window; it is not built.
+
+    **Whose row it trusts.** The run comes from ``scope``'s own marker, and the
+    caller is the run path, which passes the scope and not the row: nothing here
+    re-reads the run's row (``service/runs.py`` calls it positionally), so a run
+    whose registry row a peer has reaped in the meantime still publishes its copy.
+    A caller that must not publish a rowless run has to establish that itself.
+
+    **What it will not destroy.** For a workspace whose runs have always been
+    scoped, the root's documents are the last run's published copy, which that
+    run's own scope still holds byte for byte — replacing them loses nothing. A
+    root written **before** runs were scoped (an install from before 257), or by
+    a *stage command* (a stage writes at the root and names no run), is held
+    nowhere else: publishing over it would leave the artifact rows that named
+    those paths describing the **new** run's bytes with the old ones gone — the
+    upgrade boundary, where the first new run destroyed the last legacy output.
+    So every document about to be replaced is paired with a path that holds its
+    bytes — copied into a retained copy under the workspace **when no marked
+    directory holds them**, and otherwise the holder itself (a finished run's own
+    copy, or an earlier publication's retained copy, which is how a retry after a
+    failed attempt finds them) — before the first of them is written.
+    :attr:`Publication.preserved` names every pair and
+    :attr:`Publication.retained` only the copies, so the caller that owns the
+    association between a path and a row can follow **both** cases
+    (:meth:`clear_record.service.store.Registry.retain_artifact_paths`): a row
+    that named the mutable root follows the bytes it recorded even when this
+    publication had nothing to copy.
+
+    ``on_preserved``, when given, is called **once** with the preserved pairs —
+    after every copy has landed and every document is staged, and **before** the
+    first rename. It is the seam for the caller that owns the *association* between
+    a root path and a row (the run path repoints the artifact rows at the preserved
+    copies there): moving the rows at that point means a crash anywhere after it
+    leaves them already describing the bytes they recorded, and a failure of the
+    move itself is the staging failure's shape — the root is untouched and the
+    scratch is cleaned up.
+
+    Returns the paths written and the paths preserved. It writes each document of
+    the run's own copy, and no more than that: what it did not write is the
+    previous publication's, which is why the promise above is read **per
+    document** (the two shapes are named at the top).
+    """
+    if scope.run_id is None:
+        return Publication()
+    home = Workspace(scope.root)
+    targets = _publication_targets(scope, home)
+    preserved, retained = _preserve_unscoped_outputs(home, targets)
+    # **Every copy first, then one rename per document.** The copies are the half
+    # that copies bytes and can therefore fail for want of space, and each lands
+    # in a scratch file beside the target it will replace — so a publication that
+    # fails while copying (a disk filling on the third document, the shape the
+    # review reproduced) has replaced nothing, and the root still holds the
+    # previous complete run. What follows is a rename per target inside one
+    # directory, which needs no space; that sequence is what the docstring's
+    # claim rests on.
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for source, target in targets:
+            staged.append((_stage_file(source, target), target))
+        if preserved and on_preserved is not None:
+            # The caller's seam: the rows that named these root paths move at their
+            # preserved copies **here** — after every copy has landed and every file
+            # is staged, and before the first rename. With the move left until after
+            # the swaps, a crash in between left the rows naming root paths that now
+            # held the new run's bytes while the preserved copies sat orphaned under
+            # ``runs/retained-*/``, unreconciled on restart. A failure of the move
+            # itself takes the same path a staging failure does: the root was never
+            # touched, so the scratch is cleaned up and nothing has changed.
+            on_preserved(tuple(preserved.items()))
+    except BaseException:
+        # The root was never touched: the copies that did land are scratch.
+        for scratch, _target in staged:
+            scratch.unlink(missing_ok=True)
+        raise
+    published: list[Path] = []
+    for scratch, target in staged:
+        _swap_file(scratch, target)
+        published.append(target)
+    return Publication(
+        published=tuple(published),
+        retained=tuple(retained.items()),
+        preserved=tuple(preserved.items()),
+    )
+
+
 def report_line(
     workspace: Workspace,
     sink: EventSink | None,
@@ -725,6 +1281,12 @@ __all__ = [
     "ChunkCache",
     "DeclarationUnreadable",
     "IGNORE_FILE",
+    "PUBLISHED_DOCUMENTS",
+    "Publication",
+    "RETENTION_PREFIX",
+    "RUN_GLOSSARY_DIRNAME",
+    "RUNS_DIR",
+    "RUN_MARKER",
     "Workspace",
     "cache_plan",
     "chunk_cache_key",
@@ -734,5 +1296,6 @@ __all__ = [
     "glossary_digest",
     "is_audio",
     "plan_matches",
+    "publish_run",
     "report_line",
 ]

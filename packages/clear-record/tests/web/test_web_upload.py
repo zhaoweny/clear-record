@@ -11,12 +11,11 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import paths as core_paths
-from clear_record.service import Registry, RunManager
-from clear_record.service import managed
+from clear_record.service import Registry, RunManager, managed
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -31,16 +30,18 @@ def client(tmp_path) -> TestClient:
     # (``core.node``), which is what lets it name a ``workspace_path`` (ADR-0032;
     # the suite's default ``testserver`` client is a *proxied* one, and is refused
     # a path — see ``test_web_naming.py``).
-    return TestClient(
-        create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
-        base_url="http://127.0.0.1:8765",
+    return signed_in(
+        TestClient(
+            create_app(Registry.open(db_path=tmp_path / "registry.sqlite3")),
+            base_url="http://127.0.0.1:8765",
+        )
     )
 
 
 def _managed_meeting(client: TestClient, title: str = "Kickoff") -> dict:
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     res = client.post(
-        "/api/projects/ops/meetings", json={"title": title, "managed": True}
+        "/api/v1/projects/ops/meetings", json={"title": title, "managed": True}
     )
     assert res.status_code == 201, res.text
     return res.json()
@@ -48,7 +49,7 @@ def _managed_meeting(client: TestClient, title: str = "Kickoff") -> dict:
 
 def _upload(client: TestClient, meeting_id: int, name: str, payload: bytes):
     return client.post(
-        f"/api/meetings/{meeting_id}/tapes",
+        f"/api/v1/meetings/{meeting_id}/tapes",
         files={"file": (name, payload, "audio/wav")},
     )
 
@@ -64,18 +65,18 @@ def test_creating_a_managed_meeting_provisions_its_workspace(client) -> None:
 
 
 def test_managed_ignores_a_workspace_path_but_dir_still_works(client, tmp_path) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
 
     managed_meeting = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Managed", "workspace_path": str(chosen), "managed": True},
     ).json()
     assert managed_meeting["workspace_path"] != str(chosen)
 
     dir_meeting = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Dir", "workspace_path": str(chosen)},
     ).json()
     assert dir_meeting["workspace_path"] == str(chosen)
@@ -99,7 +100,7 @@ def test_upload_records_a_checksummed_tape(client) -> None:
 def test_upload_to_an_unknown_meeting_is_404(client) -> None:
     assert (
         client.post(
-            "/api/meetings/999/tapes", files={"file": ("a.wav", b"x")}
+            "/api/v1/meetings/999/tapes", files={"file": ("a.wav", b"x")}
         ).status_code
         == 404
     )
@@ -109,25 +110,25 @@ def test_upload_to_an_unknown_meeting_is_404(client) -> None:
 def test_an_upload_with_an_upload_id_is_accepted(client) -> None:
     meeting = _managed_meeting(client)
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes?upload_id=take-01",
+        f"/api/v1/meetings/{meeting['id']}/tapes?upload_id=take-01",
         files={"file": ("a.wav", b"RIFF", "audio/wav")},
     )
 
     assert res.status_code == 201, res.text
-    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    storage = client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()
     assert [tape["name"] for tape in storage["tapes"]] == ["a.wav"]
 
 
 def test_a_malformed_upload_id_is_400(client) -> None:
     meeting = _managed_meeting(client)
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes?upload_id=not%20a%20token",
+        f"/api/v1/meetings/{meeting['id']}/tapes?upload_id=not%20a%20token",
         files={"file": ("a.wav", b"x", "audio/wav")},
     )
 
     assert res.status_code == 400
     assert "upload id" in res.json()["detail"]
-    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+    assert client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
 def test_an_occupied_upload_id_is_501_and_names_the_way_out(client) -> None:
@@ -138,14 +139,14 @@ def test_an_occupied_upload_id_is_501_and_names_the_way_out(client) -> None:
     partial.write_bytes(b"interrupted")
 
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes?upload_id=take-01",
+        f"/api/v1/meetings/{meeting['id']}/tapes?upload_id=take-01",
         files={"file": ("a.wav", b"x", "audio/wav")},
     )
 
     assert res.status_code == 501
     assert "cannot resume" in res.json()["detail"]
     assert partial.read_bytes() == b"interrupted"  # never overwritten
-    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+    assert client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
 # --- guards ---------------------------------------------------------------- #
@@ -154,7 +155,7 @@ def test_traversal_filename_is_rejected(client) -> None:
     res = _upload(client, meeting["id"], "../escape.wav", b"x")
     assert res.status_code == 400
     assert "traversal" in res.json()["detail"]
-    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+    assert client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
 def test_disallowed_extension_is_415(client) -> None:
@@ -167,7 +168,7 @@ def test_disallowed_extension_is_415(client) -> None:
 def test_missing_file_part_is_400(client) -> None:
     meeting = _managed_meeting(client)
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         files={"wrong": ("a.wav", b"x", "audio/wav")},
     )
     assert res.status_code == 400
@@ -180,7 +181,7 @@ def test_oversize_upload_is_413(client, monkeypatch) -> None:
     res = _upload(client, meeting["id"], "a.wav", b"0123456789")
     assert res.status_code == 413
     assert "CR_MAX_UPLOAD_BYTES" in res.json()["detail"]
-    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+    assert client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
 def test_low_disk_is_507(client, monkeypatch) -> None:
@@ -196,11 +197,11 @@ def test_low_disk_is_507(client, monkeypatch) -> None:
 
 
 def test_upload_into_a_user_chosen_workspace_is_400(client, tmp_path) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
     meeting = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Local", "workspace_path": str(chosen)},
     ).json()
 
@@ -216,7 +217,7 @@ def test_storage_reports_size_and_tapes(client) -> None:
     _upload(client, meeting["id"], "a.wav", b"12345")
     _upload(client, meeting["id"], "b.wav", b"123")
 
-    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    storage = client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()
     assert storage["managed"] is True
     assert storage["bytes"] == 8
     assert [tape["name"] for tape in storage["tapes"]] == ["a.wav", "b.wav"]
@@ -226,45 +227,62 @@ def test_storage_reports_free_space_from_the_service(client, monkeypatch) -> Non
     meeting = _managed_meeting(client)
     monkeypatch.setattr(managed, "root_free_bytes", lambda root=None: 4096)
 
-    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    storage = client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()
 
     assert storage["free_bytes"] == 4096
 
 
 def test_storage_has_no_free_space_for_a_user_chosen_meeting(client, tmp_path) -> None:
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     chosen = tmp_path / "user-docs"
     chosen.mkdir()
     meeting = client.post(
-        "/api/projects/ops/meetings",
+        "/api/v1/projects/ops/meetings",
         json={"title": "Local", "workspace_path": str(chosen)},
     ).json()
 
-    storage = client.get(f"/api/meetings/{meeting['id']}/storage").json()
+    storage = client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()
 
     assert storage["free_bytes"] is None
 
 
 def test_storage_unknown_meeting_is_404(client) -> None:
-    assert client.get("/api/meetings/999/storage").status_code == 404
+    assert client.get("/api/v1/meetings/999/storage").status_code == 404
 
 
-def test_delete_removes_the_tape_and_names_the_archive(client) -> None:
-    meeting = _managed_meeting(client)
+def test_delete_needs_a_verified_archive_and_names_it(client, tmp_path) -> None:
+    client.post(
+        "/api/v1/projects",
+        json={"name": "Ops", "default_archive_root": str(tmp_path / "archive")},
+    )
+    meeting = client.post(
+        "/api/v1/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
+    ).json()
     tape = _upload(client, meeting["id"], "a.wav", b"x").json()
 
-    res = client.delete(f"/api/meetings/{meeting['id']}/tapes/{tape['id']}")
+    refused = client.delete(f"/api/v1/meetings/{meeting['id']}/tapes/{tape['id']}")
+
+    # No durable copy: refused with the archive action named, nothing unlinked.
+    assert refused.status_code == 400
+    assert "archive the meeting first" in refused.json()["detail"]
+    assert Path(tape["path"]).exists()
+
+    archive = client.post(f"/api/v1/meetings/{meeting['id']}/archives", json={}).json()
+    res = client.delete(f"/api/v1/meetings/{meeting['id']}/tapes/{tape['id']}")
 
     assert res.status_code == 200
-    assert "archive is the durable copy" in res.json()["note"]
+    assert "durable copy" in res.json()["note"]
+    assert archive["root_path"] in res.json()["note"]
     assert not Path(tape["path"]).exists()
-    assert client.get(f"/api/meetings/{meeting['id']}/storage").json()["tapes"] == []
+    assert client.get(f"/api/v1/meetings/{meeting['id']}/storage").json()["tapes"] == []
 
 
 def test_delete_unknown_tape_is_404(client) -> None:
     meeting = _managed_meeting(client)
-    assert client.delete(f"/api/meetings/{meeting['id']}/tapes/999").status_code == 404
-    assert client.delete("/api/meetings/999/tapes/1").status_code == 404
+    assert (
+        client.delete(f"/api/v1/meetings/{meeting['id']}/tapes/999").status_code == 404
+    )
+    assert client.delete("/api/v1/meetings/999/tapes/1").status_code == 404
 
 
 # --- the upload feeds the existing run path -------------------------------- #
@@ -279,12 +297,12 @@ def test_an_uploaded_tape_feeds_the_existing_run(tmp_path, monkeypatch) -> None:
         Path(directory, "record.json").write_text("{}", encoding="utf-8")
 
     manager = RunManager(registry, pipeline=fake_pipeline)
-    client = TestClient(create_app(registry, runs=manager))
+    client = signed_in(TestClient(create_app(registry, runs=manager)))
     meeting = _managed_meeting(client)
     tape = _upload(client, meeting["id"], "a.wav", b"RIFF").json()
 
     started = client.post(
-        f"/api/meetings/{meeting['id']}/runs", json={"backend": "apple"}
+        f"/api/v1/meetings/{meeting['id']}/runs", json={"backend": "apple"}
     )
     assert started.status_code == 202, started.text
     state = manager.wait(started.json()["run"]["id"], timeout=10)

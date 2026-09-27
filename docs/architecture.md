@@ -393,8 +393,11 @@ runnable, and the **project console** is built on top of it:
   importable with no web stack, which is what keeps the console optional
   (ADR-0013).
 - `clear_record.web` — the local console: FastAPI serving a server-rendered
-  **htmx + Alpine.js** UI on `/ui/*` and a JSON API on `/api/*`, bound to
-  localhost, with no account (extra: `web`) (ADR-0013, ADR-0016). Its CSS/JS are
+  **htmx + Alpine.js** UI on `/web/ui/*` and a JSON API on `/api/v1/*`, bound to
+  localhost, behind the console credential (a browser session, which a client
+  that holds one also presents to `/api/v1`) or a **machine token** for the JSON
+  API (ADR-0033; extra: `web`)
+  (ADR-0013, ADR-0016). Its CSS/JS are
   built from `packages/clear-record/frontend/` (Vite + Tailwind v4) and the
   **compiled output is committed**, so the console works offline with no Node on
   the user's machine (ADR-0023). Inside the package, a page's **context** is
@@ -437,7 +440,7 @@ socket holds. An absent record, and a record nothing answers, are the
 | Who asks | How it asks where the node is | Where it stands |
 |---|---|---|
 | command line | `clear-record node` — the address, proved by one request | a client of the recorded address |
-| console | `GET /api/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
+| console | `GET /api/v1/node` — the record, when it names the socket this app holds | the node itself, in the `serve`/`web` posture |
 | tray | the record, proved by one request — the attach path the command line takes | a client of the node it found; it starts one only when none answers, and stops or restarts only that one |
 | MCP adapter | the node it states for the agent, in its instructions | in-process over the service (ADR-0017), with no path that starts a node |
 
@@ -466,20 +469,22 @@ machine-facing JSON routes take one only from a request that named the node
 section above records and every surface dials). A client that reached the node
 through a name an operator published for it is a client elsewhere, and is answered
 with **one sentence** naming the rule and, per case, the registry-addressed or
-node-decided shape that replaces it (`POST /api/meetings/{id}/runs`, an upload
+node-decided shape that replaces it (`POST /api/v1/meetings/{id}/runs`, an upload
 into a managed workspace, `managed: true`, or simply omitting the root or the
 glossary) rather than having a path of its own — or a same-named file on the
 node — acted on.
 Everything the registry owns is named by its id, and that is the route a remote
-client uses. The **console is not that edge**: its `/ui/*` forms are the node's
+client uses. The **console is not that edge**: its `/web/ui/*` forms are the node's
 own in-process face, so a visitor reaching the console through a proxy may still
 type a path there; the meeting's storage panel shows back the path the node resolved. A
 **model** is named neither way: it must already be on the node that runs the work,
 so a run request carries a name the node's models directory resolves
 (`CR_MODELS_DIR` / `--models-dir` are the node's) and never a path. Both rules are
 stated where a client author meets them — the request shapes and route
-descriptions the OpenAPI schema publishes at `/api/docs`, the `run` command's
-help, and README — and enforced at the edge (ADR-0032's 2026-09-25 Update).
+descriptions the OpenAPI schema publishes at `/api/v1/docs` (a machine request,
+so it is read with a credential in a header — a browser's console session is
+scoped away from it), the `run` command's help, and README — and enforced at the
+edge (ADR-0032's 2026-09-25 Update).
 
 The console's **service** owns projects, the glossary, meetings and tape sets,
 background runs and the **archive** (copy + sha256 manifest); the **web UI** is
@@ -488,14 +493,62 @@ workspace: the project list, then Overview / Meetings / Glossary / Media),
 **Settings** (the control plane), **Setup** (system readiness) and the one
 **Agent** flow — over the **live run view**, **tape upload** into a managed
 workspace and the **archive view**; the **MCP surface** carries the **tuning
-loop** and the **draft chain** (ADR-0017, ADR-0031). clear-record calls no
-model: every draft is written by the user's harness over MCP with the author
-identity it declares, the drafts' accept/reject states and author provenance
-have landed, and the harness is the only agent integration — see
+loop** and the **draft chain** (ADR-0017, ADR-0031). Every mutating service call
+appends one row — `(at, actor, action, target, outcome)` — to an **append-only**
+audit record (`audit_event`); a **conditional** write that matched no row (a lost
+claim, a state the move is not legal from), and a **key miss**, append nothing,
+because nothing happened. The **actor is a required argument** on the mutating
+entry points, supplied by the transport that calls (`console`, `api`, `mcp`,
+`cli`, or `queue` for the node's own queue): a surface can neither forget it nor
+forge it, and a run's `origin` — the surface that asked, which a run request may
+name — is a **separate column** from the actor, so a client cannot write itself
+into the record by filling in a field (ADR-0033).
+clear-record calls no model: every draft is written by the user's harness over
+MCP, its recorded author is the **actor its transport supplies** — `mcp` for the
+stdio adapter, never a string a caller declares; the *decision* is recorded
+against the transport that makes it, so a console acceptance says `console`
+(ADR-0033) — the drafts' accept/reject states and provenance have landed, and the
+harness is the only agent integration — see
 [ADR-0031](adr/0031-harness-is-the-only-agent.md). The setup path's
 **hello-world acceptance test** proves tape → transcription → transcript while
 localizing a failure to a leg (`tts`, `backend`, `model`, `transcribe`), and the
 optional `just agent-drive` stands in for a harness over the MCP tools.
+
+A run's **outputs are its own copy**. The service writes each run's documents —
+`manifest.json`, `segments.json`, `record.json` and the `export/` files — into
+`<workspace>/runs/<run id>/`, and a **finished** run publishes that copy at the
+workspace root, which stays the default read. The run's own documents name the
+run that wrote them — `run_id` in the manifest, in the segments' `meta`, in the
+record's `metadata` and so in the JSON export, while the Markdown/SRT/VTT
+exports carry no run id — and the run's artifact rows point at its own copy, so a
+reader can say which run produced the transcript it holds. A run that stops,
+fails or dies publishes nothing, so neither the workspace's copy nor an earlier
+run's can be rewritten by it: prior versions are retained, not covered
+(ADR-0033). **The root is not the run's copy document for document**, and a
+reader takes each document's own `run_id` rather than the publication's: a
+document the run never wrote is left as the previous publication left it (so the
+root's `manifest.json` can be a later run's while its `record.json` is an
+earlier one's), and nothing removes an export file a previous run put at the
+root, so `export/` can hold more than one run's exports. Publication copies every
+document into a scratch file before it renames any of them, so a failure **while
+copying** (a disk filling) replaces nothing and the root stays the previous
+complete run; the renames that follow are of files already written, and one that
+fails part-way leaves the documents it had renamed as this run's and the rest as
+the previous run's — nothing reconciles it, and the root stays that mix until a
+later run publishes over those same documents again. A run's **documents** are
+run-scoped, and so is what it publishes;
+what a run **reads** stays the workspace's — its tapes, the `glossary.txt` a
+hand-edit lands in, and the `.clear-record-ignore` declaration — so `ingest` stays
+idempotent and the `manifest.json` declarations an operator hand-edits at the root
+still reach the next run. Three things a **node** run writes at the workspace
+root all the same: the normalized `audio/` (the ingest stage writes it there, not
+under `runs/<run id>/`), the `glossary.txt` its glossary resolution
+publishes when the registry has confirmed terms (the ADR-0031 tuning loop), and
+the durable `transcribe.log` a running pipeline appends to. The app-owned chunk
+cache is neither: it lives in the app's own cache directory, keyed per workspace,
+and a run only advances it (a resume continues the same cache). The stage commands
+and `calibrate` are the writers that leave **everything** in place, at the root and
+naming no run.
 
 - `ingest` → normalize every source to 16 kHz mono WAV in the workspace
   (`<dir>/audio/`); **multi-channel splitting** (>2 ch by default) preserves

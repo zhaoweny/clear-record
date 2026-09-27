@@ -34,14 +34,26 @@ def test_releasing_records_the_real_publish_state() -> None:
     assert "live on PyPI" in text
 
 
-def test_x_forwarded_is_an_open_not_a_decision() -> None:
-    """ADR-0021 recorded a steer with no implementation, so it is [OPEN]."""
+def test_x_forwarded_is_closed_and_the_quote_is_intact() -> None:
+    """ADR-0021's forwarded-header steer landed, so the record says so.
+
+    While the console read no ``X-Forwarded-*`` header at all the item was
+    [OPEN]; the trusted-proxy change closed it, and the two halves that keep the
+    record honest are the tag that marks the closure and the Update that carries
+    what landed. The item's own text is **quoted as it stood** — the convention
+    ADR-0032 sets — so its "deferred, not built" words stay where the history put
+    them, inside the quotation, and the closure marker is what says they no
+    longer hold. The operator's half must be where an operator meets it.
+    """
     adr = _text("docs/adr/0021-localhost-only-deployment.md")
-    assert "[OPEN: owner, 2026-09-15]" in adr
-    assert "deferred, not built" in adr
-    assert "[DECISION: owner, 2026-09-15] **Honour" not in adr
+    assert "[OPEN: owner, 2026-09-15, **closed 2026-09-26**" in adr
+    assert "quoted here as it stood while the item was open" in adr
+    assert "(`CR_TRUSTED_PROXIES`) — deferred, not built.**" in adr
+    assert "## Update (2026-09-26) — the trusted proxies land" in adr
     guide = _text("docs/service-deployment.md")
-    assert "deferred, not built" in guide
+    assert "CR_TRUSTED_PROXIES" in guide
+    assert "it makes no `Host` trustable" in guide
+    assert "deferred, not built" not in guide
 
 
 def _tool_names() -> list[str]:
@@ -107,9 +119,9 @@ def test_adr_0027_sitemap_lists_the_project_subroutes() -> None:
     adr = _text("docs/adr/0027-console-information-architecture.md")
     app = _text("packages/clear-record/src/clear_record/web/app.py")
     for route in (
-        "/projects/<slug>/meetings",
-        "/projects/<slug>/glossary",
-        "/projects/<slug>/media",
+        "/web/projects/<slug>/meetings",
+        "/web/projects/<slug>/glossary",
+        "/web/projects/<slug>/media",
     ):
         assert route in adr, f"{route} missing from ADR-0027's sitemap"
         assert route.replace("<slug>", "{slug}") in app

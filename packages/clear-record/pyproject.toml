@@ -117,6 +117,11 @@ clear-record = "clear_record.cli.cli:main"
 [project.entry-points."clear_record.commands"]
 bench = "clear_record.service.benchmark:register"
 diagnose = "clear_record.service.diagnostics:register"
+# The console-credential rescue (`clear-record password`): a service provider for
+# the same reason `diagnose` is one — the command opens the registry directly, is
+# exactly what a console that cannot be signed into needs, and must not drag the
+# web stack (or a running node) in with it (ADR-0013).
+auth = "clear_record.service.auth:register"
 web = "clear_record.web:register"
 tray = "clear_record.tray:register"
 mcp = "clear_record.mcp:register"

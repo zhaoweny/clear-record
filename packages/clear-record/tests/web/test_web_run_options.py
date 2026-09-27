@@ -21,11 +21,11 @@ import json
 import sqlite3
 from contextlib import closing
 
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.core import PipelineOptions
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 #: The key the released line wrote and this build does not have (see
 #: ``core.options.SUPERSEDED_KEYS``).
@@ -41,17 +41,26 @@ def _console(tmp_path) -> tuple[TestClient, Registry, int]:
     that to timing. These tests are about the read.
     """
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     manager = RunManager(registry, start_queue=False)
-    client = TestClient(
-        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    client = signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
     )
     return client, registry, run.id
 
@@ -82,8 +91,8 @@ def test_the_console_starts_against_a_registry_a_release_wrote(tmp_path) -> None
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, _released_row())
 
-    assert client.get("/").status_code == 200
-    answered = client.get(f"/api/runs/{run_id}")
+    assert client.get("/web/").status_code == 200
+    answered = client.get(f"/api/v1/runs/{run_id}")
     assert answered.status_code == 200, answered.text
     body = answered.json()
     assert body["run"]["id"] == run_id
@@ -99,7 +108,7 @@ def test_a_row_this_build_cannot_read_is_a_409_not_a_500(tmp_path) -> None:
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, '{"backend": "apple", "jobs": "many"}')
 
-    answered = client.get(f"/api/runs/{run_id}")
+    answered = client.get(f"/api/v1/runs/{run_id}")
 
     assert answered.status_code == 409, answered.text
     detail = answered.json()["detail"]
@@ -120,7 +129,7 @@ def test_a_page_route_that_refuses_says_so_in_the_console(tmp_path) -> None:
     client, registry, run_id = _console(tmp_path)
     _store(registry, run_id, "not json at all")
 
-    page = client.get("/")
+    page = client.get("/web/")
 
     assert page.status_code == 409, page.text
     assert f"run {run_id}" in page.text

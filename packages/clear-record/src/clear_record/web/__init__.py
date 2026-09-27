@@ -74,8 +74,8 @@ _COMMON_CONSOLE_OPTIONS = (
         help=tr(
             "set up Tailscale Serve for this port, trust this machine's tailnet "
             "name, and print its https URL. Serve runs in the foreground "
-            "alongside the console and stops with it. The tailnet is the "
-            "authentication: anyone on your tailnet can reach the console."
+            "alongside the console and stops with it. The tailnet decides who "
+            "can reach the console; the console still asks for its own password."
         ),
     ),
     click.option(
@@ -234,14 +234,25 @@ def _run(
             )
         )
     trusted_hosts: list[str] | None = None
+    trusted_proxies: list[str] | None = None
     session: ServeSession | None = None
     if tailscale:
+        from clear_record.web import guard
+
         _require_loopback_bind(host)
         trusted_hosts, session = _tailscale_setup(
             target_port=port,
             serve_port=tailscale_port if tailscale_port is not None else port,
             override=tailscale_host,
         )
+        # Serve is the proxy this console runs behind, and its hop arrives over
+        # loopback: the flag that sets Serve up declares that peer itself — the
+        # quick path ADR-0021 promised, rather than asking the operator for a
+        # second variable — so Serve's ``X-Forwarded-Proto`` is honoured and a
+        # tailnet request gets a ``Secure`` session cookie.
+        trusted_proxies = sorted(guard.trusted_proxies() | {_serve_proxy_peer()})
+    else:
+        _require_named_trust(host)
     from clear_record.web.app import serve
 
     if session is not None:
@@ -274,6 +285,7 @@ def _run(
             open_browser=not no_browser,
             data_dir=data_dir,
             trusted_hosts=trusted_hosts,
+            trusted_proxies=trusted_proxies,
             **serve_kwargs,
         )
     finally:
@@ -281,6 +293,75 @@ def _run(
             restore()
         if session is not None:
             session.stop()
+
+
+def _serve_proxy_peer() -> str:
+    """The peer Tailscale Serve's hop arrives from — its target's own host.
+
+    Read from the one declaration of that target
+    (:data:`clear_record.web.tailscale.SERVE_TARGET`) rather than spelled again,
+    because the two must agree: the peer a request is *judged* by is the address
+    the socket delivers, which is the host Serve dials.
+    """
+    from urllib.parse import urlsplit
+
+    from clear_record.web import tailscale
+
+    return urlsplit(tailscale.serve_target(0)).hostname or ""
+
+
+def _require_named_trust(host: str) -> None:
+    """Refuse a bind past loopback that no name the guard trusts covers.
+
+    The console holds one credential now (ADR-0033), and that is not what this
+    checks: it checks the **request guard**, which answers ``403`` to a ``Host``
+    that is neither loopback nor named in ``CR_TRUSTED_HOSTS``. So a console told
+    to bind another address, with no such name declared, would start and then
+    refuse every request it received — a bind that serves nobody, and a
+    misconfiguration that looks like it worked. Refusing here says so before a
+    port is taken, and names the ways forward.
+
+    What admits the bind is therefore the *same* declaration the guard's own
+    ``Host`` check reads (:func:`clear_record.web.guard.names_a_trusted_host`),
+    and not ``CR_TRUSTED_PROXIES``: a declared peer is the forwarded-header
+    declaration the guard honours, and it makes no ``Host`` trustable — a
+    forwarded name is checked exactly as a direct one is — so admitting a bind on
+    the proxy alone would reproduce exactly the dead console this refusal exists
+    to prevent.
+
+    Both come from the environment, which is where the operator puts them, so the
+    refusal and the guard cannot disagree about what was declared.
+    ``--tailscale`` needs no declaration of its own: it resolves the tailnet name
+    and passes it to :func:`create_app` in-process, and it refuses a non-loopback
+    bind before this is reached.
+    """
+    from clear_record.web import guard
+
+    if guard.is_loopback_host(guard.host_name(host)):
+        return
+    if guard.names_a_trusted_host():
+        return
+    raise SystemExit(
+        tr(
+            "refusing to bind {host!r}: the request guard answers 403 to any Host "
+            "but loopback or a name in CR_TRUSTED_HOSTS, and none is named, so this "
+            "console would serve nobody.\n"
+            "  Ways forward:\n"
+            "    - keep the loopback bind (the default) and let your reverse proxy "
+            "be the ingress: drop --host\n"
+            "    - name the hostname this console answers to: "
+            "CR_TRUSTED_HOSTS=<hostname>\n"
+            "    - name the address your own command line and tray dial as well, so "
+            "they reach the node directly: CR_TRUSTED_HOSTS=<hostname>,<address>\n"
+            "    - let Tailscale Serve front it: --tailscale\n"
+            "  A reverse proxy also declares CR_TRUSTED_PROXIES=<peer>[,<peer>...], "
+            "a comma-separated list of the peers whose forwarded headers are "
+            "honoured — but that is not a name "
+            "this console answers to: the hostname it forwards still has to be in "
+            "CR_TRUSTED_HOSTS.",
+            host=host,
+        )
+    )
 
 
 def _guard_termination(session: ServeSession | None):
@@ -360,6 +441,7 @@ def _tailscale_setup(
     variable is set or needed — the name is passed straight to ``create_app``.
     """
     from clear_record.web import guard, tailscale
+    from clear_record.web.auth import CONSOLE_HOME
 
     try:
         name = tailscale.normalize_name(override) or tailscale.resolve_dns_name()
@@ -404,10 +486,10 @@ def _tailscale_setup(
                 tr(
                     "[tailscale] console is now shared on your tailnet:\n"
                     "    {url}\n"
-                    "    The tailnet is the authentication: anyone on your tailnet "
-                    "can reach this console.\n"
+                    "    The tailnet decides who can reach this console; the "
+                    "console still asks for its own password.\n"
                     "    Serve runs in the foreground and stops with this console.",
-                    url=tailscale.console_url(name, serve_port),
+                    url=tailscale.console_url(name, serve_port, CONSOLE_HOME),
                 )
             )
     return sorted(guard.trusted_extra_hosts() | {name}), session

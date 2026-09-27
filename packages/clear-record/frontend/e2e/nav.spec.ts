@@ -5,11 +5,11 @@
 import { test, expect } from "@playwright/test";
 
 test("the header nav reaches Settings and Setup", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/web/");
   await expect(page.locator(".app-nav a", { hasText: "Projects" })).toBeVisible();
 
   await page.locator(".app-nav a", { hasText: "Settings" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/web\/settings$/);
   // Settings lands on the first of its pinned sections (models).
   await expect(page.locator("#detail h2")).toHaveText("Models");
 
@@ -18,24 +18,24 @@ test("the header nav reaches Settings and Setup", async ({ page }) => {
   // rewrites the marker stale and asserts the link appears, then dismisses it
   // back. The setup page is still reachable by URL.
   await expect(page.locator(".app-nav a", { hasText: "Setup" })).toHaveCount(0);
-  await page.goto("/setup");
-  await expect(page).toHaveURL(/\/setup$/);
+  await page.goto("/web/setup");
+  await expect(page).toHaveURL(/\/web\/setup$/);
   await expect(page.locator(".setup-step").first()).toBeVisible();
 });
 
 test("a project opens on its own URL and the back button returns", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/web/");
   await page.locator("#projects .project", { hasText: "Q3 sync" }).click();
-  await expect(page).toHaveURL(/\/projects\/q3-sync$/);
+  await expect(page).toHaveURL(/\/web\/projects\/q3-sync$/);
   await expect(page.locator("#detail h2")).toHaveText("Q3 sync");
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/web\/$/);
   await expect(page.locator("#projects .project").first()).toBeVisible();
 });
 
 test("an unknown project is a page, not a fragment", async ({ page }) => {
-  const response = await page.goto("/projects/does-not-exist");
+  const response = await page.goto("/web/projects/does-not-exist");
   expect(response?.status()).toBe(404);
   await expect(page.getByRole("heading", { name: "Not found" })).toBeVisible();
 });
@@ -44,11 +44,11 @@ test.describe("with JavaScript disabled", () => {
   test.use({ javaScriptEnabled: false });
 
   test("server-rendered links navigate on their own", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/web/");
     const project = page.locator("#projects .project", { hasText: "Q3 sync" });
     await expect(project).toBeVisible();
     await project.click();
-    await expect(page).toHaveURL(/\/projects\/q3-sync$/);
+    await expect(page).toHaveURL(/\/web\/projects\/q3-sync$/);
     await expect(page.locator("#detail h2")).toHaveText("Q3 sync");
   });
 });

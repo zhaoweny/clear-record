@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
-from clear_record.pipeline.workspace import Workspace
+from _console import signed_in
 from clear_record.core import RecordDocument, Segment, Source
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 COST = {
     "audio_seconds": 3600.0,
@@ -31,7 +31,29 @@ def _console(registry: Registry) -> TestClient:
     by whether the first pass or the shutdown gets there first.
     """
     manager = RunManager(registry, start_queue=False)
-    return TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    return signed_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
+    )
+
+
+def _documents(
+    target: Workspace, *, memory: dict | None, confidence: float | None
+) -> None:
+    """One source's manifest, one segment and record, in *target*."""
+    source = Source(id="a", path=str(target.root / "a.wav"), label="mic")
+    target.write_manifest([source])
+    segments = [
+        Segment(
+            start=0.0, end=4.0, text="hello there", source="a", confidence=confidence
+        )
+    ]
+    target.write_segments(
+        {"a": segments},
+        {"sources": {"a": {"duration": 10.0}}, **(memory or {})},
+    )
+    target.write_record(
+        RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
+    )
 
 
 def _seeded(
@@ -43,25 +65,20 @@ def _seeded(
 ):
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
     client = _console(registry)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     directory = tmp_path / "ws"
     directory.mkdir()
     workspace = Workspace.at(directory)
-    source = Source(id="a", path=str(directory / "a.wav"), label="mic")
-    workspace.write_manifest([source])
-    segments = [
-        Segment(
-            start=0.0, end=4.0, text="hello there", source="a", confidence=confidence
-        )
-    ]
-    workspace.write_segments(
-        {"a": segments},
-        {"sources": {"a": {"duration": 10.0}}, **(memory or {})},
+    _documents(workspace, memory=memory, confidence=confidence)
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(directory),
+        actor="console",
     )
-    workspace.write_record(
-        RecordDocument(sources=(source,), alignment=None, segments=tuple(segments))
-    )
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(directory))
     run = registry.create_run(
         meeting.id,
         backend="apple",
@@ -71,9 +88,18 @@ def _seeded(
             "profile": "accurate",
             "auto": {"explanation": "chose profile (a short tape)", "chose": ["model"]},
         },
+        actor="console",
     )
+    # The run's own copy (ADR-0033): the accuracy axis reads it, not the
+    # workspace's published copy.
+    _documents(workspace.begin_scope(run.id), memory=memory, confidence=confidence)
     if cost is not None:
-        registry.update_run(run.id, status="done", progress={"cost": cost})
+        registry.update_run(
+            run.id,
+            status="done",
+            progress={"cost": cost},
+            actor="console",
+        )
     return registry, client, run
 
 
@@ -86,7 +112,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
         cost={**COST, "peak_rss_bytes": 512 * 1024 * 1024},
     )
 
-    fragment = client.get(f"/ui/runs/{run.id}")
+    fragment = client.get(f"/web/ui/runs/{run.id}")
 
     assert fragment.status_code == 200
     text = fragment.text
@@ -98,7 +124,7 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
     assert "unknown" not in text
 
     # The project meetings tab renders the same fragment for the latest run.
-    tab = client.get("/projects/ops/meetings")
+    tab = client.get("/web/projects/ops/meetings")
     assert tab.status_code == 200
     assert "512.0 MiB" in tab.text
 
@@ -106,11 +132,15 @@ def test_a_finished_run_renders_the_four_axes(tmp_path) -> None:
 def test_an_unmeasured_run_says_unknown_with_the_records_reason(tmp_path) -> None:
     registry, client, run = _seeded(tmp_path)  # queued: no cost, no memory
 
-    live = client.get(f"/ui/runs/{run.id}").text
+    live = client.get(f"/web/ui/runs/{run.id}").text
     assert "run-axes" not in live  # a live run stays a progress fragment
 
-    registry.update_run(run.id, status="done")
-    finished = client.get(f"/ui/runs/{run.id}").text
+    registry.update_run(
+        run.id,
+        status="done",
+        actor="console",
+    )
+    finished = client.get(f"/web/ui/runs/{run.id}").text
     assert "run-axes" in finished
     assert "unknown" in finished
     assert "the run recorded no cost, so this axis is unknown" in finished
@@ -121,7 +151,7 @@ def test_a_null_accuracy_figure_renders_a_dash_not_none(tmp_path) -> None:
     """F2: a missing confidence is a dash, and figures round like the CLI's."""
     _registry, client, run = _seeded(tmp_path, cost=dict(COST), confidence=None)
 
-    text = client.get(f"/ui/runs/{run.id}").text
+    text = client.get(f"/web/ui/runs/{run.id}").text
 
     assert "None" not in text
     assert "mean confidence -" in text

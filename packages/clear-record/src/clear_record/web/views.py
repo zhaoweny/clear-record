@@ -55,10 +55,12 @@ from clear_record.core.paths import (
 )
 from clear_record.service import (
     BACKEND_AUTO,
+    CONSOLE,
     TERM_STATUSES,
     MalformedRunOptions,
     Meeting,
     MeetingAgent,
+    MeetingAgentError,
     PipelineRun,
     Registry,
     RunManager,
@@ -99,10 +101,11 @@ from clear_record.service.setup import (
     setup_incomplete,
 )
 from clear_record.service.webhooks import WebhookStatus
+from clear_record.web import auth as auth_edge
 from clear_record.web import lookup
 
 #: The Settings page's sections (ADR-0027): each is a real URL,
-#: ``/settings/<slug>``. This is the control plane's spine, not the project
+#: ``/web/settings/<slug>``. This is the control plane's spine, not the project
 #: navigation. The pinned sections: each is one job at a time.
 #: Agent and MCP write the config; Status writes the setup marker (walk setup
 #: again) and Models can download a checkpoint. The rest show their config path.
@@ -677,7 +680,7 @@ class WebhookEndpointOut(Shape):
 
 
 class WebhookStatusOut(Shape):
-    """`/api/webhooks`: the overall state, the config problems, one row per endpoint.
+    """`/api/v1/webhooks`: the overall state, the config problems, one row per endpoint.
 
     The signing secret is nowhere in this shape — only whether an endpoint is
     signed — and a problem names the environment variable, never its value.
@@ -867,9 +870,16 @@ def media_rows(registry: Registry, slug: str) -> list[dict]:
 
 
 def archive_status(archive) -> ArchiveVerification | None:
-    """The verification summary, or None when the manifest is gone."""
+    """The verification summary, or None when the manifest is gone.
+
+    The registry's own digest of the manifest is passed in, so the answer is
+    about **this archive's** record: a manifest rewritten since it was sealed is
+    *unverifiable*, never a vacuous pass.
+    """
     try:
-        return _adapters().verify_archive(archive.root_path)
+        return _adapters().verify_archive(
+            archive.root_path, manifest_sha256=archive.manifest_sha256
+        )
     except FileNotFoundError:
         return None
 
@@ -1021,6 +1031,11 @@ def meeting_context(
 
     ``agent`` is the app's injected draft seam; constructing it from the meeting
     is wiring, and a view may not do it.
+
+    The drafts panel is the one panel that reads the meeting's **workspace**, and
+    a meeting need not have one (the machine API creates meetings without it), so
+    that refusal is rendered in the panel's place: a read of such a meeting is
+    still a page, and the sentence says what would give it drafts.
     """
     _speaks(locale)
     try:
@@ -1033,12 +1048,31 @@ def meeting_context(
             "returned": page.returned,
             "next": page.next,
             "prev": max(0, page.offset - TRANSCRIPT_PAGE) if page.offset else None,
+            # The run this page came from, so the pane says what the artifact
+            # table and the API payload already say: a reader can tell which run
+            # produced the transcript in hand (ADR-0033).
+            "run_id": page.run_id,
         }
         transcript_error = None
     except FileNotFoundError:
         transcript = None
         transcript_error = tr("No transcript yet. Run the pipeline first.")
     minutes_artifact = agent.minutes_artifact()
+    # The draft panel is the one panel that reads the meeting's **workspace**, and
+    # a meeting need not have one: the machine API creates meetings without it
+    # (`POST /api/v1/projects/<p>/meetings`), and the console's own create route
+    # is the only reason the state is rare. A read must not raise for it, so the
+    # panel renders the service's own refusal — the sentence names the condition
+    # and what would fix it — instead of the page (and its fragment) answering a
+    # 500 over a meeting the console's own tab links to.
+    try:
+        drafts = [describe_draft(draft).model_dump() for draft in agent.drafts()]
+        legacy_drafts = len(agent.legacy_drafts())
+        drafts_error = None
+    except MeetingAgentError as exc:
+        drafts = []
+        legacy_drafts = 0
+        drafts_error = error_message(locale, exc)
     return {
         "project": registry.require_project(meeting.project_slug),
         "meeting": meeting,
@@ -1059,8 +1093,9 @@ def meeting_context(
             }
             for artifact in registry.list_artifacts(meeting.id)
         ],
-        "drafts": [describe_draft(draft).model_dump() for draft in agent.drafts()],
-        "legacy_drafts": len(agent.legacy_drafts()),
+        "drafts": drafts,
+        "legacy_drafts": legacy_drafts,
+        "drafts_error": drafts_error,
         "minutes_artifact": minutes_artifact,
         "minutes_text": artifact_text(minutes_artifact)
         if minutes_artifact is not None
@@ -1126,7 +1161,7 @@ def upload_refusal(registry: Registry, locale: str, meeting: Meeting) -> dict | 
     if managed.is_managed(meeting) or not meeting.workspace_path:
         return None
     try:
-        managed.precheck_upload(registry, meeting, declared_bytes=0)
+        managed.precheck_upload(registry, meeting, declared_bytes=0, actor=CONSOLE)
     except managed.UploadRejected as exc:
         return refusal(locale, exc, tr("This meeting cannot take an upload"))
     return None  # pragma: no cover - is_managed / no-path are handled above
@@ -1279,6 +1314,43 @@ def storage_settings_context(registry: Registry, locale: str) -> dict:
     }
 
 
+def tokens_context(
+    registry: Registry, *, minted: str | None = None, error: str | None = None
+) -> dict:
+    """The machine-token list: labels, instants, and the one-time plaintext.
+
+    One context builder for the Settings → Status block and the two routes that
+    write to it (mint, revoke), so the page and a fragment swap render the same
+    rows. The rows come from the service as :class:`~clear_record.service.models.MachineToken`
+    values, which carry **no** digest — a template cannot print a token's secret
+    because the value it renders has no such field.
+
+    ``minted`` is the plaintext of a token minted by *this* request, and it is
+    only ever passed by the mint route's own response: nothing stores it and no
+    earlier read can produce it, so a reload renders the list without it.
+
+    ``error`` is the service's own refusal sentence for a mint that did not land
+    (a label already in use, or one the rule rejects), rendered as the block's
+    alert rather than as a page.
+    """
+    return {
+        "tokens": [
+            {
+                "id": token.id,
+                "label": token.label,
+                "created_at": token.created_at,
+                # ``None`` is "this token has never been presented": the block
+                # says so rather than showing the mint time twice.
+                "last_used_at": token.last_used_at,
+                "revoke_path": auth_edge.token_revoke_path(token.id),
+            }
+            for token in registry.machine_tokens()
+        ],
+        "minted": minted,
+        "error": error,
+    }
+
+
 def status_context(registry: Registry, locale: str) -> dict:
     """Version, the resolved directories, the queue and backend availability."""
     _speaks(locale)
@@ -1306,8 +1378,11 @@ def status_context(registry: Registry, locale: str) -> dict:
         "backends": backend_rows(),
         "config_path": str(config_path()),
         # The permanent hello-world check renders its idle state here; the
-        # /ui/hello-check POST swaps a result into #hello-check.
+        # /web/ui/hello-check POST swaps a result into #hello-check.
         "check": None,
+        # The machine-token block beside Sessions: the list the mint/revoke
+        # routes swap back into #tokens, rendered here with no plaintext.
+        **tokens_context(registry),
     }
 
 

@@ -1,5 +1,5 @@
 // Setup is system readiness (ADR-0027, ticket 04): a numbered, skippable
-// sequence on /setup, and a dismissible update notice when the recorded version
+// sequence on /web/setup, and a dismissible update notice when the recorded version
 // marker is stale. The seed records the current version; these tests rewrite it
 // stale and restore it through the UI's own DISMISS and COMPLETE, so the seeded
 // suite still lands on Projects.
@@ -35,7 +35,7 @@ function writeMarker(version: string): void {
 test("the setup page renders the numbered steps and the shared agent panel", async ({
   page,
 }) => {
-  await page.goto("/setup");
+  await page.goto("/web/setup");
 
   await expect(page.locator(".setup-step")).toHaveCount(4);
   await expect(page.locator("#setup-welcome")).toContainText("Welcome");
@@ -43,7 +43,7 @@ test("the setup page renders the numbered steps and the shared agent panel", asy
   // Try it points at the one acceptance test (the flow's Try it stage)
   // and the permanent copy in Settings -> Status; it is not a second tape flow.
   await expect(page.locator("#setup-try")).toContainText("Run it in the Agent step");
-  await expect(page.locator('#setup-try a[href="/settings/status"]')).toBeVisible();
+  await expect(page.locator('#setup-try a[href="/web/settings/status"]')).toBeVisible();
   // The agent step is the one panel Settings -> Agent mounts, loaded by htmx.
   await expect(page.locator("#setup-agent #agent-setup .agent-setup")).toBeVisible();
   await expect(page.locator("#setup-agent .agent-flow .agent-stage")).toHaveCount(3);
@@ -55,17 +55,17 @@ test("a stale marker shows the update notice and the nav Setup link", async ({
   const current = seenVersion();
   writeMarker("0.0.0-stale");
 
-  await page.goto("/");
+  await page.goto("/web/");
   const notice = page.locator(".setup-notice");
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("updated to");
   // The notice links to the update reason, and the nav link follows the marker.
-  await expect(notice.locator('a[href="/setup?reason=update"]')).toBeVisible();
+  await expect(notice.locator('a[href="/web/setup?reason=update"]')).toBeVisible();
   await expect(page.locator(".app-nav a", { hasText: "Setup" })).toBeVisible();
 
   // Dismissing records the current version, so neither comes back on reload.
   await notice.getByRole("button", { name: "Dismiss" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/web\/$/);
   await expect(page.locator(".setup-notice")).toHaveCount(0);
   await expect(page.locator(".app-nav a", { hasText: "Setup" })).toHaveCount(0);
   expect(seenVersion()).toBe(current);
@@ -77,7 +77,7 @@ test("the update entry point shows its copy and COMPLETE records the version", a
   const current = seenVersion();
   writeMarker("0.0.0-stale");
 
-  await page.goto("/setup?reason=update");
+  await page.goto("/web/setup?reason=update");
 
   await expect(page.locator(".setup-update")).toBeVisible();
   await expect(page.locator(".setup-update")).toContainText("was updated to");
@@ -86,7 +86,7 @@ test("the update entry point shows its copy and COMPLETE records the version", a
 
   await page.getByRole("button", { name: "Finish setup" }).click();
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/web\/$/);
   await expect(page.locator(".app-nav a", { hasText: "Setup" })).toHaveCount(0);
   expect(seenVersion()).toBe(current);
 });

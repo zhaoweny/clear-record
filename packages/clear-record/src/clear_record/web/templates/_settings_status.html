@@ -32,17 +32,33 @@
 <h3>{{ tr("Setup") }}</h3>
 <p class="muted">{{ tr("Walk the first-run path again, or open the wizard directly. Re-running forgets the marker only; your harness and MCP client config are kept.") }}</p>
 <div class="row">
-  <a class="btn btn-ghost" href="/setup">{{ tr("Open the setup wizard") }}</a>
-  <form method="post" action="/setup/restart">
+  <a class="btn btn-ghost" href="/web/setup">{{ tr("Open the setup wizard") }}</a>
+  <form method="post" action="/web/setup/restart">
     <button type="submit" class="btn btn-ghost">{{ tr("Walk setup again") }}</button>
   </form>
+</div>
+
+<h3>{{ tr("Sessions") }}</h3>
+<p class="muted">{{ tr("This browser holds a session on this node. Signing out ends it here; signing out everywhere ends every session this node has issued — this browser included — and takes effect on the very next request, with no restart. The node's own machine — the command line — is the one client it opens a session for again (within a minute, since nobody is there to sign in).") }}</p>
+<div class="row">
+  <form method="post" action="/web/ui/sessions/revoke-all">
+    <button type="submit" class="btn btn-danger-ghost">{{ tr("Sign out everywhere") }}</button>
+  </form>
+</div>
+
+<h3>{{ tr("Machine tokens") }}</h3>
+{# The credentials scripts carry: one list, its mint form and the one-time
+   plaintext, all swapped as one block (#tokens) by the two routes that write. #}
+<p class="muted">{{ tr("A token authenticates the machine API (/api/v1) for a script, with no browser and no cookie. It is shown once when it is minted and stored only as a hash; revoking it takes effect on the very next request, with no restart. A token cannot open the console, cannot mint or revoke tokens, and cannot destroy anything — the machine API has no verb that destroys what a durable copy cannot reconstruct.") }}</p>
+<div id="tokens">
+  {% include "_settings_tokens.html" %}
 </div>
 
 <h3>{{ tr("Backend availability") }}</h3>
 {% include "_backend_list.html" %}
 
 <h3>{{ tr("Diagnostics") }}</h3>
-<p><a class="btn btn-ghost" href="/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
+<p><a class="btn btn-ghost" href="/web/ui/diagnostics" download="clear-record-diagnostics.txt">{{ tr("Download diagnostics") }}</a></p>
 
 <h3>{{ tr("Hello-world check") }}</h3>
 {# The permanent diagnostic: the SAME check the agent flow's Try it

@@ -16,7 +16,7 @@ import pytest
 from alembic import command
 
 from clear_record.service import Registry, archive_meeting, verify_archive
-from clear_record.service.archive import MANIFEST_FILENAME
+from clear_record.service.archive import MANIFEST_FILENAME, unarchived_tapes
 from clear_record.service.store import _alembic_config
 
 
@@ -29,16 +29,26 @@ def _seeded(tmp_path, *, default_archive_root: bool = True):
     registry = _registry(tmp_path)
     root = tmp_path / "archive"
     registry.create_project(
-        "Ops", default_archive_root=str(root) if default_archive_root else None
+        "Ops",
+        default_archive_root=str(root) if default_archive_root else None,
+        actor="console",
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake-audio")
     meeting = registry.create_meeting(
-        "ops", "Kickoff", recorded_at="2026-09-14", workspace_path=str(workspace)
+        "ops",
+        "Kickoff",
+        recorded_at="2026-09-14",
+        workspace_path=str(workspace),
+        actor="console",
     )
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     record = workspace / "record.json"
     record.write_bytes(b'{"segments": []}')
     registry.add_artifact(
@@ -47,13 +57,18 @@ def _seeded(tmp_path, *, default_archive_root: bool = True):
         path=str(record),
         sha256=hashlib.sha256(record.read_bytes()).hexdigest(),
         bytes=record.stat().st_size,
+        actor="console",
     )
     return registry, meeting, tape, record, root
 
 
 def test_manifest_lists_every_file_with_checksums(tmp_path) -> None:
     registry, meeting, tape, record, root = _seeded(tmp_path)
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     assert archive.meeting_id == meeting.id
     assert archive.project_id == meeting.project_id
@@ -109,10 +124,18 @@ def test_rearchiving_creates_a_new_directory(tmp_path, monkeypatch) -> None:
         "clear_record.service.archive._timestamp", lambda: "20260914-120000"
     )
 
-    first = archive_meeting(registry, meeting)
+    first = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
     first_manifest = Path(first.manifest_path).read_bytes()
 
-    second = archive_meeting(registry, meeting)
+    second = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     assert second.root_path != first.root_path
     assert Path(second.root_path).is_dir()
@@ -144,7 +167,11 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(archive_mod, "_archive_dir", racy)
 
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
 
     # The concurrent winner is byte-for-byte untouched...
     assert (winner / MANIFEST_FILENAME).read_text(
@@ -158,7 +185,11 @@ def test_a_concurrent_archive_winner_is_never_deleted(tmp_path, monkeypatch) -> 
 
 def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
     registry, meeting, _tape, _record, _root = _seeded(tmp_path)
-    archive = archive_meeting(registry, meeting)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        actor="console",
+    )
     archive_dir = Path(archive.root_path)
 
     assert verify_archive(archive_dir).ok is True
@@ -177,15 +208,151 @@ def test_verify_archive_detects_tampering_and_missing_files(tmp_path) -> None:
         verify_archive(tmp_path / "nothing-here")
 
 
+def test_verify_archive_reports_a_manifest_it_cannot_read(tmp_path) -> None:
+    """A manifest that is there but unreadable is *unverifiable*, never missing.
+
+    The console prints what the service answers, so a file sitting on the disk
+    must not be reported gone; an entry the manifest cannot be asked about is the
+    same answer, and a manifest that is actually absent is still its own
+    (``FileNotFoundError``: there is nothing to verify).
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    manifest.write_text("{not json", encoding="utf-8")
+
+    result = verify_archive(archive_dir)
+    assert result.ok is False
+    assert result.missing == []
+    assert result.mismatched == []
+    assert result.checked == 0
+    assert result.unverifiable is not None
+    assert MANIFEST_FILENAME in result.unverifiable
+
+    manifest.write_text(
+        json.dumps({"files": [{"path": "tapes/a.wav"}]}), encoding="utf-8"
+    )
+    entryless = verify_archive(archive_dir)
+    assert entryless.ok is False
+    assert entryless.missing == []
+    assert entryless.unverifiable is not None
+
+    manifest.unlink()
+    with pytest.raises(FileNotFoundError):
+        verify_archive(archive_dir)
+
+
+def test_verify_archive_answers_about_the_manifest_the_registry_sealed(
+    tmp_path,
+) -> None:
+    """A manifest rewritten since is *unverifiable*, however consistent it reads.
+
+    The sealed digest is what makes the answer about **this archive's** record:
+    a rewritten manifest — emptied, or truncated to the one file a caller happens
+    to ask about — must not verify vacuously against its own contents, or an
+    archive that never held a tape would authorize deleting it.
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    sealed = manifest.read_text(encoding="utf-8")
+
+    assert (
+        verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256).ok is True
+    )
+
+    # Emptied: nothing listed, so nothing missing and nothing mismatched.
+    manifest.write_text(json.dumps({"files": []}), encoding="utf-8")
+    emptied = verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256)
+    assert emptied.ok is False
+    assert emptied.missing == [] and emptied.mismatched == []
+    assert emptied.unverifiable is not None
+    assert "registry recorded" in emptied.unverifiable
+    # Without the digest the same file still reads as its own, consistent list:
+    # the weaker check a path alone can make, kept for callers that have no row.
+    assert verify_archive(archive_dir).ok is True
+
+    # Rewritten but self-consistent, listing only what the caller asks about.
+    manifest.write_text(
+        json.dumps(json.loads(sealed) | {"files": [json.loads(sealed)["files"][0]]}),
+        encoding="utf-8",
+    )
+    subset = verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256)
+    assert subset.ok is False
+    assert subset.unverifiable is not None
+
+    manifest.write_text(sealed, encoding="utf-8")
+    assert (
+        verify_archive(archive_dir, manifest_sha256=archive.manifest_sha256).ok is True
+    )
+
+
+def test_unarchived_tapes_covers_nothing_when_the_manifest_lists_nothing(
+    tmp_path,
+) -> None:
+    """An entries-less manifest holds no copy, so it answers for no tape.
+
+    The vacuous pass this closes is *verification*', not coverage's: a manifest
+    listing no files verifies against itself, and a delete leaning on that answer
+    would destroy the only copy there is. Coverage is asked of the **contents** —
+    an entry whose size and digest are the file's current bytes — so no entries
+    means no tape is covered.
+    """
+    registry, meeting, _tape, _record, _root = _seeded(tmp_path)
+    archive = archive_meeting(registry, meeting, actor="console")
+    archive_dir = Path(archive.root_path)
+    manifest = archive_dir / MANIFEST_FILENAME
+    sealed = manifest.read_text(encoding="utf-8")
+    tape = tmp_path / "a.wav"
+
+    assert unarchived_tapes(archive_dir, [tape]) == []
+    manifest.write_text(json.dumps({"files": []}), encoding="utf-8")
+    assert unarchived_tapes(archive_dir, [tape]) == ["a.wav"]
+
+    # The name is not the copy: the same path under the same name, holding other
+    # bytes of the same length, is not covered — the digest is the test.
+    manifest.write_text(sealed, encoding="utf-8")
+    tape.write_bytes(b"RIFFfake-AUDIO")
+    assert unarchived_tapes(archive_dir, [tape]) == ["a.wav"]
+
+
+def test_a_refused_archive_copies_nothing(tmp_path) -> None:
+    """The actor's gate precedes the copy: a bad word writes no file (ADR-0033).
+
+    ``add_archive`` runs the same gate the record has, but after the tape set and
+    every artifact have been copied — so a programming error in a surface would
+    leave a complete archive on the disk for a call the record cannot attribute.
+    """
+    registry, meeting, _tape, _record, root = _seeded(tmp_path)
+
+    for bad in ("", "bogus", None):
+        with pytest.raises(ValueError):
+            archive_meeting(registry, meeting, actor=bad)
+
+    assert registry.list_archives(meeting.id) == []
+    assert not root.exists()
+
+
 def test_archive_root_must_be_chosen(tmp_path) -> None:
     registry, meeting, _tape, _record, _root = _seeded(
         tmp_path, default_archive_root=False
     )
     with pytest.raises(ValueError, match="no archive root"):
-        archive_meeting(registry, meeting)
+        archive_meeting(
+            registry,
+            meeting,
+            actor="console",
+        )
 
     explicit = tmp_path / "somewhere-else"
-    archive = archive_meeting(registry, meeting, root=explicit)
+    archive = archive_meeting(
+        registry,
+        meeting,
+        root=explicit,
+        actor="console",
+    )
     assert Path(archive.root_path).parent == explicit.resolve() / "ops"
 
 
@@ -208,13 +375,18 @@ def test_an_existing_registry_at_the_released_baseline_opens_and_archives(
 
     registry = Registry(db)
     assert [p.slug for p in registry.list_projects()] == ["ops"]
-    meeting = registry.create_meeting("ops", "Kickoff")
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     archive = registry.add_archive(
         meeting.id,
         meeting.project_id,
         root_path="/archives/ops/kickoff",
         manifest_path="/archives/ops/kickoff/archive.json",
         manifest_sha256="0" * 64,
+        actor="console",
     )
     assert registry.list_archives(meeting.id) == [archive]
     assert registry.get_archive(archive.id) == archive

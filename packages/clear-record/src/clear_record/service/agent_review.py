@@ -64,6 +64,7 @@ from clear_record.service.agent_drafts import (
 )
 from clear_record.service.models import Meeting
 from clear_record.service.schemas import ArtifactOut, ProvenanceOut, Shape
+from clear_record.service import audit
 from clear_record.service.store import Registry
 
 #: The subdirectory of a meeting workspace holding its agent drafts. It is not
@@ -179,7 +180,7 @@ class MeetingAgent:
         kind: str,
         value: Any,
         *,
-        author: str,
+        actor: str,
         draft_id: str | None = None,
         clock: Callable[[], str] = _now,
     ) -> Draft:
@@ -187,10 +188,31 @@ class MeetingAgent:
 
         ``value`` is stored as it came — the app did not produce it and does not
         second-guess it. ``draft_id`` appends to an existing chain; without it a
-        new chain is opened. The author identity is the writer's own declaration
-        and is recorded on the version. An append to a chain that cannot be read
-        is refused with the service's own sentence, and nothing is written.
+        new chain is opened. ``actor`` is the surface's own word for itself and is
+        what the version records as its author: a draft's provenance is the
+        transport's, never the writer's own declaration (ADR-0033). An append to
+        a chain that cannot be read is refused with the service's own sentence,
+        and nothing is written.
         """
+        with audit.refused_call(
+            self.registry,
+            actor,
+            "draft.write",
+            f"draft:{draft_id or kind}",
+            refusals=(MeetingAgentError,),
+        ):
+            return self._write(kind, value, actor=actor, draft_id=draft_id, clock=clock)
+
+    def _write(
+        self,
+        kind: str,
+        value: Any,
+        *,
+        actor: str,
+        draft_id: str | None,
+        clock: Callable[[], str],
+    ) -> Draft:
+        """``write``'s body: the refusals it can raise are recorded by the caller."""
         directory = self.directory
         if draft_id is None:
             if kind not in TASK_KINDS:
@@ -206,75 +228,114 @@ class MeetingAgent:
                     kind=kind,
                     detail=problem,
                 )
-            return start_draft(
+            written = start_draft(
                 directory,
                 kind=kind,
                 project=self.meeting.project_slug,
                 meeting=self.meeting.slug,
                 value=value,
-                author=author,
+                actor=actor,
                 clock=clock,
             )
-        target = self.draft(draft_id)
-        if target is None:
-            raise MeetingAgentError(
-                deferred("no draft {draft} for {meeting}"),
-                draft=draft_id,
-                meeting=self.meeting.slug,
-            )
-        problem = require_shape(target.kind, value)
-        if problem is not None:
-            raise MeetingAgentError(
-                deferred("the {kind} draft cannot be written: {detail}"),
-                kind=target.kind,
-                detail=problem,
-            )
-        try:
-            return append_version(target.path, value=value, author=author, clock=clock)
-        except UnreadableChain as exc:
-            raise _unreadable(target) from exc
+        else:
+            target = self.draft(draft_id)
+            if target is None:
+                raise MeetingAgentError(
+                    deferred("no draft {draft} for {meeting}"),
+                    draft=draft_id,
+                    meeting=self.meeting.slug,
+                )
+            problem = require_shape(target.kind, value)
+            if problem is not None:
+                raise MeetingAgentError(
+                    deferred("the {kind} draft cannot be written: {detail}"),
+                    kind=target.kind,
+                    detail=problem,
+                )
+            try:
+                written = append_version(
+                    target.path, value=value, actor=actor, clock=clock
+                )
+            except UnreadableChain as exc:
+                raise _unreadable(target) from exc
+        # The chain is a meeting's file the service owns, so the write is recorded
+        # like a registry write — the record is of service mutations, and this is
+        # one (ADR-0033).
+        self.registry.record_audit(actor, "draft.write", f"draft:{written.draft_id}")
+        return written
 
     # --- reviewing --------------------------------------------------------- #
     def promote(
         self,
         draft: Draft,
         *,
-        author: str = "human",
+        actor: str,
         version: int,
         clock: Callable[[], str] = _now,
     ) -> Draft:
-        """Accept ``draft``'s ``version``; produce what its acceptance means."""
-        try:
-            return promote_draft(
-                draft,
-                registry=self.registry,
-                meeting=self.meeting,
-                author=author,
-                version=version,
-                clock=clock,
-            )
-        except StaleVersion as exc:
-            raise _stale(exc) from exc
-        except UnreadableChain as exc:
-            raise _unreadable(draft) from exc
+        """Accept ``draft``'s ``version``; produce what its acceptance means.
+
+        ``actor`` is the **transport** that carried the decision — ``mcp`` for
+        the stdio adapter, ``console`` for the console — and is recorded both on
+        the version (``reviewed_by``) and in the audit record, along with the
+        promotion's own writes, which the store records for the same actor
+        (ADR-0033). It is the surface, not a person: a harness that accepts its
+        own draft over MCP is recorded as ``mcp``, which is why a human decision
+        is made at the console.
+        """
+        with audit.refused_call(
+            self.registry,
+            actor,
+            "draft.accept",
+            f"draft:{draft.draft_id}",
+            refusals=(MeetingAgentError,),
+        ):
+            try:
+                promoted = promote_draft(
+                    draft,
+                    registry=self.registry,
+                    meeting=self.meeting,
+                    actor=actor,
+                    version=version,
+                    clock=clock,
+                )
+            except StaleVersion as exc:
+                raise _stale(exc) from exc
+            except UnreadableChain as exc:
+                raise _unreadable(draft) from exc
+        self.registry.record_audit(actor, "draft.accept", f"draft:{promoted.draft_id}")
+        return promoted
 
     def reject(
         self,
         draft: Draft,
         *,
-        author: str = "human",
+        actor: str,
         version: int,
         clock: Callable[[], str] = _now,
     ) -> Draft:
-        """Reject a version, keeping the whole chain on disk as history."""
-        try:
-            return record_review(
-                draft, "rejected", author=author, version=version, clock=clock
-            )
-        except StaleVersion as exc:
-            raise _stale(exc) from exc
-        except UnreadableChain as exc:
-            raise _unreadable(draft) from exc
+        """Reject a version, keeping the whole chain on disk as history.
+
+        ``actor`` is the transport that carried the decision, recorded as the
+        decision's reviewer and in the audit record (ADR-0033).
+        """
+        with audit.refused_call(
+            self.registry,
+            actor,
+            "draft.reject",
+            f"draft:{draft.draft_id}",
+            refusals=(MeetingAgentError,),
+        ):
+            try:
+                rejected = record_review(
+                    draft, "rejected", actor=actor, version=version, clock=clock
+                )
+            except StaleVersion as exc:
+                raise _stale(exc) from exc
+            except UnreadableChain as exc:
+                raise _unreadable(draft) from exc
+        self.registry.record_audit(actor, "draft.reject", f"draft:{rejected.draft_id}")
+        return rejected
 
     def legacy_drafts(self) -> tuple[str, ...]:
         """The 0.2 agent runs still on disk under this meeting's agent directory.
@@ -389,6 +450,7 @@ def _register_file(
     meeting: Meeting,
     path: Path,
     *,
+    actor: str,
     kind: str,
 ):
     """Record ``path`` as a final agent artifact, for the content it holds **now**.
@@ -398,6 +460,9 @@ def _register_file(
     whose bytes differ from the latest row's — including one that returns to an
     earlier version's bytes — gets its own row. ``latest_artifact`` is the highest
     id, so what it publishes always describes the file it names (ADR-0030).
+
+    ``actor`` is the surface whose acceptance produced the artifact: the registry
+    records the row against it (ADR-0033).
     """
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     latest = None
@@ -409,6 +474,7 @@ def _register_file(
         return latest
     return registry.add_artifact(
         meeting.id,
+        actor=actor,
         kind=kind,
         path=str(path),
         sha256=digest,
@@ -423,6 +489,7 @@ def _promote_glossary(
     *,
     registry: Registry,
     meeting: Meeting,
+    actor: str,
 ) -> dict:
     """The proposed terms become **candidate** registry terms (never confirmed)."""
     value = draft.value if isinstance(draft.value, dict) else {}
@@ -443,6 +510,7 @@ def _promote_glossary(
         registry.add_term(
             meeting.project_slug,
             term,
+            actor=actor,
             reading=item.get("reading"),
             aliases=", ".join(str(alias) for alias in aliases) or None,
             definition=item.get("definition"),
@@ -460,6 +528,7 @@ def _promote_transcript_check(
     *,
     registry: Registry,
     meeting: Meeting,
+    actor: str,
 ) -> dict:
     """Write the corrected revision as a **new** file plus its change list."""
     value = draft.value if isinstance(draft.value, dict) else {}
@@ -481,7 +550,7 @@ def _promote_transcript_check(
         encoding="utf-8",
     )
     artifact = _register_file(
-        registry, meeting, revision_path, kind="transcript_revision"
+        registry, meeting, revision_path, actor=actor, kind="transcript_revision"
     )
     return {
         "revision_path": str(revision_path),
@@ -496,12 +565,13 @@ def _promote_minutes(
     *,
     registry: Registry,
     meeting: Meeting,
+    actor: str,
 ) -> dict:
     """Write the Markdown minutes and register them as the meeting's artifact."""
     value = draft.value if isinstance(draft.value, dict) else {}
     path = draft.run_dir / "minutes.md"
     path.write_text(str(value.get("body", "")) + "\n", encoding="utf-8")
-    artifact = _register_file(registry, meeting, path, kind="minutes")
+    artifact = _register_file(registry, meeting, path, actor=actor, kind="minutes")
     return {
         "path": str(path),
         "artifact_id": artifact.id,
@@ -524,7 +594,7 @@ def promote_draft(
     *,
     registry: Registry,
     meeting: Meeting,
-    author: str = "human",
+    actor: str,
     version: int,
     clock: Callable[[], str] = _now,
 ) -> Draft:
@@ -542,18 +612,25 @@ def promote_draft(
     Idempotent: a version that already carries a decision is returned as it
     stands, with no second side effect. The decision and the promotion's outcome
     are one write, so the accepted state and what it produced never disagree.
+
+    ``actor`` is the deciding surface, and it is the actor every registry write
+    the promotion makes is recorded against (ADR-0033): the terms a glossary
+    acceptance adds and the artifact an acceptance registers say who accepted
+    them, not just that an agent proposed them.
     """
     return record_review(
         draft,
         "accepted",
-        author=author,
+        actor=actor,
         version=version,
         clock=clock,
-        apply=lambda stored: _produce(stored, registry=registry, meeting=meeting),
+        apply=lambda stored: _produce(
+            stored, registry=registry, meeting=meeting, actor=actor
+        ),
     )
 
 
-def _produce(draft: Draft, *, registry: Registry, meeting: Meeting) -> dict:
+def _produce(draft: Draft, *, registry: Registry, meeting: Meeting, actor: str) -> dict:
     """What accepting one version produces, as the promotion's outcome summary.
 
     Runs inside the store's hold on the chain, before the decision is recorded:
@@ -574,7 +651,7 @@ def _produce(draft: Draft, *, registry: Registry, meeting: Meeting) -> dict:
             deferred("no promotion is defined for draft kind {kind}"), kind=draft.kind
         )
     _agent_dir(meeting)  # refuses a meeting with no workspace
-    return promoter(draft, registry=registry, meeting=meeting)
+    return promoter(draft, registry=registry, meeting=meeting, actor=actor)
 
 
 __all__ = [

@@ -1,8 +1,16 @@
 {# The glossary table, its filters and the add-term form: unchanged from the
-   single-scroll page, ids and `#detail` targets kept so the `/ui/glossary/*`
+   single-scroll page, ids and `#detail` targets kept so the `/web/ui/glossary/*`
    fragments keep working. #}
 <div x-data="{ filter: 'all' }">
   <h3>{{ tr("Glossary") }}</h3>
+  {# Where the registry and the workspace file disagree, and by design: a run
+     publishes the confirmed terms into the meeting's `glossary.txt` (replacing a
+     hand-edit, retaining nothing), and when nothing is confirmed the registry
+     writes nothing and the user's file stands (service/runs.py's glossary
+     precedence, pinned by tests/service/test_runs.py). An operator looking at
+     terms meets the question here, so the answer is here — the decision is the
+     owner's, and this states it rather than changing it. #}
+  <p class="muted">{{ tr("The registry is the truth: a run publishes these confirmed terms to the meeting workspace's glossary.txt — the last published copy of this list, not a second place to edit terms — and only when nothing is confirmed does your own glossary.txt stand as it is.") }}</p>
   <div class="filters">
     <span class="muted">{{ tr("Filter") }}</span>
     <select x-model="filter">
@@ -32,7 +40,7 @@
           <div class="muted term-by">{{ term.added_by }}</div>
         </td>
         <td>
-          <form hx-post="/ui/glossary/{{ term.id }}/status" hx-target="#detail"
+          <form hx-post="/web/ui/glossary/{{ term.id }}/status" hx-target="#detail"
                 hx-swap="innerHTML">
             <select class="select-sm" name="status" aria-label="{{ tr("Term status") }}"
                     onchange="this.form.requestSubmit()">
@@ -41,10 +49,25 @@
               {% endfor %}
             </select>
           </form>
-          <button class="btn btn-icon btn-sm btn-danger-ghost" title="{{ tr("delete") }}"
-                  aria-label="{{ tr("Delete term") }}"
-                  hx-delete="/ui/glossary/{{ term.id }}"
-                  hx-target="#detail" hx-swap="innerHTML">&#10005;</button>
+          {% if term.status == "retired" %}
+          {# A retired row stays on the table, so it can be brought back: a
+             retire is a status change, never a row delete (ADR-0033). Restore
+             returns the term to the status the retire took it from. #}
+          <form hx-post="/web/ui/glossary/{{ term.id }}/restore" hx-target="#detail"
+                hx-swap="innerHTML">
+            <button class="btn btn-sm" type="submit"
+                    title="{{ tr('Restore term') }}"
+                    aria-label="{{ tr('Restore term') }}"
+                    hx-confirm="{{ tr('Restore this term? It returns to the status it had before it was retired.') }}">{{ tr("Restore") }}</button>
+          </form>
+          {% else %}
+          <button class="btn btn-sm btn-danger-ghost" type="button"
+                  title="{{ tr("Retire term") }}"
+                  aria-label="{{ tr("Retire term") }}"
+                  hx-delete="/web/ui/glossary/{{ term.id }}"
+                  hx-confirm="{{ tr('Retire this term? It stops biasing the decoder; the row is kept, and Restore returns it to the status it had before the retire.') }}"
+                  hx-target="#detail" hx-swap="innerHTML">{{ tr("Retire") }}</button>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -57,7 +80,7 @@
 
 <h3>{{ tr("Add a term") }}</h3>
 <form class="stack"
-      hx-post="/ui/projects/{{ project.slug }}/glossary"
+      hx-post="/web/ui/projects/{{ project.slug }}/glossary"
       hx-target="#detail"
       hx-swap="innerHTML">
   <div class="row">

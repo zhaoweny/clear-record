@@ -24,7 +24,9 @@ import pytest
 
 from clear_record.service import (
     AGENT_DIRNAME,
+    CONSOLE,
     DRAFT_FILENAME,
+    MCP,
     PROMOTERS,
     TASK_KINDS,
     Draft,
@@ -66,15 +68,27 @@ _ANSWERS: dict[str, dict] = {
     },
 }
 
-_AUTHOR = "pi-agent"
+#: The two transports these tests call as. A draft's recorded author and its
+#: reviewer are the **actors** their transports supply, never declared identities
+#: (ADR-0033): the harness writes over ``mcp``, a person decides at the console.
+_HARNESS = MCP
+_HUMAN = CONSOLE
 
 
 def _workspace(tmp_path: Path) -> tuple[Registry, object, Path]:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor=_HUMAN,
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor=_HUMAN,
+    )
     return registry, meeting, workspace
 
 
@@ -84,18 +98,28 @@ def _agent(registry: Registry, meeting) -> MeetingAgent:
 
 def _write(agent: MeetingAgent, kind: str, value: dict | None = None) -> Draft:
     return agent.write(
-        kind, value if value is not None else _ANSWERS[kind], author=_AUTHOR
+        kind,
+        value if value is not None else _ANSWERS[kind],
+        actor=_HARNESS,
     )
 
 
 def _promote(agent: MeetingAgent, draft: Draft) -> Draft:
     """Accept the version this draft was read at — what a reviewer who read it does."""
-    return agent.promote(draft, version=draft.version)
+    return agent.promote(
+        draft,
+        version=draft.version,
+        actor=_HUMAN,
+    )
 
 
 def _reject(agent: MeetingAgent, draft: Draft) -> Draft:
     """Reject the version this draft was read at."""
-    return agent.reject(draft, version=draft.version)
+    return agent.reject(
+        draft,
+        version=draft.version,
+        actor=_HUMAN,
+    )
 
 
 # --- the dispatch tables cover every declared kind -------------------------- #
@@ -121,7 +145,7 @@ def test_a_written_draft_records_its_author_and_value(tmp_path: Path) -> None:
     assert draft.review_state == "draft"
     assert draft.project == "ops" and draft.meeting == "kickoff"
     assert draft.value == _ANSWERS["transcript_check"]
-    assert draft.provenance.author == _AUTHOR
+    assert draft.provenance.author == _HARNESS
     assert draft.provenance.written_at
     assert len(draft.versions) == 1
     # A draft directory belongs to the meeting's agent directory.
@@ -139,18 +163,21 @@ def test_a_new_version_reopens_a_decided_draft(tmp_path: Path) -> None:
 
     revised = _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"}
     second = agent.write(
-        "minutes", revised, author="another-agent", draft_id=first.draft_id
+        "minutes",
+        revised,
+        draft_id=first.draft_id,
+        actor=_HUMAN,
     )
 
     assert [version.provenance.author for version in second.versions] == [
-        _AUTHOR,
-        "another-agent",
+        _HARNESS,
+        _HUMAN,
     ]
     # The decision belongs to the version it was made on, so the chain is back
     # in review — a new version is never accepted on an earlier one's strength.
     assert second.review_state == "draft"
     assert second.value["body"] == "# Kickoff (revised)"
-    assert agent.draft(first.draft_id).versions[0].reviewed_by == "human"
+    assert agent.draft(first.draft_id).versions[0].reviewed_by == _HUMAN
 
 
 def test_appending_to_an_unknown_chain_is_a_named_error(tmp_path: Path) -> None:
@@ -158,7 +185,7 @@ def test_appending_to_an_unknown_chain_is_a_named_error(tmp_path: Path) -> None:
 
     with pytest.raises(MeetingAgentError, match="no draft"):
         _agent(registry, meeting).write(
-            "minutes", _ANSWERS["minutes"], author=_AUTHOR, draft_id="nope"
+            "minutes", _ANSWERS["minutes"], draft_id="nope", actor=_HARNESS
         )
 
 
@@ -166,17 +193,20 @@ def test_an_unknown_kind_is_a_named_error(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
 
     with pytest.raises(MeetingAgentError, match="unknown draft kind"):
-        _agent(registry, meeting).write("summarize", {}, author=_AUTHOR)
+        _agent(registry, meeting).write("summarize", {}, actor=_HARNESS)
 
 
 def test_drafts_lists_only_this_meetings_chains(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
     other = registry.create_meeting(
-        "ops", "Standup", workspace_path=str(tmp_path / "ws2")
+        "ops",
+        "Standup",
+        workspace_path=str(tmp_path / "ws2"),
+        actor=_HUMAN,
     )
     agent = _agent(registry, meeting)
     _write(agent, "minutes")
-    _agent(registry, other).write("minutes", _ANSWERS["minutes"], author=_AUTHOR)
+    _agent(registry, other).write("minutes", _ANSWERS["minutes"], actor=_HARNESS)
     # A directory that is not a chain at all is skipped, not fatal.
     (agent.directory / "unrelated").mkdir(parents=True)
 
@@ -188,11 +218,18 @@ def test_drafts_lists_only_this_meetings_chains(tmp_path: Path) -> None:
 
 def test_writing_needs_a_workspace(tmp_path: Path) -> None:
     registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        actor=_HUMAN,
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor=_HUMAN,
+    )
 
     with pytest.raises(MeetingAgentError, match="no workspace"):
-        _agent(registry, meeting).write("minutes", _ANSWERS["minutes"], author=_AUTHOR)
+        _agent(registry, meeting).write("minutes", _ANSWERS["minutes"], actor=_HARNESS)
 
 
 # --- promotion: glossary collection ----------------------------------------- #
@@ -215,8 +252,8 @@ def test_promoting_glossary_candidates_adds_candidate_terms(tmp_path: Path) -> N
     assert promoted.review_state == "accepted"
     assert promoted.promotion["summary"]["added"] == ["Falcon"]
     # The chain records who decided it, beside who wrote it.
-    assert promoted.versions[-1].reviewed_by == "human"
-    assert promoted.versions[-1].provenance.author == _AUTHOR
+    assert promoted.versions[-1].reviewed_by == _HUMAN
+    assert promoted.versions[-1].provenance.author == _HARNESS
     # Candidate terms are excluded from the decoder snapshot: an accepted draft
     # is not the owner's per-term confirmation.
     assert project_snapshot(registry, "ops").empty
@@ -235,7 +272,13 @@ def test_promoting_glossary_twice_is_idempotent(tmp_path: Path) -> None:
 
 def test_promoting_glossary_skips_an_existing_term(tmp_path: Path) -> None:
     registry, meeting, _ = _workspace(tmp_path)
-    registry.add_term("ops", "Falcon", status="confirmed", added_by="human")
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        added_by="human",
+        actor=_HUMAN,
+    )
     agent = _agent(registry, meeting)
 
     promoted = _promote(agent, _write(agent, "glossary_collection"))
@@ -271,7 +314,7 @@ def test_promoting_a_check_records_a_revision_without_overwriting_the_record(
     assert summary["changes"] == 1
     changes = json.loads(Path(summary["changes_path"]).read_text(encoding="utf-8"))
     assert changes["changes"] == _ANSWERS["transcript_check"]["changes"]
-    assert changes["author"] == _AUTHOR
+    assert changes["author"] == _HARNESS
     # The reconciled record is not the promotion's target: a revision is a new file.
     assert (workspace / "record.json").read_bytes() == record_before
     artifact = registry.latest_artifact(meeting.id, "transcript_revision")
@@ -338,11 +381,15 @@ def test_a_re_accepted_version_leaves_a_row_that_describes_the_file(
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
 
-    assert agent.promote(agent.draft(first.draft_id), version=2).accepted
+    assert agent.promote(
+        agent.draft(first.draft_id),
+        version=2,
+        actor=_HUMAN,
+    ).accepted
 
     latest = registry.latest_artifact(meeting.id, "minutes")
     assert latest is not None
@@ -370,15 +417,15 @@ def test_a_version_that_returns_to_earlier_bytes_gets_its_own_row(
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": first_body + "\n\nAnd then some."},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
     assert _promote(agent, agent.draft(first.draft_id)).accepted
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": first_body},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
     assert _promote(agent, agent.draft(first.draft_id)).accepted
 
@@ -406,7 +453,7 @@ def test_rejecting_a_draft_keeps_it_and_promotes_nothing(tmp_path: Path) -> None
     assert registry.list_artifacts(meeting.id) == []
     stored = agent.draft(draft.draft_id)
     assert stored.review_state == "rejected"
-    assert stored.versions[-1].reviewed_by == "human"
+    assert stored.versions[-1].reviewed_by == _HUMAN
 
 
 def test_a_review_round_trips_the_promotion_record(tmp_path: Path) -> None:
@@ -419,7 +466,7 @@ def test_a_review_round_trips_the_promotion_record(tmp_path: Path) -> None:
     assert reloaded.review_state == "accepted"
     assert reloaded.promotion == promoted.promotion
     assert describe_draft(reloaded).promotion["kind"] == "minutes"
-    assert describe_draft(reloaded).versions[0].author == _AUTHOR
+    assert describe_draft(reloaded).versions[0].author == _HARNESS
 
 
 def test_a_value_that_cannot_be_its_kind_is_refused_at_the_write(
@@ -435,23 +482,51 @@ def test_a_value_that_cannot_be_its_kind_is_refused_at_the_write(
     agent = _agent(registry, meeting)
 
     with pytest.raises(MeetingAgentError, match="'body' is missing"):
-        agent.write("minutes", {}, author=_AUTHOR)
+        agent.write(
+            "minutes",
+            {},
+            actor=_HARNESS,
+        )
     # A blank string is the empty document the key rules out, not a value: without
     # this an empty (or whitespace) minutes body accepts and registers an artifact
     # no larger than its own newline as the meeting's final minutes.
     with pytest.raises(MeetingAgentError, match="'body' is empty"):
-        agent.write("minutes", {"body": "  "}, author=_AUTHOR)
+        agent.write(
+            "minutes",
+            {"body": "  "},
+            actor=_HARNESS,
+        )
     with pytest.raises(MeetingAgentError, match="'revision' is empty"):
-        agent.write("transcript_check", {"revision": "", "changes": []}, author=_AUTHOR)
+        agent.write(
+            "transcript_check",
+            {"revision": "", "changes": []},
+            actor=_HARNESS,
+        )
     with pytest.raises(MeetingAgentError, match="'terms' must be a list"):
-        agent.write("glossary_collection", {"terms": "Falcon"}, author=_AUTHOR)
+        agent.write(
+            "glossary_collection",
+            {"terms": "Falcon"},
+            actor=_HARNESS,
+        )
     with pytest.raises(MeetingAgentError, match=r"terms\[0\]\.term"):
-        agent.write("glossary_collection", {"terms": [{}]}, author=_AUTHOR)
+        agent.write(
+            "glossary_collection",
+            {"terms": [{}]},
+            actor=_HARNESS,
+        )
     with pytest.raises(MeetingAgentError, match="'changes'"):
-        agent.write("transcript_check", {"revision": "x"}, author=_AUTHOR)
+        agent.write(
+            "transcript_check",
+            {"revision": "x"},
+            actor=_HARNESS,
+        )
     # A well-shaped empty list is legitimate: the harness found nothing.
     assert (
-        agent.write("glossary_collection", {"terms": []}, author=_AUTHOR).review_state
+        agent.write(
+            "glossary_collection",
+            {"terms": []},
+            actor=_HARNESS,
+        ).review_state
         == "draft"
     )
     assert agent.drafts()  # and nothing above left a partial write behind
@@ -474,7 +549,7 @@ def test_a_chain_that_does_not_hold_its_kind_cannot_be_accepted(
         project="ops",
         meeting="kickoff",
         value={},
-        author=_AUTHOR,
+        actor=_HARNESS,
     )
 
     with pytest.raises(PromotionError, match="'body' is missing"):
@@ -491,7 +566,7 @@ def test_a_chain_that_does_not_hold_its_kind_cannot_be_accepted(
         project="ops",
         meeting="kickoff",
         value={"body": "  "},
-        author=_AUTHOR,
+        actor=_HARNESS,
     )
 
     with pytest.raises(PromotionError, match="'body' is empty"):
@@ -508,19 +583,27 @@ def test_a_decision_names_the_version_the_human_read(tmp_path: Path) -> None:
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
     read = agent.draft(first.draft_id)
     assert read.version == 2
 
     with pytest.raises(MeetingAgentError, match="not the newest"):
-        agent.promote(read, version=1)
+        agent.promote(
+            read,
+            version=1,
+            actor=_HUMAN,
+        )
 
     # Nothing ran: the stale refusal is checked before any side effect.
     assert registry.list_artifacts(meeting.id) == []
 
-    promoted = agent.promote(agent.draft(first.draft_id), version=2)
+    promoted = agent.promote(
+        agent.draft(first.draft_id),
+        version=2,
+        actor=_HUMAN,
+    )
 
     assert promoted.review_state == "accepted"
     artifact = registry.latest_artifact(meeting.id, "minutes")
@@ -533,11 +616,18 @@ def test_a_rejection_names_its_version_too(tmp_path: Path) -> None:
     agent = _agent(registry, meeting)
     first = _write(agent, "minutes")
     agent.write(
-        "minutes", _ANSWERS["minutes"], author="another-agent", draft_id=first.draft_id
+        "minutes",
+        _ANSWERS["minutes"],
+        draft_id=first.draft_id,
+        actor=_HARNESS,
     )
 
     with pytest.raises(MeetingAgentError, match="not the newest"):
-        agent.reject(agent.draft(first.draft_id), version=1)
+        agent.reject(
+            agent.draft(first.draft_id),
+            version=1,
+            actor=_HUMAN,
+        )
 
     assert agent.draft(first.draft_id).review_state == "draft"
 
@@ -559,12 +649,16 @@ def test_a_decision_refuses_a_chain_that_gained_a_version_after_the_read(
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
 
     with pytest.raises(MeetingAgentError, match="not the newest"):
-        agent.reject(read, version=1)
+        agent.reject(
+            read,
+            version=1,
+            actor=_HUMAN,
+        )
 
     stored = agent.draft(first.draft_id)
     assert stored.version == 2
@@ -586,12 +680,16 @@ def test_a_superseded_acceptance_promotes_nothing(tmp_path: Path) -> None:
     agent.write(
         "minutes",
         _ANSWERS["minutes"] | {"body": "# Kickoff (revised)"},
-        author="another-agent",
         draft_id=first.draft_id,
+        actor=_HARNESS,
     )
 
     with pytest.raises(MeetingAgentError, match="not the newest"):
-        agent.promote(read, version=1)
+        agent.promote(
+            read,
+            version=1,
+            actor=_HUMAN,
+        )
 
     assert registry.list_artifacts(meeting.id) == []
     assert not (first.run_dir / "minutes.md").exists()
@@ -640,7 +738,11 @@ def test_a_chain_that_cannot_be_read_is_refused_not_written_over(
     read.path.write_text(torn, encoding="utf-8")
 
     with pytest.raises(MeetingAgentError, match="cannot be read"):
-        agent.reject(read, version=1)
+        agent.reject(
+            read,
+            version=1,
+            actor=_HUMAN,
+        )
 
     assert read.path.read_text(encoding="utf-8") == torn
 
@@ -662,7 +764,7 @@ def test_appending_to_a_chain_that_cannot_be_read_is_refused(tmp_path: Path) -> 
         store.append_version(
             first.path,
             value=_ANSWERS["minutes"] | {"body": "# Third"},
-            author="another-agent",
+            actor=_HARNESS,
         )
 
     assert first.path.read_text(encoding="utf-8") == torn
@@ -698,8 +800,8 @@ def test_the_append_surface_answers_over_a_chain_damaged_after_its_read(
         agent.write(
             "minutes",
             _ANSWERS["minutes"] | {"body": "# Third"},
-            author="another-agent",
             draft_id=first.draft_id,
+            actor=_HARNESS,
         )
 
     assert first.path.read_text(encoding="utf-8") == torn["before"][:120]
@@ -716,8 +818,18 @@ def test_two_writes_in_one_second_open_two_chains(tmp_path: Path) -> None:
     frozen = "2026-01-01T00:00:00+00:00"
     clock = lambda: frozen  # noqa: E731 - one frozen instant for both writes
 
-    first = agent.write("minutes", _ANSWERS["minutes"], author=_AUTHOR, clock=clock)
-    second = agent.write("minutes", _ANSWERS["minutes"], author=_AUTHOR, clock=clock)
+    first = agent.write(
+        "minutes",
+        _ANSWERS["minutes"],
+        clock=clock,
+        actor=_HARNESS,
+    )
+    second = agent.write(
+        "minutes",
+        _ANSWERS["minutes"],
+        clock=clock,
+        actor=_HARNESS,
+    )
 
     assert first.draft_id != second.draft_id
     assert len(agent.drafts()) == 2
@@ -742,16 +854,26 @@ def test_a_chain_directory_that_has_not_been_written_yet_is_a_taken_id(
     # The first writer stops between creating its directory and writing it.
     real_write = store.write_draft
     monkeypatch.setattr(store, "write_draft", lambda draft: draft.path)
-    first = agent.write("minutes", _ANSWERS["minutes"], author="one", clock=clock)
+    first = agent.write(
+        "minutes",
+        _ANSWERS["minutes"],
+        clock=clock,
+        actor=_HARNESS,
+    )
     monkeypatch.setattr(store, "write_draft", real_write)
 
     assert not (first.run_dir / DRAFT_FILENAME).exists()
 
-    second = agent.write("minutes", _ANSWERS["minutes"], author="two", clock=clock)
+    second = agent.write(
+        "minutes",
+        _ANSWERS["minutes"],
+        clock=clock,
+        actor=_HUMAN,
+    )
 
     assert second.draft_id != first.draft_id
     assert second.run_dir != first.run_dir
-    assert second.provenance.author == "two"
+    assert second.provenance.author == _HUMAN
     assert first.run_dir.is_dir()  # the mid-write chain's directory is left alone
 
 
@@ -781,7 +903,11 @@ def test_promote_draft_is_the_same_function_the_agent_delegates_to(
     draft = _write(agent, "minutes")
 
     promoted = promote_draft(
-        draft, registry=registry, meeting=meeting, version=draft.version
+        draft,
+        registry=registry,
+        meeting=meeting,
+        version=draft.version,
+        actor=_HUMAN,
     )
 
     assert promoted.review_state == "accepted"

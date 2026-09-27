@@ -9,6 +9,10 @@ Date: 2026-09-14
   the MCP rung is deleted and `run_agent_task` is replaced by the harness-facing
   `write_agent_draft`. Everything else here stands, including the thin-adapter
   and no-credential decisions.
+- Extended by [ADR-0033](0033-the-auth-position.md) (2026-09-26): the network
+  transport's auth story is decided and this ADR's own revisit condition is
+  discharged — stdio stays the transport a local harness uses, and a `/mcp` mount
+  waits for a client that needs a non-local one.
 
 ## Context
 
@@ -176,3 +180,16 @@ Date: 2026-09-14
   instead of reaching the agent as `Error executing tool <name>`.
 - Revisit if a client needs a network transport, or if the extra proves to be
   friction.
+
+## Update (2026-09-26) — the transport clause's revisit condition is discharged
+
+- [FACT] [ADR-0033](0033-the-auth-position.md) answers the two things this ADR's
+  discarded SSE/Streamable-HTTP alternative named: a recorded endpoint every
+  surface can find, and the access position. The HTTP transport's credential is
+  decided — a pre-shared bearer from the node's machine-token story, with the
+  tool surface destructive-free — and the MCP specification leaves authorization
+  optional for an implementation that does not support it.
+- [DECISION] Mounting `/mcp` over HTTP is a **transport change** over settled
+  policy, deferred until a client needs a non-local MCP transport; its open
+  questions (credential conformance, the remote-safe tool surface, the session
+  model) live in ADR-0033. The stdio decision above is unchanged.

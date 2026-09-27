@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import configparser
 import dataclasses
+import json
 import re
 import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 import types
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -27,9 +30,10 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, UniqueConstraint, create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import NullPool
 
-from clear_record.core import PipelineOptions
+from clear_record.core import JobEvent, PipelineOptions, diagnostics
 from clear_record.core.paths import registry_path
 from clear_record.service import (
     RUN_ORIGINS,
@@ -41,7 +45,10 @@ from clear_record.service import (
 from clear_record.service import models as models_module
 from clear_record.service import store as store_module
 from clear_record.service.lifecycle import active_run_predicate
-from clear_record.service.store import _LADDER_VERSION, _alembic_config
+from clear_record.service.store import (
+    _LADDER_VERSION,
+    _alembic_config,
+)
 
 #: The repository root: the tree this test's git history lives in.
 _REPO = Path(__file__).resolve().parents[4]
@@ -139,7 +146,11 @@ def _seed_project(db_path: Path) -> None:
 
 def test_create_and_list_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    project = reg.create_project("Weekly Ops", notes="ops sync")
+    project = reg.create_project(
+        "Weekly Ops",
+        notes="ops sync",
+        actor="console",
+    )
 
     assert project.slug == "weekly-ops"
     assert project.name == "Weekly Ops"
@@ -151,7 +162,16 @@ def test_create_and_list_projects(tmp_path) -> None:
 
 def test_slug_collision_gets_a_suffix(tmp_path) -> None:
     reg = _registry(tmp_path)
-    assert (reg.create_project("Sync").slug, reg.create_project("Sync").slug) == (
+    assert (
+        reg.create_project(
+            "Sync",
+            actor="console",
+        ).slug,
+        reg.create_project(
+            "Sync",
+            actor="console",
+        ).slug,
+    ) == (
         "sync",
         "sync-2",
     )
@@ -159,9 +179,17 @@ def test_slug_collision_gets_a_suffix(tmp_path) -> None:
 
 def test_duplicate_explicit_slug_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("A", slug="shared")
+    reg.create_project(
+        "A",
+        slug="shared",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.create_project("B", slug="shared")
+        reg.create_project(
+            "B",
+            slug="shared",
+            actor="console",
+        )
 
 
 def test_unsafe_explicit_slugs_are_rejected(tmp_path) -> None:
@@ -169,76 +197,246 @@ def test_unsafe_explicit_slugs_are_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     for bad in ("../escaped", "a/b", "UPPER", "with space", "."):
         with pytest.raises(ValueError, match="slug must match"):
-            reg.create_project("Ops", slug=bad)
+            reg.create_project(
+                "Ops",
+                slug=bad,
+                actor="console",
+            )
 
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     with pytest.raises(ValueError, match="slug must match"):
-        reg.create_meeting("ops", "Kickoff", slug="../escaped")
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            slug="../escaped",
+            actor="console",
+        )
 
 
 def test_blank_project_name_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
     with pytest.raises(ValueError):
-        reg.create_project("   ")
+        reg.create_project(
+            "   ",
+            actor="console",
+        )
 
 
 def test_state_survives_reopen(tmp_path) -> None:
     db = tmp_path / "registry.sqlite3"
-    Registry(db).create_project("Persist")
+    Registry(db).create_project("Persist", actor="console")
     assert [p.slug for p in Registry(db).list_projects()] == ["persist"]
 
 
 def test_update_project(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    updated = reg.update_project("ops", name="Ops Weekly", notes="n")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    updated = reg.update_project(
+        "ops",
+        name="Ops Weekly",
+        notes="n",
+        actor="console",
+    )
     assert (updated.name, updated.notes) == ("Ops Weekly", "n")
     with pytest.raises(KeyError):
-        reg.update_project("missing", name="x")
+        reg.update_project(
+            "missing",
+            name="x",
+            actor="console",
+        )
 
 
 def test_glossary_lifecycle(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     term = reg.add_term(
-        "ops", "李工", reading="Li Gong", aliases="老李", definition="lead"
+        "ops",
+        "李工",
+        reading="Li Gong",
+        aliases="老李",
+        definition="lead",
+        actor="console",
     )
     assert term.status == "candidate" and term.added_by == "human"
     assert reg.list_terms("ops") == [term]
 
-    assert reg.update_term(term.id, status="confirmed").status == "confirmed"
-    assert reg.update_term(term.id, definition="team lead").definition == "team lead"
+    assert (
+        reg.update_term(
+            term.id,
+            status="confirmed",
+            actor="console",
+        ).status
+        == "confirmed"
+    )
+    assert (
+        reg.update_term(
+            term.id,
+            definition="team lead",
+            actor="console",
+        ).definition
+        == "team lead"
+    )
 
-    reg.delete_term(term.id)
-    assert reg.list_terms("ops") == []
+    retired = reg.retire_term(term.id, actor="console")
+    assert retired.status == "retired"
+    # A retire is a status change, not a row delete: the history survives.
+    assert retired.added_by == "human" and retired.created_at
+    assert reg.list_terms("ops") == [retired]
+    assert reg.list_terms("ops", status="confirmed") == []
+
+    assert (
+        reg.update_term(term.id, status="confirmed", actor="console").status
+        == "confirmed"
+    )
     with pytest.raises(KeyError):
-        reg.delete_term(term.id)
+        reg.retire_term(9999, actor="console")
+
+
+def test_retire_records_the_status_a_restore_returns_the_term_to(tmp_path) -> None:
+    """A retire is reversible to where the term was, not to "confirmed"."""
+    reg = _registry(tmp_path)
+    reg.create_project("Ops", actor="console")
+    draft = reg.add_term("ops", "AgentTerm", added_by="agent", actor="console")
+    owner = reg.add_term("ops", "Falcon", status="confirmed", actor="console")
+    noted = reg.add_term(
+        "ops", "Mars", status="confirmed", notes="call it Mars", actor="console"
+    )
+
+    for term in (draft, owner, noted):
+        assert reg.retire_term(term.id, actor="console").status == "retired"
+    # The marker a retire records stays inside the registry: it is never the
+    # term's published notes.
+    assert reg.get_term(noted.id).notes == "call it Mars"
+
+    # Un-reviewed, still; then the status the retire took each term from.
+    assert reg.restore_term(draft.id, actor="console").status == "candidate"
+    assert reg.restore_term(owner.id, actor="console").status == "confirmed"
+    restored = reg.restore_term(noted.id, actor="console")
+    assert (restored.status, restored.notes) == ("confirmed", "call it Mars")
+    assert reg.list_terms("ops", status="retired") == []
+
+
+def test_a_status_change_to_retired_records_where_it_came_from(tmp_path) -> None:
+    """The status control retires like the verb: the marker is written on it.
+
+    ``update_term(status="retired")`` is the console's status control and the
+    API's ``PATCH``, and it must leave the term exactly as ``retire_term`` does —
+    the row survives, and the status it came from is recorded on it — so a
+    Restore returns a previously-confirmed term as **confirmed**, never as a
+    candidate that silently leaves the decoder's bias.
+    """
+    reg = _registry(tmp_path)
+    reg.create_project("Ops", actor="console")
+    term = reg.add_term(
+        "ops", "Falcon", status="confirmed", added_by="human", actor="console"
+    )
+
+    retired = reg.update_term(term.id, status="retired", actor="console")
+    assert retired.status == "retired"
+    assert reg.get_term(term.id).notes is None  # the marker is never published
+
+    assert reg.restore_term(term.id, actor="console").status == "confirmed"
+
+
+def test_restoring_a_term_that_is_not_retired_is_refused(tmp_path) -> None:
+    """Only a retired term has a prior status to return to.
+
+    Restoring a never-retired one would invent a status — a confirmed term would
+    come back a candidate, dropping owner-accepted truth out of the decoder's
+    bias — so the move is refused with the status the term actually holds, and
+    the term is left exactly as it was.
+    """
+    reg = _registry(tmp_path)
+    reg.create_project("Ops", actor="console")
+    term = reg.add_term(
+        "ops", "Falcon", status="confirmed", added_by="human", actor="console"
+    )
+
+    with pytest.raises(ValueError, match="not retired"):
+        reg.restore_term(term.id, actor="console")
+
+    assert reg.get_term(term.id).status == "confirmed"
 
 
 def test_duplicate_term_in_one_project_is_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.add_term("ops", "Falcon")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Falcon",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "Falcon")
+        reg.add_term(
+            "ops",
+            "Falcon",
+            actor="console",
+        )
 
 
 def test_same_term_is_allowed_in_two_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "Falcon")
-    reg.add_term("research", "Falcon")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Falcon",
+        actor="console",
+    )
+    reg.add_term(
+        "research",
+        "Falcon",
+        actor="console",
+    )
     assert len(reg.list_terms()) == 2
 
 
 def test_cross_project_table_filters_by_status_and_project(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "Alpha", status="confirmed")
-    reg.add_term("ops", "Beta", status="candidate")
-    reg.add_term("research", "Gamma", status="confirmed")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Alpha",
+        status="confirmed",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "Beta",
+        status="candidate",
+        actor="console",
+    )
+    reg.add_term(
+        "research",
+        "Gamma",
+        status="confirmed",
+        actor="console",
+    )
 
     assert [t.term for t in reg.list_terms(status="confirmed")] == ["Alpha", "Gamma"]
     assert [t.term for t in reg.list_terms("ops")] == ["Alpha", "Beta"]
@@ -248,110 +446,262 @@ def test_cross_project_table_filters_by_status_and_project(tmp_path) -> None:
 
 def test_term_counts_include_empty_projects(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    reg.create_project("Research")
-    reg.add_term("ops", "A")
-    reg.add_term("ops", "B")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    reg.create_project(
+        "Research",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "A",
+        actor="console",
+    )
+    reg.add_term(
+        "ops",
+        "B",
+        actor="console",
+    )
     assert reg.term_counts() == {"ops": 2, "research": 0}
 
 
 def test_invalid_status_and_author_are_rejected(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "A", status="maybe")
+        reg.add_term(
+            "ops",
+            "A",
+            status="maybe",
+            actor="console",
+        )
     with pytest.raises(ValueError):
-        reg.add_term("ops", "A", added_by="robot")
+        reg.add_term(
+            "ops",
+            "A",
+            added_by="robot",
+            actor="console",
+        )
     with pytest.raises(KeyError):
-        reg.add_term("nope", "A")
+        reg.add_term(
+            "nope",
+            "A",
+            actor="console",
+        )
 
 
 def test_agent_terms_are_marked_as_such(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    term = reg.add_term("ops", "Falcon", added_by="agent")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    term = reg.add_term(
+        "ops",
+        "Falcon",
+        added_by="agent",
+        actor="console",
+    )
     assert term.added_by == "agent"
     assert term.status == "candidate"
 
 
 def test_meeting_lifecycle_and_tape_set(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff", recorded_at="2026-09-14")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        recorded_at="2026-09-14",
+        actor="console",
+    )
     assert meeting.slug == "kickoff"
     assert meeting.status == "new"
     assert meeting.notes == ""
     assert reg.list_meetings("ops") == [meeting]
 
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff-2"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff-2"
+    )
     assert reg.get_meeting("ops", "kickoff") == meeting
     assert reg.get_meeting("ops", "nope") is None
 
-    selected = reg.set_recording_set(meeting.id, ["/a.wav", "/b.wav"])
+    selected = reg.set_recording_set(
+        meeting.id,
+        ["/a.wav", "/b.wav"],
+        actor="console",
+    )
     assert selected.paths == ("/a.wav", "/b.wav")
     assert reg.latest_recording_set(meeting.id) == selected
 
     # A newer selection supersedes the old one.
-    newer = reg.set_recording_set(meeting.id, ["/c.wav"])
+    newer = reg.set_recording_set(
+        meeting.id,
+        ["/c.wav"],
+        actor="console",
+    )
     assert reg.latest_recording_set(meeting.id) == newer
 
     with pytest.raises(ValueError):
-        reg.set_recording_set(meeting.id, [])
+        reg.set_recording_set(
+            meeting.id,
+            [],
+            actor="console",
+        )
 
 
 def test_update_meeting_notes_and_title(tmp_path) -> None:
     """The story has a durable home: meeting notes (and title) are writable."""
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
 
-    updated = reg.update_meeting(meeting.id, notes="tell the story here")
+    updated = reg.update_meeting(
+        meeting.id,
+        notes="tell the story here",
+        actor="console",
+    )
     assert updated.notes == "tell the story here"
     assert reg.get_meeting("ops", "kickoff").notes == "tell the story here"
 
-    assert reg.update_meeting(meeting.id, notes="").notes == ""
-    assert reg.update_meeting(meeting.id, title="Kickoff v2").title == "Kickoff v2"
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="",
+            actor="console",
+        ).notes
+        == ""
+    )
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            title="Kickoff v2",
+            actor="console",
+        ).title
+        == "Kickoff v2"
+    )
 
     with pytest.raises(ValueError):
-        reg.update_meeting(meeting.id, title="   ")
+        reg.update_meeting(
+            meeting.id,
+            title="   ",
+            actor="console",
+        )
     with pytest.raises(KeyError):
-        reg.update_meeting(999, notes="nope")
+        reg.update_meeting(
+            999,
+            notes="nope",
+            actor="console",
+        )
 
 
 def test_run_and_artifact_rows(tmp_path) -> None:
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
 
-    run = reg.create_run(meeting.id, backend="apple", model="small")
+    run = reg.create_run(
+        meeting.id,
+        backend="apple",
+        model="small",
+        actor="console",
+    )
     assert run.status == "queued"
     assert reg.get_run(run.id) == run
     assert [r.id for r in reg.list_runs(meeting.id)] == [run.id]
 
-    updated = reg.update_run(run.id, status="running", started_at="now")
+    updated = reg.update_run(
+        run.id,
+        status="running",
+        started_at="now",
+        actor="console",
+    )
     assert updated.status == "running"
     with pytest.raises(ValueError):
-        reg.update_run(run.id, status="bogus")
+        reg.update_run(
+            run.id,
+            status="bogus",
+            actor="console",
+        )
 
     # RUN-02: origin is one of the four surfaces, and only a start path has one.
     assert run.origin is None
     with pytest.raises(ValueError):
-        reg.create_run(meeting.id, origin="grafana")
+        reg.create_run(
+            meeting.id,
+            origin="grafana",
+            actor="console",
+        )
     # A meeting carries one active run (revision 0009's index), so the run the
     # origin is read back from is the meeting's next one.
-    reg.update_run(run.id, status="done")
-    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+    reg.update_run(
+        run.id,
+        status="done",
+        actor="console",
+    )
+    assert (
+        reg.create_run(
+            meeting.id,
+            origin="cli",
+            actor="console",
+        ).origin
+        == "cli"
+    )
 
     artifact = reg.add_artifact(
-        meeting.id, run_id=run.id, kind="record", path="/ws/record.json", sha256="ab"
+        meeting.id,
+        run_id=run.id,
+        kind="record",
+        path="/ws/record.json",
+        sha256="ab",
+        actor="console",
     )
     assert artifact.kind == "record"
     assert artifact.produced_by == "pipeline"
     assert reg.list_artifacts(meeting.id) == [artifact]
 
-    assert reg.set_meeting_status(meeting.id, "recorded").status == "recorded"
+    assert (
+        reg.set_meeting_status(
+            meeting.id,
+            "recorded",
+            actor="console",
+        ).status
+        == "recorded"
+    )
     with pytest.raises(ValueError):
-        reg.set_meeting_status(meeting.id, "bogus")
+        reg.set_meeting_status(
+            meeting.id,
+            "bogus",
+            actor="console",
+        )
 
 
 def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None:
@@ -374,14 +724,29 @@ def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     meeting = reg.get_meeting("ops", "kickoff")
     assert meeting is not None and meeting.notes == ""
-    assert reg.update_meeting(meeting.id, notes="story").notes == "story"
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="story",
+            actor="console",
+        ).notes
+        == "story"
+    )
     # The baseline's own shapes answer over the migrated registry: an uploaded
     # tape joins the meeting's tape set, and a run carries its durable options.
-    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    tape = reg.register_tape(
+        meeting.id,
+        path="/tapes/a.wav",
+        sha256="0" * 64,
+        bytes=3,
+        actor="console",
+    )
     assert reg.list_tapes(meeting.id) == [tape]
     assert reg.latest_recording_set(meeting.id).paths == ("/tapes/a.wav",)
     run = reg.create_run(
-        meeting.id, run_options=dataclasses.asdict(PipelineOptions(backend="apple"))
+        meeting.id,
+        run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     assert reg.get_run(run.id).run_options == dataclasses.asdict(
         PipelineOptions(backend="apple")
@@ -391,26 +756,65 @@ def test_a_registry_at_the_released_baseline_gains_every_delta(tmp_path) -> None
     # owner. The claim runs on a *second* meeting's run: one meeting has one
     # active run, which revision 0009's index enforces.
     assert reg.get_run(run.id).origin is None  # a seeded row has no origin
-    second = reg.create_meeting("ops", "Second pass")
-    queued = reg.create_run(second.id, origin="console")
-    claimed = reg.claim_run(queued.id, owner="peer:1")
+    second = reg.create_meeting(
+        "ops",
+        "Second pass",
+        actor="console",
+    )
+    queued = reg.create_run(
+        second.id,
+        origin="console",
+        actor="console",
+    )
+    claimed = reg.claim_run(
+        queued.id,
+        owner="peer:1",
+        actor="console",
+    )
     assert claimed is not None
     assert (claimed.origin, claimed.owner) == ("console", "peer:1")
     assert claimed.heartbeat_at is not None
     # Delta 0008: a run can be linked to the run it resumes, and carry a cancel request.
     assert claimed.resumes_run_id is None and claimed.cancel_requested_at is None
     with pytest.raises(KeyError):
-        reg.create_run(meeting.id, resumes_run_id=999)  # no such run
-    assert reg.request_cancel(claimed.id).cancel_requested_at is not None
+        reg.create_run(
+            meeting.id,
+            resumes_run_id=999,
+            actor="console",
+        )  # no such run
+    assert (
+        reg.request_cancel(
+            claimed.id,
+            actor="console",
+        ).cancel_requested_at
+        is not None
+    )
     assert reg.cancel_requested(claimed.id) is True
     # A queued run is cancelled outright: it never reaches a pipeline.
-    stopped = reg.stop_run(run.id, ended_at="now", progress={})
+    stopped = reg.stop_run(
+        run.id,
+        ended_at="now",
+        progress={},
+        actor="console",
+    )
     assert stopped is not None and stopped.status == "stopped"
     # And a run that is not queued any more is left to its owner.
-    assert reg.stop_run(claimed.id, ended_at="now", progress={}) is None
+    assert (
+        reg.stop_run(
+            claimed.id,
+            ended_at="now",
+            progress={},
+            actor="console",
+        )
+        is None
+    )
     # Delta 0009: the meeting's run has ended, so the meeting runs again — and
     # the new run continues the stopped one.
-    resumed = reg.create_run(meeting.id, resumes_run_id=run.id)
+    resumed = reg.create_run(
+        meeting.id,
+        resumes_run_id=run.id,
+        actor="console",
+    )
     assert resumed.resumes_run_id == run.id
 
 
@@ -436,11 +840,35 @@ def test_a_registry_from_the_retired_ladder_migrates_on_open(tmp_path) -> None:
     assert [p.slug for p in reg.list_projects()] == ["ops"]
     # Every delta is in place: a run's ownership (0007), its cancel and resume
     # columns (0008) and the one-active-run index (0009) all answer.
-    meeting = reg.create_meeting("ops", "Kickoff")
-    assert reg.update_meeting(meeting.id, notes="story").notes == "story"
-    tape = reg.register_tape(meeting.id, path="/tapes/a.wav", sha256="0" * 64, bytes=3)
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    assert (
+        reg.update_meeting(
+            meeting.id,
+            notes="story",
+            actor="console",
+        ).notes
+        == "story"
+    )
+    tape = reg.register_tape(
+        meeting.id,
+        path="/tapes/a.wav",
+        sha256="0" * 64,
+        bytes=3,
+        actor="console",
+    )
     assert reg.list_tapes(meeting.id) == [tape]
-    assert reg.create_run(meeting.id, origin="cli").origin == "cli"
+    assert (
+        reg.create_run(
+            meeting.id,
+            origin="cli",
+            actor="console",
+        ).origin
+        == "cli"
+    )
 
 
 @pytest.mark.parametrize("version", [0, 3, 7, 8])
@@ -531,13 +959,13 @@ def test_a_registry_stamped_at_a_revision_the_cut_dropped_meets_the_wipe_remedy(
         ]
 
 
-@pytest.mark.parametrize("version", [99, 9])
+@pytest.mark.parametrize("version", [99, 10])
 def test_a_ladder_registry_from_a_newer_version_fails_loudly(tmp_path, version) -> None:
     """The guard the retired ladder enforced survives: a newer version is refused.
 
-    Both numbers are pinned, and **9** is the one that earns its place: 9 is the
-    head revision's id, so a ladder number of 9 used to be read as revision
-    ``0009`` and the registry was silently stamped at it — the coincidence of
+    Both numbers are pinned, and **10** is the one that earns its place: 10 is
+    the head revision's id, so a ladder number of 10 used to be read as revision
+    ``0010`` and the registry was silently stamped at it — the coincidence of
     numbering the ladder path had. 99 names no revision in this chain and refused
     even before the bound existed, which is exactly why it alone could not keep
     the bound honest.
@@ -576,7 +1004,13 @@ def test_a_registry_path_with_a_query_character_opens(tmp_path) -> None:
 
     reg = Registry(db)
 
-    assert reg.create_project("Ops").slug == "ops"
+    assert (
+        reg.create_project(
+            "Ops",
+            actor="console",
+        ).slug
+        == "ops"
+    )
     assert db.exists()
     assert not (tmp_path / "what").exists()  # the file the text form creates
 
@@ -843,8 +1277,8 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
     The ladder's row in ``schema_version`` is the only version state such a build
     reads, and it compares that row with its **own** last version: the row is
     therefore levelled at the ladder's own number (8), never at the head revision's
-    id (9 today) — a number above what that build supports is refused outright
-    ("registry schema version 9 is newer than this build supports (8)"), which
+    id (10 today) — a number above what that build supports is refused outright
+    ("registry schema version 10 is newer than this build supports (8)"), which
     makes an upgrade one-way for no reason at all.
 
     The retired build runs here rather than being described: its own store module
@@ -865,7 +1299,10 @@ def test_a_migrated_registry_opens_in_the_retired_ladder(tmp_path) -> None:
         ("ops", "Ops")
     ]
     assert reg.get_project("ops").notes == ""
-    meeting = reg.create_meeting("ops", "Kickoff")  # and writes with its own DDL
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+    )  # and writes with its own DDL
     assert reg.get_meeting("ops", "kickoff").id == meeting.id
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone() == (
@@ -1073,9 +1510,20 @@ def test_the_active_run_index_arrives_with_revision_0009(tmp_path) -> None:
     # Both active states are refused for a meeting that has one, and a finished
     # run is not refused at all: the index is partial, and the states it names
     # are the states the guard reads.
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
-    active = reg.create_run(meeting.id, origin="console")
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    active = reg.create_run(
+        meeting.id,
+        origin="console",
+        actor="console",
+    )
     with closing(sqlite3.connect(str(db))) as conn, conn:
         for status in ("queued", "running"):
             with pytest.raises(sqlite3.IntegrityError):
@@ -1197,7 +1645,7 @@ def test_a_registry_that_already_holds_two_active_runs_opens(tmp_path) -> None:
     assert _index_sql(db, "pipeline_run_active_meeting") is not None
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0009",
+            "0012",
         )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -1220,9 +1668,19 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     statement's own parameters.
     """
     reg = _registry(tmp_path)
-    reg.create_project("Ops")
-    meeting = reg.create_meeting("ops", "Kickoff")
-    run = reg.create_run(meeting.id)
+    reg.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = reg.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
+    run = reg.create_run(
+        meeting.id,
+        actor="console",
+    )
 
     seen: list[tuple[str, tuple]] = []
 
@@ -1230,9 +1688,16 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     def _record(_conn, _cursor, statement, parameters, _context, _many) -> None:
         seen.append((" ".join(statement.split()), parameters))
 
-    claimed = reg.claim_run(run.id, owner="host:1")
+    claimed = reg.claim_run(
+        run.id,
+        owner="host:1",
+        actor="console",
+    )
     assert claimed is not None and claimed.status == "running"
-    assert len(seen) == 2, seen  # the transition, and the row it wrote read back
+    # The transition, the row it wrote read back, and the audit row the call
+    # appends for itself (ADR-0033) — which is a statement of its own, after the
+    # claim's unit of work has closed.
+    assert len(seen) == 3, seen
     statement, parameters = seen[0]
     assert statement.startswith("UPDATE pipeline_run")
     assert "EXISTS" in statement.upper()  # the node's rule, inside the WHERE
@@ -1240,10 +1705,15 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
 
     seen.clear()
     reaped = reg.interrupt_run(
-        run.id, observed=claimed, ended_at="now", error="gone", progress={}
+        run.id,
+        observed=claimed,
+        ended_at="now",
+        error="gone",
+        progress={},
+        actor="console",
     )
     assert reaped is not None and reaped.status == "interrupted"
-    assert len(seen) == 2, seen
+    assert len(seen) == 3, seen  # the compare-and-set, the read back, the audit row
     statement, parameters = seen[0]
     assert statement.startswith("UPDATE pipeline_run")
     assert claimed.owner in parameters and claimed.heartbeat_at in parameters
@@ -1252,7 +1722,12 @@ def test_the_claim_and_the_compare_decide_in_one_statement(tmp_path) -> None:
     # a stale observation does not interrupt a row it no longer describes.
     assert (
         reg.interrupt_run(
-            run.id, observed=claimed, ended_at="later", error="stale", progress={}
+            run.id,
+            observed=claimed,
+            ended_at="later",
+            error="stale",
+            progress={},
+            actor="console",
         )
         is None
     )
@@ -1278,10 +1753,17 @@ def test_a_version_table_holding_two_revisions_opens_and_is_reduced(tmp_path) ->
     reg = Registry(db)
 
     assert [project.slug for project in reg.list_projects()] == ["ops"]
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff"
+    )
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0012",)
         ]
 
 
@@ -1310,16 +1792,48 @@ def test_an_empty_version_table_on_a_built_schema_opens(tmp_path) -> None:
     reg = Registry(db)
 
     assert [project.slug for project in reg.list_projects()] == ["ops"]
-    assert reg.create_meeting("ops", "Kickoff").slug == "kickoff"
+    assert (
+        reg.create_meeting(
+            "ops",
+            "Kickoff",
+            actor="console",
+        ).slug
+        == "kickoff"
+    )
     assert _index_sql(db, "pipeline_run_active_meeting") == index_before
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0012",)
         ]
 
 
-def _engine_timing_out_box(path: Path, timeout: float = 0.2):
-    """An engine like the registry's own, with a busy timeout a test can wait out."""
+#: The busy-timeout budget the short-timeout engine boxes carry: small enough
+#: that a test can wait out several of them in the time the registry's own
+#: five-second policy would take to expire once.
+_BOX_TIMEOUT = 0.2
+
+#: The per-connection policy as the *file* reports it, which is what a durable
+#: assertion about the contract can pin: milliseconds of waiting for a writer,
+#: SQLite's own code for FULL, and the two guards the audit record leans on. It
+#: is here rather than read off ``store`` because a test that imported the values
+#: it compares against would pass whatever the code said.
+_CONNECTION_POLICY = {
+    "busy_timeout": 5000,
+    "synchronous": 2,
+    "foreign_keys": 1,
+    "recursive_triggers": 1,
+}
+
+
+def _engine_timing_out_box(path: Path, timeout: float = _BOX_TIMEOUT):
+    """An engine like the registry's own, with a busy timeout a test can wait out.
+
+    It is not the registry's policy: the budget here is the *test's*, set through
+    the driver's own ``timeout`` connect argument (which is the knob the policy's
+    ``PRAGMA busy_timeout`` sets on the registry's connections), so the
+    short-timeout tests do not set that pragma and do not spend five seconds
+    waiting out a decision they are asserting.
+    """
     engine = create_engine(
         URL.create("sqlite", database=str(path)),
         poolclass=NullPool,
@@ -1446,7 +1960,7 @@ def test_a_successors_widened_index_is_left_as_this_revisions_own(tmp_path) -> N
     assert _index_sql(db, "pipeline_run_active_meeting") == widened
     with closing(sqlite3.connect(str(db))) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0009",)
+            ("0012",)
         ]
 
 
@@ -1513,9 +2027,9 @@ def test_a_revision_written_the_documented_way_is_numbered_like_the_chain(
     )
 
     assert made.returncode == 0, made.stderr
-    written = sorted(script_location.glob("versions/0010_a_next_change.py"))
-    assert [path.name for path in written] == ["0010_a_next_change.py"]
-    assert 'revision: str = "0010"' in written[0].read_text(encoding="utf-8")
+    written = sorted(script_location.glob("versions/0013_a_next_change.py"))
+    assert [path.name for path in written] == ["0013_a_next_change.py"]
+    assert 'revision: str = "0013"' in written[0].read_text(encoding="utf-8")
 
 
 def test_the_alembic_ini_names_the_history_this_build_opens() -> None:
@@ -1594,13 +2108,13 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     """
     script_location = tmp_path / "migrations"
     shutil.copytree(_MIGRATIONS, script_location)
-    (script_location / "versions" / "0010_pragma_probe.py").write_text(
+    (script_location / "versions" / "0013_pragma_probe.py").write_text(
         '"""A probe revision: record the FK pragma this migration runs under."""\n'
         "\n"
         "from alembic import op\n"
         "\n"
-        'revision: str = "0010"\n'
-        'down_revision: str | None = "0009"\n'
+        'revision: str = "0013"\n'
+        'down_revision: str | None = "0012"\n'
         "branch_labels = None\n"
         "depends_on = None\n"
         "\n"
@@ -1641,3 +2155,702 @@ def test_the_migration_runs_under_the_registrys_foreign_key_rule(tmp_path) -> No
     assert migrated.returncode == 0, migrated.stderr
     with closing(sqlite3.connect(str(db))) as conn, conn:
         assert conn.execute("SELECT foreign_keys FROM pragma_probe").fetchone() == (1,)
+
+
+# --- the connection's policy, and the journal the file reads through -------- #
+def test_a_read_is_not_refused_while_another_surface_holds_the_write_lock(
+    tmp_path,
+) -> None:
+    """A read does not wait behind a writer's lock — the node's own shape.
+
+    The node reads while it writes: a run appends a report per chunk, the
+    heartbeat refreshes its row, and each of those mutations appends the audit
+    row ADR-0033 requires, while the console's status page, the CLI's poll and a
+    test's ``list_run_events`` read the same registry. In SQLite's default
+    rollback journal a commit holds ``PENDING`` and then ``EXCLUSIVE`` while it
+    writes the journal, syncs the database and deletes the journal again, and
+    both locks refuse every other connection's read lock for the whole of it. A
+    read issued inside one of those windows therefore waits out the driver's
+    busy timeout (5 s) and then fails with ``database is locked`` — the flake a
+    cancel test's poll met under the gate's load, where the node's writes kept
+    the windows tiled. The write-ahead log the registry's file is opened on
+    (:func:`clear_record.service.store._write_ahead_log`) is what removes that
+    class: readers take no lock a writer holds, so the read below answers while
+    the writer is still holding the lock.
+
+    The writer's state is *held* here rather than raced for: ``BEGIN EXCLUSIVE``
+    is the lock a commit holds across the journal write and the syncs, kept open
+    deliberately, so a refusal is a verdict and not a timing.
+    """
+    registry = _registry(tmp_path)
+    registry.create_project("Ops", actor="console")
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    run = registry.create_run(meeting.id, origin="console", actor="console")
+    registry.add_run_event(run.id, JobEvent(stage="ingest"), actor="queue")
+
+    holder = sqlite3.connect(str(registry.db_path), timeout=5.0)
+    holder.execute("BEGIN EXCLUSIVE")
+    # A write that changes nothing, to hold the lock: the version table carries
+    # one row by construction, so this statement is the lock and nothing else.
+    holder.execute("UPDATE alembic_version SET version_num = version_num")
+    read: list[JobEvent] = []
+    failure: list[BaseException] = []
+
+    def read_while_the_writer_holds_the_lock() -> None:
+        try:
+            read.extend(registry.list_run_events(run.id))
+        except BaseException as exc:  # the refusal this test is about
+            failure.append(exc)
+
+    try:
+        reader = threading.Thread(
+            target=read_while_the_writer_holds_the_lock, daemon=True
+        )
+        reader.start()
+        reader.join(1.0)
+        assert not reader.is_alive(), (
+            "a read waited behind the writer's lock: this registry's journal "
+            "refuses readers while a commit holds the database"
+        )
+        assert not failure, failure[0]
+        assert [event.stage for event in read] == ["ingest"]
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def _journal_mode(db_path: Path) -> str:
+    """The file's journal mode, read back from its header."""
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        return str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+
+
+def _registry_log_events(event: str) -> list[dict]:
+    """Every record of that name the node's log holds, oldest first.
+
+    Read off the sink itself — the test environment redirects the log directory
+    into ``tmp_path`` — so what is asserted is what a reader of the log meets,
+    not what the code meant to write.
+    """
+    try:
+        lines = diagnostics.log_path().read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    return [
+        record
+        for record in (json.loads(line) for line in lines if line.strip())
+        if record.get("event") == event
+    ]
+
+
+def _release_lock(holder: sqlite3.Connection) -> None:
+    """Give a held lock back; a connection already released is not an error.
+
+    A timer may release the connection before the test's own ``finally`` does
+    (the waiting test does exactly that), and closing it twice raises.
+    """
+    try:
+        holder.rollback()
+        holder.close()
+    except sqlite3.ProgrammingError:  # a second release
+        pass
+
+
+def _in_the_rollback_journal(db_path: Path) -> None:
+    """Put a registry on disk back in the rollback journal a released line left.
+
+    This build creates registries on the log, so a fixture only reaches the
+    conversion by taking one back: the mode is a property of the file, and this
+    is the file a candidate meets on an upgrade.
+    """
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+    assert str(mode).lower() == "delete"
+
+
+def test_an_existing_registry_converts_to_the_write_ahead_log_on_open(
+    tmp_path,
+) -> None:
+    """A registry already on disk gains the log, once, and keeps its rows.
+
+    The mode belongs to the **file**, so one open does the conversion and every
+    open after it reads the answer back — which is what extends the property
+    ``test_a_read_is_not_refused_while_another_surface_holds_the_write_lock``
+    leans on to the registries that already exist, not only to the ones this
+    build created. The log's own files are the other half of it: they are beside
+    the registry while a connection holds one, and the last close checkpoints
+    them back into the database and takes them away.
+
+    What opened the file and what the file *is* are one fact: the mode the
+    registry recorded is the mode the pragma answered with, and the open said
+    nothing about a degradation. That starts at the **first** open — a registry
+    this build creates is on the log before it can hold a row — and the fixture
+    below takes the mode back only to meet it again as an upgrade would.
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    first = _registry(tmp_path)
+    assert first.journal_mode == "wal" == _journal_mode(db_path)
+    first.create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+    assert _journal_mode(db_path) == "delete"
+
+    # The same file, opened again: the row it held is still there, and the file
+    # now carries the log.
+    reopened = Registry.open(db_path=db_path)
+    assert [project.slug for project in reopened.list_projects()] == ["ops"]
+    assert _journal_mode(db_path) == "wal"
+    assert reopened.journal_mode == "wal" == _journal_mode(db_path)
+    assert not _registry_log_events(store_module.JOURNAL_MODE_DEGRADED)
+
+    wal = db_path.with_name(db_path.name + "-wal")
+    shm = db_path.with_name(db_path.name + "-shm")
+    assert not wal.exists() and not shm.exists()  # the pool holds nothing open
+    writer = sqlite3.connect(str(db_path))
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("UPDATE project SET slug = slug")
+        assert wal.exists() and shm.exists()
+        writer.commit()
+    finally:
+        writer.close()
+    assert not wal.exists() and not shm.exists()
+
+
+def test_an_open_whose_conversion_is_refused_serves_in_the_mode_it_kept(
+    tmp_path, monkeypatch
+) -> None:
+    """A refused conversion is tolerated, recorded, stated — and over at the next open.
+
+    The lock is **another writer's reservation** (``BEGIN IMMEDIATE``), and the
+    pragma is refused **at once** — SQLite does not make a mode change wait for a
+    lock it cannot take while that reservation stands (measured: 0.00 s for this
+    shape; a *reader's* shared lock is the shape that waits, and
+    ``test_a_conversion_that_must_wait_a_reader_pays_the_whole_budget`` drives
+    that one). The file keeps the rollback journal, and the registry then
+    **serves** — this one migrates and reads its rows — which is the tolerance
+    that stays; what is new is that it is no longer silent: the mode is recorded
+    on the registry (:attr:`Registry.journal_mode`), stated in the node's log
+    (:data:`store.JOURNAL_MODE_DEGRADED`, with the mode and the reason) and, from
+    there, carried by the diagnostics bundle.
+
+    The lock is given back **at the refusal** rather than on a timer, so what
+    this test fixes is the order and not a clock: the reservation is held while
+    the pragma is refused, and gone before the migration's own write lock is
+    attempted. A lock that *stayed* held would refuse the migration too — and in
+    the rollback journal any surviving lock forbids its COMMIT as well (measured:
+    a read-only ``BEGIN IMMEDIATE`` transaction cannot commit while another
+    connection holds ``SHARED``) — which is why a registry serving in the
+    rollback journal is only reachable along this transient path, and why the
+    mode is worth stating when it happens instead of being left for whoever next
+    debugs a reader that was refused.
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    _registry(tmp_path).create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+    assert _journal_mode(db_path) == "delete"
+    monkeypatch.setattr(store_module, "_engine", _engine_timing_out_box)
+
+    holder = sqlite3.connect(str(db_path), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+
+    real_conversion = store_module._write_ahead_log
+    attempts: list[tuple[str, str | None]] = []
+
+    def the_other_surface_gives_the_lock_back_at_the_refusal(engine):
+        result = real_conversion(engine)
+        if not attempts:
+            # The conversion is over — refused at once by the reservation — so
+            # the lock has done the work this test is about, and it is released
+            # before the migration asks for it.
+            _release_lock(holder)
+        attempts.append(result)
+        return result
+
+    monkeypatch.setattr(
+        store_module,
+        "_write_ahead_log",
+        the_other_surface_gives_the_lock_back_at_the_refusal,
+    )
+    try:
+        registry = Registry.open(db_path=db_path)
+
+        assert attempts[0][0] == "delete"  # asked for the log, did not get it
+        assert registry.journal_mode == "delete"  # ... and records what it has
+        assert _journal_mode(db_path) == "delete"
+        assert [project.slug for project in registry.list_projects()] == ["ops"]
+    finally:
+        _release_lock(holder)
+
+    degraded = _registry_log_events(store_module.JOURNAL_MODE_DEGRADED)
+    assert [(record["level"], record["mode"]) for record in degraded] == [
+        ("warning", "delete")
+    ]
+    # The reason is the registry's own refusal, not a sentence of its own: a
+    # reader of the log must be able to tell a lock apart from a filesystem that
+    # will not host the log at all.
+    assert "lock" in degraded[0]["reason"], degraded[0]["reason"]
+
+    # The next open finds the file free to change and converts — and it says
+    # nothing, because there is nothing to say.
+    reopened = Registry.open(db_path=db_path)
+    assert attempts[1] == ("wal", None)
+    assert reopened.journal_mode == "wal" == _journal_mode(db_path)
+    assert [project.slug for project in reopened.list_projects()] == ["ops"]
+    assert len(_registry_log_events(store_module.JOURNAL_MODE_DEGRADED)) == 1
+
+
+def test_a_conversion_that_must_wait_a_reader_pays_the_whole_budget(tmp_path) -> None:
+    """The other refusal shape: a reader in the way is *waited out*, then refused.
+
+    What a refused conversion costs depends on what is in the way (see
+    :func:`clear_record.service.store._write_ahead_log`): another writer's
+    reservation is refused at once — the test above — while a **reader's** shared
+    lock makes the pragma wait the connection's whole busy timeout before it
+    fails, because the change needs exclusive access past that reader. Both
+    shapes are the registry's contract, so both are pinned.
+
+    This drives the seam directly rather than through an open, and that is
+    deliberate: a reader held for the whole attempt also refuses the migration's
+    COMMIT in the rollback journal, so an open under it cannot complete without a
+    clock deciding which of the two waits the reader outlives. The wait is the
+    box's budget, so this costs a fifth of a second rather than the policy's
+    five, and the assertion is built to be true of the *mechanism* — SQLite's
+    busy handler cannot return before its deadline — rather than of a machine's
+    speed.
+    """
+    db_path = tmp_path / "registry.sqlite3"
+    _registry(tmp_path).create_project("Ops", actor="console")
+    _in_the_rollback_journal(db_path)
+    engine = _engine_timing_out_box(db_path)
+
+    holder = sqlite3.connect(str(db_path), timeout=0)
+    holder.execute("BEGIN")
+    holder.execute("SELECT count(*) FROM project").fetchone()  # a reader's SHARED
+    try:
+        started = time.monotonic()
+        mode, reason = store_module._write_ahead_log(engine)
+        waited = time.monotonic() - started
+
+        assert mode == "delete"  # it asked for the log and reports what it has
+        assert reason and "lock" in reason, reason
+        assert waited >= _BOX_TIMEOUT, (
+            f"the pragma gave up after {waited:.2f}s: the reader was not waited out"
+        )
+        assert _journal_mode(db_path) == "delete"
+    finally:
+        holder.rollback()
+        holder.close()
+
+    # With the reader gone the same seam converts: what was measured is the
+    # reader's effect, not a permanently refused file.
+    assert store_module._write_ahead_log(engine) == ("wal", None)
+
+
+def test_an_actor_outside_the_vocabulary_registers_nothing(tmp_path) -> None:
+    """The registration reads the actor **before** it writes anything.
+
+    The decorated creates get that gate from ``audit.recorded``'s wrapper, which
+    runs it before the method body; this path composes the inserts itself, so the
+    gate has to be its own — and it has to be *first*, before the writer lock.
+    Left to the row-append, the gate would refuse **after** the registration had
+    committed: a folder registered under an unknown actor with no row to say who
+    registered it, which is the opposite of what the record is for (measured at
+    the reviewed tip: one project, one meeting, an empty record).
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+
+    with pytest.raises(ValueError, match="unknown actor"):
+        registry.meeting_for_workspace(str(workspace), actor="hacker")
+
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
+    assert registry.list_audit_events() == []
+
+
+def test_every_connection_carries_the_decided_policy(tmp_path) -> None:
+    """The connection policy is a promise about the *database*, not about a listener.
+
+    SQLite keeps this state per connection and resets every new one to its own
+    default, so "which pragmas are set" is only answerable by asking a connection
+    the registry's own engine made — and the answer is the decision
+    (:func:`clear_record.service.store._engine`), not the code that applies it:
+    five seconds of waiting for a writer, a commit that is synced before it is
+    acknowledged, and the two guards the audit record leans on. Asked of two
+    connections, because the promise is about every one of them.
+    """
+    registry = _registry(tmp_path)
+
+    for _ in range(2):
+        with registry._engine.connect() as conn:
+            assert {
+                pragma: conn.exec_driver_sql(f"PRAGMA {pragma}").scalar()
+                for pragma in _CONNECTION_POLICY
+            } == _CONNECTION_POLICY
+
+
+def test_a_second_writer_waits_out_a_held_lock_and_then_succeeds(tmp_path) -> None:
+    """The busy timeout is a *wait*, and the write that waited lands afterwards.
+
+    The registration takes the writer lock before its first read
+    (:meth:`Registry._writer_session`), so a lock another surface holds makes it
+    wait rather than look and collide. The lock is released a moment before the
+    policy's budget runs out, and what comes back is the registration — one
+    meeting, registered once. (The *other* end of the budget — contention that
+    outlasts it — is ``test_prolonged_contention_fails_within_the_budget``.)
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    holder = sqlite3.connect(str(registry.db_path), timeout=0, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    released = threading.Timer(0.05, _release_lock, args=(holder,))
+    released.start()
+    try:
+        meeting = registry.meeting_for_workspace(str(workspace), actor="console")
+    finally:
+        released.join(timeout=10)
+        _release_lock(holder)
+
+    assert meeting.slug == "second"
+    assert [meeting.slug for meeting in registry.list_meetings()] == ["second"]
+
+
+def test_prolonged_contention_fails_within_the_budget(tmp_path, monkeypatch) -> None:
+    """A writer that never gets the lock is refused **after the budget**, not left waiting.
+
+    The policy pins the budget at 5000 ms — asserted, as a fact about a
+    connection, by ``test_every_connection_carries_the_decided_policy``; the
+    engine here is the short-timeout box so that *this* test waits the box's own
+    fifth of a second instead of five seconds of the suite's, and what it checks
+    is that the wait is the configured one and that the end of it is the driver's
+    refusal (``OperationalError``, the class every caller of this store already
+    handles) rather than a success or a hang. The registration is the operation:
+    it takes the lock before it reads anything, so there is no path on which it
+    reads around a held lock and collides instead.
+    """
+    monkeypatch.setattr(store_module, "_engine", _engine_timing_out_box)
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    holder = sqlite3.connect(str(registry.db_path), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(OperationalError, match="database is locked"):
+            registry.meeting_for_workspace(str(workspace), actor="console")
+        waited = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert _BOX_TIMEOUT <= waited < 5 * _BOX_TIMEOUT, (
+        f"the refusal took {waited:.2f}s, which is not the configured budget"
+    )
+    # Refused, and nothing half-written: the transaction rolled back with it.
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
+    # ... and refused *audibly*: the row the creates owe cannot be written while
+    # the lock is held, so the loss is stated under the audit record's own name
+    # for it. The verb is the create that was in flight — the folder's project,
+    # the operation's first — and the vocabulary is unchanged.
+    assert [
+        (record["actor"], record["action"], record["outcome"])
+        for record in _registry_log_events("audit.row_lost")
+    ] == [("console", "project.create", "failed")]
+
+
+# --- the registration's lookup and its rows -------------------------------- #
+def test_a_re_registration_resolves_no_stored_workspace_path(
+    tmp_path, monkeypatch
+) -> None:
+    """The registration's hot path does no filesystem work **inside** the writer lock.
+
+    The lookup runs under the lock, so the resolving comparison
+    (:meth:`Registry._meeting_at`) must not be its common path: this node stores
+    the **resolved** path when it registers a folder, so the exact comparison
+    (:meth:`Registry._meeting_at_exact`) answers the second ``run <dir>`` from
+    one row comparison, and no stored path is resolved at all. Measured before
+    the split: 201 ``Path.resolve`` calls and about a second inside the lock for
+    a registry of 200 meetings, which is exactly the filesystem work a
+    read-then-write operation must keep out of its transaction.
+
+    Counting the resolver keeps that a fact about the seam rather than a claim in
+    a docstring: the input is resolved **once** (outside the lock, by the
+    caller's own step) and the scan — which resolves every stored path — is not
+    reached.
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    registered = registry.meeting_for_workspace(str(workspace), actor="console")
+
+    calls: list[str] = []
+    real_resolve = store_module._resolved_workspace
+
+    def counting(path: str) -> str:
+        calls.append(path)
+        return real_resolve(path)
+
+    monkeypatch.setattr(store_module, "_resolved_workspace", counting)
+    again = registry.meeting_for_workspace(str(workspace), actor="console")
+
+    assert again.id == registered.id
+    assert calls == [str(workspace)], "a stored path was resolved again"
+
+
+def test_two_spellings_of_one_folder_are_decided_by_the_exact_stored_one(
+    tmp_path, monkeypatch
+) -> None:
+    """The lookup's **precedence**, pinned: the exactly-stored spelling answers first.
+
+    One folder can hold two meetings (the deliberate allowance), and the surfaces
+    store a workspace path **as it was given** (``web/app.py`` and
+    ``mcp/server.py`` pass the caller's ``str(path)`` through), so one folder can
+    be stored under two spellings — ``/tmp/x/third`` and ``/tmp/x/third/``, say.
+    The registration's lookup is ordered, and this is what fixes *which* order:
+    the **exact stored spelling** answers (newest of those when it too is stored
+    twice), and the resolving, spelling-insensitive comparison is the fallback
+    for a folder with no row under that spelling at all.
+
+    The reviewed tip answered the newer *resolving* match here. That answer is
+    reachable only by resolving every stored meeting on every registration — a
+    `run <dir>` included — which is the filesystem work the lookup exists to keep
+    out of the writer lock, so the trade is deliberate and it is now stated in
+    the code and fenced here rather than left implicit.
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "third"
+    workspace.mkdir()
+    registry.create_project("Ops", actor="console")
+    exact = registry.create_meeting(
+        "ops", "Older exact", workspace_path=str(workspace), actor="console"
+    )
+    sloppy = registry.create_meeting(
+        "ops", "Newer sloppy", workspace_path=str(workspace) + "/", actor="console"
+    )
+
+    calls: list[str] = []
+    real_resolve = store_module._resolved_workspace
+
+    def counting(path: str) -> str:
+        calls.append(path)
+        return real_resolve(path)
+
+    monkeypatch.setattr(store_module, "_resolved_workspace", counting)
+    chosen = registry.meeting_for_workspace(str(workspace), actor="cli")
+
+    assert chosen.id == exact.id, "the exact stored spelling did not answer"
+    assert chosen.id != sloppy.id
+    assert calls == [str(workspace)], "the exact arm resolved a stored path"
+    assert len(registry.list_meetings()) == 2, "the lookup registered a third meeting"
+
+
+def test_a_workspace_stored_under_another_spelling_is_the_same_folder(
+    tmp_path,
+) -> None:
+    """The fallback arm: a spelling a *surface* stored still answers as this folder.
+
+    Registration stores the resolved path, so the exact comparison is the common
+    path — but the console and the API take a workspace path as a caller typed
+    it, and a registry can therefore hold a meeting whose ``workspace_path`` is a
+    spelling rather than the resolved path. The promise ("a relative,
+    trailing-separator or symlinked spelling is the same workspace") is what the
+    resolving arm is for, and it runs exactly when the exact comparison misses —
+    which is what keeps the decision the same while the syscalls stay off the hot
+    path. (When both arms *can* answer, the exact one does: the precedence is
+    ``test_two_spellings_of_one_folder_are_decided_by_the_exact_stored_one``'s.)
+    """
+    registry = _registry(tmp_path)
+    real = tmp_path / "second"
+    real.mkdir()
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    registry.create_project("Ops", actor="console")
+    stored = registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(link), actor="console"
+    )
+
+    found = registry.meeting_for_workspace(str(real), actor="cli")
+
+    assert found.id == stored.id, "the spelling was not read as the same workspace"
+    assert len(registry.list_meetings()) == 1, "the lookup registered a second meeting"
+
+
+# --- a folder registered by two surfaces at once ---------------------------- #
+def test_two_registrations_of_one_folder_leave_one_meeting(
+    tmp_path, monkeypatch
+) -> None:
+    """Registering one folder twice at once is one meeting, and the loser registers nothing.
+
+    Two surfaces registering one folder are a real pair — the command line's
+    ``run <dir>`` and the console adding the same folder — and what makes them
+    one meeting is the writer lock the registration takes **before its first
+    read**: the loser's own transaction cannot begin until the winner's has
+    committed, so the loser's scan reads the winner's row and it creates nothing
+    at all.
+
+    The winner is paused *inside* its transaction here — its row flushed, nothing
+    committed — so the loser's wait is against a lock that is not going away
+    until this test says so, and there is no interleaving in which the loser
+    reads around the lock and collides instead. That is what the earlier form of
+    this test injected (a winner landing in the loser's window between the scan
+    and the insert) and what the lock removes: the window it fired into no longer
+    exists, so it is the *wait* that has to be fenced rather than a moment inside
+    the loser. The observable is the record, not a timing: both calls answer with
+    one meeting, and there is exactly **one** ``meeting.create`` row, because the
+    loser's own row would describe a meeting this folder does not have.
+    """
+    winner = _registry(tmp_path)
+    loser = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+    in_the_transaction = threading.Event()
+    released = threading.Event()
+    real_insert = winner._insert_meeting
+
+    def the_winner_holds_its_lock(*args, **kwargs):
+        row = real_insert(*args, **kwargs)
+        in_the_transaction.set()
+        assert released.wait(timeout=10), "the lock was never released"
+        return row
+
+    monkeypatch.setattr(winner, "_insert_meeting", the_winner_holds_its_lock)
+    answered: list[tuple[int, str]] = []
+    failures: list[BaseException] = []
+
+    def the_winner_registers() -> None:
+        try:
+            meeting = winner.meeting_for_workspace(str(workspace), actor="console")
+            answered.append((meeting.id, meeting.slug))
+        except BaseException as exc:  # the failure this test is not about
+            failures.append(exc)
+
+    def the_late_registration() -> None:
+        try:
+            meeting = loser.meeting_for_workspace(str(workspace), actor="api")
+            answered.append((meeting.id, meeting.slug))
+        except BaseException as exc:
+            failures.append(exc)
+
+    winner_thread = threading.Thread(target=the_winner_registers, daemon=True)
+    late_thread = threading.Thread(target=the_late_registration, daemon=True)
+    winner_thread.start()
+    assert in_the_transaction.wait(timeout=10), "the winner never got its lock"
+    late_thread.start()
+    time.sleep(0.05)  # long enough for the late call to reach the lock
+    assert not failures and not answered, "the late call did not wait"
+    released.set()
+    winner_thread.join(timeout=10)
+    late_thread.join(timeout=10)
+
+    assert not winner_thread.is_alive() and not late_thread.is_alive()
+    assert not failures, failures[0]
+    one = winner.list_meetings()
+    assert len(one) == 1, "one folder, one meeting"
+    assert answered == [(one[0].id, "second"), (one[0].id, "second")]
+    assert [(row.action, row.target) for row in winner.list_audit_events()] == [
+        ("project.create", "project:second"),
+        ("meeting.create", "meeting:second"),
+    ]
+    # The loser wrote no rows of its own: it registered nothing (it reads the
+    # same file, so this is the same record).
+    assert loser.list_audit_events() == winner.list_audit_events()
+
+
+def test_a_registration_that_fails_after_the_project_leaves_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    """Half a registration is not a registration: the project rolls back with the meeting.
+
+    The failure is injected **inside** the registration's transaction and *after*
+    the project create — the shape a disk that fills up mid-operation has, and
+    the shape the base could not survive: there the project was a unit of work of
+    its own, so a meeting create that then failed left the folder half-registered
+    (measured at ``b648294``: one ``project`` row, no meeting, and the ``ok`` row
+    the project's create had already written). One transaction is what closes it.
+
+    What the rollback must **not** take with it is the record of the refusal: the
+    ``ok`` rows belong to committed work and are not written, and one ``failed``
+    row takes their place — the same row the base's decorated create would have
+    appended, under the same verb and the same target — because a registration
+    that failed is exactly what an audit record exists for. A caller therefore
+    sees a refusal and a record of it, and never a folder that was registered
+    without one.
+
+    The second half is the point of the first: with no residue, the folder is
+    registered for the first time by whoever asks next, under its own slug.
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "second"
+    workspace.mkdir()
+
+    def the_disk_fills_up(*args, **kwargs):
+        raise RuntimeError("no space left on device")
+
+    monkeypatch.setattr(registry, "_insert_meeting", the_disk_fills_up)
+    with pytest.raises(RuntimeError, match="no space left"):
+        registry.meeting_for_workspace(str(workspace), actor="console")
+
+    assert registry.list_projects() == []
+    assert registry.list_meetings() == []
+    assert [
+        (row.action, row.target, row.outcome) for row in registry.list_audit_events()
+    ] == [("meeting.create", "meeting:second", "failed")]
+
+    monkeypatch.undo()  # the injection is over: the directory is registrable
+    meeting = registry.meeting_for_workspace(str(workspace), actor="console")
+    assert (meeting.slug, meeting.workspace_path) == ("second", str(workspace))
+    assert [
+        (row.action, row.target, row.outcome) for row in registry.list_audit_events()
+    ] == [
+        # The refused attempt first (the refusal is recorded when it happens),
+        # then the registration that succeeded.
+        ("meeting.create", "meeting:second", "failed"),
+        ("project.create", "project:second", "ok"),
+        ("meeting.create", "meeting:second", "ok"),
+    ]
+
+
+def test_a_folders_own_slug_taken_by_another_folder_is_computed_again(
+    tmp_path,
+) -> None:
+    """Two folders of one name: the second gets a meeting of its own, under a computed slug.
+
+    A project's meetings share one slug space, so registering ``a/second`` and
+    then ``b/second`` pins ``second`` twice and the second insert collides. That
+    is **not** the same folder's race — the lock cannot settle it, since both
+    registrations are legitimate — so the pinned attempt is given up and the
+    create computes ``second-2``, which is what this case has always done. The
+    registration holds its transaction across the collision: the attempt runs
+    inside a savepoint, so the collision costs that attempt and not the project
+    (or the folder's own registration) it is part of.
+
+    Both folders are registered, each with one meeting, and the folder that
+    answers a repeat call is the folder's own.
+    """
+    registry = _registry(tmp_path)
+    first = tmp_path / "a" / "second"
+    second = tmp_path / "b" / "second"
+    for path in (first, second):
+        path.mkdir(parents=True)
+
+    one = registry.meeting_for_workspace(str(first), actor="console")
+    two = registry.meeting_for_workspace(str(second), actor="console")
+
+    assert (one.slug, two.slug) == ("second", "second-2")
+    assert one.id != two.id
+    assert registry.meeting_for_workspace(str(second), actor="api").id == two.id
+    assert registry.meeting_for_workspace(str(first), actor="api").id == one.id
+    assert len(registry.list_meetings()) == 2
+    assert [(row.action, row.target) for row in registry.list_audit_events()] == [
+        ("project.create", "project:second"),
+        ("meeting.create", "meeting:second"),
+        ("meeting.create", "meeting:second"),
+    ]

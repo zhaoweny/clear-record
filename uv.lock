@@ -265,6 +265,7 @@ dev = [
     { name = "jinja2" },
     { name = "mcp" },
     { name = "pytest" },
+    { name = "pytest-jobserver" },
     { name = "pytest-xdist" },
     { name = "python-multipart" },
     { name = "ruff" },
@@ -297,6 +298,7 @@ dev = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=2" },
     { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-jobserver", specifier = ">=1.1.0" },
     { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "ruff", specifier = ">=0.9" },
@@ -1059,6 +1061,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+]
+
+[[package]]
+name = "pytest-jobserver"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/f4/74470708b7e0600610999b5ff89c61bfe72a2e47173d4de44e4f6ad55a0d/pytest_jobserver-1.1.0.tar.gz", hash = "sha256:235d1101b6a3defd2d36223ff221aa9c2acc9e32233c7cda3c8320a269452078", size = 11754, upload-time = "2026-02-02T09:42:02.807Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/b0/48a7165fa51d3c3012ec108e37c759518e431853fc30daed24b377ce3c51/pytest_jobserver-1.1.0-py2.py3-none-any.whl", hash = "sha256:4b5521e3204f01eba1e2b79407cf3df41397115534a014ca45f769e120d42a10", size = 12543, upload-time = "2026-02-02T09:42:01.774Z" },
 ]
 
 [[package]]

@@ -25,12 +25,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
-from fastapi.testclient import TestClient
-
+from _console import signed_in
 from clear_record.service import Registry
 from clear_record.web import _guard_termination, tailscale
 from clear_record.web.app import create_app
+from clear_record.web.auth import CONSOLE_HOME
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
 
 PORT = 8765
 EXPOSED_PORT = 443
@@ -178,16 +179,25 @@ def fake_tailscale(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture()
 def captured_serve(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Replace the uvicorn launcher with a recorder of its ``trusted_hosts``."""
+    """Replace the uvicorn launcher with a recorder of what it was handed."""
     captured: dict = {}
 
-    def fake_serve(*, host, port, open_browser, data_dir=None, trusted_hosts=None):
+    def fake_serve(
+        *,
+        host,
+        port,
+        open_browser,
+        data_dir=None,
+        trusted_hosts=None,
+        trusted_proxies=None,
+    ):
         captured.update(
             host=host,
             port=port,
             open_browser=open_browser,
             data_dir=data_dir,
             trusted_hosts=trusted_hosts,
+            trusted_proxies=trusted_proxies,
         )
         return 0
 
@@ -440,14 +450,20 @@ def test_stop_on_a_reused_mapping_touches_nothing(fake_tailscale) -> None:
 
 
 def test_console_url_omits_the_default_https_port() -> None:
-    assert tailscale.console_url("Host.Tailnet.ts.net.", 443) == (
-        "https://host.tailnet.ts.net/"
+    """The URL names the console's home, not the bare origin.
+
+    Serve proxies the node, and the node serves the console under its own prefix
+    with nothing at the root, so a URL without it is a 404 for the operator who
+    clicks it.
+    """
+    assert tailscale.console_url("Host.Tailnet.ts.net.", 443, CONSOLE_HOME) == (
+        "https://host.tailnet.ts.net/web/"
     )
 
 
 def test_console_url_spells_out_a_non_default_port() -> None:
-    assert tailscale.console_url(TAILNET_NAME, 8765) == (
-        "https://myhost.tailnet.ts.net:8765/"
+    assert tailscale.console_url(TAILNET_NAME, 8765, CONSOLE_HOME) == (
+        "https://myhost.tailnet.ts.net:8765/web/"
     )
 
 
@@ -455,7 +471,11 @@ def test_console_url_spells_out_a_non_default_port() -> None:
 def test_tailscale_flag_serves_trusts_and_prints_the_url(
     fake_tailscale, captured_serve, monkeypatch
 ) -> None:
+    # Both declarations: the flag *merges* into whichever the operator exported
+    # (§2 hands them `CR_TRUSTED_PROXIES`), so an ambient value would answer this
+    # test's exact-list assertion with a second peer.
     monkeypatch.delenv("CR_TRUSTED_HOSTS", raising=False)
+    monkeypatch.delenv("CR_TRUSTED_PROXIES", raising=False)
     fake = fake_tailscale(
         status=_completed("tailscale", "status", stdout=_status_json())
     )
@@ -464,8 +484,16 @@ def test_tailscale_flag_serves_trusts_and_prints_the_url(
 
     assert result.exit_code == 0, result.output
     assert captured_serve["trusted_hosts"] == [TAILNET_NAME]
-    assert f"https://{TAILNET_NAME}:{PORT}/" in result.output
-    assert "anyone on your tailnet" in result.output
+    # Serve is the proxy, and its hop arrives over loopback: the flag declares
+    # that peer itself (ADR-0021's quick path), so Serve's X-Forwarded-Proto is
+    # honoured and a tailnet request gets a Secure session cookie — with no
+    # second variable for the operator to set.
+    assert captured_serve["trusted_proxies"] == ["127.0.0.1"]
+    assert f"https://{TAILNET_NAME}:{PORT}{CONSOLE_HOME}" in result.output
+    # The tailnet is the perimeter, not the authentication: the console asks for
+    # its own password (ADR-0033), and the message says both.
+    assert "tailnet decides who can reach this console" in result.output
+    assert "asks for its own password" in result.output
     assert "stops with this console" in result.output
     assert fake.spawned() == [
         ["tailscale", "serve", f"--https={PORT}", f"http://127.0.0.1:{PORT}"]
@@ -490,7 +518,7 @@ def test_tailscale_port_overrides_the_exposed_port(
         ["tailscale", "serve", "--https=443", f"http://127.0.0.1:{PORT}"]
     ]
     # 443 is implicit in an HTTPS URL.
-    assert f"https://{TAILNET_NAME}/" in result.output
+    assert f"https://{TAILNET_NAME}{CONSOLE_HOME}" in result.output
 
 
 def test_cleanup_runs_on_the_console_exit_path(
@@ -690,9 +718,9 @@ def test_no_env_var_is_needed_for_the_host_to_be_trusted(
         Registry.open(db_path=tmp_path / "registry.sqlite3"),
         trusted_hosts=captured_serve["trusted_hosts"],
     )
-    client = TestClient(app, base_url=f"https://{TAILNET_NAME}")
+    client = signed_in(TestClient(app, base_url=f"https://{TAILNET_NAME}"))
     res = client.post(
-        "/ui/projects",
+        "/web/ui/projects",
         data={"name": "Tailnet"},
         headers={"host": TAILNET_NAME, "Origin": f"https://{TAILNET_NAME}"},
     )
@@ -736,4 +764,5 @@ def test_help_states_the_security_shape_and_the_port_flag() -> None:
     assert result.exit_code == 0
     assert "--tailscale" in result.output
     assert "--tailscale-port" in result.output
-    assert "tailnet is the authentication" in result.output
+    assert "tailnet decides who can reach the console" in result.output
+    assert "asks for its own password" in result.output

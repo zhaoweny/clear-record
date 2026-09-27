@@ -1,0 +1,261 @@
+"""What the console and the JSON API record themselves as (ADR-0033).
+
+One FastAPI app serves both surfaces, and they are told apart by the actor each
+one supplies: every ``/web/ui/`` route calls the service as ``console``, every
+``/api/v1/`` route as ``api``. The actor is not a request field, so the record says
+which *surface* did a thing — including on the run edges, where a body word does
+choose the run's own ``origin`` and is recorded in that column, never as the
+actor (a client that sends ``{"origin": "console"}`` is still audited as ``api``).
+
+The registry here is the app's own, so the rows these tests read are the rows the
+routes wrote: the audit record is the service's, and these are its two web
+callers.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+from _console import signed_in
+from clear_record.service import (
+    API,
+    CLI,
+    CONSOLE,
+    MCP,
+    RUN_IN_FLIGHT,
+    MeetingAgent,
+    Registry,
+    RunManager,
+)
+from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
+
+#: The address the console's own client dials (see ``test_web_api``): a client on
+#: the node's machine, which is what a route taking a local path requires.
+LOCAL_ORIGIN = "http://127.0.0.1:8765"
+
+
+class App:
+    """The app under test, plus the registry whose record its routes wrote."""
+
+    def __init__(self, *, client: TestClient, registry: Registry) -> None:
+        self.client = client
+        self.registry = registry
+
+    def rows(self) -> list[tuple[str, str, str, str]]:
+        """**Every** row the registry holds, oldest first — nothing filtered out.
+
+        The fixture's own sign-in writes one ``credential.set`` row (the act a
+        real first run performs), so it is the first row of every expected list
+        here: a filter would hide a spurious or misplaced credential row written
+        by the route under test, which is a row this surface is meant to see.
+        """
+        return [
+            (row.actor, row.action, row.target, row.outcome)
+            for row in self.registry.list_audit_events()
+        ]
+
+
+@pytest.fixture()
+def app(tmp_path) -> App:
+    """A console over a temp registry, with the queue stopped.
+
+    The queue is built stopped (``start_queue=False``) and shut down at teardown:
+    nothing here runs a pipeline, and a drain thread left behind would be a
+    mutation of the registry this suite did not ask for.
+    """
+    registry = Registry.open(db_path=tmp_path / "registry.sqlite3")
+    manager = RunManager(registry, pipeline=lambda *a, **k: None, start_queue=False)
+    try:
+        yield App(
+            client=signed_in(
+                TestClient(create_app(registry, runs=manager), base_url=LOCAL_ORIGIN)
+            ),
+            registry=registry,
+        )
+    finally:
+        manager.shutdown(timeout=10)
+
+
+def test_the_console_records_itself_as_the_actor(app: App) -> None:
+    """A console form submit is one ``console`` row, naming what it touched."""
+    res = app.client.post("/web/ui/projects", data={"name": "Ops"})
+
+    assert res.status_code == 200
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (CONSOLE, "project.create", "project:Ops", "ok"),
+    ]
+
+
+def test_the_json_api_records_itself_as_the_actor(app: App) -> None:
+    """The same mutation through ``/api/v1/`` is the API's row, not the console's."""
+    res = app.client.post("/api/v1/projects", json={"name": "Ops"})
+
+    assert res.status_code == 201
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (API, "project.create", "project:Ops", "ok"),
+    ]
+
+
+def test_a_token_authenticated_write_records_the_api_as_the_actor(app: App) -> None:
+    """The machine surface's **second** way in writes the same row: the API's.
+
+    A token reaches ``/api/v1`` without a session cookie — a client with an empty
+    jar and one header is the whole of it — and the mutation it carries is the
+    *surface's*: the row says ``api``, because the actor is the transport that
+    took the request, and a token is another credential for that same transport
+    (ADR-0033). Nothing about the credential it presented appears in the record.
+    """
+    minted, _row = app.client.app.state.auth.mint_token("script", actor=CONSOLE)
+    script = TestClient(app.client.app, base_url=LOCAL_ORIGIN)
+    assert not script.cookies, "the script's jar is empty on purpose"
+
+    res = script.post(
+        "/api/v1/projects",
+        json={"name": "Ops"},
+        headers={"Authorization": f"Bearer {minted}"},
+    )
+
+    assert res.status_code == 201
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (CONSOLE, "token.mint", "token:script", "ok"),
+        (API, "project.create", "project:Ops", "ok"),
+    ]
+
+
+def test_a_client_declared_origin_is_not_the_audit_actor(app: App) -> None:
+    """A body word names the run's ``origin``; the record holds the transport.
+
+    The forgery this closes: a client posted ``{"origin": "console"}`` and the
+    enqueue was filed as the console's work. ``origin`` is the run's own
+    provenance column and stays the caller's word; the actor is the surface that
+    carried the request (ADR-0033).
+    """
+    workspace = app.registry.db_path.parent / "ws"
+    workspace.mkdir(exist_ok=True)
+    app.registry.create_project("Ops", actor=CONSOLE)
+    meeting = app.registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(workspace), actor=CONSOLE
+    )
+    app.registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    before = len(app.registry.list_audit_events())
+
+    res = app.client.post(
+        f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "console"}
+    )
+
+    assert res.status_code == 202
+    assert res.json()["run"]["origin"] == "console"  # the caller's word, on the row
+    assert [
+        (row.actor, row.action, row.target, row.outcome)
+        for row in app.registry.list_audit_events()[before:]
+        if row.action == "run.enqueue"
+    ] == [(API, "run.enqueue", f"meeting:{meeting.id}", "ok")]
+
+
+def test_a_console_acceptance_records_console_as_the_reviewer(app: App) -> None:
+    """The human's half: the console decides, and the decision says so.
+
+    The harness writes the draft — as ``mcp`` in ``tests/mcp/`` — and the
+    acceptance here is the console's, so the version's reviewer and every
+    registry write the promotion makes carry the console's word, never the
+    writer's (ADR-0033).
+    """
+    workspace = app.registry.db_path.parent / "ws"
+    workspace.mkdir()
+    app.registry.create_project("Ops", actor=CONSOLE)
+    meeting = app.registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(workspace), actor=CONSOLE
+    )
+    agent = MeetingAgent(app.registry, meeting)
+    draft = agent.write(
+        "glossary_collection", {"terms": [{"term": "Falcon"}]}, actor=MCP
+    )
+
+    res = app.client.post(
+        f"/web/ui/meetings/{meeting.id}/agent/drafts/{draft.draft_id}/accept",
+        data={"version": draft.version},
+    )
+
+    assert res.status_code == 200
+    decided = agent.draft(draft.draft_id)
+    assert decided is not None
+    assert decided.versions[-1].reviewed_by == CONSOLE
+    assert decided.versions[-1].provenance.author == MCP
+    # The write, the promotion the decision produced, and the decision's own row:
+    # the promotion runs inside the decision's hold on the chain, so the terms it
+    # adds are recorded before the decision that caused them is (ADR-0031).
+    assert app.rows() == [
+        (CONSOLE, "credential.set", "credential:console", "ok"),
+        (CONSOLE, "project.create", "project:Ops", "ok"),
+        (CONSOLE, "meeting.create", "meeting:Kickoff", "ok"),
+        (MCP, "draft.write", f"draft:{draft.draft_id}", "ok"),
+        (CONSOLE, "term.add", "term:Falcon", "ok"),
+        (CONSOLE, "draft.accept", f"draft:{draft.draft_id}", "ok"),
+    ]
+
+
+def test_a_run_refusal_whose_row_the_registry_refused_answers_409(
+    app: App, monkeypatch
+) -> None:
+    """The route answers the refusal's own status, never the record's failure.
+
+    A second submission for a meeting with a live run is the service's refusal,
+    and ``/api/v1/`` maps it to 409 (``RUN_IN_FLIGHT``, the sentence the index and
+    the guard both answer with). The *record* of that refusal is a write of its
+    own — the row ADR-0033 exists for — and the registry can refuse it, which is
+    the shape ``tests/service/test_audit.py`` holds a real write lock to drive.
+    The injection here is at that seam, where the route's behaviour depends on
+    it: the append's ``OperationalError`` escapes ``runs.start``, and the route —
+    whose ``except ValueError`` maps the service's own refusals — answers 500
+    where the spec says 409.
+
+    The refusal has to *reach* the service for this surface to be answerable, so
+    the race the route's own 409 branch exists for is what the submission is
+    given: the read that answers the pre-check happened before the competing
+    client's run landed, so it sees nothing, and every read after it sees the
+    live run — the guard inside ``runs.start`` and the handler's re-read of the
+    state (the shape ``test_web_api``'s ``test_a_refusal_that_raced_the_pre_check
+    _is_409`` and ``test_runs``' own guard tests use: the *read* is the early
+    one). The row the append would have written is the service's half and is
+    asserted there (one stated ``audit.row_lost``); what this surface owes is the
+    status.
+    """
+    workspace = app.registry.db_path.parent / "ws"
+    workspace.mkdir(exist_ok=True)
+    app.registry.create_project("Ops", actor=CONSOLE)
+    meeting = app.registry.create_meeting(
+        "ops", "Kickoff", workspace_path=str(workspace), actor=CONSOLE
+    )
+    app.registry.set_recording_set(meeting.id, ["a.wav"], actor=CONSOLE)
+    app.registry.create_run(meeting.id, origin=CLI, actor=CONSOLE)
+
+    live = app.registry.active_run_for_meeting
+    reads: list[int] = []
+
+    def the_pre_checks_read_came_first(meeting_id: int):
+        reads.append(meeting_id)
+        return None if len(reads) == 1 else live(meeting_id)
+
+    def a_registry_that_refuses_the_row(*_args, **_kwargs) -> None:
+        raise OperationalError(
+            "INSERT INTO audit_event",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(
+        app.registry, "active_run_for_meeting", the_pre_checks_read_came_first
+    )
+    monkeypatch.setattr(app.registry, "record_audit", a_registry_that_refuses_the_row)
+
+    res = app.client.post(f"/api/v1/meetings/{meeting.id}/runs", json={"origin": "cli"})
+
+    assert reads, "the pre-check never read the meeting's live run"
+    assert res.status_code == 409
+    assert res.json()["detail"] == RUN_IN_FLIGHT

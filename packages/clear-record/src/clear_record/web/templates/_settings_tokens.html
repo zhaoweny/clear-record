@@ -1,0 +1,58 @@
+{# The machine-token block of Settings → Status: the bearer credentials scripts
+   present to /api/v1, and the one place a minted plaintext is ever shown.
+
+   The block is the inner content of `#tokens`, which both routes swap back into
+   itself (mint at /web/ui/tokens, revoke at /web/ui/tokens/{id}/revoke), so the
+   list, the refusal and the one-time secret render from one template and one
+   context builder (views.tokens_context). `minted` is set only by the response
+   to a mint: a reload is a GET, and a GET renders the registry's rows, which
+   hold a digest rather than a token — so the plaintext cannot come back. #}
+{% if error %}<div class="run-error" role="alert">{{ error }}</div>{% endif %}
+
+{% if minted %}
+<div class="token-minted" role="status">
+  <p class="muted">{{ tr("Copy this token now — it is shown once and cannot be retrieved again.") }}</p>
+  <code class="token-secret">{{ minted }}</code>
+</div>
+{% endif %}
+
+<form class="row token-mint"
+      hx-post="/web/ui/tokens"
+      hx-target="#tokens"
+      hx-swap="innerHTML">
+  <input name="label" maxlength="64" required
+         placeholder="{{ tr('Label (what will present it)') }}"
+         aria-label="{{ tr('Token label') }}">
+  <button class="primary" type="submit">{{ tr("Mint token") }}</button>
+</form>
+
+<table class="table-settings tokens">
+  <thead>
+    <tr>
+      <th>{{ tr("Label") }}</th>
+      <th>{{ tr("Created") }}</th>
+      <th>{{ tr("Last used") }}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for token in tokens %}
+    <tr>
+      <td>{{ token.label }}</td>
+      <td class="muted"><code>{{ token.created_at }}</code></td>
+      {% if token.last_used_at %}
+      <td class="muted"><code>{{ token.last_used_at }}</code></td>
+      {% else %}
+      <td class="muted">{{ tr("never") }}</td>
+      {% endif %}
+      <td>
+        <form hx-post="{{ token.revoke_path }}" hx-target="#tokens" hx-swap="innerHTML">
+          <button type="submit" class="btn btn-danger-ghost">{{ tr("Revoke") }}</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">{{ tr("No machine tokens yet.") }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

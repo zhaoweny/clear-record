@@ -30,13 +30,25 @@ def _registry(tmp_path) -> Registry:
 
 
 def _meeting_with_tapes(registry: Registry, tmp_path):
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     return meeting
 
 
@@ -165,6 +177,40 @@ def test_bundle_redacts_a_model_path_in_the_run_section() -> None:
     assert "/Users/alice" not in text
 
 
+def test_the_bundle_carries_the_registrys_journal_mode() -> None:
+    """A registry not on the write-ahead log is a fact the bundle states.
+
+    The mode is a property of the file and a registry serves either way, so the
+    difference stays invisible until something reads behind a committing writer
+    and is refused — which is why the one artifact a user can hand us says it
+    outright, and spells the consequence out when the mode is not the log
+    (``service.store._write_ahead_log``). With no registry gathered there is
+    nothing to state, and the section says that instead of guessing.
+    """
+
+    def bundle(journal_mode: str | None) -> str:
+        return diagnostics.build_bundle(
+            diagnostics.BundleFacts(
+                version="0.4.0",
+                python="3.14.0",
+                platform="TestOS",
+                machine="x86_64",
+                backends={},
+                options={},
+                journal_mode=journal_mode,
+            )
+        )
+
+    assert "journal_mode: wal" in bundle("wal")
+    assert "NOT the write-ahead log" not in bundle("wal")
+
+    degraded = bundle("delete")
+    assert "journal_mode: delete" in degraded
+    assert "NOT the write-ahead log" in degraded
+
+    assert "(not gathered: no registry was passed)" in bundle(None)
+
+
 def test_bundle_redacts_a_separator_free_glossary_filename() -> None:
     facts = diagnostics.BundleFacts(
         version="0.2.0",
@@ -245,7 +291,7 @@ def test_run_lifecycle_is_logged(tmp_path) -> None:
     meeting = _meeting_with_tapes(registry, tmp_path)
 
     manager = RunManager(registry, pipeline=lambda *args: None)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     events = [json.loads(line) for line in read_recent(100)]
@@ -264,7 +310,7 @@ def test_a_failing_run_logs_the_reason(tmp_path) -> None:
         raise RuntimeError("backend exploded")
 
     manager = RunManager(registry, pipeline=boom)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     manager.wait(run.id, timeout=10)
 
     failures = [json.loads(line) for line in read_recent(100) if '"run.failed"' in line]
@@ -274,14 +320,22 @@ def test_a_failing_run_logs_the_reason(tmp_path) -> None:
 
 def test_a_refused_start_is_logged(tmp_path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    meeting = registry.create_meeting("ops", "Empty", workspace_path=str(workspace))
+    meeting = registry.create_meeting(
+        "ops",
+        "Empty",
+        workspace_path=str(workspace),
+        actor="console",
+    )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
     with pytest.raises(ValueError):
-        manager.start(meeting, origin="console")
+        manager.start(meeting, origin="console", actor="console")
 
     events = [json.loads(line)["event"] for line in read_recent(100)]
     assert "run.refused" in events
@@ -293,8 +347,17 @@ def test_startup_reconciliation_is_logged(tmp_path) -> None:
 
     registry = _registry(tmp_path)
     meeting = _meeting_with_tapes(registry, tmp_path)
-    orphan = registry.create_run(meeting.id, backend="apple")
-    registry.update_run(orphan.id, status="running", started_at="now")
+    orphan = registry.create_run(
+        meeting.id,
+        backend="apple",
+        actor="console",
+    )
+    registry.update_run(
+        orphan.id,
+        status="running",
+        started_at="now",
+        actor="console",
+    )
 
     RunManager(registry, pipeline=lambda *args: None)
 
@@ -323,7 +386,7 @@ def test_console_log_config_routes_uvicorn_to_the_sink(tmp_path) -> None:
             logging.INFO,
             __file__,
             1,
-            '127.0.0.1 - "GET /api/health HTTP/1.1" 200',
+            '127.0.0.1 - "GET /health HTTP/1.1" 200',
             None,
             None,
         )
@@ -338,7 +401,7 @@ def test_console_log_config_routes_uvicorn_to_the_sink(tmp_path) -> None:
     console_records = [record for record in records if record["event"] == "console.log"]
     assert [record["component"] for record in console_records] == ["console", "console"]
     assert console_records[0]["level"] == "info"
-    assert "GET /api/health" in console_records[0]["message"]
+    assert "GET /health" in console_records[0]["message"]
     assert console_records[1]["level"] == "warning"
 
 

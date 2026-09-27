@@ -25,7 +25,7 @@ the writer records *after* the bind, not the request.
 
 A record nothing answers is answered as an absent one is. :class:`NoNodeError`
 carries :data:`NO_NODE_MESSAGE`, so the command line, the console's
-``GET /api/node`` refusal and the MCP adapter's instructions state **one**
+``GET /api/v1/node`` refusal and the MCP adapter's instructions state **one**
 sentence — never a hang, and never a different error per surface. (The tray's
 status line is the node's own health, so it keeps its own two strings.)
 The English source *is* the message ID (marked with
@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from clear_record.core.i18n import deferred, tr
-from clear_record.core.paths import node_address_path
+from clear_record.core.paths import node_address_path, resolve_state_dir
 
 #: The node's default bind — **the** declaration of where a node listens by
 #: default. The console's and the tray's ``--host``/``--port`` options, and the
@@ -64,7 +64,32 @@ DEFAULT_PORT = 8765
 
 #: The path the client asks, and the node answers, "are you there?" on. One
 #: path, so the two sides cannot disagree about what answering means.
-HEALTH_PATH = "/api/health"
+#:
+#: It is the console's **liveness route** — outside ``/api/v1`` and outside the
+#: console's ``/web`` prefix, since both surfaces' routes live under one or the
+#: other — and it is anonymous: a tray, a supervisor's probe
+#: or a monitor has to tell a healthy node from a sign-in page without a session
+#: (ADR-0033). Its answer is exactly ``{"status": "ok"}`` — no registry path, no
+#: version, no session — which is what lets this client require an exact 200 and
+#: follow no redirect (:func:`reach`).
+HEALTH_PATH = "/health"
+
+#: The session cookie's name. Declared here because **both ends of one request**
+#: need it: the console issues the cookie, and a client running on the node's own
+#: machine presents the session the node published there (:data:`LOCAL_SESSION_FILENAME`).
+#: One declaration, so the two cannot disagree about what the cookie is called.
+#: The name is opaque on purpose — it says nothing about what it carries.
+SESSION_COOKIE = "cr_session"
+
+#: The file beside the address where a node publishes a **session for its own
+#: machine's clients** (ADR-0032/ADR-0033). The command line is a surface and a
+#: client of the node, and it runs as the same operating-system user as the node;
+#: that user is inside the trust boundary the auth gate defends, so the node
+#: hands it one session rather than a password prompt. The file holds a session
+#: **token** — the same kind a browser holds in its cookie — is written ``0600``
+#: in the state directory, and is removed when the node exits cleanly. A stale
+#: file is harmless: an unknown or expired session is refused like any other.
+LOCAL_SESSION_FILENAME = "local-session"
 
 #: A wildcard bind is not an address a client can dial; loopback is where the
 #: local user reaches it. Kept here so a recorded ``0.0.0.0`` is never handed to
@@ -218,6 +243,86 @@ def forget() -> None:
         pass
 
 
+def local_session_path() -> Path:
+    """Where a node publishes the session its own machine's clients present.
+
+    Beside the address file and resolved the same way, so the writer and the
+    readers agree on one path and no surface guesses it.
+    """
+    return resolve_state_dir() / LOCAL_SESSION_FILENAME
+
+
+def local_session() -> str | None:
+    """The published local session's token, or ``None``.
+
+    **Total**, like :func:`recorded`: a missing, empty, unreadable or
+    hand-edited file is no token rather than an exception — the client then makes
+    its request with no cookie and is answered exactly as any other anonymous
+    request, which is the safe direction.
+
+    A hand-edited file is no token *whatever* it holds. A token is one line and
+    nothing else (:func:`~clear_record.service.auth.new_session_token`), so a file
+    carrying a second line or an internal space is refused here rather than handed
+    to the HTTP client: a value with a newline in it is not a cookie — the request
+    fails to build — and the surface would report a node that is answering as
+    "no node is listening".
+    """
+    try:
+        text = local_session_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    token = text.strip()
+    if not token or any(char.isspace() for char in token):
+        return None
+    return token
+
+
+def publish_local_session(token: str) -> Path:
+    """Publish *token* as this machine's local session; return the file written.
+
+    Written beside itself and moved into place, like the address record, so a
+    client reading while the node rewrites the file sees one token or the other
+    and never half of one. The mode is set at creation (``0600``) rather than
+    afterwards: a file whose permissions are tightened a moment later is a file
+    someone else may already have read.
+    """
+    path = local_session_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+    except BaseException:
+        pending.unlink(missing_ok=True)
+        raise
+    os.replace(pending, path)
+    return path
+
+
+def forget_local_session() -> None:
+    """Remove **this node's** published local session; a missing file is fine.
+
+    Called when the node exits cleanly, and gated the way :func:`forget` is: the
+    recorded pid is the test, because the two files are one node's pair. A node
+    that has been replaced leaves the record and the session to its successor,
+    and a file a *second* node published is not this process's to erase.
+
+    The session *row* is not deleted with the file — it is a session like any
+    other, and it lapses on its own clocks. What a clean exit takes down is the
+    file, because the file is what a client reads: a file left behind names a
+    token whose row may still be live, and the next node adopts it as its own
+    (which is what makes a stale file harmless rather than a way in).
+    """
+    current = recorded()
+    if current is None or current.pid != os.getpid():
+        return
+    try:
+        local_session_path().unlink()
+    except OSError:
+        pass
+
+
 # --- the client every surface reaches the node through --------------------- #
 
 
@@ -255,6 +360,8 @@ def _send(
     path: str,
     body: dict[str, Any] | None,
     timeout: float,
+    *,
+    session: bool = False,
 ) -> tuple[int, bytes]:
     """One request to the node: its status line and its body's bytes.
 
@@ -263,11 +370,32 @@ def _send(
     :class:`NoNodeError`; an **HTTP** answer is never one of them, whatever its
     status, because that is the node talking and its words are the caller's to
     render.
+
+    **The local session travels only where a session is required, and only to the
+    recorded node.** A client on the node's own machine presents the token the
+    node published there (:func:`local_session`) as the session cookie when
+    ``session`` is set — that is, from :func:`request`, which is what the gated
+    routes answer; the **liveness read** still carries nothing, so a health probe
+    never puts a live token on the wire. The address record is also the only
+    target it is sent to.
+
+    The residual, said plainly: the address record lives in the node's state
+    directory, where a same-uid process can rewrite it, so this is a guard against
+    a *stale* record pointing at a stranger's listener rather than against the
+    user's own processes — which ADR-0033 puts inside the boundary anyway. The
+    record itself carries the host and the port, not a secret (the state
+    directory's mode is the platform default and the file is not tightened); the
+    *session* file beside it is the secret, and that one is written ``0600`` at
+    creation (:func:`publish_local_session`).
     """
     data = None if body is None else json.dumps(body).encode("utf-8")
     sent = urllib.request.Request(target.url_for(path), data=data, method=method)
     if data is not None:
         sent.add_header("Content-Type", "application/json")
+    if session and target == recorded():
+        token = local_session()
+        if token is not None:
+            sent.add_header("Cookie", f"{SESSION_COOKIE}={token}")
     try:
         with _OPENER.open(sent, timeout=timeout) as response:
             return int(response.status), response.read()
@@ -358,8 +486,12 @@ def request(
 
     The timeout defaults to the generous end: a request that resolves a model or
     reads a workspace before it answers is doing real work, unlike the probe.
+
+    This is the call that carries the local session: it asks a route that needs
+    one (the API's refusals are what it renders), unlike :func:`reach`, whose
+    liveness route answers anonymously (:func:`_send`).
     """
-    status, payload = _send(target, method, path, body, timeout)
+    status, payload = _send(target, method, path, body, timeout, session=True)
     parsed: Any = None
     if payload:
         try:
@@ -389,6 +521,8 @@ __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
     "HEALTH_PATH",
+    "LOCAL_SESSION_FILENAME",
+    "SESSION_COOKIE",
     "NO_NODE_MESSAGE",
     "Answer",
     "NoNodeError",
@@ -396,6 +530,10 @@ __all__ = [
     "address",
     "ask",
     "forget",
+    "forget_local_session",
+    "local_session",
+    "local_session_path",
+    "publish_local_session",
     "reach",
     "record",
     "recorded",

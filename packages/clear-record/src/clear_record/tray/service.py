@@ -38,7 +38,11 @@ import threading
 
 from clear_record.core import node
 from clear_record.service import Registry
-from clear_record.web.app import NodeServer, create_app
+
+# The console's home is re-exported by the app module the tray already builds the
+# node with: the tray names no credential module on purpose — it holds no
+# credential, and `tests/tray/test_no_credential_path.py` is the guard for that.
+from clear_record.web.app import CONSOLE_HOME, NodeServer, create_app
 
 
 class ServiceState(enum.StrEnum):
@@ -102,6 +106,18 @@ class ServiceController:
     @property
     def url(self) -> str:
         return self.address.url
+
+    @property
+    def console_url(self) -> str:
+        """The console's home on that node — what a browser is opened at.
+
+        The node's :attr:`url` is the origin it answers on; the console lives
+        under the console prefix (``/web/``), so the address alone would open a
+        path the node does not serve. Built from the same
+        :data:`~clear_record.web.auth.CONSOLE_HOME` the console's own links use,
+        so the tray and the console cannot disagree about where it is.
+        """
+        return self.address.url_for(CONSOLE_HOME)
 
     @property
     def running(self) -> bool:
@@ -197,10 +213,16 @@ class ServiceController:
         so the tray asks the node the same question they ask — of the node it
         joined as much as of the one it started.
         Only a 200 counts and redirects are **not** followed: a 3xx (e.g. a
-        redirect to the setup page) is not a healthy server. The path stays the
-        current one — B3 replaces it with a dedicated credential-free
-        ``GET /health`` (AUTH-06/AUTH-07), whose response must not carry the
-        registry path.
+        redirect to the sign-in page) is not a healthy server, and the client
+        answers the 3xx itself rather than the page behind it
+        (:class:`clear_record.core.node._NoRedirect`). The path is the dedicated
+        credential-free ``GET /health`` (``core.node.HEALTH_PATH``), which is
+        anonymous and answers exactly ``{"status": "ok"}`` — no session, no
+        token, no registry path — so a tray tells a healthy node from a page that
+        wants a sign-in without holding any credential of its own. The tray holds
+        none: with the gate in place the **browser** is what asks for the
+        password, and the console it opens does the writing as the console's own
+        actor (ADR-0033).
         """
         try:
             node.reach(self.address)

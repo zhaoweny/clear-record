@@ -52,7 +52,11 @@ def test_tool_surface_is_registered(tmp_path: Path) -> None:
 
 def test_project_and_glossary_roundtrip(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Weekly Ops", notes="sync")
+    registry.create_project(
+        "Weekly Ops",
+        notes="sync",
+        actor="console",
+    )
     server = build_server(registry)
 
     projects = _payload(server, "list_projects")
@@ -100,7 +104,10 @@ def test_project_and_glossary_roundtrip(tmp_path: Path) -> None:
 
 def test_meeting_tape_set_run_and_artifacts_roundtrip(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
     tape = tmp_path / "a.wav"
@@ -174,7 +181,10 @@ def test_meeting_tape_set_run_and_artifacts_roundtrip(tmp_path: Path) -> None:
 
 def test_unknown_project_and_meeting_are_actionable(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     server = build_server(registry)
 
     assert "unknown project 'nope'" in _error_text(
@@ -192,8 +202,16 @@ def test_unknown_project_and_meeting_are_actionable(tmp_path: Path) -> None:
 
 def test_start_run_without_tapes_is_actionable(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
 
     message = _error_text(server, "start_run", {"project": "ops", "meeting": "kickoff"})
@@ -202,11 +220,23 @@ def test_start_run_without_tapes_is_actionable(tmp_path: Path) -> None:
 
 def test_backend_failure_is_reported_by_run_status(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     def no_backend(directory, options, on_event) -> None:
         raise RuntimeError("backend unavailable")
@@ -230,8 +260,16 @@ def test_unknown_run_ids_are_actionable(tmp_path: Path) -> None:
 def test_update_project_and_meeting_notes(tmp_path: Path) -> None:
     """The story persists: project notes and meeting notes are agent-writable."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops", notes="old")
-    meeting = registry.create_meeting("ops", "Kickoff")
+    registry.create_project(
+        "Ops",
+        notes="old",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        actor="console",
+    )
     assert meeting.notes == ""
     server = build_server(registry)
 
@@ -280,10 +318,18 @@ def test_the_agent_flow_advertises_a_transcript_tool_the_server_exposes() -> Non
 
 def test_read_transcript_as_text_with_a_slice(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
     write_json(
         workspace / "record.json",
         RecordDocument(
@@ -324,8 +370,16 @@ def test_read_transcript_as_text_with_a_slice(tmp_path: Path) -> None:
 
 def test_read_transcript_without_a_run_is_actionable(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     server = build_server(registry)
     assert "no transcript" in _error_text(
         server, "read_transcript", {"project": "ops", "meeting": "kickoff"}
@@ -335,11 +389,23 @@ def test_read_transcript_without_a_run_is_actionable(tmp_path: Path) -> None:
 def test_start_run_carries_explicit_options(tmp_path: Path) -> None:
     """A re-run can set intent: profile, backend, model and language."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     seen = []
 
@@ -375,8 +441,16 @@ def test_start_run_carries_explicit_options(tmp_path: Path) -> None:
 
 def test_start_run_rejects_unknown_profile(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
     message = _error_text(
         server,
@@ -403,11 +477,23 @@ def _probe(**over: object) -> AutoProbe:
 
 def _runnable_meeting(tmp_path: Path) -> tuple[Registry, Meeting]:
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     return registry, meeting
 
 
@@ -476,8 +562,16 @@ def test_start_run_backend_auto_without_a_backend_is_actionable(
     """No backend for ``backend='auto'``: a usable error, not a traceback."""
     monkeypatch.setattr("clear_record.service.auto.available_backend_ids", lambda: ())
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     server = build_server(registry, RunManager(registry, pipeline=lambda *a: None))
 
     message = _error_text(
@@ -526,11 +620,23 @@ def test_rerun_options_key_the_chunk_cache(tmp_path: Path) -> None:
     from clear_record.pipeline.workspace import chunk_cache_key
 
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     seen = []
 
@@ -576,15 +682,37 @@ def test_start_run_defaults_to_the_project_glossary_snapshot(tmp_path: Path) -> 
     ``glossary.txt`` and recording the snapshot hash. Candidates are ignored.
     """
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
-    registry.add_term("ops", "Falcon", status="confirmed")
-    registry.add_term("ops", "Draft", added_by="agent")  # candidate
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Falcon",
+        status="confirmed",
+        actor="console",
+    )
+    registry.add_term(
+        "ops",
+        "Draft",
+        added_by="agent",
+        actor="console",
+    )  # candidate
     workspace = tmp_path / "ws"
     workspace.mkdir()
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(workspace))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(workspace),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     seen: dict = {}
 
@@ -612,7 +740,10 @@ def test_start_run_defaults_to_the_project_glossary_snapshot(tmp_path: Path) -> 
 def test_list_glossary_terms_rejects_an_unknown_status(tmp_path: Path) -> None:
     """The status enum is validated by the service (store.list_terms)."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     server = build_server(registry)
 
     message = _error_text(
@@ -625,11 +756,23 @@ def test_list_glossary_terms_rejects_an_unknown_status(tmp_path: Path) -> None:
 def test_run_events_replay_for_a_later_process(tmp_path: Path) -> None:
     """A fresh manager (the next server process) replays the persisted stream."""
     registry = _registry(tmp_path)
-    registry.create_project("Ops")
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
     tape = tmp_path / "a.wav"
     tape.write_bytes(b"RIFFfake")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
 
     def fake_pipeline(directory, options, on_event) -> None:
         progress = Progress("transcribe", 1, on_event)

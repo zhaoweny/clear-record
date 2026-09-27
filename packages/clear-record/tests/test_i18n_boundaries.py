@@ -20,11 +20,7 @@ from contextlib import closing
 
 import click
 import pytest
-from fastapi.testclient import TestClient
-
-from clear_record.pipeline import stages
 from clear_record.cli.cli import _build_group, _split_value
-from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     PipelineOptions,
     RecordDocument,
@@ -32,9 +28,14 @@ from clear_record.core import (
     log_event,
     log_path,
 )
+from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.service import Registry, RunManager, managed, setup
 from clear_record.service.diagnostics import BundleFacts, build_bundle
+from clear_record.core.node import SESSION_COOKIE
+from clear_record.service.lifecycle import CONSOLE
 from clear_record.web.app import create_app
+from fastapi.testclient import TestClient
 
 
 class _Pseudo(gettext.NullTranslations):
@@ -54,19 +55,53 @@ def pseudo() -> gettext.NullTranslations:
     return translations
 
 
+#: The password this module's clients sign in with. The console has a credential
+#: (ADR-0033), so every route these tests drive needs a session — set through the
+#: same service call the app's first-run route makes, and handed to the client as
+#: a cookie. ``tests/web/_console.py`` holds the shared version of this for the
+#: web suite; it is a module of that directory, which is not importable from here.
+_LOGGED_IN_PASSWORD = "console-password-for-the-suite"
+
+
+def _logged_in(client: TestClient) -> TestClient:
+    """Give ``client`` a console session, and the machine surface one too.
+
+    The credential is set through the service seam the app's own first-run route
+    uses, and the session then comes from the **real sign-in form** — the same two
+    steps ``tests/web/_console.py``'s shared helper makes, which is not importable
+    from this directory (it is a module of ``tests/web/``). That helper then does
+    what this one does next, and for the same reason: this module drives both
+    surfaces through one client, while the app keeps them apart — the console's
+    cookie is scoped to the console's own prefix and never rides the machine API,
+    so the session is re-presented the way a client *holding* a token presents it
+    (a jar cookie at the origin's path; the node's own machine sends the same
+    value as a header).
+    """
+    client.app.state.auth.set_password(_LOGGED_IN_PASSWORD, actor=CONSOLE)
+    client.post("/web/setup/sign-in", data={"password": _LOGGED_IN_PASSWORD})
+    token = client.cookies.get(SESSION_COOKIE)
+    for cookie in list(client.cookies.jar):
+        if cookie.name == SESSION_COOKIE:
+            client.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)
+    client.cookies.set(SESSION_COOKIE, token)
+    return client
+
+
 # --- tr is consulted ------------------------------------------------------- #
 def test_tr_is_consulted_in_a_template(pseudo, tmp_path) -> None:
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
-    assert "«No projects yet.»" in client.get("/ui/projects").text
-    # A returning user: the first-run redirect to /setup is not what this test
+    assert "«No projects yet.»" in client.get("/web/ui/projects").text
+    # A returning user: the first-run redirect to /web/setup is not what this test
     # is about, and the marker keeps `/` on the workspace page (ticket 04).
     setup.record_seen_version()
-    home = client.get("/")
+    home = client.get("/web/")
     assert "«project console»" in home.text
     assert "«Add project»" in home.text
 
@@ -84,15 +119,17 @@ def test_tr_is_consulted_in_python(pseudo) -> None:
 def _managed_app(tmp_path, monkeypatch):
     """A console app whose managed root is ``tmp_path`` (no ASR, no network)."""
     monkeypatch.setenv("CR_WORKSPACE_ROOT", str(tmp_path / "managed"))
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
-    client.post("/api/projects", json={"name": "Ops"})
+    client.post("/api/v1/projects", json={"name": "Ops"})
     meeting = client.post(
-        "/api/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
+        "/api/v1/projects/ops/meetings", json={"title": "Kickoff", "managed": True}
     ).json()
     return client, meeting
 
@@ -108,7 +145,7 @@ def test_a_guard_reason_is_translated_not_just_its_label(pseudo, tmp_path, monke
     monkeypatch.setattr(managed, "max_upload_bytes", lambda: 4)
 
     panel = client.post(
-        f"/ui/meetings/{meeting['id']}/tapes/upload",
+        f"/web/ui/meetings/{meeting['id']}/tapes/upload",
         files={"file": ("a.wav", b"0123456789", "audio/wav")},
     )
 
@@ -125,7 +162,7 @@ def test_the_json_api_refusal_stays_english(pseudo, tmp_path, monkeypatch):
     monkeypatch.setattr(managed, "max_upload_bytes", lambda: 4)
 
     res = client.post(
-        f"/api/meetings/{meeting['id']}/tapes",
+        f"/api/v1/meetings/{meeting['id']}/tapes",
         files={"file": ("a.wav", b"0123456789", "audio/wav")},
     )
 
@@ -169,18 +206,27 @@ def _console_over_a_refused_row(tmp_path, stored: str):
     un-take a row a rescan already reached.
     """
     registry = Registry.open(db_path=tmp_path / "r.sqlite3")
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(tmp_path))
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
     run = registry.create_run(
         meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
     _store_run_options(registry, run.id, stored)
     manager = RunManager(registry, start_queue=False)
-    client = TestClient(
-        create_app(registry, runs=manager, trusted_hosts=("testserver",))
+    client = _logged_in(
+        TestClient(create_app(registry, runs=manager, trusted_hosts=("testserver",)))
     )
     return client, registry, run.id
 
@@ -200,7 +246,7 @@ def test_the_refused_row_page_translates_the_frame_not_the_detail(
     """
     client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
 
-    page = client.get("/")
+    page = client.get("/web/")
 
     assert page.status_code == 409, page.text
     rendered = re.search(r'<p class="muted">(.*?)</p>', page.text, re.S)
@@ -222,7 +268,7 @@ def test_the_refused_row_stays_english_on_the_machine_surfaces(
     """
     client, _, run_id = _console_over_a_refused_row(tmp_path, stored)
 
-    res = client.get(f"/api/runs/{run_id}")
+    res = client.get(f"/api/v1/runs/{run_id}")
 
     assert res.status_code == 409, res.text
     detail = res.json()["detail"]
@@ -248,14 +294,22 @@ def test_the_quarantine_keeps_the_detail_english(pseudo, tmp_path) -> None:
     later_workspace = tmp_path / "later"
     later_workspace.mkdir()
     later_meeting = registry.create_meeting(
-        "ops", "Retro", workspace_path=str(later_workspace)
+        "ops",
+        "Retro",
+        workspace_path=str(later_workspace),
+        actor="console",
     )
-    registry.set_recording_set(later_meeting.id, [str(tape)])
+    registry.set_recording_set(
+        later_meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     later = registry.create_run(
         later_meeting.id,
         backend="apple",
         origin="cli",
         run_options=dataclasses.asdict(PipelineOptions(backend="apple")),
+        actor="console",
     )
 
     manager = RunManager(registry, pipeline=lambda *args: None)
@@ -330,16 +384,18 @@ def test_log_records_stay_untranslated(pseudo, tmp_path, monkeypatch) -> None:
 
 def test_json_api_stays_untranslated(pseudo, tmp_path) -> None:
     """Status values in the JSON API are machine-read, not UI text."""
-    client = TestClient(
-        create_app(
-            Registry.open(db_path=tmp_path / "r.sqlite3"),
-            trusted_hosts=("testserver",),
+    client = _logged_in(
+        TestClient(
+            create_app(
+                Registry.open(db_path=tmp_path / "r.sqlite3"),
+                trusted_hosts=("testserver",),
+            )
         )
     )
-    assert client.get("/api/health").json()["status"] == "ok"
+    assert client.get("/health").json()["status"] == "ok"
 
-    assert client.post("/api/projects", json={"name": "Ops"}).status_code == 201
-    term = client.post("/api/projects/ops/glossary", json={"term": "Falcon"}).json()
+    assert client.post("/api/v1/projects", json={"name": "Ops"}).status_code == 201
+    term = client.post("/api/v1/projects/ops/glossary", json={"term": "Falcon"}).json()
     assert term["status"] == "candidate"
     assert "«" not in json.dumps(term)
 
@@ -378,12 +434,11 @@ def test_the_backends_command_stays_english_under_a_catalog(
     pseudo, monkeypatch
 ) -> None:
     """The terminal reads the message's English form, never the catalog's."""
-    from click.testing import CliRunner
-
     import clear_record.providers.backends as provider_backends
     from clear_record.core.i18n import deferred
     from clear_record.core.message import Message
     from clear_record.providers import Availability, BackendBase, BackendInfo
+    from click.testing import CliRunner
 
     class _FakeSystemBackend(BackendBase):
         def __init__(self) -> None:
@@ -474,8 +529,8 @@ UNTRANSLATED_IDS = frozenset(
         "log is written to the app state directory, never to stdout",
         "set up Tailscale Serve for this port, trust this machine's tailnet "
         "name, and print its https URL. Serve runs in the foreground alongside "
-        "the console and stops with it. The tailnet is the authentication: "
-        "anyone on your tailnet can reach the console.",
+        "the console and stops with it. The tailnet decides who can reach the "
+        "console; the console still asks for its own password.",
         "the tailnet HTTPS port Serve exposes (default: the same as --port); "
         "requires --tailscale",
         "trust NAME instead of the machine's resolved tailnet name (requires "

@@ -7,7 +7,7 @@
   <div class="row webhooks-head">
     <span class="badge status-webhook-{{ status.state }}">{{ status.state_label }}</span>
     <button class="btn btn-sm btn-ghost" type="button"
-            hx-get="/ui/webhooks" hx-target="#webhooks" hx-swap="innerHTML"
+            hx-get="/web/ui/webhooks" hx-target="#webhooks" hx-swap="innerHTML"
             title="{{ tr('Refresh webhook status') }}">{{ tr('Refresh') }}</button>
   </div>
 

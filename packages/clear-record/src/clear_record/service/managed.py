@@ -45,12 +45,14 @@ is asked for; the upload id is the seam that layer will use.
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import hashlib
 import os
 import re
 import secrets
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import BinaryIO
 
@@ -58,14 +60,17 @@ from clear_record.pipeline.workspace import (
     AUDIO_DIR,
     AUDIO_SUFFIXES,
     EXPORT_DIR,
+    RUN_MARKER,
+    RUNS_DIR,
     Workspace,
     is_audio,
 )
 from clear_record.core.i18n import deferred
 from clear_record.core.paths import resolve_models_dir, resolve_workspace_root
-from clear_record.service import tapestore
+from clear_record.service import audit, tapestore
 from clear_record.service.agent_review import AGENT_DIRNAME
-from clear_record.service.models import Meeting, Tape
+from clear_record.service.archive import unarchived_tapes, verify_archive
+from clear_record.service.models import Archive, Meeting, Tape
 from clear_record.service.schemas import Shape
 from clear_record.service.store import Registry
 
@@ -166,6 +171,17 @@ class ResumeNotSupported(UploadRejected):
     """The id names an interrupted/in-flight upload, and resume is not built."""
 
 
+class ArchiveRequired(UploadRejected):
+    """A managed tape cannot be deleted: no verified archive holds its bytes.
+
+    The delete would destroy data with no durable copy, so it is refused with a
+    message naming the archive action instead (ADR-0033) — either because no
+    archive of the meeting verifies, or because **no single verified archive holds
+    every tape the batch asked for** (one archive may hold one of them and another
+    the rest; the copy that licenses the batch has to hold all of it).
+    """
+
+
 def managed_root(explicit: str | os.PathLike | None = None) -> Path:
     """The managed workspace root (see :func:`paths.resolve_workspace_root`)."""
     return resolve_workspace_root(explicit)
@@ -192,18 +208,24 @@ def ensure_managed_workspace(
     registry: Registry,
     meeting: Meeting,
     root: str | os.PathLike | None = None,
+    *,
+    actor: str,
 ) -> Meeting:
     """Create the meeting's managed workspace and point the meeting at it.
 
     Idempotent: an already-provisioned managed meeting keeps its directory. The
     shape is the ordinary :class:`~clear_record.pipeline.workspace.Workspace` shape,
     so nothing downstream can tell it apart.
+
+    ``actor`` is the surface this provisioning is done for, and is recorded
+    against the meeting it points at (ADR-0033): pointing a meeting at a
+    workspace is a registry write like any other.
     """
     resolved_root = managed_root(root)
     path = workspace_path_for(resolved_root, meeting)
     _safe_mkdir(path, root=resolved_root)
     if meeting.workspace_path != str(path):
-        meeting = registry.set_meeting_workspace(meeting.id, str(path))
+        meeting = registry.set_meeting_workspace(meeting.id, str(path), actor=actor)
     return meeting
 
 
@@ -228,6 +250,8 @@ def precheck_upload(
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
     upload_id: str | None = None,
+    *,
+    actor: str,
 ) -> Meeting:
     """Refuse an upload *before* its body is read, where the guard can.
 
@@ -236,9 +260,11 @@ def precheck_upload(
     free space on the managed root. ``upload_id`` is the client's optional
     upload id: it is validated here, and an id whose scratch file is already on
     disk is refused as unsupported (resume is not built). Returns the (possibly
-    newly provisioned) meeting so the caller need not resolve it twice.
+    newly provisioned) meeting so the caller need not resolve it twice — and
+    ``actor`` is the upload's surface, recorded if provisioning turns out to be
+    needed (ADR-0033).
     """
-    meeting = _upload_workspace(registry, meeting, root)
+    meeting = _upload_workspace(registry, meeting, root, actor=actor)
     token = validate_upload_id(upload_id)
     if token is not None:
         _refuse_occupied_upload_id(meeting, token)
@@ -262,6 +288,7 @@ def upload_tape(
     meeting: Meeting,
     stream: BinaryIO,
     *,
+    actor: str,
     filename: str | None,
     declared_bytes: int | None = None,
     root: str | os.PathLike | None = None,
@@ -273,14 +300,28 @@ def upload_tape(
     filename and extension). The body is
     then copied in blocks to a sibling ``.part`` file, ``fsync``-ed and
     atomically renamed; the tape is recorded — checksum and size — only after
-    the rename. Any failure (a truncated body included) removes the partial file
-    and leaves no tape behind.
+    the rename. A failure **while the bytes are being written** (a truncated
+    body included) removes the partial file and leaves no tape behind.
+
+    **A failure after the record is written does not delete what the record
+    names.** The row and the file are the two halves of one upload, and the row
+    is written last, so once it is there the bytes are its subject: an exception
+    out of :meth:`~clear_record.service.store.Registry.register_tape` — which
+    appends the audit row ADR-0033 owes in a unit of work of its own, after the
+    tape's own transaction has committed — must not unlink the file that row
+    names, or ``list_tapes`` would hand back a tape whose path is gone. A failure
+    of the row's *own* write leaves nothing naming the bytes, and the file goes
+    back with the exception: the record is read (never guessed) to decide which,
+    and a record that cannot be read at all keeps the bytes, since keeping them
+    is the half a human can undo.
 
     ``upload_id``, when given, names that scratch file, so it is the transfer's
     identity for a future resume layer. This slice still starts every upload at
     zero: an id whose scratch file exists is refused by the precheck.
     """
-    meeting = precheck_upload(registry, meeting, declared_bytes, root, upload_id)
+    meeting = precheck_upload(
+        registry, meeting, declared_bytes, root, upload_id, actor=actor
+    )
     assert meeting.workspace_path is not None  # precheck provisioned it
     token = validate_upload_id(upload_id)
     name = sanitize_filename(filename)
@@ -338,9 +379,6 @@ def upload_tape(
         os.replace(part, target)
         replaced = True
         _fsync_dir(tapes)
-        return registry.register_tape(
-            meeting.id, path=str(target), sha256=digest.hexdigest(), bytes=written
-        )
     except OSError as exc:
         if created:
             part.unlink(missing_ok=True)
@@ -362,6 +400,40 @@ def upload_tape(
         if replaced:
             target.unlink(missing_ok=True)
         raise
+    # The bytes are in place; from here the *record* is what the two must agree
+    # about. `register_tape` writes the tape row and its audit row, and it can
+    # fail after the tape's transaction has committed (the audit append is a
+    # unit of work of its own), so nothing here may unlink `target` on the way
+    # out: a row naming a file that is gone is the lie this order exists to
+    # prevent. Whether the row landed is *read*, not assumed.
+    try:
+        return registry.register_tape(
+            meeting.id,
+            actor=actor,
+            path=str(target),
+            sha256=digest.hexdigest(),
+            bytes=written,
+        )
+    except BaseException:
+        if not _a_row_names(registry, meeting.id, target):
+            target.unlink(missing_ok=True)
+        raise
+
+
+def _a_row_names(registry: Registry, meeting_id: int, target: Path) -> bool:
+    """Whether the registry holds a tape row naming ``target`` — the uploaded bytes.
+
+    Read after a failed ``register_tape``, so the two halves of an upload agree:
+    the file goes back only where no row names it, and the row is the only thing
+    that can say which. A record that cannot be read answers **``True``** — the
+    bytes stay, because deleting them is the half no code can undo and keeping
+    them is the half a human can; an unreadable registry is not a registry saying
+    the tape is absent.
+    """
+    try:
+        return any(tape.path == str(target) for tape in registry.list_tapes(meeting_id))
+    except Exception:  # pragma: no cover - a registry that cannot be read at all
+        return True
 
 
 def workspace_usage(meeting: Meeting) -> int:
@@ -396,7 +468,7 @@ class MeetingStorage(Shape):
     """A meeting's workspace size, its uploaded tapes and the root's free space.
 
     Declared where it is computed (ADR-0030), because both surfaces read it: the
-    console's panel and `/api/meetings/{id}/storage`.
+    console's panel and `/api/v1/meetings/{id}/storage`.
     """
 
     workspace_path: str | None
@@ -521,34 +593,201 @@ def machine_storage(
     }
 
 
-def delete_tape(
+@dataclasses.dataclass(frozen=True)
+class TapeDeletion:
+    """A deleted tape and the verified archive that made the delete safe."""
+
+    tape: Tape
+    archive: Archive
+
+
+def durable_archive(
+    registry: Registry, meeting: Meeting, tapes: Sequence[Tape]
+) -> Archive:
+    """The meeting's **verified** archive that holds *tapes*' current bytes.
+
+    The durable copy a delete leans on, and the whole of the licence: the
+    archives are re-checked newest first (the registry lists them newest first),
+    and an archive whose manifest is gone, or whose files no longer match their
+    recorded sizes/digests, does not count. Neither does one that verifies while
+    holding no copy of **every tape being deleted**: what makes the delete
+    reconstructible is the copy of *those bytes*, so a tape uploaded after the
+    archive was made — or re-recorded under an old name since — is not covered by
+    it, and leaning on the meeting's membership alone would destroy the only copy
+    there is (:func:`clear_record.service.archive.unarchived_tapes`).
+
+    Raises :class:`ArchiveRequired` when no archive verifies *and* covers the
+    batch — the message names the archive action, since archiving is what makes
+    the delete reconstructible, and the tapes that are missing from **some**
+    verifying archive, since the rule is one archive holding *all* of them and
+    that is what the next archive has to include. It deliberately does not claim
+    any of them is held nowhere: an older verifying archive can hold a name the
+    newest one lacks, which is exactly why the newest answer alone is not the
+    message.
+    """
+    uncovered: list[str] = []
+    for archive in registry.list_archives(meeting.id):
+        try:
+            # The manifest must still be the one the registry sealed for this
+            # archive: a rewritten or subset manifest is not the record of what
+            # was copied, so nothing about the archive can be checked (and a
+            # manifest listing only this tape would otherwise pass vacuously).
+            verification = verify_archive(
+                archive.root_path, manifest_sha256=archive.manifest_sha256
+            )
+        except FileNotFoundError:
+            continue
+        if not verification.ok:
+            continue
+        missing = unarchived_tapes(archive.root_path, [tape.path for tape in tapes])
+        if missing:
+            # The rule is "one archive covers **every** tape", so the answer is
+            # the union across the ones that verified: a name the newest archive
+            # lacks may be held by an older one, and naming only the newest's gaps
+            # would say a tape is held nowhere when a verified copy of it exists.
+            for name in missing:
+                if name not in uncovered:
+                    uncovered.append(name)
+            continue
+        return archive
+    if uncovered:
+        raise ArchiveRequired(
+            deferred(
+                "no verified archive holds a copy of every tape being deleted; "
+                "missing from at least one of them: {names} — archive the meeting "
+                "again, then delete these tapes"
+            ),
+            names=", ".join(uncovered),
+        )
+    raise ArchiveRequired(
+        deferred(
+            "this meeting has no verified archive; archive the meeting first, "
+            "then delete its tapes"
+        )
+    )
+
+
+def delete_tapes(
     registry: Registry,
     meeting: Meeting,
-    tape_id: int,
+    tape_ids: list[int],
     root: str | os.PathLike | None = None,
-) -> Tape:
-    """Delete one **managed** tape's file and record.
+    *,
+    actor: str,
+) -> list[TapeDeletion]:
+    """Delete **managed** tapes' files and records, when that is reversible.
 
-    Only a tape inside the meeting's managed workspace may be deleted: a
-    user-chosen path is the user's document, not app-owned data (ADR-0007). The
-    archive is the durable copy, so deleting workspace tapes is safe by design
-    (ADR-0024).
+    Only tapes inside the meeting's managed workspace may be deleted: a
+    user-chosen path is the user's document, not app-owned data (ADR-0007). And
+    every delete stands on a durable copy: the meeting must have a **verified**
+    archive **that holds the current bytes of every tape being deleted** — a
+    meeting-level archive is not the licence, the copy of those bytes is — or the
+    whole batch is refused with a message naming the archive action and nothing
+    is unlinked (ADR-0033). One archive is the durable copy for the whole batch,
+    so it is verified **once**, and every precondition — the actor's own gate
+    included — passes before the first unlink: a bad id, or a word the record
+    cannot attribute a row to, refuses the batch whole with the filesystem
+    untouched.
+
+    ``actor`` is the transport's word for the surface that asked for the
+    deletion. Each tape's own row is dropped against it, and the two refusals
+    below — a user-chosen workspace, or no verified archive holding these tapes —
+    each leave one failed ``tape.forget`` row for the meeting (the batch's
+    subject: one refusal covers every id asked for), so a tape that is gone is
+    still accounted for (ADR-0033). The containment guard's refusal (a tape
+    resolving outside the managed root) is not one of them: it names the path it
+    refuses and leaves no row.
+
+    **Each record goes before its file.** A tape's row is dropped — which takes
+    its path out of the meeting's tape set in the same transaction — and only
+    then is the file unlinked, so no state the registry holds can come to name a
+    file this batch has already removed: the tape set is what a run's inputs are
+    read from, and a row naming a missing file is a run that cannot start. A
+    crash between the two steps leaves bytes that no record names, and the
+    verified archive every delete stands on is their durable copy — which is why
+    that precondition, not the order, is what makes the bytes recoverable. The
+    other order (unlink, then the row) left the row and the tape set pointing at
+    a file that was gone, and nothing but a retry reconciled it.
+
+    **What the order's inverse leaves, and why it stays stated.** The commit
+    first means an unlink that *fails* — an I/O error, a permission changed under
+    the process, a path replaced by a directory — leaves the bytes on disk with
+    **no record naming them**: the tape set and the meeting's tape rows are the
+    registry's answers, neither holds the path any more, and a retry therefore
+    cannot rediscover the file. Nothing reconciles the orphan; the verified
+    archive the delete already stood on holds the same bytes, which is what makes
+    it recoverable rather than lost, and a caller that wants the bytes back takes
+    them from there. Closing it would need a state this schema does not have (a
+    tombstone naming an unlinked path, and a sweep that clears it once the file is
+    confirmed gone) — a design change, not a fix in place, so it is **left to the
+    owner as a decision** and stated here rather than papered over.
+    (`test_a_delete_whose_unlink_fails_leaves_bytes_no_record_names` drives the
+    state it leaves.)
     """
-    tape = registry.get_tape(tape_id)
-    if tape is None or tape.meeting_id != meeting.id:
-        raise KeyError(tape_id)
+    audit.require_actor(actor)
+    tapes: list[Tape] = []
+    for tape_id in tape_ids:
+        tape = registry.get_tape(tape_id)
+        if tape is None or tape.meeting_id != meeting.id:
+            raise KeyError(tape_id)
+        tapes.append(tape)
     resolved_root = managed_root(root)
     if not is_managed(meeting, resolved_root):
+        # A policy answer, not a key miss, so the refusal leaves a row — one for
+        # the batch, naming the meeting whose tapes were refused (ADR-0033).
+        registry.record_audit(
+            actor,
+            "tape.forget",
+            f"meeting:{meeting.id}",
+            outcome=audit.FAILED,
+        )
         raise UploadRejected(
             deferred(
                 "this meeting uses a user-chosen workspace; only a managed tape can "
                 "be deleted here"
             )
         )
-    path = Path(tape.path)
-    _require_within(path, resolved_root)
-    path.unlink(missing_ok=True)
-    return registry.forget_tape(tape_id)
+    for tape in tapes:
+        _require_within(Path(tape.path), resolved_root)
+    try:
+        archive = durable_archive(registry, meeting, tapes)
+    except ArchiveRequired:
+        # A policy answer like the workspace refusal above, and the one that
+        # guards the destroy: the refusal leaves a row (ADR-0033) — one for the
+        # batch, naming the meeting whose durable copy is missing or does not
+        # hold the tapes asked for.
+        registry.record_audit(
+            actor,
+            "tape.forget",
+            f"meeting:{meeting.id}",
+            outcome=audit.FAILED,
+        )
+        raise
+    deletions: list[TapeDeletion] = []
+    for tape in tapes:
+        # The row (and the tape set with it) goes first: the registry may never
+        # name a file this batch has already removed. `row.path` is what the
+        # record named, which is what is unlinked.
+        row = registry.forget_tape(tape.id, actor=actor)
+        Path(row.path).unlink(missing_ok=True)
+        deletions.append(TapeDeletion(tape=row, archive=archive))
+    return deletions
+
+
+def delete_tape(
+    registry: Registry,
+    meeting: Meeting,
+    tape_id: int,
+    root: str | os.PathLike | None = None,
+    *,
+    actor: str,
+) -> TapeDeletion:
+    """Delete one managed tape; see :func:`delete_tapes` for the rule.
+
+    ``actor`` is the transport's word for the surface that asked, and every
+    drop this delegates to is recorded against it (ADR-0033).
+    """
+    return delete_tapes(registry, meeting, [tape_id], root, actor=actor)[0]
 
 
 def sanitize_filename(filename: str | None) -> str:
@@ -644,6 +883,8 @@ def _upload_workspace(
     registry: Registry,
     meeting: Meeting,
     root: str | os.PathLike | None,
+    *,
+    actor: str,
 ) -> Meeting:
     """The managed workspace an upload may write into.
 
@@ -652,7 +893,7 @@ def _upload_workspace(
     in a user document (ADR-0007's rule still holds).
     """
     if not meeting.workspace_path:
-        return ensure_managed_workspace(registry, meeting, root)
+        return ensure_managed_workspace(registry, meeting, root, actor=actor)
     if not is_managed(meeting, root):
         raise UploadRejected(
             deferred(
@@ -840,15 +1081,42 @@ def _file_bytes(path: Path, seen: set[str]) -> _Measure:
     return (size, False)
 
 
+def _run_file_bucket(root: Path, rel: tuple[str, ...]) -> str | None:
+    """The bucket a file inside a **marked** run scope belongs to, or ``None``.
+
+    A run keeps its own copy of its documents under
+    ``<workspace>/runs/<run id>/`` (ADR-0033), and the walk must attribute them
+    where they belong: a run's **exports** are exports, and its manifest,
+    segments and record are records — the same buckets the workspace root's
+    published copies land in, so the machine total stays true and a run's export
+    directory is not silently counted as a transcript (STO-01).
+
+    Only a **marked** directory is a run scope (:data:`RUN_MARKER`), which is the
+    rule the walk itself reads: ``runs`` is an ordinary word, so everything else
+    under it is the operator's, classified like any other file — discovery takes
+    its audio as an input, and the buckets must count that file as the source
+    tape it is.
+    """
+    if rel[:1] != (RUNS_DIR,) or len(rel) < 2:
+        return None
+    if not (root / RUNS_DIR / rel[1] / RUN_MARKER).is_file():
+        return None
+    if len(rel) > 2 and rel[2] == EXPORT_DIR:
+        return "exports"
+    return "records"
+
+
 def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
     """One walk over a meeting's workspace, split into STO-01's buckets.
 
     A file under tapes/ -- or input audio the pipeline would discover, symlinks
     included -- is a **source** tape. audio/, export/ and agent/ are the app's
     derived output, and the manifest, segments, transcript and minutes are the
-    meeting's records. Files this call already counted are skipped, so a shared
-    workspace or a linked target cannot double count; every bucket carries the
-    walk's partial flag.
+    meeting's records; a file inside a **marked** run scope's ``runs/<id>/`` is
+    attributed by :func:`_run_file_bucket` (a run's own exports are exports, and
+    an operator's unmarked ``runs/`` is classified like any other file). Files
+    this call already counted are skipped, so a shared workspace or a linked
+    target cannot double count; every bucket carries the walk's partial flag.
     """
     files, unreadable = _scan(root)
     buckets = {key: 0 for key in WORKSPACE_BUCKETS}
@@ -860,7 +1128,7 @@ def _workspace_buckets(root: Path, seen: set[str]) -> dict[str, _Measure]:
         top = rel[0] if rel else ""
         bucket = _BUCKET_DIRS.get(top)
         if bucket is None:
-            bucket = (
+            bucket = _run_file_bucket(root, rel) or (
                 "tapes"
                 if top == tapestore.TAPES_DIRNAME or is_audio(path)
                 else "records"
@@ -1008,6 +1276,7 @@ def _resume_not_supported(upload_id: str) -> ResumeNotSupported:
 
 
 __all__ = [
+    "ArchiveRequired",
     "DEFAULT_MAX_UPLOAD_BYTES",
     "DISK_HEADROOM_BYTES",
     "DisallowedExtension",
@@ -1018,10 +1287,13 @@ __all__ = [
     "ResumeNotSupported",
     "STORAGE_BUCKETS",
     "StorageTape",
+    "TapeDeletion",
     "UnsafeFilename",
     "UploadRejected",
     "UploadTooLarge",
     "delete_tape",
+    "delete_tapes",
+    "durable_archive",
     "ensure_managed_workspace",
     "is_managed",
     "machine_storage",

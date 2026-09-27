@@ -11,7 +11,7 @@
 <ul class="recent-meetings">
   {% for row in recent %}
   <li>
-    <a href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ row.meeting.title }}</a>
+    <a href="/web/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ row.meeting.title }}</a>
     <span class="badge">{{ row.meeting.status }}</span>
     {% if row.managed %}<span class="badge status-managed">{{ tr("managed") }}</span>{% endif %}
   </li>
@@ -42,7 +42,7 @@
       </td>
       <td class="muted">{{ row.artifact.created_at }}</td>
       <td>
-        <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open") }}</a>
+        <a class="btn btn-sm btn-ghost" href="/web/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open") }}</a>
       </td>
     </tr>
     {% endfor %}

@@ -82,6 +82,37 @@ def build_snapshot(terms: Iterable[GlossaryTerm]) -> GlossarySnapshot:
     return _snapshot(canonical_terms(t.term for t in terms if t.status == CONFIRMED))
 
 
+def _body_terms(lines: Iterable[str]) -> tuple[str, ...]:
+    """The terms a one-term-per-line glossary **body** holds.
+
+    The format is the decoder's own (``<workspace>/glossary.txt``): one term per
+    line, ``#`` comments and blanks ignored. Every reader of that format has to
+    agree on what a *term* is — a filtered body and the file it came from must
+    hold the same terms, or their identities are not comparable.
+    """
+    return canonical_terms(
+        line.strip()
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
+def filter_terms(lines: Iterable[str], blocked: Iterable[str]) -> GlossarySnapshot:
+    """A glossary **body** minus ``blocked``, as a snapshot.
+
+    ``lines`` is the body's own lines, read exactly as :func:`snapshot_from_text`
+    reads a body (comments and blanks dropped, so the two speak about the same
+    terms). The workspace ``glossary.txt`` is the user's file and is never
+    rewritten when the registry confirms nothing, but a term the registry has
+    retired or left unconfirmed must not bias the decoder from it either
+    (ADR-0033): the run hands the pipeline this filtered set instead.
+    """
+    drop = {term.strip().casefold() for term in blocked}
+    return _snapshot(
+        tuple(term for term in _body_terms(lines) if term.casefold() not in drop)
+    )
+
+
 def snapshot_from_text(text: str) -> GlossarySnapshot:
     """The snapshot a glossary body represents.
 
@@ -89,10 +120,7 @@ def snapshot_from_text(text: str) -> GlossarySnapshot:
     ``#`` comments and blanks ignored — so an explicit glossary's identity is
     comparable to a project snapshot's.
     """
-    lines = (line.strip() for line in text.splitlines())
-    return _snapshot(
-        canonical_terms(line for line in lines if not line.startswith("#"))
-    )
+    return _snapshot(_body_terms(text.splitlines()))
 
 
 def project_snapshot(registry: Registry, project_slug: str) -> GlossarySnapshot:
@@ -114,6 +142,21 @@ def write_snapshot(workspace: Workspace, snapshot: GlossarySnapshot) -> Path:
     return path
 
 
+def write_run_snapshot(workspace: Workspace, snapshot: GlossarySnapshot) -> Path:
+    """Publish ``snapshot`` at the workspace's app-owned *run* glossary.
+
+    Written atomically like :func:`write_snapshot`, but at
+    :attr:`Workspace.run_glossary_path`, so the run's bias never lands in the
+    user's ``glossary.txt``.
+    """
+    path = workspace.run_glossary_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(snapshot.text, encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
 def write_project_snapshot(
     registry: Registry, project_slug: str, workspace: Workspace
 ) -> tuple[Path, GlossarySnapshot]:
@@ -127,6 +170,7 @@ def write_project_snapshot(
 
 
 __all__ = [
+    "filter_terms",
     "CONFIRMED",
     "GlossarySnapshot",
     "build_snapshot",
@@ -134,5 +178,6 @@ __all__ = [
     "project_snapshot",
     "snapshot_from_text",
     "write_project_snapshot",
+    "write_run_snapshot",
     "write_snapshot",
 ]

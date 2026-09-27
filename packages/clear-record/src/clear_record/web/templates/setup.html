@@ -8,7 +8,7 @@
    never blocks a returning user. The Transcription step owns ASR backend and
    checkpoint readiness and states it from service.agent_flow.transcription_status;
    it never points at the Agent step or at Models settings for a fetch. The agent
-   step reuses the one `/ui/agent-setup` panel Settings -> Agent mounts, so there
+   step reuses the one `/web/ui/agent-setup` panel Settings -> Agent mounts, so there
    is no second implementation. The last step is that flow's acceptance check. #}
 <section class="content setup">
   <h2>{{ tr("Setup") }}</h2>
@@ -37,7 +37,7 @@
       </div>
       <p class="muted">{{ tr("Register clear-record with your MCP harness. This is the same panel as Settings → Agent; there is only one.") }}</p>
       {# The one agent flow, loaded by htmx (and visible to e2e on page load). #}
-      <div id="agent-setup" hx-get="/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
+      <div id="agent-setup" hx-get="/web/ui/agent-setup" hx-trigger="load" hx-swap="innerHTML">
         <div class="muted">{{ tr("Loading agent setup…") }}</div>
       </div>
       <div class="setup-step-actions">
@@ -53,11 +53,11 @@
       <p class="muted">{{ tr("The acceptance test this path ends on: a hello-world tape through transcription, shown back as the transcript an MCP agent receives. Run it in the Agent step's Try it stage, or from Settings → Status.") }}</p>
       <div class="setup-step-actions">
         <a class="btn btn-sm" href="#setup-agent">{{ tr("Run it in the Agent step") }}</a>
-        <a class="btn btn-sm btn-ghost" href="/settings/status">{{ tr("Hello-world check") }}</a>
-        <form method="post" action="/setup/complete">
+        <a class="btn btn-sm btn-ghost" href="/web/settings/status">{{ tr("Hello-world check") }}</a>
+        <form method="post" action="/web/setup/complete">
           <button type="submit" class="primary">{{ tr("Finish setup") }}</button>
         </form>
-        <form method="post" action="/setup/dismiss">
+        <form method="post" action="/web/setup/dismiss">
           <button type="submit" class="btn btn-ghost">{{ tr("Dismiss setup") }}</button>
         </form>
       </div>

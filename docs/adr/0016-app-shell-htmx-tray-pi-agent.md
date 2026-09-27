@@ -49,14 +49,14 @@ Date: 2026-09-14
 ## Decision
 
 - [DECISION] **The console is htmx + Alpine.js, server-rendered by FastAPI.**
-  htmx drives partial updates (`/ui/*` returns HTML fragments); Alpine.js owns
+  htmx drives partial updates (`/web/ui/*` returns HTML fragments); Alpine.js owns
   local UI state. Both libraries are **vendored** under
   `clear_record/web/static/` (htmx 2.0.4, Alpine 3.14.9), so there is **no build
   step** and no npm toolchain in CI, and the console works offline. This
   **supersedes** the brief Vue/React direction and ADR-0013's embedded-string
   assets.
-- [DECISION] Two surfaces over one service adapter: **`/api/*` JSON** (scripts,
-  the MCP server, and any future client) and **`/ui/*` HTML fragments** (the
+- [DECISION] Two surfaces over one service adapter: **`/api/v1/*` JSON** (scripts,
+  the MCP server, and any future client) and **`/web/ui/*` HTML fragments** (the
   browser). Neither contains domain logic.
 - [DECISION] Templates (`web/templates/*.html`) and static assets
   (`web/static/*`) are **package data**: `uv_build` ships them in the wheel and

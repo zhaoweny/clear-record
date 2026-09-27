@@ -1,5 +1,5 @@
 <div id="run-{{ run.meeting_id }}" class="run status-{{ run.status }}"
-     {% if run.polling %}hx-get="/ui/runs/{{ run.run_id }}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+     {% if run.polling %}hx-get="/web/ui/runs/{{ run.run_id }}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
   <div class="run-head">
     <span class="badge status-{{ run.status }}">{{ run.status }}</span>
     {% if run.stage %}<span class="run-stage">{{ run.stage }}</span>{% endif %}
@@ -75,11 +75,11 @@
   <div class="run-actions">
     {% if run.cancellable %}
     {% if run.cancel_requested %}<span class="muted">{{ tr("asking the run to stop…") }}</span>{% endif %}
-    <button class="btn btn-ghost" hx-post="/ui/runs/{{ run.run_id }}/cancel"
+    <button class="btn btn-ghost" hx-post="/web/ui/runs/{{ run.run_id }}/cancel"
             hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("Cancel") }}</button>
     {% endif %}
     {% if run.resumable %}
-    <button class="btn btn-ghost" hx-post="/ui/runs/{{ run.run_id }}/resume"
+    <button class="btn btn-ghost" hx-post="/web/ui/runs/{{ run.run_id }}/resume"
             hx-target="#run-{{ run.meeting_id }}" hx-swap="outerHTML">{{ tr("Resume") }}</button>
     <span class="muted">{{ tr("Resuming re-uses this workspace's cached chunks. A run elsewhere re-decodes from scratch: the cache is app-owned and keyed by this workspace's path.") }}</span>
     {% endif %}

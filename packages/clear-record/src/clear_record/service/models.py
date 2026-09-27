@@ -16,10 +16,20 @@ one-active-run rule and what each move announces. What stays here is a run's
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 
 #: A glossary term's lifecycle. ``candidate`` is what an agent's draft produces;
 #: ``confirmed`` is owner-accepted truth; ``retired`` is kept for history.
 TERM_STATUSES = ("candidate", "confirmed", "retired")
+
+#: The un-reviewed status a term starts in, and the one a restore falls back to
+#: when a term's own history is gone.
+CANDIDATE = "candidate"
+
+#: The status a term takes when it leaves the decoder's glossary. A retire is a
+#: status change, never a row delete: the term keeps its ``added_by``/``created_at``
+#: and can be restored (ADR-0033).
+RETIRED = "retired"
 
 #: Who a term came from. A human edit and an agent draft are never conflated.
 TERM_AUTHORS = ("human", "agent")
@@ -213,14 +223,74 @@ class Archive:
     created_at: str
 
 
+@dataclasses.dataclass(frozen=True)
+class AuditEvent:
+    """One appended row of the service's audit record (ADR-0033).
+
+    Who called the service, what they touched and how it ended. ``target`` is the
+    service's own address for what was touched (``project:demo``, ``run:12``) and
+    not a foreign key: an audit row outlives what it names, which is the point of
+    keeping it.
+    """
+
+    id: int
+    at: str
+    actor: str
+    action: str
+    target: str
+    outcome: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ConsoleSession:
+    """One signed-in browser's session, as the auth gate judges it.
+
+    Four instants, and the token's digest is the row's key rather than a field
+    here: anything reading a session already holds the token and digests it
+    itself, so carrying the digest would only be one more place it could be
+    printed. The deadlines are absolute instants — the idle one moves with each
+    accepted request, the absolute one never moves — so a session's verdict is a
+    comparison, never a recomputation of a policy that may have changed since.
+    """
+
+    created_at: _dt.datetime
+    seen_at: _dt.datetime
+    idle_deadline: _dt.datetime
+    absolute_deadline: _dt.datetime
+
+
+@dataclasses.dataclass(frozen=True)
+class MachineToken:
+    """One labelled bearer token, as the console's registry lists it.
+
+    The **digest is deliberately not a field**, for the reason a session row
+    carries none: the reader that has the plaintext digests it itself, and the
+    console's list — the only other reader — shows the label, when the token was
+    minted and when it was last used, and nothing that could be presented as a
+    credential. A token with no use yet says so: ``last_used_at`` is ``None``
+    until a request the token authenticated moved it, rather than borrowing the
+    mint time and claiming a use that never happened.
+    """
+
+    id: int
+    label: str
+    created_at: str
+    last_used_at: str | None
+
+
 __all__ = [
     "Archive",
     "Artifact",
+    "AuditEvent",
+    "CANDIDATE",
+    "ConsoleSession",
     "GlossaryTerm",
+    "MachineToken",
     "Meeting",
     "MEETING_STATUSES",
     "PipelineRun",
     "Project",
+    "RETIRED",
     "RecordingSet",
     "TERM_AUTHORS",
     "TERM_STATUSES",

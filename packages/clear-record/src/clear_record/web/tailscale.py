@@ -2,15 +2,15 @@
 
 Tailscale Serve is one of the reverse proxies ADR-0021 leaves remote access to:
 it shares a **loopback** service inside an authenticated tailnet, terminates TLS
-itself, and needs no in-app account. ``clear-record web --tailscale`` is the
-one-command wrapper: it reads this machine's tailnet DNS name from
-``tailscale status --json``, runs
+itself. ``clear-record web --tailscale`` is the one-command wrapper: it reads
+this machine's tailnet DNS name from ``tailscale status --json``, runs
 ``tailscale serve --https=<port> http://127.0.0.1:<console-port>``, and trusts
 that name in the request guard.
 
-**The tailnet is the authentication.** The console keeps its loopback-only bind
-and its no-auth posture; anyone who is a member of the tailnet can reach the
-console, and there is no second password (ADR-0021).
+**The tailnet is the perimeter.** The console keeps its loopback-only bind, and
+since ADR-0033's gate landed it also asks for its own password: the tailnet
+decides who can *reach* the console, and a device on the tailnet that is not the
+operator's still cannot read the meetings behind it.
 
 Lifecycle: Serve is run in its **foreground** form (no ``--bg``), as a real
 child process, so the mapping lives exactly as long as the console does. A
@@ -526,13 +526,19 @@ def start_serve(
     )
 
 
-def console_url(name: str, port: int) -> str:
-    """The tailnet HTTPS URL Serve publishes for the console.
+def console_url(name: str, port: int, home: str) -> str:
+    """The tailnet HTTPS URL Serve publishes, at the console's own home.
 
-    HTTPS on 443 is implicit in a URL; any other port is spelled out.
+    ``home`` is the console's home path — the caller passes
+    :data:`clear_record.web.auth.CONSOLE_HOME`, which this light module does not
+    import (nothing here may pull in FastAPI) — because the node serves the
+    console under that prefix and **nothing at the bare origin**: a URL without
+    it is a 404 waiting for the reader. HTTPS on 443 is implicit in a URL; any
+    other port is spelled out.
     """
     host = normalize_name(name)
-    return f"https://{host}/" if port == 443 else f"https://{host}:{port}/"
+    origin = f"https://{host}" if port == 443 else f"https://{host}:{port}"
+    return f"{origin}{home}"
 
 
 __all__ = [

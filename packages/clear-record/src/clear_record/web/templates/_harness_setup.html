@@ -18,7 +18,7 @@
        JSON, and the JSON's own quotes are safe inside the single-quoted
        attribute. The path is still the user's to accept: this only saves typing
        it. #}
-    <form hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
+    <form hx-post="/web/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
           hx-swap="innerHTML" hx-vals='{{ {"harness": harness.path} | tojson }}'>
       {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
       <button class="btn btn-sm" type="submit">{{ tr("Point at this") }}</button>
@@ -29,7 +29,7 @@
   </div>
   {% endfor %}
 
-  <form class="stack" hx-post="/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
+  <form class="stack" hx-post="/web/ui/agent-setup/mcp/harness" hx-target="{{ target }}"
         hx-swap="innerHTML">
     {% if standalone %}<input type="hidden" name="part" value="mcp">{% endif %}
     <input name="harness" value="" placeholder="{{ tr('path to pi-agent or another MCP-capable harness') }}">

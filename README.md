@@ -279,7 +279,10 @@ before you type it:
   and after it finishes, and its progress is read back from the node. The
   workspace keeps every file it kept before — `manifest.json`, `audio/`,
   `segments.json`, `record.json`, `export/` — and the node's registry only
-  records that the run happened.
+  records that the run happened. Re-running is not destructive: each run's own
+  copy of `manifest.json`, `segments.json`, `record.json` and `export/` is kept
+  under `runs/<run id>/`, the workspace root keeps the newest **finished** run's
+  copy (the default read), and a run that dies publishes nothing (ADR-0033).
 - **The directory and the model are named the node's way.** The run's
   `<directory>` argument is sent as a path **the node resolves**: `run` talks to
   the node, so the directory has to be the node's — in the ordinary case a client
@@ -288,7 +291,7 @@ before you type it:
   proxy, Tailscale) is refused a directory with one sentence, rather than having a
   path of its own, or a same-named directory of the node's, acted on. A client
   elsewhere names what it wants the way the registry does: a run names its meeting
-  by id (`POST /api/meetings/{id}/runs`), and a tape is uploaded into a managed
+  by id (`POST /api/v1/meetings/{id}/runs`), and a tape is uploaded into a managed
   workspace. A **model is the exception in both directions** — it is addressed
   neither by path nor by id, and must already be on the node that runs the work —
   so `--model` names a checkpoint the node's models directory resolves (`small`,
@@ -461,7 +464,7 @@ CLI-only install stays audio-only:
 
 ```sh
 uv tool install 'clear-record[web]'    # or:  pip install 'clear-record[web]'
-clear-record web                       # serves http://127.0.0.1:8765 and opens it
+clear-record web                       # serves http://127.0.0.1:8765/web/ and opens it
 clear-record web --tailscale           # sets up Tailscale Serve for remote access
 ```
 
@@ -474,9 +477,11 @@ ends it as it does an unsupervised node. That is the stand-in when there is no
 systemd/launchd unit — see the
 [deployment guide](docs/service-deployment.md#systemd-linux-user-unit).
 `--no-browser` is `web`'s only; `--port`, `--host` and `--data-dir` control either
-launch; the server binds `127.0.0.1` by default and needs no account — leave
-`--host` on loopback and let your proxy be the ingress
-([ADR-0021](docs/adr/0021-localhost-only-deployment.md)). The UI language comes from
+launch; the server binds `127.0.0.1` by default and asks for **one console
+password** — set on the first run at `/web/setup`, replaceable from a terminal with
+`clear-record password` — so leave `--host` on loopback and let your proxy be the
+ingress ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
+[ADR-0033](docs/adr/0033-the-auth-position.md)). The UI language comes from
 `--lang`, `CR_LANG` or `LANG` (English is the source, `zh_CN` ships) — see
 [docs/i18n.md](docs/i18n.md). With `--tailscale` the
 console also resolves this machine's tailnet name, runs a **foreground**
@@ -489,8 +494,8 @@ untouched. If Serve cannot start, the console still starts and says why. The
 the macOS App Store install symlinks `~/.local/bin/tailscale` into
 `Tailscale.app`, whose bundle aborts when the CLI is invoked through that
 symlink; `CR_TAILSCALE` points at a non-standard install. **The
-tailnet is then the authentication — anyone on your tailnet can reach the
-console**
+tailnet then decides who can reach the console**, which still asks for its own
+password
 ([ADR-0021](docs/adr/0021-localhost-only-deployment.md),
 [deployment guide](docs/service-deployment.md#tailscale)). The app-owned
 **project registry** (SQLite) lives in the platform-native data directory —
@@ -527,8 +532,12 @@ meeting tape").
 > meetings and tape sets, running tapes with progress and a live run view, tape
 > upload into a managed workspace, and the archive view. The three jobs
 > (glossary collection, transcript check, minutes) are the **harness's** work:
-> it reads the transcript over MCP and writes what it produced as a draft with
-> the author identity it declares, and a human accepts or rejects it
+> it reads the transcript over MCP and writes what it produced as a draft, whose
+> recorded author is the **actor its transport supplies** — `mcp` for the stdio
+> adapter, which is the only surface that writes a version, never a name a caller
+> declares (ADR-0033) — and the draft's decision is recorded against the
+> transport that makes it: a harness can accept its own draft over MCP and is
+> recorded as `mcp`, so a **human** decision is the console's
 > (ADR-0031). clear-record itself calls no model and holds no model credential.
 > The setup path's hello-world acceptance test proves tape → transcription →
 > transcript, localizing a failure to a leg (`tts`, `backend`, `model`,

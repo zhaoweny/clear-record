@@ -7,7 +7,7 @@
    and the one obvious action, plus one compact line of the newest meetings
    across projects to jump back into. The list is server-rendered, so a plain
    link works with no JavaScript; `_projects.html` is still the fragment
-   `POST /ui/projects` swaps in. #}
+   `POST /web/ui/projects` swaps in. #}
 <section class="content workspace">
   <div class="workspace-head">
     <h2>{{ tr("Projects") }}</h2>
@@ -22,7 +22,7 @@
     <ul>
       {% for row in recent %}
       <li>
-        <a href="/projects/{{ row.meeting.project_slug }}/meetings/{{ row.meeting.slug }}">{{ row.meeting.title }}</a>
+        <a href="/web/projects/{{ row.meeting.project_slug }}/meetings/{{ row.meeting.slug }}">{{ row.meeting.title }}</a>
         <span class="muted">{{ row.project_name }}</span>
       </li>
       {% endfor %}

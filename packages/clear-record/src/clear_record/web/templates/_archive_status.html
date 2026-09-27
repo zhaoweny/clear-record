@@ -9,6 +9,11 @@
 <span class="muted">
   {{ trn("{count} file verified", "{count} files verified", row.verification.checked, count=row.verification.checked) }}
 </span></span>
+{% elif row.verification.unverifiable %}
+{# The third answer, with a chip that says what it is: nothing about this
+   archive could be checked, which is neither ok nor a failure of any file. #}
+<span class="status status-neutral"><span class="badge">{{ tr("unverifiable") }}</span>
+<span class="muted">{{ row.verification.unverifiable }}</span></span>
 {% else %}
 <span class="status status-failed"><span class="badge">{{ tr("failed") }}</span>
 <span class="muted">

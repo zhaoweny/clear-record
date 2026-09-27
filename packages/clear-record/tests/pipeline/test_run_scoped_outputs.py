@@ -1,0 +1,486 @@
+"""A run's outputs are its own copy; the workspace publishes the newest.
+
+ADR-0033's retention rule, at the workspace level: rewrite-in-place is
+destructive in kind, so every run writes its manifest, transcript segments,
+reconciled record and exports into ``<workspace>/runs/<run id>/`` — its own copy,
+retained — and a **finished** run publishes that copy at the workspace root,
+which stays the default read. A later run writes its own copy and leaves the
+earlier run's readable; a run that dies half-way publishes nothing, so neither
+the workspace's copy nor another run's can be touched by it. What a run
+**reads** (its tapes, the ``glossary.txt`` a hand-edit lands in, the
+``.clear-record-ignore`` declaration) stays the workspace's; three things a node
+run writes at the workspace root all the same — the normalized ``audio/``, the
+``glossary.txt`` a confirmed-term registry publishes, and ``transcribe.log``.
+The app-owned chunk cache is neither: it lives in the app's own cache directory,
+keyed per workspace, and a run only advances it, so a resume keeps its cache.
+"""
+
+from __future__ import annotations
+
+import errno
+from pathlib import Path
+
+import numpy as np
+import pytest
+import soundfile as sf
+
+from clear_record.core import RecordDocument, Segment, Source, load_json
+from clear_record.pipeline import stages
+from clear_record.pipeline import workspace as workspace_module
+from clear_record.pipeline.workspace import (
+    MANIFEST,
+    RETENTION_PREFIX,
+    RUN_MARKER,
+    RECORD,
+    RUNS_DIR,
+    SEGMENTS,
+    Workspace,
+    discover_audio,
+    discover_inputs,
+    publish_run,
+)
+
+
+def _tone(path: Path, *, sr: int = 8000, seconds: float = 2.0) -> None:
+    """One recording of a tone, so ``ingest`` has real audio to normalize."""
+    time = np.arange(int(seconds * sr), dtype=np.float64) / sr
+    sf.write(str(path), (0.4 * np.sin(2 * np.pi * 220.0 * time)).astype(np.float32), sr)
+
+
+def _source(source_id: str) -> Source:
+    return Source(id=source_id, path=f"audio/{source_id}.wav", label="Speaker 1")
+
+
+def _finish(scope: Workspace, text: str) -> Workspace:
+    """Leave the documents a finished run leaves in *scope*, keyed by *text*."""
+    scope.write_manifest([_source("a")])
+    scope.write_segments({"a": [Segment(0.0, 1.0, text, "a")]}, {"backend": text})
+    scope.write_record(
+        RecordDocument(
+            sources=(_source("a"),),
+            alignment=None,
+            segments=(Segment(0.0, 1.0, text, "a"),),
+        )
+    )
+    scope.export_dir.mkdir(parents=True, exist_ok=True)
+    (scope.export_dir / "record.md").write_text(text, encoding="utf-8")
+    return scope
+
+
+def _published(home: Workspace) -> dict[str, bytes]:
+    """The workspace's published documents, byte for byte."""
+    return {
+        name: (home.root / name).read_bytes() for name in (MANIFEST, SEGMENTS, RECORD)
+    }
+
+
+def _record_text(workspace: Workspace) -> str:
+    return workspace.load_record().segments[0].text
+
+
+# --- the layout ------------------------------------------------------------- #
+def test_a_run_scope_writes_beside_the_workspace_and_keeps_the_shared_state(
+    tmp_path: Path,
+) -> None:
+    home = Workspace.at(tmp_path / "ws")
+    scope = _finish(home.run_scope(7), "seven")
+
+    assert scope.outputs == home.root / RUNS_DIR / "7"
+    assert scope.manifest_path == home.root / RUNS_DIR / "7" / MANIFEST
+    assert scope.segments_path == home.root / RUNS_DIR / "7" / SEGMENTS
+    assert scope.record_path == home.root / RUNS_DIR / "7" / RECORD
+    assert scope.export_dir == home.root / RUNS_DIR / "7" / "export"
+    # The inputs and the shared state are the workspace's, not the run's.
+    assert scope.audio_dir == home.audio_dir
+    assert scope.glossary_path == home.glossary_path
+    assert scope.ignore_path == home.ignore_path
+    assert scope.chunks_dir == home.chunks_dir
+    # Nothing is published until the run finishes.
+    assert not home.manifest_path.exists()
+    assert not home.record_path.exists()
+
+
+def test_a_run_scope_resolves_back_to_its_workspace(tmp_path: Path) -> None:
+    home = Workspace.at(tmp_path / "ws")
+    scope = home.begin_scope(7)
+
+    opened = Workspace.at(scope.outputs)
+    assert opened.root == home.root
+    assert opened.run_id == 7
+    assert opened.outputs == scope.outputs
+    assert Workspace.at(home.root).run_id is None
+
+
+def test_a_marker_rewrite_is_published_atomically(tmp_path: Path, monkeypatch) -> None:
+    """A crash mid-write leaves the marker a reader opens whole.
+
+    ``begin_scope`` runs again for a run that begins in a scope that already
+    exists (a re-claim), and every stage of the run opens the scope by reading
+    its marker. Written in place, a writer killed mid-body would leave a torn
+    marker and ``Workspace.at`` would silently open the scope as *its own*
+    workspace — the run's shared state (the published manifest, ``audio/``, the
+    chunk cache key) read from the wrong directory. The marker is published by
+    rename instead, so the torn body never reaches the path a reader opens.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    scope = home.begin_scope(1)
+
+    def dying_write_json(path, payload) -> None:
+        # A writer killed mid-write: the body it was writing is partial.
+        Path(path).write_text('{"workspace": "/torn', encoding="utf-8")
+        raise OSError("killed mid-write")
+
+    monkeypatch.setattr("clear_record.pipeline.workspace.write_json", dying_write_json)
+    with pytest.raises(OSError):
+        scope.begin_scope(1)
+
+    assert load_json(scope.outputs / RUN_MARKER)["run_id"] == 1
+    reopened = Workspace.at(scope.outputs)
+    assert reopened.run_id == 1
+    assert reopened.root == home.root
+
+
+def test_only_a_marked_run_scope_resolves_back(tmp_path: Path) -> None:
+    """The **mark**, not the name, is what makes a scope.
+
+    ``runs`` is an ordinary word, so a directory merely *named* like one — a
+    workspace that happens to sit at ``…/runs/7``, an operator's own ``runs``
+    folder — stays a workspace: inferring a scope from the leaf name put a
+    meeting's outputs in a different directory, left its tapes outside the walk
+    and made ``read_transcript`` raise.
+    """
+    plain = Workspace.at(tmp_path / "docs" / "7")
+    assert plain.run_id is None
+    assert plain.outputs == tmp_path / "docs" / "7"
+    named = Workspace.at(tmp_path / "runs" / "not-an-id")
+    assert named.run_id is None
+    assert named.root == tmp_path / "runs" / "not-an-id"
+
+    # A workspace whose own path ends in ``runs/<digits>`` is a workspace.
+    workspace = tmp_path / "runs" / "7"
+    workspace.mkdir(parents=True)
+    (workspace / "a.wav").write_bytes(b"RIFFfake")
+    here = Workspace.at(workspace)
+    assert here.run_id is None
+    assert here.root == workspace
+    assert here.outputs == workspace
+    # ... and its own run scopes are under it, marked, and resolve back to it.
+    scope = here.begin_scope(1)
+    assert scope.outputs == workspace / "runs" / "1"
+    assert Workspace.at(scope.outputs).root == workspace
+    assert Workspace.at(scope.outputs).run_id == 1
+
+
+# --- the documents name their run ------------------------------------------- #
+def test_each_document_of_a_run_names_the_run_that_wrote_it(tmp_path: Path) -> None:
+    home = Workspace.at(tmp_path / "ws")
+    scope = _finish(home.begin_scope(7), "seven")
+
+    assert load_json(scope.manifest_path)["run_id"] == 7
+    assert scope.load_segments()[1]["run_id"] == 7
+    assert scope.load_record().metadata["run_id"] == 7
+
+    # A workspace's own documents name no run: the stage commands and
+    # ``calibrate`` write in place at the workspace root, and what they leave
+    # there names no run at all.
+    plain = Workspace.at(tmp_path / "plain")
+    _finish(plain, "plain")
+    assert "run_id" not in load_json(plain.manifest_path)
+    assert "run_id" not in plain.load_segments()[1]
+    assert "run_id" not in plain.load_record().metadata
+
+
+def test_a_run_reads_the_workspaces_published_manifest_for_declarations(
+    tmp_path: Path,
+) -> None:
+    """The declaration an operator hand-edits lives at the root, not in a run.
+
+    A run scope's own manifest is written fresh by its ``ingest``, so the
+    declarations carried over (`_manifest_starts` / `_manifest_roles`) are read
+    from the workspace's published manifest — and a scope, having none of its own
+    yet, does not silently read the published one as its own.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    home.write_manifest([_source("a")])
+
+    scope = home.run_scope(3)
+    assert [source.id for source in scope.load_published_manifest()[0]] == ["a"]
+    with pytest.raises(FileNotFoundError):
+        scope.load_manifest()
+
+
+# --- publication: the newest run is the default read ------------------------ #
+def test_publishing_makes_a_runs_own_copy_the_workspaces_default_read(
+    tmp_path: Path,
+) -> None:
+    home = Workspace.at(tmp_path / "ws")
+    first = _finish(home.run_scope(1), "first")
+    publish_run(first)
+    assert _record_text(home) == "first"
+    assert home.load_segments()[1]["run_id"] == 1
+
+    second = _finish(home.run_scope(2), "second")
+    publish_run(second)
+
+    # The newest run is the default read, documents and exports both.
+    assert _record_text(home) == "second"
+    assert home.load_segments()[1]["run_id"] == 2
+    assert (home.export_dir / "record.md").read_text(encoding="utf-8") == "second"
+    # The earlier run's own copy is intact and readable.
+    assert _record_text(first) == "first"
+    assert first.load_segments()[1]["run_id"] == 1
+    assert load_json(first.manifest_path)["run_id"] == 1
+    assert (first.export_dir / "record.md").read_text(encoding="utf-8") == "first"
+
+
+def test_a_publication_that_fails_while_copying_leaves_the_previous_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed publication is not half a new run: the root keeps the last complete one.
+
+    The reproduction: ENOSPC on the third copy left the root holding run 2's
+    manifest and segments beside run 1's record while the run was recorded
+    failed — two runs' documents presented as one, which no reader can tell
+    apart. Every copy now lands in a scratch file first and the root is touched
+    only by the renames that follow, so a failure while copying replaces nothing
+    (a rename needs no space), and the scratch a failed attempt made is cleaned
+    up with it.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    # Both runs' scopes are begun (marked), so the root's documents are held by a
+    # run's own copy and nothing is at risk: these are the publication's own
+    # copies that fail below, not the retention's.
+    first = _finish(home.begin_scope(1), "first")
+    publish_run(first)
+    published = _published(home)
+    exported = (home.export_dir / "record.md").read_bytes()
+
+    second = _finish(home.begin_scope(2), "second")
+
+    real_copy = workspace_module.shutil.copy2
+    copies: list[Path] = []
+
+    def the_disk_fills(source, target, *args, **kwargs):
+        copies.append(Path(target))
+        if len(copies) == 3:  # manifest, segments, then the record
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copy(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(workspace_module.shutil, "copy2", the_disk_fills)
+    with pytest.raises(OSError):
+        publish_run(second)
+
+    assert len(copies) == 3, "the failure did not land in the copy phase"
+    assert _published(home) == published
+    assert (home.export_dir / "record.md").read_bytes() == exported
+    assert _record_text(home) == "first"
+    assert home.load_segments()[1]["run_id"] == 1
+    assert list(home.root.glob("*.tmp")) == []
+
+
+def test_a_half_written_run_cannot_touch_the_published_copy_or_another_run(
+    tmp_path: Path,
+) -> None:
+    """A run that is still writing leaves the root, and the earlier run, where they were.
+
+    Only a **finished** run's copy is published, and the run path is what decides
+    that — so the writing half is what this drives, through the writers a run
+    really has: a begun scope and the first stage (``ingest``), which writes that
+    scope's own documents. What the run does not do is finish: the tape the pass
+    needs is gone, so the pass that follows refuses where it dies. The workspace's
+    published documents are byte-identical through all of it and run 1's own copy
+    is untouched, which is the whole claim: what a half-written run writes is its
+    own directory.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    first = _finish(home.run_scope(1), "first")
+    publish_run(first)
+    published = _published(home)
+
+    _tone(home.root / "a.wav")
+    dying = home.begin_scope(2)
+    stages.ingest(str(dying.outputs))
+    # The run died here: its input is gone and the pass that would carry on
+    # refuses. Nothing publishes, because the run path publishes on finish only.
+    (home.root / "a.wav").unlink()
+    with pytest.raises(stages.PipelineError):
+        stages.ingest(str(dying.outputs))
+
+    assert load_json(dying.manifest_path)["run_id"] == 2  # it did write its own copy
+    assert _published(home) == published
+    assert _record_text(home) == "first"
+    assert _record_text(first) == "first"
+    assert (first.export_dir / "record.md").read_text(encoding="utf-8") == "first"
+    assert load_json(first.manifest_path)["run_id"] == 1
+
+
+# --- resume and the cache --------------------------------------------------- #
+def test_every_run_of_a_workspace_shares_its_chunk_cache(tmp_path: Path) -> None:
+    """A run's own copy is its documents; the cache stays the workspace's.
+
+    Which is what makes a resume a resume: the run after the stop decodes into
+    the cache the stopped one already filled, whatever run id its documents
+    carry (ADR-0007/ADR-0025).
+    """
+    home = Workspace.at(tmp_path / "ws")
+    cache = home.chunk_cache("a").directory
+    assert home.run_scope(1).chunk_cache("a").directory == cache
+    assert home.begin_scope(2).chunk_cache("a").directory == cache
+    assert Workspace.at(home.run_scope(2).outputs).chunk_cache("a").directory == cache
+
+
+def test_publishing_over_a_root_no_run_scope_holds_preserves_it(tmp_path: Path) -> None:
+    """The upgrade boundary: the first scoped run is not the last copy's end.
+
+    A root written before runs were scoped (or by a stage command) holds
+    documents **no** run's own copy has, so publishing over them left the
+    artifact rows that named those paths describing the new run's bytes with the
+    old ones gone. They are copied aside first, the copies are readable and not
+    an input, and the publication names each one so the caller that owns the
+    association can follow it.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    home.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    home.manifest_path.write_text('{"sources": []}', encoding="utf-8")
+    home.segments_path.write_text('{"legacy": "segments"}', encoding="utf-8")
+    home.record_path.write_text('{"legacy": "record"}', encoding="utf-8")
+    home.export_dir.mkdir(parents=True, exist_ok=True)
+    (home.export_dir / "record.md").write_text("legacy export", encoding="utf-8")
+    legacy = {
+        path: path.read_bytes()
+        for path in (
+            home.manifest_path,
+            home.segments_path,
+            home.record_path,
+            home.export_dir / "record.md",
+        )
+    }
+
+    scope = _finish(home.begin_scope(1), "new")
+    publication = publish_run(scope)
+
+    # The new run's copy is the published one — documents and exports both.
+    assert _record_text(home) == "new"
+    assert (home.export_dir / "record.md").read_text(encoding="utf-8") == "new"
+    # Every document publication replaced is readable, byte for byte, in the
+    # retained copy the publication named.
+    retained = dict(publication.retained)
+    assert set(retained) == set(legacy)
+    assert all(
+        copy.read_bytes() == legacy[original] for original, copy in retained.items()
+    )
+    # One retained copy, beside the run scopes and named for what it is.
+    directory = next(iter(retained.values()))
+    while not directory.name.startswith(RETENTION_PREFIX):
+        directory = directory.parent
+    assert directory.parent == home.root / RUNS_DIR
+    assert all(directory in copy.parents for copy in retained.values())
+    # It is the app's own state, not an input: the walk takes nothing from it and
+    # narrates nothing about it.
+    assert discover_inputs(home.root) == ([], [])
+    # The run's own copy is untouched by the preservation.
+    assert _record_text(scope) == "new"
+    assert (scope.export_dir / "record.md").read_text(encoding="utf-8") == "new"
+
+
+def test_publishing_over_a_run_scopes_own_copy_preserves_nothing(
+    tmp_path: Path,
+) -> None:
+    """The ordinary flow stays silent: a run's published copy is retained already.
+
+    Run 1's copy is at ``runs/1/``, byte for byte, so run 2's publication of the
+    root replaces nothing that is not readable elsewhere — no retained copy is
+    made, and the root holds no extra directory.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    publish_run(_finish(home.begin_scope(1), "first"))
+
+    publication = publish_run(_finish(home.begin_scope(2), "second"))
+
+    assert publication.retained == ()
+    assert sorted(path.name for path in (home.root / RUNS_DIR).iterdir()) == ["1", "2"]
+    assert _record_text(home) == "second"
+    assert _record_text(home.run_scope(1)) == "first"
+
+
+def test_a_stage_commands_root_document_is_preserved_too(tmp_path: Path) -> None:
+    """A stage command writes at the root and names no run — so a run keeps it.
+
+    ``transcribe``/``calibrate`` leave their outputs at the workspace root with
+    no run named (ADR-0033); they are the other root a run's publication would
+    otherwise be the end of, and the rule that preserves the pre-257 set covers
+    them for the same reason: no run's copy holds those bytes.
+    """
+    home = Workspace.at(tmp_path / "ws")
+    home.record_path.parent.mkdir(parents=True, exist_ok=True)
+    home.record_path.write_text('{"staged": "hand-run"}', encoding="utf-8")
+
+    publication = publish_run(_finish(home.begin_scope(1), "new"))
+
+    (copy,) = dict(publication.retained).values()
+    assert copy.read_text(encoding="utf-8") == '{"staged": "hand-run"}'
+    assert _record_text(home) == "new"
+
+
+# --- the declaration an operator hand-edits --------------------------------- #
+def test_a_scoped_ingest_carries_the_workspaces_declared_start_and_role(
+    tmp_path: Path,
+) -> None:
+    """The operator's hand-edit at the root reaches the run's own copy.
+
+    ``ingest`` **rebuilds** the manifest, so a start and a role declared by hand
+    in the workspace's ``manifest.json`` are carried into the manifest the pass
+    writes — which, for a run, is the manifest in the run's own copy. The
+    declaration is therefore read from the workspace's **published** manifest,
+    where a hand-edit lands (``Workspace.load_published_manifest``): the run's own
+    copy is written fresh by this pass, so reading it would drop exactly the
+    declarations the flow exists for. The scoped twin of the CLI's
+    declare-then-run pin.
+    """
+    workspace = tmp_path / "rec"
+    workspace.mkdir()
+    _tone(workspace / "a.wav")
+    home = Workspace.at(workspace)
+    declared_start = 1_750_000_000.0
+    home.write_manifest(
+        [
+            Source(
+                id="a",
+                path=str(workspace / "a.wav"),
+                start_s=declared_start,
+                role="mixed",
+            )
+        ]
+    )
+
+    scope = home.begin_scope(5)
+    stages.ingest(str(scope.outputs))
+
+    (source,) = scope.load_manifest()[0]
+    assert source.id == "a"
+    assert source.role == "mixed"
+    assert source.start_s == declared_start
+    assert load_json(scope.manifest_path)["run_id"] == 5
+    # The pass wrote its own copy, and the operator's declaration is where it was.
+    assert home.load_manifest()[0][0].role == "mixed"
+
+
+def test_discovery_keeps_an_operators_own_runs_directory(tmp_path: Path) -> None:
+    """`runs/` is not skipped by name — only a **marked** scope is the app's own.
+
+    A capture folder that happens to be called ``runs`` (or anything else under
+    the workspace's ``runs/`` that no marker claims) is the operator's: its audio
+    is an input. The name-based skip dropped it without a word, and the pass then
+    refused with "no audio files found".
+    """
+    home = Workspace.at(tmp_path / "ws")
+    takes = home.root / RUNS_DIR / "my-takes"
+    takes.mkdir(parents=True)
+    (takes / "a.wav").write_bytes(b"RIFFfake")
+
+    # A marked scope holds the app's own output: it is never an input.
+    scope = home.begin_scope(1)
+    (scope.outputs / "take.wav").write_bytes(b"RIFFfake")
+    assert (scope.outputs / RUN_MARKER).is_file()
+
+    assert [path.name for path in discover_audio(home.root)] == ["a.wav"]

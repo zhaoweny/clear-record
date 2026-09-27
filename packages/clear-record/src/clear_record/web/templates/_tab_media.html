@@ -10,7 +10,7 @@
       <span class="badge">{{ row.meeting.status }}</span>
       {% if row.managed %}<span class="badge status-managed">{{ tr("managed") }}</span>{% endif %}
       <span class="muted meeting-path">{{ row.workspace_path or tr("no workspace") }}</span>
-      <a class="btn btn-sm btn-ghost" href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
+      <a class="btn btn-sm btn-ghost" href="/web/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Review") }}</a>
     </div>
 
     <h3 class="media-label">{{ tr("Tapes") }}</h3>
@@ -40,7 +40,7 @@
     {% if row.transcript %}
     <div class="muted transcript-meta">
       {{ trn("{count} segment", "{count} segments", row.transcript.segments, count=row.transcript.segments) }} &middot; {{ row.transcript.source }}
-      &middot; <a href="/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open the review") }}</a>
+      &middot; <a href="/web/projects/{{ project.slug }}/meetings/{{ row.meeting.slug }}">{{ tr("Open the review") }}</a>
     </div>
     {% else %}
     <div class="empty">{{ tr("No transcript yet.") }}</div>

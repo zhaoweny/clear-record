@@ -14,7 +14,7 @@ function watch(page: Page): string[] {
 
 test("the console boots on htmx 4 and Alpine 3, with no errors", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/");
+  await page.goto("/web/");
   await expect(page.locator("#projects .project").first()).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { htmx?: { version: string } }).htmx?.version)).toMatch(/^4\./);
   expect(await page.evaluate(() => (window as unknown as { Alpine?: { version: string } }).Alpine?.version)).toMatch(/^3\./);
@@ -26,16 +26,16 @@ test("the console boots on htmx 4 and Alpine 3, with no errors", async ({ page }
 
 test("a project opens on its own URL and the review is its own page", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/");
+  await page.goto("/web/");
   await page.locator("#projects .project", { hasText: "Q3 sync" }).click();
-  await expect(page).toHaveURL(/\/projects\/q3-sync$/);
+  await expect(page).toHaveURL(/\/web\/projects\/q3-sync$/);
   await expect(page.locator("#detail h2")).toHaveText("Q3 sync");
   // The Meetings tab is a real link; the review is a real page under it.
   await page.locator(".project-tabs a", { hasText: "Meetings" }).click();
-  await expect(page).toHaveURL(/\/projects\/q3-sync\/meetings$/);
+  await expect(page).toHaveURL(/\/web\/projects\/q3-sync\/meetings$/);
   // "Review" is a real link; match by text, not by role.
   await page.locator("#detail .meeting", { hasText: "Kickoff" }).getByText("Review", { exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/q3-sync\/meetings\/kickoff$/);
+  await expect(page).toHaveURL(/\/web\/projects\/q3-sync\/meetings\/kickoff$/);
   // The meeting's own transcript; the minutes body is a separate element.
   await expect(page.locator("pre.transcript").first()).toContainText("the recorder was running");
   await expect(page.locator(".table-artifacts")).toContainText("record.json");
@@ -44,7 +44,7 @@ test("a project opens on its own URL and the review is its own page", async ({ p
 
 test("creating a project adds it to the workspace", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/");
+  await page.goto("/web/");
   // Unique per run: the suite deliberately reuses one seeded data dir.
   const name = `Design review ${Date.now()}`;
   const field = page.getByPlaceholder("New project name");
@@ -58,7 +58,7 @@ test("creating a project adds it to the workspace", async ({ page }) => {
 
 test("a refused project name stays in the form", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/");
+  await page.goto("/web/");
   const field = page.getByPlaceholder("New project name");
   await field.fill("   ");
   await page.getByRole("button", { name: "Add project" }).click();
@@ -71,7 +71,7 @@ test("a refused project name stays in the form", async ({ page }) => {
 
 test("adding a glossary term renders it in the table", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/projects/q3-sync/glossary");
+  await page.goto("/web/projects/q3-sync/glossary");
   await expect(page.locator(".project-tabs a[aria-current='page']")).toHaveText("Glossary");
   const term = `reconciliation loop ${Date.now()}`;
   await page.getByPlaceholder("Term", { exact: true }).fill(term);
@@ -81,7 +81,7 @@ test("adding a glossary term renders it in the table", async ({ page }) => {
 });
 
 test("the language switch flips the document language", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/web/");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await page.locator(".lang-switch button", { hasText: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
@@ -89,7 +89,7 @@ test("the language switch flips the document language", async ({ page }) => {
 
 test("the profile picker previews the resolved knobs it will run", async ({ page }) => {
   const errors = watch(page);
-  await page.goto("/projects/q3-sync/meetings");
+  await page.goto("/web/projects/q3-sync/meetings");
   const preview = page.locator(".profile-options").first();
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("resolved knobs");

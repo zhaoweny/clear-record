@@ -24,6 +24,7 @@ import pytest
 import soundfile as sf
 
 from clear_record.pipeline import stages
+from clear_record.pipeline.workspace import Workspace
 from clear_record.core import (
     Progress,
     Segment,
@@ -134,10 +135,34 @@ def _workspace(tmp_path) -> tuple[Path, Path]:
     return directory, tape
 
 
+def _adopt_workspace_declaration(directory: str, workspace: Path) -> None:
+    """Hand a run scope the workspace's own manifest.
+
+    ``run`` ingests first, and ``ingest`` is what writes a manifest; these tests
+    compose a **stage-only** pipeline (``transcribe`` onward) over a workspace
+    that is already ingested, so the run's own copy has no manifest yet. The
+    manifest the CLI's own ``transcribe <dir>`` would read out of the directory is
+    handed to the run's copy here — the sources it names are the same.
+    """
+    Workspace.at(directory).write_manifest(*Workspace.at(workspace).load_manifest())
+
+
 def _meeting(registry: Registry, directory: Path, tape: Path):
-    registry.create_project("Ops")
-    meeting = registry.create_meeting("ops", "Kickoff", workspace_path=str(directory))
-    registry.set_recording_set(meeting.id, [str(tape)])
+    registry.create_project(
+        "Ops",
+        actor="console",
+    )
+    meeting = registry.create_meeting(
+        "ops",
+        "Kickoff",
+        workspace_path=str(directory),
+        actor="console",
+    )
+    registry.set_recording_set(
+        meeting.id,
+        [str(tape)],
+        actor="console",
+    )
     return meeting
 
 
@@ -184,8 +209,17 @@ def test_a_queued_run_is_cancelled_outright(tmp_path) -> None:
     for tape in (first_tape, second_tape):
         tape.write_bytes(b"RIFFfake")
     first = _meeting(registry, tmp_path, first_tape)
-    second = registry.create_meeting("ops", "Second", workspace_path=str(tmp_path))
-    registry.set_recording_set(second.id, [str(second_tape)])
+    second = registry.create_meeting(
+        "ops",
+        "Second",
+        workspace_path=str(tmp_path),
+        actor="console",
+    )
+    registry.set_recording_set(
+        second.id,
+        [str(second_tape)],
+        actor="console",
+    )
 
     ran: list[str] = []
     release = threading.Event()
@@ -195,15 +229,15 @@ def test_a_queued_run_is_cancelled_outright(tmp_path) -> None:
         release.wait(10)
 
     manager = RunManager(registry, pipeline=pipeline)
-    running = manager.start(first, origin="console")
+    running = manager.start(first, origin="console", actor="console")
     for _ in range(1000):
         if registry.get_run(running.id).status == "running":
             break
         time.sleep(0.005)
-    queued = manager.start(second, origin="console")
+    queued = manager.start(second, origin="console", actor="console")
     assert registry.get_run(queued.id).status == "queued"
 
-    stopped = manager.cancel(queued.id)
+    stopped = manager.cancel(queued.id, actor="console")
 
     assert stopped.status == "stopped"
     assert registry.get_run(queued.id).status == "stopped"
@@ -241,7 +275,7 @@ def test_a_cancel_mid_run_stops_at_the_next_report(tmp_path) -> None:
     meeting = _meeting(registry, tmp_path, tape)
 
     manager = RunManager(registry, pipeline=_reporting_pipeline)
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     # Wait for the pipeline's own report — a ``transcribe`` line — rather than for
     # the first recorded event: the run path's ``ingest`` line lands before the
     # pipeline starts, and a cancel that lands there stops the run before the
@@ -249,7 +283,7 @@ def test_a_cancel_mid_run_stops_at_the_next_report(tmp_path) -> None:
     # records anything, so the report waited for is always a *persisted* one.
     _wait_for_stage(registry, run.id, "transcribe")
 
-    requested = manager.cancel(run.id)
+    requested = manager.cancel(run.id, actor="console")
 
     # A running run is *asked*: the row records the request, and the owner — this
     # manager — stops it at the next boundary.
@@ -277,10 +311,11 @@ def test_a_cancel_stops_a_decode_that_is_already_running(tmp_path, monkeypatch) 
     monkeypatch.setattr(stages, "get_backend", lambda _id: backend)
 
     registry = _registry(tmp_path)
-    directory, tape = _workspace(tmp_path)
-    meeting = _meeting(registry, directory, tape)
+    workspace, tape = _workspace(tmp_path)
+    meeting = _meeting(registry, workspace, tape)
 
     def pipeline(directory, options, on_event) -> None:
+        _adopt_workspace_declaration(directory, workspace)
         stages.transcribe(
             directory,
             "child",
@@ -292,9 +327,9 @@ def test_a_cancel_stops_a_decode_that_is_already_running(tmp_path, monkeypatch) 
 
     manager = RunManager(registry, pipeline=pipeline)
     try:
-        run = manager.start(meeting, origin="console")
+        run = manager.start(meeting, origin="console", actor="console")
         assert backend.started.wait(10), "the decode never started"
-        assert manager.cancel(run.id) is not None
+        assert manager.cancel(run.id, actor="console") is not None
         # The child is killed where it stands, so the run ends well inside a
         # decode that would otherwise run for half a minute.
         assert manager.wait(run.id, timeout=10).status == "stopped"
@@ -324,7 +359,7 @@ def test_a_cancel_request_stops_a_run_another_writer_owns(
     meeting = _meeting(registry, tmp_path, tape)
 
     owner = RunManager(registry, pipeline=_reporting_pipeline)
-    run = owner.start(meeting, origin="console")
+    run = owner.start(meeting, origin="console", actor="console")
     for _ in range(1000):
         if registry.get_run(run.id).status == "running":
             break
@@ -332,7 +367,7 @@ def test_a_cancel_request_stops_a_run_another_writer_owns(
 
     other = RunManager(registry, pipeline=lambda *args: None)
     try:
-        requested = other.cancel(run.id)
+        requested = other.cancel(run.id, actor="console")
         # Not this writer's to end: the row stays running, with the request on it.
         assert requested.status == "running"
         assert requested.cancel_requested_at is not None
@@ -355,10 +390,11 @@ def test_a_resume_re_uses_the_cached_chunks(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(stages, "get_backend", lambda _id: backend)
 
     registry = _registry(tmp_path)
-    directory, tape = _workspace(tmp_path)
-    meeting = _meeting(registry, directory, tape)
+    workspace, tape = _workspace(tmp_path)
+    meeting = _meeting(registry, workspace, tape)
 
     def pipeline(directory, options, on_event) -> None:
+        _adopt_workspace_declaration(directory, workspace)
         stages.transcribe(
             directory,
             "counting",
@@ -372,18 +408,18 @@ def test_a_resume_re_uses_the_cached_chunks(tmp_path, monkeypatch) -> None:
         stages.export(directory, on_event=on_event)
 
     manager = RunManager(registry, pipeline=pipeline)
-    first = manager.start(meeting, origin="console")
+    first = manager.start(meeting, origin="console", actor="console")
     # Stop it while the chunks are still coming: one is cached, the rest are not.
     for _ in range(2000):
         if backend.calls >= 1 and registry.get_run(first.id).status == "running":
             break
         time.sleep(0.005)
     try:
-        assert manager.cancel(first.id) is not None
+        assert manager.cancel(first.id, actor="console") is not None
         assert manager.wait(first.id, timeout=15).status == "stopped"
         assert backend.calls >= 1, "one chunk decoded before the stop"
 
-        resumed = manager.resume(first.id, origin="console")
+        resumed = manager.resume(first.id, origin="console", actor="console")
         state = manager.wait(resumed.id, timeout=30)
     finally:
         manager.shutdown(timeout=5)
@@ -395,6 +431,22 @@ def test_a_resume_re_uses_the_cached_chunks(tmp_path, monkeypatch) -> None:
     assert cost["chunks_redecoded"] >= 1, "and decoded the chunks the stop left"
     assert cost["chunks"] == cost["chunks_reused"] + cost["chunks_redecoded"]
 
+    # The real stages wrote the resumed run's own copy, and the workspace
+    # publishes exactly that copy (ADR-0033): what a reader opens at the root is
+    # the run's own bytes, and the run that stopped has no transcript in its copy
+    # of its own to be mistaken for one.
+    home = Workspace.at(workspace)
+    own = home.run_scope(resumed.id)
+    assert own.segments_path.is_file()
+    assert home.segments_path.read_bytes() == own.segments_path.read_bytes()
+    assert home.load_segments()[1]["run_id"] == resumed.id
+    assert home.export_file("record.md").is_file()
+    assert (
+        home.export_file("record.md").read_bytes()
+        == own.export_file("record.md").read_bytes()
+    )
+    assert not home.run_scope(first.id).segments_path.exists()
+
 
 def test_a_resume_refuses_a_run_that_is_still_in_flight(tmp_path) -> None:
     """A live run is cancelled first, never resumed beside itself."""
@@ -405,10 +457,10 @@ def test_a_resume_refuses_a_run_that_is_still_in_flight(tmp_path) -> None:
 
     release = threading.Event()
     manager = RunManager(registry, pipeline=lambda *args: release.wait(10))
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     try:
         with pytest.raises(ValueError):
-            manager.resume(run.id, origin="console")
+            manager.resume(run.id, origin="console", actor="console")
     finally:
         release.set()
         assert manager.wait(run.id, timeout=10).status == "done"
@@ -445,7 +497,7 @@ def test_a_cancel_that_lands_before_the_first_line_is_a_stop(
     arrived.set()
     monkeypatch.setattr(manager, "_signal_for", lambda run_id: arrived)
 
-    run = manager.start(meeting, origin="console")
+    run = manager.start(meeting, origin="console", actor="console")
     state = manager.wait(run.id, timeout=10)
 
     assert state.status == "stopped"

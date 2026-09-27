@@ -738,10 +738,11 @@ def _meeting_query() -> Select[tuple[entities.Meeting, str]]:
 def _newest_first(statement: Select) -> Select:
     """``statement`` ordered the way the registry reads meetings: newest first.
 
-    One declaration, because two reads depend on the order being the same: the
-    list a caller sees, and the registration's workspace lookup, which answers
-    with the **first** match — and therefore with the same meeting whichever of
-    its two arms found it.
+    One declaration, because every read that answers with **a** meeting depends on
+    the order being the same: the list a caller sees, and each arm of the
+    registration's lookup — whose *precedence* is the arms'
+    (:meth:`Registry._registered_meeting`), so within whichever arm ran the
+    newest match is the one that answers.
     """
     return statement.order_by(
         func.coalesce(entities.Meeting.recorded_at, entities.Meeting.created_at).desc(),
@@ -1964,8 +1965,12 @@ class Registry:
         translation, in one place (ADR-0032): the meeting whose
         ``workspace_path`` *is* the directory — compared by resolved path, so a
         relative, trailing-separator or symlinked spelling is the same
-        workspace — or, when the node has none, a meeting registered under the
-        project its directory names and titled after it.
+        workspace (when several meetings name one folder — the deliberate
+        allowance that two may share a workspace — the one stored under the
+        **exact** spelling answers first, and the resolving comparison is what
+        finds the folder when none is: the precedence and its reason are
+        :meth:`_registered_meeting`'s) — or, when the node has none, a meeting
+        registered under the project its directory names and titled after it.
 
         A meeting registered here carries ``recorded_at=None`` and status
         ``new``, exactly as the console's own create does: what a directory holds
@@ -2163,14 +2168,31 @@ class Registry:
         return registered
 
     def _registered_meeting(self, session: Session, resolved: str) -> Meeting | None:
-        """The meeting registered for a folder — the exact path first, then any spelling.
+        """The meeting registered for a folder — the **exact stored spelling** first, then any.
 
-        One seam for the registration's lookup, so its two arms are one decision:
-        the **stored** path compared exactly (no filesystem work, which is what
-        the writer lock must not wrap), then the spelling-insensitive scan
-        (:meth:`_meeting_at`) for a workspace another surface stored as a caller
-        typed it. Both read on the caller's session, inside the transaction that
-        decided (:meth:`meeting_for_workspace`).
+        One seam for the registration's lookup, so its two arms and their
+        **precedence** are one decision:
+
+        1. the **stored** path compared exactly (:meth:`_meeting_at_exact`), which
+           needs no filesystem work at all — the arm the writer lock can afford,
+           and the one a folder this node registered is stored under;
+        2. and, only when no row is stored under that spelling, the
+           spelling-insensitive comparison (:meth:`_meeting_at`), which resolves
+           every stored path and is therefore what finds a workspace another
+           surface stored as a caller typed it.
+
+        That order **is** the precedence, and the arms are not interchangeable
+        when one folder holds several meetings — the deliberate allowance that
+        two may share a workspace, which the surfaces can create by storing a
+        path as it was given (``/tmp/x/third`` and ``/tmp/x/third/``, say). The
+        exactly-stored spelling answers; within one arm the newest match answers
+        (:func:`_newest_first` orders both). A caller cannot have the resolving
+        answer *first* and the cheap one at the same time: asking which of two
+        meetings a folder's newer, differently-spelled row names means resolving
+        every stored path on every registration — a `run <dir>` included — which
+        is the cost this lookup exists to keep out of the lock. Both arms read on
+        the caller's session, inside the transaction that decided
+        (:meth:`meeting_for_workspace`).
         """
         return self._meeting_at_exact(session, resolved) or self._meeting_at(
             session, resolved

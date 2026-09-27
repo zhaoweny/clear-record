@@ -2605,6 +2605,53 @@ def test_a_re_registration_resolves_no_stored_workspace_path(
     assert calls == [str(workspace)], "a stored path was resolved again"
 
 
+def test_two_spellings_of_one_folder_are_decided_by_the_exact_stored_one(
+    tmp_path, monkeypatch
+) -> None:
+    """The lookup's **precedence**, pinned: the exactly-stored spelling answers first.
+
+    One folder can hold two meetings (the deliberate allowance), and the surfaces
+    store a workspace path **as it was given** (``web/app.py`` and
+    ``mcp/server.py`` pass the caller's ``str(path)`` through), so one folder can
+    be stored under two spellings — ``/tmp/x/third`` and ``/tmp/x/third/``, say.
+    The registration's lookup is ordered, and this is what fixes *which* order:
+    the **exact stored spelling** answers (newest of those when it too is stored
+    twice), and the resolving, spelling-insensitive comparison is the fallback
+    for a folder with no row under that spelling at all.
+
+    The reviewed tip answered the newer *resolving* match here. That answer is
+    reachable only by resolving every stored meeting on every registration — a
+    `run <dir>` included — which is the filesystem work the lookup exists to keep
+    out of the writer lock, so the trade is deliberate and it is now stated in
+    the code and fenced here rather than left implicit.
+    """
+    registry = _registry(tmp_path)
+    workspace = tmp_path / "third"
+    workspace.mkdir()
+    registry.create_project("Ops", actor="console")
+    exact = registry.create_meeting(
+        "ops", "Older exact", workspace_path=str(workspace), actor="console"
+    )
+    sloppy = registry.create_meeting(
+        "ops", "Newer sloppy", workspace_path=str(workspace) + "/", actor="console"
+    )
+
+    calls: list[str] = []
+    real_resolve = store_module._resolved_workspace
+
+    def counting(path: str) -> str:
+        calls.append(path)
+        return real_resolve(path)
+
+    monkeypatch.setattr(store_module, "_resolved_workspace", counting)
+    chosen = registry.meeting_for_workspace(str(workspace), actor="cli")
+
+    assert chosen.id == exact.id, "the exact stored spelling did not answer"
+    assert chosen.id != sloppy.id
+    assert calls == [str(workspace)], "the exact arm resolved a stored path"
+    assert len(registry.list_meetings()) == 2, "the lookup registered a third meeting"
+
+
 def test_a_workspace_stored_under_another_spelling_is_the_same_folder(
     tmp_path,
 ) -> None:
@@ -2617,7 +2664,8 @@ def test_a_workspace_stored_under_another_spelling_is_the_same_folder(
     trailing-separator or symlinked spelling is the same workspace") is what the
     resolving arm is for, and it runs exactly when the exact comparison misses —
     which is what keeps the decision the same while the syscalls stay off the hot
-    path.
+    path. (When both arms *can* answer, the exact one does: the precedence is
+    ``test_two_spellings_of_one_folder_are_decided_by_the_exact_stored_one``'s.)
     """
     registry = _registry(tmp_path)
     real = tmp_path / "second"
